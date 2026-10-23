@@ -4,6 +4,32 @@ All notable changes to JankHunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- **Flaky CI: `jankhunt` could exit 120 under a closed pipe.** Any command
+  piped into something that reads only part of the output and exits early
+  (`| head`, `| grep -q`, as the self-test's own `review --brief` check
+  does) could intermittently fail. The write that raised `BrokenPipeError`
+  was already caught, but CPython separately tries to flush the *buffered,
+  not-yet-written* remainder of stdout at interpreter shutdown; that flush
+  hits the same closed pipe outside any `try`/`except` we control and makes
+  CPython set exit status 120 itself, overriding the 0 `main()` returned.
+  Fixed by explicitly flushing stdout right after `main()` returns (still
+  catchable there) and sinking further writes to `/dev/null` on
+  `BrokenPipeError` before the implicit shutdown flush runs.
+- **CI matrix:** `ubuntu-latest` dropped Python 3.9 from its preinstalled/
+  downloadable set (migration to Ubuntu 26.04). Pinned the 3.9 job to
+  `ubuntu-22.04` so the "Python 3.9+" compatibility claim stays tested
+  instead of silently failing `setup-python`.
+- Added `.claude/`, `.opencode/`, `.cursor/`, `.codex/` to `.gitignore`.
+  These are where a coding agent's own local session state lives when run
+  inside this repo (this repo is also a target *install* location for
+  other projects via those same directory names — see the README install
+  table — but this repo's own working tree should never track an agent's
+  session data in it).
+
 ## [0.3.0] — 2026-10-23
 
 Positioning and distribution release. No scanner or scoring behavior

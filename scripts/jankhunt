@@ -781,8 +781,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("\njankhunt: interrupted", file=sys.stderr)
         return 130
     except BrokenPipeError:
+        # The reader (e.g. `| head` or `| grep -q`) closed its end early
+        # and an explicit write caught the EPIPE synchronously. Nothing
+        # more to do here; the shutdown-flush guard below still applies,
+        # since Python may still hold buffered output from before this
+        # point.
         return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    _code = main()
+    # Most output goes through buffered print() calls that don't hit the
+    # OS pipe until flushed, so a reader closing early (e.g. `| grep -q`)
+    # is usually invisible here: main() returns 0 with no exception ever
+    # raised. The failure instead surfaces when CPython flushes stdout
+    # during interpreter shutdown, which is outside any try/except we can
+    # write around main() and makes CPython set exit status 120 itself
+    # (see Modules/main.c), overriding whatever _code was. Flush explicitly
+    # now, while it is still ours to catch, and sink further writes to
+    # /dev/null so the later implicit shutdown flush is a no-op instead of
+    # raising again.
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    sys.exit(_code)

@@ -7,3 +7,11 @@ __pycache__/
 /jankhunt.json
 /jankhunt.sarif
 /hunt-brief.md
+
+# Coding-agent working state never belongs in this repo (prompts, session
+# transcripts, local tool config). Keep it out regardless of any machine-
+# local excludes.
+.claude/
+.opencode/
+.cursor/
+.codex/
