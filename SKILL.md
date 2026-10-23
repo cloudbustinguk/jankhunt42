@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "0.4.0"
+  version: "1.1.0"
 ---
 
 # JankHunt42 — universal debugging doctrine

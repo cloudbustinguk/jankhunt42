@@ -4,6 +4,19 @@ All notable changes to JankHunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [1.1.0] — 2026-10-23
+
+First 1.x release. No functional changes from 0.4.0: the CLI, rules,
+config format, and output schemas are identical. The jump to 1.x is so the
+repo version and the skills-hub.ai listing version stay the same. That
+registry numbered its first upload (0.2.0-era content) 1.0.0 and only
+accepts newer versions above it, so 1.0.0 is taken there and this release
+is 1.1.0.
+
+### Changed
+
+- Version bumped to 1.1.0 in `SKILL.md`, `scripts/jh_core.py`, and README.
+
 ## [0.4.0] — 2026-10-23
 
 Acts on the three highest-leverage gaps identified by an industry/competitor

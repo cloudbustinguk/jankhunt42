@@ -8,7 +8,7 @@
 
 JankHunt42 is an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) that runs in Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
 
-**Version:** 0.4.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 1.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Install as a skill
 
@@ -632,7 +632,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 - [ ] README commands verified from a different working directory.
 - [ ] `references/scoring.md`, `references/review.md`, `references/supply-chain.md`, and `references/deep-hunt.md` are linked from `SKILL.md`.
 - [ ] The receipt schema and review/supply-chain docs are included in the release archive.
-- [ ] `git status` is clean, the tag matches `0.4.0`, and the release archive is rebuilt from the clean tree.
+- [ ] `git status` is clean, the tag matches `1.1.0`, and the release archive is rebuilt from the clean tree.
 - [ ] Tag the release and publish the folder/repo. If using an OpenCode skill catalog, point it at `SKILL.md`; keep `scripts/`, `references/`, and `templates/` alongside it.
 
 ## License
