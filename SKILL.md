@@ -2,7 +2,11 @@
 name: JankHunt42
 description: Universal debugging, code-quality, and diff-review skill for any bug, crash, hang, leak, flaky test, build failure, performance regression, security smell, data problem, or "why is this broken" question. It produces evidence-backed fixes and reviews with deterministic scope, receipts, coverage, baseline deltas, and supply-chain evidence. Includes Jank Score 2.0, a transparent SonarQube/Veracode-inspired prioritization model, an opt-in deep-hunt protocol for adversarial multi-agent panels, and parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Works across languages, stacks, and systems; runs a built-in multi-language jank scanner (code, GitHub Actions, GitLab CI, Kubernetes, Docker, secrets, dependencies/CVEs), log triage, project doctor, and structured debugging playbooks.
 license: MIT
-compatibility: "OpenCode V2 · Python 3.9+ · Linux/macOS/Windows"
+compatibility: "Claude Code · Cursor · Codex CLI · OpenCode V2 · Python 3.9+ · Linux/macOS/Windows"
+platforms:
+  - CLAUDE_CODE
+  - CURSOR
+  - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
   version: "0.2.0"

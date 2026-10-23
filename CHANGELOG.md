@@ -4,6 +4,21 @@ All notable changes to JankHunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- **Cross-tool compatibility.** `SKILL.md` now declares `platforms`
+  (`CLAUDE_CODE`, `CURSOR`, `CODEX_CLI`) and documents the exact install
+  directory for Claude Code, Cursor, Codex CLI, and OpenCode. The skill was
+  already a plain `SKILL.md` + stdlib-Python CLI with no tool-specific code;
+  this makes that explicit instead of reading as OpenCode-only.
+- **Release provenance** (`.github/workflows/provenance.yml`): tagged
+  releases are built into a source tarball and signed with a GitHub Artifact
+  Attestation (keyless Sigstore), verifiable with `gh attestation verify`.
+  This is independent of, and does not change, any third-party marketplace's
+  own verification badge for this skill.
+
 ## [0.2.0] — 2026-10-23
 
 Review-layer release. JankHunt42 now reviews a diff deterministically, emits

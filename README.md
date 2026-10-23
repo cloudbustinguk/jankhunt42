@@ -6,9 +6,32 @@
 
 **Find the jank before it finds production.**
 
-JankHunt42 is an OpenCode skill and a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
+JankHunt42 is an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) that runs in Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
 
 **Version:** 0.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+
+## Install as a skill
+
+JankHunt42 is one `SKILL.md` directory, so installing it is just putting that directory where your tool already looks for skills. Clone/copy this repo (or `git submodule add`) into one of:
+
+| Tool | Project scope | User scope |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/jankhunt42/` | `~/.claude/skills/jankhunt42/` |
+| Cursor | `.cursor/skills/jankhunt42/` | — |
+| Codex CLI | `.codex/skills/jankhunt42/` (also reads `.agents/skills/`) | `~/.codex/skills/jankhunt42/` |
+| OpenCode | `.opencode/skills/jankhunt42/` (also reads `.claude/skills/`, `.agents/skills/`) | `~/.config/opencode/skills/jankhunt42/` |
+
+Or install via [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42): `npx @skills-hub-ai/cli install jankhunt42`. The scanner itself (`scripts/jankhunt`) is plain Python 3.9+ stdlib and works identically regardless of which tool invokes it — nothing in this repo is tool-specific.
+
+### Verifying a release
+
+Every tag (`vX.Y.Z`) is built into a source tarball and signed in CI with a [GitHub Artifact Attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) (keyless Sigstore, tied to this repo's GitHub Actions identity — see `.github/workflows/provenance.yml`). This is independent of any registry's own badge; verify it yourself with the GitHub CLI:
+
+```sh
+gh attestation verify jankhunt42-<version>.tar.gz -R cloudbustinguk/jankhunt42
+```
+
+This confirms the tarball was produced by this repo's CI from the tagged commit and hasn't been altered since. It does not imply any particular third-party marketplace has independently reviewed the skill's behavior.
 
 What makes it more than a regex wrapper:
 

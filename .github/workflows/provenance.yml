@@ -1,0 +1,45 @@
+name: provenance
+
+# Builds a reproducible source tarball for each tagged release and attaches
+# a GitHub Artifact Attestation (keyless Sigstore signing via GitHub's OIDC
+# identity). This is independent of any third-party registry's own
+# verification badge — it lets anyone clone this repo, build the same
+# tarball, and confirm with `gh attestation verify` or `cosign
+# verify-attestation` that it was built by this repo's CI and has not been
+# tampered with since. See references/supply-chain.md for how JankHunt42
+# itself parses this class of evidence.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build source tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="jankhunt42-${version}/" \
+            -o "jankhunt42-${version}.tar.gz" HEAD
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: "jankhunt42-*.tar.gz"
+
+      - name: Attach tarball and attestation to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            jankhunt42-*.tar.gz
+          generate_release_notes: true
