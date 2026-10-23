@@ -14,15 +14,34 @@ config file and JankHunt42 did not, and diff-only review misses the same
 defect repeated across files. Also fixes a flaky selftest CI failure and
 adds multi-tool platform metadata.
 
+### Changed
+
+- **CLI renamed `jankhunt` → `jankhunt42`** (`scripts/jankhunt42`), to stop
+  colliding with "jank hunting," the established browser/mobile
+  performance-profiling term (Chrome DevTools, Perfetto, Flutter, Android).
+  The name now matches the project everywhere: `prog`, `--version`, JSON
+  `tool`, SARIF driver name, error prefixes, repro commands in receipts,
+  config files (`.jankhunt42.toml`/`.json`), and the calibration ledger
+  directory (`.jankhunt42/`). Update scripts, aliases, and symlinks that
+  invoke `scripts/jankhunt`.
+- **Inline pragma is now `# jankhunt42: ignore …`.** The old
+  `# jankhunt: ignore …` / `ignore-file` prefix is still honored, so
+  existing suppressions keep working.
+- **SARIF consumers:** the driver name changed from `jankhunt` to
+  `jankhunt42`, so GitHub code scanning (and similar) will treat this as a
+  new tool. Alerts filed under the old name will not auto-close; dismiss or
+  close them once after upgrading. Review baselines are unaffected (they
+  match on rule/path/evidence fingerprints, not tool name).
+
 ### Added
 
-- **Repo config file** (`jh_config.py`): `.jankhunt.toml` (Python 3.11+,
-  `tomllib`) or `.jankhunt.json` (always), discovered upward from the scan
+- **Repo config file** (`jh_config.py`): `.jankhunt42.toml` (Python 3.11+,
+  `tomllib`) or `.jankhunt42.json` (always), discovered upward from the scan
   root the way `.git` is. Disables a rule, overrides its severity globally
   or per path glob, or ignores a subtree. Applies to `scan`, `score`, and
   `hunt` via `--config PATH` / `--no-config`; not yet wired into `review`.
 - **Opt-in false-positive calibration** (`jh_calibrate.py`, `--calibrate`):
-  records each rule's fired/suppressed counts into `.jankhunt/calibration.json`
+  records each rule's fired/suppressed counts into `.jankhunt42/calibration.json`
   and, once a rule has enough history, downgrades its severity (confidence
   → `low`, tagged `calibrated`) based on its measured suppression rate in
   *this* repo — counting, not inference. The only flag besides `--cve` that
@@ -40,7 +59,7 @@ adds multi-tool platform metadata.
 
 ### Fixed
 
-- **Flaky CI: `jankhunt` could exit 120 under a closed pipe.** Any command
+- **Flaky CI: `jankhunt42` could exit 120 under a closed pipe.** Any command
   piped into something that reads only part of the output and exits early
   (`| head`, `| grep -q`, as the self-test's own `review --brief` check
   does) could intermittently fail. The write that raised `BrokenPipeError`

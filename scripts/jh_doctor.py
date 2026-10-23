@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Environment and project health checks for jankhunt."""
+"""Environment and project health checks for jankhunt42."""
 from __future__ import annotations
 
 import json
@@ -176,7 +176,7 @@ def _meminfo() -> Dict[str, int]:
                 m = re.match(r"^(\w+):\s+(\d+)\s+kB", line)
                 if m:
                     out[m.group(1)] = int(m.group(2)) * 1024
-    except OSError:  # jankhunt: ignore JH201
+    except OSError:  # jankhunt42: ignore JH201
         pass
     return out
 
@@ -190,14 +190,14 @@ def _system_info(root: str, deep: bool) -> Dict[str, object]:
                 if line.startswith("PRETTY_NAME="):
                     info["distro"] = line.split("=", 1)[1].strip().strip('"')
                     break
-    except OSError:  # jankhunt: ignore JH201
+    except OSError:  # jankhunt42: ignore JH201
         pass
     info["kernel"] = platform.release()
     info["python"] = sys.version.split()[0]
     info["cpu_count"] = os.cpu_count()
     try:
         info["loadavg"] = [round(x, 2) for x in os.getloadavg()]
-    except OSError:  # jankhunt: ignore JH201
+    except OSError:  # jankhunt42: ignore JH201
         pass
     mem = _meminfo()
     if mem:
@@ -208,19 +208,19 @@ def _system_info(root: str, deep: bool) -> Dict[str, object]:
         info["disk_total_gib"] = round(usage.total / 1073741824, 1)
         info["disk_free_gib"] = round(usage.free / 1073741824, 1)
         info["disk_free_pct"] = round(100.0 * usage.free / usage.total, 1) if usage.total else 0
-    except OSError:  # jankhunt: ignore JH201
+    except OSError:  # jankhunt42: ignore JH201
         pass
     try:
         with open("/proc/sys/fs/inotify/max_user_watches", "r", encoding="utf-8") as fh:
             info["inotify_watches"] = int(fh.read().strip())
-    except (OSError, ValueError):  # jankhunt: ignore JH201
+    except (OSError, ValueError):  # jankhunt42: ignore JH201
         pass
     try:
         import resource
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         info["nofile_soft"] = soft
         info["nofile_hard"] = hard
-    except (ImportError, OSError, ValueError):  # jankhunt: ignore JH201
+    except (ImportError, OSError, ValueError):  # jankhunt42: ignore JH201
         pass
     proxies = [k for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY") if os.environ.get(k)]
     if proxies:

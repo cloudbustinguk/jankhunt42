@@ -236,7 +236,7 @@ def triage_paths(paths: Sequence[str], grep: Optional[str] = None) -> TriageResu
         try:
             grep_re = re.compile(grep, re.IGNORECASE)
         except re.error as exc:
-            print(f"jankhunt: bad --grep regex: {exc}", file=sys.stderr)
+            print(f"jankhunt42: bad --grep regex: {exc}", file=sys.stderr)
             grep_re = None
     state = _ClusterState(result)
 
@@ -244,7 +244,7 @@ def triage_paths(paths: Sequence[str], grep: Optional[str] = None) -> TriageResu
         try:
             text = _read(path)
         except OSError as exc:
-            print(f"jankhunt: cannot read {path}: {exc}", file=sys.stderr)
+            print(f"jankhunt42: cannot read {path}: {exc}", file=sys.stderr)
             continue
         for line_no, raw in enumerate(text.split("\n"), 1):
             result.lines += 1

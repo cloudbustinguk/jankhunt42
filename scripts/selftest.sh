@@ -6,9 +6,9 @@ export PYTHONDONTWRITEBYTECODE=1
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL="$(cd "$HERE/.." && pwd)"
-JH="$SKILL/scripts/jankhunt"
+JH="$SKILL/scripts/jankhunt42"
 PY="${PYTHON:-python3}"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/jankhunt-selftest.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/jankhunt42-selftest.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # Build fake credentials from pieces so this test file itself does not look like
@@ -261,7 +261,7 @@ YAML
 
 cat > "$FIX/package.json" <<'JSON'
 {
-  "name": "jankhunt-fixture",
+  "name": "jankhunt42-fixture",
   "version": "1.0.0",
   "dependencies": {
     "lodash": "*"
@@ -287,14 +287,14 @@ cat > "$FIX/app.log" <<'LOG'
 LOG
 
 cat > "$FIX/suppressed.py" <<'PY'
-# jankhunt: ignore-file JH303
+# jankhunt42: ignore-file JH303
 VERY_LONG_LINE = "x" * 400
 
 
 def suppressed():
     try:
         risky()
-    except Exception:  # jankhunt: ignore JH201
+    except Exception:  # jankhunt42: ignore JH201
         pass
 PY
 
@@ -356,7 +356,7 @@ print("finally check: nested loop ignored")
 PY
 
 "$PY" "$JH" scan "$FIX" --md --no-progress > "$TMP/scan.md"
-grep -q "JankHunt scan" "$TMP/scan.md" || fail "scan --md missing title"
+grep -q "JankHunt42 scan" "$TMP/scan.md" || fail "scan --md missing title"
 grep -q "Score by dimension" "$TMP/scan.md" || fail "scan --md missing scorecard"
 grep -q "JH101" "$TMP/scan.md" || fail "scan --md missing secret finding"
 
@@ -365,7 +365,7 @@ grep -q "JH101" "$TMP/scan.md" || fail "scan --md missing secret finding"
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["version"] == "2.1.0", d
-assert d["runs"][0]["tool"]["driver"]["name"] == "jankhunt"
+assert d["runs"][0]["tool"]["driver"]["name"] == "jankhunt42"
 assert d["runs"][0]["results"], "no SARIF results"
 for r in d["runs"][0]["results"]:
     uri = r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
@@ -448,6 +448,29 @@ ids = {f["rule"] for f in json.load(open(sys.argv[1]))["findings"]}
 assert "JH201" not in ids, ids
 assert "JH303" not in ids, ids
 print("suppressions: ok")
+PY
+
+# The pre-rename `jankhunt:` pragma prefix must still be honored so that
+# existing suppressions in users' code keep working after the CLI rename.
+LEGACY="$TMP/legacy-pragma"
+mkdir -p "$LEGACY"
+cat > "$LEGACY/legacy.py" <<'PY'
+# jankhunt: ignore-file JH303
+VERY_LONG_LINE = "x" * 400
+
+
+def legacy():
+    try:
+        risky()
+    except Exception:  # jankhunt: ignore JH201
+        pass
+PY
+"$PY" "$JH" scan "$LEGACY" --min-severity info --json --no-progress > "$TMP/legacy.json"
+"$PY" - "$TMP/legacy.json" <<'PY'
+import json, sys
+ids = {f["rule"] for f in json.load(open(sys.argv[1]))["findings"]}
+assert "JH201" not in ids and "JH303" not in ids, ids
+print("legacy pragma: ok")
 PY
 
 # Severity filter.
@@ -637,7 +660,7 @@ assert d["summary"]["changed_lines"] >= 2, d["summary"]
 f = next(x for x in d["findings"] if x["rule"] == "JH102")
 assert f["scope"] == "new" and f["verification"] == "supported", f
 assert f["id"].startswith("JH-") and len(f["receipt_hash"]) == 64, f
-assert f["repro"].startswith("jankhunt scan"), f
+assert f["repro"].startswith("jankhunt42 scan"), f
 sc = r["supply_chain"]
 assert sc["summary"]["sboms"] == 3, sc["summary"]
 assert sc["summary"]["attestations"] >= 2, sc["summary"]
@@ -985,7 +1008,7 @@ print("cross-file duplicates: %d cluster(s), %d sites" % (len(dupes), dupes[0]["
 PY
 
 # A config file can disable a rule and ignore a whole subtree.
-cat > "$CFG/.jankhunt.json" <<'JSON'
+cat > "$CFG/.jankhunt42.json" <<'JSON'
 {"rules": {"JH102": {"enabled": false}}}
 JSON
 "$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-disabled.json"
@@ -993,11 +1016,11 @@ JSON
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["summary"]["findings"] == 0, d["summary"]
-assert d["config"] and d["config"].endswith(".jankhunt.json"), d["config"]
+assert d["config"] and d["config"].endswith(".jankhunt42.json"), d["config"]
 PY
 
 # A path-scoped severity override applies only to matching paths.
-cat > "$CFG/.jankhunt.json" <<'JSON'
+cat > "$CFG/.jankhunt42.json" <<'JSON'
 {"paths": {"a/*.py": {"severity": {"JH102": "info"}}}}
 JSON
 "$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-sev.json"
@@ -1008,11 +1031,11 @@ by_path = {f["path"]: f["severity"] for f in d["findings"]}
 assert by_path["a/one.py"] == "info", by_path
 assert by_path["b/two.py"] == "major", by_path
 PY
-rm -f "$CFG/.jankhunt.json"
+rm -f "$CFG/.jankhunt42.json"
 
 # TOML config needs tomllib (3.11+); older interpreters must warn and skip
 # it, never crash or silently misparse it.
-cat > "$CFG/.jankhunt.toml" <<'TOML'
+cat > "$CFG/.jankhunt42.toml" <<'TOML'
 [rules.JH102]
 enabled = false
 TOML
@@ -1022,9 +1045,9 @@ if "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; the
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["summary"]["findings"] == 0, d["summary"]
-assert d["config"].endswith(".jankhunt.toml"), d["config"]
+assert d["config"].endswith(".jankhunt42.toml"), d["config"]
 PY
-  [ -s "$TMP/cfg-toml.err" ] && fail "unexpected stderr parsing a valid .jankhunt.toml: $(cat "$TMP/cfg-toml.err")"
+  [ -s "$TMP/cfg-toml.err" ] && fail "unexpected stderr parsing a valid .jankhunt42.toml: $(cat "$TMP/cfg-toml.err")"
 else
   "$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-toml.json" 2>"$TMP/cfg-toml.err"
   grep -qi "tomllib" "$TMP/cfg-toml.err" || fail "no tomllib-unavailable warning on <3.11"
@@ -1035,7 +1058,7 @@ assert d["summary"]["findings"] == 2, d["summary"]  # config was skipped, not ap
 assert d["config"] is None, d["config"]
 PY
 fi
-rm -f "$CFG/.jankhunt.toml"
+rm -f "$CFG/.jankhunt42.toml"
 note "config: rule disable, path severity override, TOML/JSON, and cross-file duplicates all verified"
 
 # FP calibration is opt-in, writes only on --calibrate, and needs history
@@ -1047,15 +1070,15 @@ mkdir -p "$CAL"
 # (>=50%, <80%) rather than the info-floor band (>=80%), so this also
 # exercises the distinction between the two calibration tiers.
 for i in 1 2 3; do
-  printf 'def h%d(v):\n    return eval(v)  # jankhunt: ignore JH102\n' "$i" > "$CAL/s$i.py"
+  printf 'def h%d(v):\n    return eval(v)  # jankhunt42: ignore JH102\n' "$i" > "$CAL/s$i.py"
 done
 for i in 4 5 6; do
   printf 'def h%d(v):\n    return eval(v)\n' "$i" > "$CAL/s$i.py"
 done
 "$PY" "$JH" scan "$CAL" --json --min-severity info > "$TMP/cal-run1.json"
-[ -f "$CAL/.jankhunt/calibration.json" ] && fail "calibration ledger written without --calibrate"
+[ -f "$CAL/.jankhunt42/calibration.json" ] && fail "calibration ledger written without --calibrate"
 "$PY" "$JH" scan "$CAL" --calibrate --json --min-severity info > "$TMP/cal-run1.json"
-[ -f "$CAL/.jankhunt/calibration.json" ] || fail "--calibrate did not write a ledger"
+[ -f "$CAL/.jankhunt42/calibration.json" ] || fail "--calibrate did not write a ledger"
 "$PY" - "$TMP/cal-run1.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))

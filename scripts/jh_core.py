@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Core types, language detection, sanitizing, and file discovery for jankhunt."""
+"""Core types, language detection, sanitizing, and file discovery for jankhunt42."""
 from __future__ import annotations
 
 import fnmatch
@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-TOOL = "jankhunt"
+TOOL = "jankhunt42"
 VERSION = "0.4.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")

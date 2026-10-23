@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TTY-first renderers for jankhunt, with clean Markdown fallbacks."""
+"""TTY-first renderers for jankhunt42, with clean Markdown fallbacks."""
 from __future__ import annotations
 
 import os
@@ -315,7 +315,7 @@ def scan_markdown(result, meta: Dict[str, object], max_findings: int = 300) -> s
     findings: List[Finding] = result.findings
     root = str(meta.get("root", "."))
     report = jh_score.compute(findings, result.loc)
-    out: List[str] = ["# JankHunt scan", ""]
+    out: List[str] = ["# JankHunt42 scan", ""]
     out.append("**Root:** `%s` · **Files:** %d · **LOC:** %d · **Findings:** %d · **Jank:** %d/100 (%s · %s) · policy **%s**"
                % (root, result.files, result.loc, len(findings), report.score,
                   report.grade, report.label, report.policy))
@@ -501,8 +501,8 @@ def scan_tty(result, meta: Dict[str, object], max_findings: int = 300) -> str:
         return "\n".join(out)
     out.extend(_tty_finding_cards(findings, max_findings, width, color))
     out.append(color.dim("  " + "─" * (width - 4)))
-    out.append("  " + color.grey("next: ") + color.cyan("jankhunt scan . --json") + color.grey("  ·  ")
-               + color.cyan("jankhunt triage app.log") + color.grey("  ·  read references/playbooks.md"))
+    out.append("  " + color.grey("next: ") + color.cyan("jankhunt42 scan . --json") + color.grey("  ·  ")
+               + color.cyan("jankhunt42 triage app.log") + color.grey("  ·  read references/playbooks.md"))
     return "\n".join(out)
 
 

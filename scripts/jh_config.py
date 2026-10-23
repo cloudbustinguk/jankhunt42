@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Repo-local scanner configuration: `.jankhunt.toml` / `.jankhunt.json`.
+"""Repo-local scanner configuration: `.jankhunt42.toml` / `.jankhunt42.json`.
 
 Every competing scanner (Semgrep, SonarQube, ESLint, ...) lets a repo tune
 which rules apply and at what severity without editing source comments one
-line at a time. jankhunt's only prior mechanism was the inline
-`# jankhunt: ignore JHxxx` pragma. This module adds a config file that is
+line at a time. jankhunt42's only prior mechanism was the inline
+`# jankhunt42: ignore JHxxx` pragma. This module adds a config file that is
 discovered the way `.git` is discovered: walk upward from the scan root
 until one is found, or none is.
 
@@ -30,7 +30,7 @@ if HERE not in sys.path:
 
 from jh_core import sev_at_least  # noqa: E402
 
-CONFIG_NAMES = (".jankhunt.toml", ".jankhunt.json")
+CONFIG_NAMES = (".jankhunt42.toml", ".jankhunt42.json")
 
 try:
     import tomllib  # Python 3.11+
@@ -100,7 +100,7 @@ def _parse_raw(path: str) -> Tuple[Optional[dict], Optional[str]]:
         if tomllib is None:
             return None, (
                 "%s found but this interpreter has no tomllib (needs Python 3.11+); "
-                "skipping. Use .jankhunt.json for compatibility with older interpreters." % path
+                "skipping. Use .jankhunt42.json for compatibility with older interpreters." % path
             )
         try:
             with open(path, "rb") as fh:
@@ -180,7 +180,7 @@ def load_config_for_root(root: str, explicit_path: Optional[str] = None,
 
 def emit_warnings(cfg: Config) -> None:
     for w in cfg.warnings:
-        print("jankhunt: config: %s" % w, file=sys.stderr)
+        print("jankhunt42: config: %s" % w, file=sys.stderr)
 
 
 def apply_to_findings(cfg: Config, findings: Sequence) -> List:

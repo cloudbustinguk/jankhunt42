@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rule catalog and scanning engine for jankhunt."""
+"""Rule catalog and scanning engine for jankhunt42."""
 from __future__ import annotations
 
 import re
@@ -517,7 +517,7 @@ class ScanResult:
     # filters, so it reflects what the rule actually matched, not what the
     # CLI chose to display. fired = every match before any filtering;
     # suppressed = subset dropped specifically by an inline
-    # `# jankhunt: ignore` pragma. Consumed by --calibrate (jh_calibrate.py).
+    # `# jankhunt42: ignore` pragma. Consumed by --calibrate (jh_calibrate.py).
     fired_by_rule: Dict[str, int] = field(default_factory=dict)
     suppressed_by_rule: Dict[str, int] = field(default_factory=dict)
 
@@ -535,7 +535,7 @@ def _compile_rules() -> None:
             try:
                 pats.append(re.compile(p))
             except re.error as exc:
-                print(f"jankhunt: bad pattern in {rule.id}: {exc}", file=sys.stderr)
+                print(f"jankhunt42: bad pattern in {rule.id}: {exc}", file=sys.stderr)
         _COMPILED[rule.id] = pats
         if rule.ignore:
             try:
@@ -549,12 +549,14 @@ def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[
     for sf in sources:
         file_ids: Set[str] = set()
         line_ids: Dict[int, Set[str]] = {}
+        # `jankhunt42:` is canonical; the pre-0.4 `jankhunt:` prefix is still
+        # honored so existing suppressions in users' code keep working.
         for raw in sf.raw[:12]:
-            m = re.search(r"jankhunt:\s*ignore-file\s+([A-Za-z0-9, ]+)", raw)
+            m = re.search(r"jankhunt(?:42)?:\s*ignore-file\s+([A-Za-z0-9, ]+)", raw)
             if m:
                 file_ids.update(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
         for i, raw in enumerate(sf.raw, 1):
-            m = re.search(r"jankhunt:\s*ignore\s+([A-Za-z0-9, ]+)", raw)
+            m = re.search(r"jankhunt(?:42)?:\s*ignore\s+([A-Za-z0-9, ]+)", raw)
             if m:
                 line_ids[i] = set(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
         suppression[sf.rel] = (file_ids, line_ids)
@@ -627,8 +629,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     continue
                 try:
                     found = fn(sf, rule)
-                except Exception as exc:  # jankhunt: ignore JH202  (a broken check must not kill the scan)
-                    print(f"jankhunt: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
+                except Exception as exc:  # jankhunt42: ignore JH202  (a broken check must not kill the scan)
+                    print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue
                 for f in found:
                     if acceptor.accept(f):

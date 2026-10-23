@@ -1,6 +1,6 @@
 # Diff review protocol
 
-`jankhunt review` is a deterministic pre-pass for a code review. It answers
+`jankhunt42 review` is a deterministic pre-pass for a code review. It answers
 five questions before an LLM or a human starts reasoning about the change:
 
 1. What exactly changed?
@@ -75,7 +75,7 @@ runtime proof.
   "message": "eval/exec-style APIs turn data into code ...",
   "fix": "Replace with a parser, dispatch table ...",
   "counterevidence": "Static pattern/structural rule only ...",
-  "repro": "jankhunt scan app.py --rule JH102 --min-severity info --json",
+  "repro": "jankhunt42 scan app.py --rule JH102 --min-severity info --json",
   "tags": [],
   "scan_id": "…",
   "receipt_version": "1.0",
@@ -106,13 +106,13 @@ evidence rule for panel findings.
 Save a baseline from a clean review:
 
 ```bash
-jankhunt review . --base origin/main --json --save-baseline .jankhunt/baseline.json
+jankhunt42 review . --base origin/main --json --save-baseline .jankhunt42/baseline.json
 ```
 
 Compare a later review:
 
 ```bash
-jankhunt review . --base origin/main --baseline .jankhunt/baseline.json --fail-on major
+jankhunt42 review . --base origin/main --baseline .jankhunt42/baseline.json --fail-on major
 ```
 
 A baseline may be a prior `review` JSON document, a `scan` JSON document, or a

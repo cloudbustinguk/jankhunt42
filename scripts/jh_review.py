@@ -474,8 +474,8 @@ def rulepack_hash() -> str:
 def _repro(f: Finding) -> str:
     path = shlex.quote(f.path)
     if f.rule == "JH901":
-        return "jankhunt scan %s --cve --rule JH901 --json" % path
-    return "jankhunt scan %s --rule %s --min-severity info --json" % (path, f.rule)
+        return "jankhunt42 scan %s --cve --rule JH901 --json" % path
+    return "jankhunt42 scan %s --rule %s --min-severity info --json" % (path, f.rule)
 
 
 def make_receipt(f: Finding, scope_status: str, scan_id: str) -> Dict[str, Any]:
@@ -741,7 +741,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "Only changed files and diff hunks were considered; unchanged code and full-repo context were not re-reviewed.",
         "Cryptographic attestation verification is delegated to gh, cosign, or jf; unverified means exactly that.",
     ]
-    unknowns.append("Dependency CVE lookup was not run by this review; use `jankhunt scan --cve` separately.")
+    unknowns.append("Dependency CVE lookup was not run by this review; use `jankhunt42 scan --cve` separately.")
     if scope_meta["skipped_files"]:
         unknowns.append("%d changed file%s were skipped; see scope.skipped_files."
                         % (len(scope_meta["skipped_files"]),
@@ -1019,7 +1019,7 @@ def brief(review: Dict[str, Any]) -> str:
     out.append("Return JSON with `agent`, `findings`, and `rejected`. Each finding needs "
                "`title`, `severity`, `confidence`, `status`, `path`, `line`, `evidence`, "
                "and either `repro` or `runtime_evidence` when status is `confirmed`. "
-               "Then run `jankhunt merge`.")
+               "Then run `jankhunt42 merge`.")
     return "\n".join(out)
 
 
@@ -1127,7 +1127,7 @@ def sarif(review: Dict[str, Any]) -> str:
                                **({"endLine": r["end_line"]} if r.get("end_line") else {})},
                 }
             }],
-            "partialFingerprints": {"jankhunt": r["receipt_hash"]},
+            "partialFingerprints": {"jankhunt42": r["receipt_hash"]},
             "properties": {
                 "severity": r["severity"], "confidence": r["confidence"],
                 "scope": r["scope"], "verification": r["verification"],
@@ -1141,7 +1141,7 @@ def sarif(review: Dict[str, Any]) -> str:
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{
-            "tool": {"driver": {"name": "jankhunt", "version": VERSION,
+            "tool": {"driver": {"name": "jankhunt42", "version": VERSION,
                                 "informationUri": "https://github.com/anomalyco/opencode",
                                 "rules": list(rules.values())}},
             "results": results,

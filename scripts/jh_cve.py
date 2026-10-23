@@ -448,7 +448,7 @@ def _cvss_severity(vuln: dict) -> Optional[str]:
             continue
         try:
             num = float(m.group(1))
-        except ValueError:  # jankhunt: ignore JH201
+        except ValueError:  # jankhunt42: ignore JH201
             return None
         if num >= 9.0:
             return "critical"

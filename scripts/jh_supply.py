@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline supply-chain evidence inspection for jankhunt.
+"""Offline supply-chain evidence inspection for jankhunt42.
 
 Supported inputs:
 * SPDX 2.x JSON and tag-value, SPDX 3 JSON-LD

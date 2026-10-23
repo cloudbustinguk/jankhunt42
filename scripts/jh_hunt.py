@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deep Hunt planning and adversarial-panel consensus for jankhunt.
+"""Deep Hunt planning and adversarial-panel consensus for jankhunt42.
 
 This module does not spawn agents. It produces the brief, role prompts, scenario
 deck, and consensus contract that an orchestrator hands to independent
@@ -421,7 +421,7 @@ def build_plan(
             "name": "Consensus board",
             "mode": "verifier-led panel",
             "goal": "Classify merged findings as confirmed, supported, contested, unverified, or rejected. Preserve dissent.",
-            "output": "jankhunt merge JSON + consensus table.",
+            "output": "jankhunt42 merge JSON + consensus table.",
             "gate": "No confirmed finding without a repro or direct runtime evidence; rejected findings include the falsifier.",
         },
     ]
@@ -501,7 +501,7 @@ def build_plan(
                 "rejected": "Falsified by a guard, unreachable path, compensating control, or failed repro.",
             },
             "rules": CONSENSUS_RULES,
-            "merge_command": "jankhunt merge <panel-json...>",
+            "merge_command": "jankhunt42 merge <panel-json...>",
         },
         "guardrails": GUARDRAILS,
         "report_template": "templates/hunt-report.md",
@@ -1400,10 +1400,10 @@ def hunt_tty(plan: Dict[str, Any]) -> str:
     out.append("    " + color.grey(", ".join(s["id"] for s in plan["scenarios"])))
     out.append("")
     out.append("  " + color.dim("─" * (width - 4)))
-    out.append("  " + color.grey("next: ") + color.cyan("jankhunt hunt . --json > hunt.json")
+    out.append("  " + color.grey("next: ") + color.cyan("jankhunt42 hunt . --json > hunt.json")
                + color.grey("  ·  spawn panel  ·  ")
-               + color.cyan("jankhunt merge panel/*.json"))
-    out.append("  " + color.grey("brief: ") + color.cyan("jankhunt hunt . --md --prompts")
+               + color.cyan("jankhunt42 merge panel/*.json"))
+    out.append("  " + color.grey("brief: ") + color.cyan("jankhunt42 hunt . --md --prompts")
                + color.grey("  ·  report: templates/hunt-report.md"))
     return "\n".join(out)
 

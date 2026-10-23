@@ -11,17 +11,17 @@ Most commands below are read-only.
 
 ```sh
 SKILL_DIR=~/.config/opencode/skills/jankhunt42
-JH="python3 $SKILL_DIR/scripts/jankhunt"
+JH="python3 $SKILL_DIR/scripts/jankhunt42"
 
 $JH scan .                              # TTY autopsy; Markdown when piped
 $JH scan . --json > jank.json           # full machine-readable report
 $JH scan . --sarif > jank.sarif         # SARIF 2.1.0
-$JH scan . --html > jankhunt.html       # self-contained visual report
+$JH scan . --html > jankhunt42.html       # self-contained visual report
 $JH scan . --since origin/main          # new-code view
 $JH scan . --cve                        # OSV.dev advisories (network, opt-in)
-$JH scan . --config .jankhunt.toml      # explicit config (default: discovered upward)
-$JH scan . --no-config                  # ignore any .jankhunt.toml/.jankhunt.json
-$JH scan . --calibrate                  # apply + update .jankhunt/calibration.json (writes)
+$JH scan . --config .jankhunt42.toml      # explicit config (default: discovered upward)
+$JH scan . --no-config                  # ignore any .jankhunt42.toml/.jankhunt42.json
+$JH scan . --calibrate                  # apply + update .jankhunt42/calibration.json (writes)
 $JH review .                            # working tree + untracked files
 $JH review . --staged                   # index only
 $JH review . --commit HEAD              # committed tree
@@ -31,8 +31,8 @@ $JH review . --base origin/main --json > review.json
 $JH review . --base origin/main --sarif > review.sarif
 $JH review . --base origin/main --brief > review-brief.md
 $JH review . --base origin/main \\
-  --baseline .jankhunt/baseline.json --fail-on major
-$JH review . --base origin/main --json --save-baseline .jankhunt/baseline.json
+  --baseline .jankhunt42/baseline.json --fail-on major
+$JH review . --base origin/main --json --save-baseline .jankhunt42/baseline.json
 $JH supply-chain . --json
 $JH supply-chain . --require-sbom --require-attestation
 $JH supply-chain . --jfrog-evidence apptrust-evidence.json
@@ -58,12 +58,12 @@ only; baseline persisting findings are excluded unless you change the baseline.
 recorded a successful verification, not that JankHunt42 verified a signature.
 Use `gh`, `cosign`, or `jf` for independent verification.
 
-`.jankhunt.toml`/`.jankhunt.json` (discovered upward from the scan root, like
+`.jankhunt42.toml`/`.jankhunt42.json` (discovered upward from the scan root, like
 `.git`) can disable a rule, override its severity, scope either to a path
 glob, or ignore a subtree outright; `--no-config` bypasses discovery,
 `--config PATH` pins one explicitly. TOML needs Python 3.11+ (`tomllib`);
 JSON always works. `--calibrate` is the only flag besides `--cve` that writes
-anything: it reads and updates `.jankhunt/calibration.json`, a per-rule count
+anything: it reads and updates `.jankhunt42/calibration.json`, a per-rule count
 of how often that rule fired vs. was suppressed in *this* repo, and
 downgrades a rule's severity (and marks it `low` confidence, tagged
 `calibrated`) once it crosses a suppression-rate threshold with enough

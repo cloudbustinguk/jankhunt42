@@ -21,7 +21,7 @@ JankHunt42 is one `SKILL.md` directory, so installing it is just putting that di
 | Codex CLI | `.codex/skills/jankhunt42/` (also reads `.agents/skills/`) | `~/.codex/skills/jankhunt42/` |
 | OpenCode | `.opencode/skills/jankhunt42/` (also reads `.claude/skills/`, `.agents/skills/`) | `~/.config/opencode/skills/jankhunt42/` |
 
-Or install via [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42): `npx @skills-hub-ai/cli install jankhunt42`. The scanner itself (`scripts/jankhunt`) is plain Python 3.9+ stdlib and works identically regardless of which tool invokes it — nothing in this repo is tool-specific.
+Or install via [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42): `npx @skills-hub-ai/cli install jankhunt42`. The scanner itself (`scripts/jankhunt42`) is plain Python 3.9+ stdlib and works identically regardless of which tool invokes it — nothing in this repo is tool-specific.
 
 ### Verifying a release
 
@@ -36,11 +36,11 @@ This confirms the tarball was produced by this repo's CI from the tagged commit 
 What makes it more than a regex wrapper:
 
 - **Jank Score 2.0** — a transparent, dimension-based prioritization model inspired by SonarQube's ratings and Veracode's severity × confidence philosophy. It grades security, reliability, maintainability, and test confidence separately, anchors the headline to the weakest dimension, and can score only the lines changed since a git ref.
-- **Evidence-gated diff review** — `jankhunt review` establishes exact scope, separates new lines from changed-hunk context, emits stable receipts with counterevidence and repro commands, measures coverage, and compares against a baseline. It is a deterministic pre-pass for `/review`, not a replacement for it.
+- **Evidence-gated diff review** — `jankhunt42 review` establishes exact scope, separates new lines from changed-hunk context, emits stable receipts with counterevidence and repro commands, measures coverage, and compares against a baseline. It is a deterministic pre-pass for `/review`, not a replacement for it.
 - **Supply-chain context** — offline parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Externally verified evidence is labeled `provider-verified`; signature material JankHunt42 did not verify is labeled `unverified`.
 - **Deep hunt (opt-in)** — a structured adversarial panel for high-risk or ambiguous work. Independent roles investigate, cross-examine, and reach an evidence-weighted consensus; `confirmed` requires a repro or direct runtime evidence, and dissent is preserved.
 - **Citizen-developer and AI-assisted jank** — a growing share of production code was never written by anyone who calls themselves an engineer: a Copilot/ChatGPT suggestion pasted in whole, a low-code workflow a citizen developer wired up, a "quick script" that became a service. That code fails in predictable ways — a secret left in from the pasted example, happy-path logic with swallowed exceptions, duplicated scaffolding from repeated regeneration, zero tests because nothing prompted for one. JankHunt42 doesn't detect "AI-written code"; its `security`, `reliability`, `maintainability`, and `tests` rule categories catch this pattern as a side effect of catching any other kind of jank, regardless of who or what wrote the line.
-- **Repo-tuned, not one-size-fits-all** — a `.jankhunt.toml`/`.jankhunt.json` config file disables a rule, overrides its severity, or ignores a subtree per repo instead of scattering inline comments. An opt-in `--calibrate` ledger goes further: it counts how often each rule is suppressed *in this repo* and downgrades one that runs hot, with the exact rate and sample size attached — calibration by counting, not vibes.
+- **Repo-tuned, not one-size-fits-all** — a `.jankhunt42.toml`/`.jankhunt42.json` config file disables a rule, overrides its severity, or ignores a subtree per repo instead of scattering inline comments. An opt-in `--calibrate` ledger goes further: it counts how often each rule is suppressed *in this repo* and downgrades one that runs hot, with the exact rate and sample size attached — calibration by counting, not vibes.
 - **Cross-file duplicates** — the same defect pasted into several files, not refactored into one, is a documented blind spot for diff-only reviewers and an AI-assisted-code growth pattern. `scan`/`score`/`hunt` cluster findings that share a rule and near-identical evidence across files, so the fix targets the class instead of one site.
 
 None of these is a substitute for compilers, tests, Semgrep, SonarQube, Trivy, signature verifiers, or human review. They are ways to spend attention better.
@@ -77,7 +77,7 @@ TTY output uses a colored banner, a dimension scorecard, severity chips, bars, a
 `scan --html` writes a single, self-contained visual report: score ring, dimension cards, hot spots, severity filters, and search, with embedded CSS/JS and no external assets. Redirect it to a file:
 
 ```sh
-jankhunt scan . --html > jankhunt.html
+jankhunt42 scan . --html > jankhunt42.html
 ```
 
 ## Why this exists
@@ -92,7 +92,7 @@ JankHunt42 is not trying to win the code-review chatbot contest. It does not bui
 
 | Layer | Owns |
 |---|---|
-| `jankhunt review` | Exact diff scope, changed-line/context separation, static receipts, coverage, baseline deltas, supply-chain evidence, reproducible gates |
+| `jankhunt42 review` | Exact diff scope, changed-line/context separation, static receipts, coverage, baseline deltas, supply-chain evidence, reproducible gates |
 | Built-in `/review` or another semantic reviewer | Intent, design, reachability, impact, test design, adjudication, and prose |
 | Compiler/tests/native tools | Correctness, build, type, lint, and runtime proof |
 
@@ -119,12 +119,12 @@ OpenCode discovers `SKILL.md` automatically. The model can invoke **JankHunt42**
 
 ```sh
 SKILL_DIR=~/.config/opencode/skills/jankhunt42
-python3 "$SKILL_DIR/scripts/jankhunt" --version
+python3 "$SKILL_DIR/scripts/jankhunt42" --version
 
 # Optional: put it on PATH (the launcher resolves symlinks)
 mkdir -p ~/.local/bin
-ln -sf "$SKILL_DIR/scripts/jankhunt" ~/.local/bin/jankhunt
-jankhunt --version
+ln -sf "$SKILL_DIR/scripts/jankhunt42" ~/.local/bin/jankhunt42
+jankhunt42 --version
 ```
 
 Requirements: Python 3.9+ (3.11+ recommended), Linux/macOS. Windows works for the scanner; `doctor --system` degrades gracefully where Linux-only probes are unavailable. No third-party packages.
@@ -134,22 +134,22 @@ Requirements: Python 3.9+ (3.11+ recommended), Linux/macOS. Windows works for th
 ### Scan
 
 ```sh
-jankhunt scan .                              # TTY autopsy, Markdown when piped
-jankhunt scan src tests --md                 # force Markdown on a TTY
-jankhunt scan . --json > jank.json           # machine-readable
-jankhunt scan . --sarif > jank.sarif         # SARIF 2.1.0 for code scanning
-jankhunt scan . --html > jankhunt.html       # self-contained visual report
-jankhunt scan . --fail-on critical           # exit 1 if a critical+ finding exists
-jankhunt scan . --min-severity major         # only major and above
-jankhunt scan . --min-severity info          # include context/style findings
-jankhunt scan . --category security --category ci
-jankhunt scan . --rule JH101 --rule JH418
-jankhunt scan . --exclude 'vendor/**' --max-files 5000
-jankhunt scan . --cve                        # OSV.dev dependency advisories (network)
-jankhunt scan . --since origin/main          # whole-tree + new-code score
-jankhunt scan . --config .jankhunt.toml      # explicit config (default: discovered upward)
-jankhunt scan . --no-config                  # ignore any .jankhunt.toml/.jankhunt.json
-jankhunt scan . --calibrate                  # apply + update the FP-calibration ledger (writes)
+jankhunt42 scan .                              # TTY autopsy, Markdown when piped
+jankhunt42 scan src tests --md                 # force Markdown on a TTY
+jankhunt42 scan . --json > jank.json           # machine-readable
+jankhunt42 scan . --sarif > jank.sarif         # SARIF 2.1.0 for code scanning
+jankhunt42 scan . --html > jankhunt42.html       # self-contained visual report
+jankhunt42 scan . --fail-on critical           # exit 1 if a critical+ finding exists
+jankhunt42 scan . --min-severity major         # only major and above
+jankhunt42 scan . --min-severity info          # include context/style findings
+jankhunt42 scan . --category security --category ci
+jankhunt42 scan . --rule JH101 --rule JH418
+jankhunt42 scan . --exclude 'vendor/**' --max-files 5000
+jankhunt42 scan . --cve                        # OSV.dev dependency advisories (network)
+jankhunt42 scan . --since origin/main          # whole-tree + new-code score
+jankhunt42 scan . --config .jankhunt42.toml      # explicit config (default: discovered upward)
+jankhunt42 scan . --no-config                  # ignore any .jankhunt42.toml/.jankhunt42.json
+jankhunt42 scan . --calibrate                  # apply + update the FP-calibration ledger (writes)
 ```
 
 Important flags:
@@ -168,7 +168,7 @@ Important flags:
 | `--cve` | Query OSV.dev for pinned dependencies |
 | `--since REF` | Also score findings on lines changed since `REF` |
 | `--config PATH` / `--no-config` | Explicit config file, or skip auto-discovery |
-| `--calibrate` | Apply + update `.jankhunt/calibration.json`; the only flag besides `--cve` that writes anything |
+| `--calibrate` | Apply + update `.jankhunt42/calibration.json`; the only flag besides `--cve` that writes anything |
 | `--quiet` / `--no-progress` | Suppress the spinner |
 
 `scan`, `score`, and `hunt` also always compute cross-file duplicate
@@ -180,8 +180,8 @@ exist.
 #### HTML report
 
 ```sh
-jankhunt scan . --html > jankhunt.html
-open jankhunt.html                 # macOS; use xdg-open on Linux
+jankhunt42 scan . --html > jankhunt42.html
+open jankhunt42.html                 # macOS; use xdg-open on Linux
 ```
 
 The report is one portable file: embedded CSS/JS, no external fonts, scripts, styles, or images. It includes the Jank Score headline and dimensions, severity counts, top offenders, top rules, and filterable/searchable finding cards. Every repository-derived string is HTML-escaped, and secret redaction still applies. `--max-findings N` caps the human view; `--json` and `--sarif` keep the full set. Choosing `--html` together with `--md`, `--json`, or `--sarif` is a usage error (exit `2`).
@@ -189,14 +189,14 @@ The report is one portable file: embedded CSS/JS, no external fonts, scripts, st
 ### Review a diff
 
 ```sh
-jankhunt review .                              # working tree + untracked files
-jankhunt review . --staged                     # index only
-jankhunt review . --commit HEAD                # one committed tree
-jankhunt review . --base origin/main           # BASE...HEAD, scans HEAD tree
-jankhunt review . --pr 123                     # checked-out GitHub PR
-jankhunt review . --base origin/main --json > review.json
-jankhunt review . --base origin/main --sarif > review.sarif
-jankhunt review . --base origin/main --brief   # reviewer handoff pack
+jankhunt42 review .                              # working tree + untracked files
+jankhunt42 review . --staged                     # index only
+jankhunt42 review . --commit HEAD                # one committed tree
+jankhunt42 review . --base origin/main           # BASE...HEAD, scans HEAD tree
+jankhunt42 review . --pr 123                     # checked-out GitHub PR
+jankhunt42 review . --base origin/main --json > review.json
+jankhunt42 review . --base origin/main --sarif > review.sarif
+jankhunt42 review . --base origin/main --brief   # reviewer handoff pack
 ```
 
 `review` scans the exact revision described by the diff: the working tree, the index, a commit tree, or `HEAD`. A committed review never silently picks up dirty working-tree edits. It separates findings into:
@@ -205,16 +205,16 @@ jankhunt review . --base origin/main --brief   # reviewer handoff pack
 - **contextual** — in a changed hunk but on an unchanged line; useful context, not a gate finding;
 - **unchanged** — in a changed file but outside every hunk; counted as suppressed.
 
-Every machine-readable finding is a receipt: rule, location, evidence, counterevidence, a `jankhunt scan …` repro command, `supported`/`unverified` verification, scan ID, and SHA-256 `receipt_hash`. A receipt is never `confirmed` without runtime evidence. The review also reports coverage and skipped-file reasons so a zero-finding result cannot hide a scope collapse.
+Every machine-readable finding is a receipt: rule, location, evidence, counterevidence, a `jankhunt42 scan …` repro command, `supported`/`unverified` verification, scan ID, and SHA-256 `receipt_hash`. A receipt is never `confirmed` without runtime evidence. The review also reports coverage and skipped-file reasons so a zero-finding result cannot hide a scope collapse.
 
 ```sh
 # Save an accepted baseline, then gate only new findings.
-jankhunt review . --base origin/main --json --save-baseline .jankhunt/baseline.json
-jankhunt review . --base origin/main \
-  --baseline .jankhunt/baseline.json --fail-on major
+jankhunt42 review . --base origin/main --json --save-baseline .jankhunt42/baseline.json
+jankhunt42 review . --base origin/main \
+  --baseline .jankhunt42/baseline.json --fail-on major
 
 # Gate unverified leads too (off by default).
-jankhunt review . --base origin/main --baseline .jankhunt/baseline.json \
+jankhunt42 review . --base origin/main --baseline .jankhunt42/baseline.json \
   --fail-on major --include-unverified
 ```
 
@@ -236,11 +236,11 @@ The review protocol, receipt schema, baseline semantics, and reviewer handoff co
 ### Supply-chain evidence
 
 ```sh
-jankhunt supply-chain . --json
-jankhunt supply-chain . --md
-jankhunt supply-chain . --require-sbom --require-attestation
-jankhunt supply-chain . --jfrog-evidence apptrust-evidence.json
-jankhunt supply-chain . --no-discover --sbom build/app.spdx.json
+jankhunt42 supply-chain . --json
+jankhunt42 supply-chain . --md
+jankhunt42 supply-chain . --require-sbom --require-attestation
+jankhunt42 supply-chain . --jfrog-evidence apptrust-evidence.json
+jankhunt42 supply-chain . --no-discover --sbom build/app.spdx.json
 ```
 
 | Evidence | Accepted forms |
@@ -257,11 +257,11 @@ The inspector is offline and read-only. `provider-verified` means the **exporter
 ### Score
 
 ```sh
-jankhunt score .                         # dimension scorecard (TTY)
-jankhunt score . --md                    # Markdown
-jankhunt score . --json                  # full arithmetic, dimensions, policy
-jankhunt score . --since origin/main     # new-code score
-jankhunt score . --fail-policy           # advisory exit 1 when policy is fail
+jankhunt42 score .                         # dimension scorecard (TTY)
+jankhunt42 score . --md                    # Markdown
+jankhunt42 score . --json                  # full arithmetic, dimensions, policy
+jankhunt42 score . --since origin/main     # new-code score
+jankhunt42 score . --fail-policy           # advisory exit 1 when policy is fail
 ```
 
 The scorecard separates **security, reliability, maintainability, and test confidence**, assigns A-E grades, and reports an advisory `pass`/`warn`/`fail` policy. It is a prioritization device, not a compliance certificate. The full model — weights, floors, saturation, new-code behavior, worked examples, and limitations — is in [`references/scoring.md`](references/scoring.md).
@@ -269,11 +269,11 @@ The scorecard separates **security, reliability, maintainability, and test confi
 ### Triage logs
 
 ```sh
-jankhunt triage app.log
-jankhunt triage app.log api.log --top 25
-jankhunt triage --grep 'timeout|refused|panic' *.log
-gzip -dc prod.log.gz | jankhunt triage -
-jankhunt triage app.log --json
+jankhunt42 triage app.log
+jankhunt42 triage app.log api.log --top 25
+jankhunt42 triage --grep 'timeout|refused|panic' *.log
+gzip -dc prod.log.gz | jankhunt42 triage -
+jankhunt42 triage app.log --json
 ```
 
 Triage parses plain text, JSONL, and gzip. It extracts severity and timestamps, detects stack traces, attaches continuations, normalizes volatile values (UUIDs, IPs, hex, paths, numbers, quoted strings), and clusters identical fingerprints. The result ranks clusters by severity and frequency, with line spans and samples.
@@ -281,10 +281,10 @@ Triage parses plain text, JSONL, and gzip. It extracts severity and timestamps, 
 ### Doctor
 
 ```sh
-jankhunt doctor
-jankhunt doctor --json
-jankhunt doctor --system          # + listening ports, failed units, kernel warnings
-jankhunt doctor /path/to/project
+jankhunt42 doctor
+jankhunt42 doctor --json
+jankhunt42 doctor --system          # + listening ports, failed units, kernel warnings
+jankhunt42 doctor /path/to/project
 ```
 
 Reports repository state (branch, HEAD, dirty files, conflicts, stashes), manifests and lockfiles, language mix, test count, installed toolchains and versions, CPU/RAM/disk, load, inotify and file-descriptor limits, proxy/PATH-related environment, and optional Linux system health. It flags mismatches such as “package.json with no lockfile” and “disk almost full.”
@@ -292,8 +292,8 @@ Reports repository state (branch, HEAD, dirty files, conflicts, stashes), manife
 ### Report
 
 ```sh
-jankhunt report . --logs app.log --out jankhunt-report.md
-jankhunt report . --system --cve --out report.md
+jankhunt42 report . --logs app.log --out jankhunt42-report.md
+jankhunt42 report . --system --cve --out report.md
 ```
 
 Builds a Markdown investigation report with an executive summary, the Jank Score 2.0 scorecard, environment snapshot, static findings, log clusters, an investigation worksheet, and next moves. Safe to attach to an issue or PR. Add `--since origin/main` to include a new-code score.
@@ -301,9 +301,9 @@ Builds a Markdown investigation report with an executive summary, the Jank Score
 ### Deep hunt (opt-in)
 
 ```sh
-jankhunt hunt . --focus security --panel 6 --rounds 3 --json > hunt.json
-jankhunt hunt . --md --prompts > hunt-brief.md
-jankhunt merge panel-*.json --md
+jankhunt42 hunt . --focus security --panel 6 --rounds 3 --json > hunt.json
+jankhunt42 hunt . --md --prompts > hunt-brief.md
+jankhunt42 merge panel-*.json --md
 ```
 
 A deep hunt is an adversarial panel, not a vote. It runs only when the user explicitly asks for one. The generated brief includes role prompts, a scenario deck, the lead board, guardrails, and the consensus contract. Independent panelists investigate first; cross-examination tries to falsify each claim; `merge` groups duplicates, preserves conflicts and dissent, and classifies findings as `confirmed`, `supported`, `contested`, `unverified`, or `rejected`.
@@ -313,10 +313,10 @@ A deep hunt is an adversarial panel, not a vote. It runs only when the user expl
 ### Rules
 
 ```sh
-jankhunt rules
-jankhunt rules --category security
-jankhunt rules --min-severity major
-jankhunt rules --json
+jankhunt42 rules
+jankhunt42 rules --category security
+jankhunt42 rules --min-severity major
+jankhunt42 rules --json
 ```
 
 Prints the catalog with severity, category, confidence, and title. `JH901` is populated dynamically by `scan --cve`.
@@ -342,7 +342,7 @@ Prints the catalog with severity, category, confidence, and title. `JH901` is po
 | Supply chain | Missing lockfiles, unpinned npm ranges, OSV CVEs with fixed versions |
 | Docs | Broken relative Markdown links |
 
-See `jankhunt rules` for the live catalog. IDs are stable; new rules may be added without renumbering.
+See `jankhunt42 rules` for the live catalog. IDs are stable; new rules may be added without renumbering.
 
 ## CVE awareness
 
@@ -365,18 +365,18 @@ It batches queries to [OSV.dev](https://osv.dev), then fetches full advisories b
 For confirmed false positives, add a reason and rule IDs:
 
 ```python
-# jankhunt: ignore JH201,JH202
-except Exception:  # jankhunt: ignore JH201
+# jankhunt42: ignore JH201,JH202
+except Exception:  # jankhunt42: ignore JH201
     pass
 ```
 
 File-level suppressions go in the first 12 lines:
 
 ```python
-# jankhunt: ignore-file JH305
+# jankhunt42: ignore-file JH305
 ```
 
-Suppressed findings do not count toward totals. Do not suppress a real defect; fix it instead.
+Suppressed findings do not count toward totals. Do not suppress a real defect; fix it instead. The pre-0.4 `# jankhunt: ignore …` prefix is still honored, so existing suppressions keep working; new ones should use `jankhunt42:`.
 
 ### Repo-wide: a config file instead of per-line comments
 
@@ -396,7 +396,7 @@ put it in a config file once instead of scattering comments:
 }
 ```
 
-Save it as `.jankhunt.json` (always works) or `.jankhunt.toml` (needs Python
+Save it as `.jankhunt42.json` (always works) or `.jankhunt42.toml` (needs Python
 3.11+'s `tomllib`; older interpreters print a warning and skip it rather
 than misparse it) at the scan root or any ancestor — it is discovered the
 way `.git` is, or pin one explicitly with `--config PATH`, or bypass
@@ -411,7 +411,7 @@ unexamined noise (SonarSource cites 3.2% FP across 137M issues as the bar
 most tools miss by a wide margin). `--calibrate` closes that loop with
 counting, not inference: every run records how often each rule fired and
 how many of those firings were suppressed (the inline pragma above) into
-`.jankhunt/calibration.json`. Once a rule has at least 5 recorded firings in
+`.jankhunt42/calibration.json`. Once a rule has at least 5 recorded firings in
 *this* repo, later `--calibrate` runs check its suppression rate:
 
 | Suppression rate | Effect |
@@ -462,7 +462,7 @@ Full formula, weights, floors, worked examples, calibration, and limitations: [`
 ### GitHub Actions
 
 ```yaml
-name: jankhunt
+name: jankhunt42
 on: [push, pull_request]
 permissions:
   contents: read
@@ -476,60 +476,60 @@ jobs:
         with:
           python-version: "3.12"
       - name: Scan
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --sarif > jankhunt.sarif
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --sarif > jankhunt42.sarif
       - name: Score
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt score . --json > jankhunt-score.json
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 score . --json > jankhunt42-score.json
       - name: Review new lines
         if: github.event_name == 'pull_request'
         run: |
-          python3 .opencode/skills/jankhunt42/scripts/jankhunt review . \
+          python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . \
             --base "${{ github.event.pull_request.base.sha }}" \
             --json > review.json
-          python3 .opencode/skills/jankhunt42/scripts/jankhunt review . \
+          python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . \
             --base "${{ github.event.pull_request.base.sha }}" \
             --fail-on major
       - name: Supply-chain evidence
         if: always()
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt supply-chain . --json > supply-chain.json
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 supply-chain . --json > supply-chain.json
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: jankhunt.sarif
+          sarif_file: jankhunt42.sarif
       - name: Gate
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --fail-on critical
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --fail-on critical
       - name: HTML report
         if: always()
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --html > jankhunt.html
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --html > jankhunt42.html
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jankhunt-reports
+          name: jankhunt42-reports
           path: |
-            jankhunt.html
-            jankhunt-score.json
+            jankhunt42.html
+            jankhunt42-score.json
             review.json
             supply-chain.json
 ```
 
-For a baseline gate, keep an accepted `review.json` artifact (or `.jankhunt/baseline.json`) and add `--baseline`. Without a baseline, `--fail-on` gates every new-line finding in the diff.
+For a baseline gate, keep an accepted `review.json` artifact (or `.jankhunt42/baseline.json`) and add `--baseline`. Without a baseline, `--fail-on` gates every new-line finding in the diff.
 
 ### GitLab CI
 
 ```yaml
-jankhunt:
+jankhunt42:
   image: python:3.12-slim
   script:
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --json > jankhunt.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --json > review.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt supply-chain . --json > supply-chain.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --html > jankhunt.html
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --fail-on major
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt scan . --fail-on critical
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --json > jankhunt42.json
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --json > review.json
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 supply-chain . --json > supply-chain.json
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --html > jankhunt42.html
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --fail-on major
+    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --fail-on critical
   artifacts:
     when: always
-    paths: [jankhunt.json, review.json, supply-chain.json, jankhunt.html]
+    paths: [jankhunt42.json, review.json, supply-chain.json, jankhunt42.html]
 ```
 
 SARIF works with GitHub code scanning, GitLab SAST ingestion, and most Sonar-style dashboards that accept SARIF 2.1.0.
@@ -565,7 +565,7 @@ jankhunt42/
 │   ├── panel-finding.json   # panelist output contract
 │   └── review-receipt.schema.json  # receipt JSON Schema
 └── scripts/
-    ├── jankhunt             # CLI entry point (stdlib only)
+    ├── jankhunt42             # CLI entry point (stdlib only)
     ├── jh_core.py           # types, file discovery, language detection, sanitizer
     ├── jh_rules.py          # rule catalog + pattern engine
     ├── jh_checks.py         # structural/multi-line checks
@@ -578,19 +578,19 @@ jankhunt42/
     ├── jh_hunt.py           # deep-hunt planner, prompts, consensus merger
     ├── jh_render.py         # TTY and Markdown renderers
     ├── jh_html.py           # self-contained HTML scan report
-    ├── jh_config.py         # .jankhunt.toml/.jankhunt.json discovery and application
+    ├── jh_config.py         # .jankhunt42.toml/.jankhunt42.json discovery and application
     ├── jh_calibrate.py      # opt-in false-positive calibration ledger
     ├── jh_dedup.py          # cross-file duplicate clustering
     └── selftest.sh          # offline regression fixture
 ```
 
-The scanner is read-only. It does not install packages, modify the repo, or call external services unless `--cve` or `--calibrate` is passed (`--calibrate` writes only `.jankhunt/calibration.json`). `review` and `supply-chain` are read-only too: review runs git diff/show commands and reads the target tree; supply-chain reads evidence files on disk and never contacts GitHub, Sigstore, JFrog, or a registry. File discovery uses `git ls-files` when available and otherwise walks the tree with conservative ignores (`.git`, `node_modules`, `vendor`, build output, generated/minified files, lockfiles for static rules).
+The scanner is read-only. It does not install packages, modify the repo, or call external services unless `--cve` or `--calibrate` is passed (`--calibrate` writes only `.jankhunt42/calibration.json`). `review` and `supply-chain` are read-only too: review runs git diff/show commands and reads the target tree; supply-chain reads evidence files on disk and never contacts GitHub, Sigstore, JFrog, or a registry. File discovery uses `git ls-files` when available and otherwise walks the tree with conservative ignores (`.git`, `node_modules`, `vendor`, build output, generated/minified files, lockfiles for static rules).
 
 ## Development
 
 ```sh
 cd jankhunt42/scripts
-python3 -m py_compile jh_core.py jh_rules.py jh_checks.py jh_triage.py jh_doctor.py jh_cve.py jh_score.py jh_review.py jh_supply.py jh_hunt.py jh_render.py jh_html.py jankhunt
+python3 -m py_compile jh_core.py jh_rules.py jh_checks.py jh_triage.py jh_doctor.py jh_cve.py jh_score.py jh_review.py jh_supply.py jh_hunt.py jh_render.py jh_html.py jankhunt42
 ./selftest.sh
 ```
 
@@ -601,7 +601,7 @@ When adding a rule:
 1. Add it to `RULES` in `jh_rules.py` with a unique `JHxxx` ID, severity, category, confidence, message, and fix.
 2. Prefer a line pattern; use a `check=` function in `jh_checks.py` for multi-line/structural logic.
 3. Add a fixture case to `selftest.sh`.
-4. Run the self-scan (`jankhunt scan scripts`) and the fixture.
+4. Run the self-scan (`jankhunt42 scan scripts`) and the fixture.
 5. Update `README.md` if the rule introduces a new category.
 
 ## Limitations and false positives
@@ -617,7 +617,7 @@ When adding a rule:
 - `review --pr` requires `gh` and a checked-out PR head; it does not fetch or merge a remote branch itself. Binary files, generated paths, excluded globs, oversized files, and files beyond `--max-files` are listed as skipped rather than silently ignored.
 - Supply-chain parsing does not verify cryptography, transparency logs, certificate chains, artifact-to-source binding, SBOM completeness, or license policy. `provider-verified` is the exporter's recorded result. Use `gh attestation verify`, `cosign verify-attestation`, or `jf evd verify` in trusted CI when independent verification is required.
 - Deep hunt quality depends on the host's subagent support and the panelists' evidence discipline. A unanimous panel is not proof; only a repro or direct runtime evidence is `confirmed`.
-- `--calibrate` is counting, not inference: it has no notion of *why* a rule was suppressed, so a team that suppresses real defects instead of fixing them will calibrate itself into blindness. The ledger is per-rule, repo-wide — not yet per-path — so a rule that is genuinely noisy in one directory and genuinely important in another will calibrate as one average. `.jankhunt.toml`/`.jankhunt.json` and `--calibrate` do not yet apply to `review`.
+- `--calibrate` is counting, not inference: it has no notion of *why* a rule was suppressed, so a team that suppresses real defects instead of fixing them will calibrate itself into blindness. The ledger is per-rule, repo-wide — not yet per-path — so a rule that is genuinely noisy in one directory and genuinely important in another will calibrate as one average. `.jankhunt42.toml`/`.jankhunt42.json` and `--calibrate` do not yet apply to `review`.
 - Cross-file duplicate detection matches on exact rule + normalized evidence (whitespace, numeric literals, and string literals collapsed); it does not catch renamed variables, reordered logic, or duplication expressed differently, only copy-paste-shaped repetition.
 
 If a finding is wrong, confirm it in context, then suppress it with a reason or improve the rule. A scanner that cries wolf is worse than no scanner.

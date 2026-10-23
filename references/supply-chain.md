@@ -33,9 +33,9 @@ hint such as `gh attestation verify`, `cosign verify-attestation`, or
 Discovery is heuristic and filename/content based. Explicit paths are stronger:
 
 ```bash
-jankhunt supply-chain . --sbom build/app.spdx.json
-jankhunt supply-chain . --attestation sha256:abc123.jsonl
-jankhunt supply-chain . --jfrog-evidence apptrust-evidence.json
+jankhunt42 supply-chain . --sbom build/app.spdx.json
+jankhunt42 supply-chain . --attestation sha256:abc123.jsonl
+jankhunt42 supply-chain . --jfrog-evidence apptrust-evidence.json
 ```
 
 Explicit categories are forced. A file named `artifact.dat` can be supplied as
@@ -155,16 +155,16 @@ signature material but no recorded result is `unverified`.
 
 ```bash
 # Fail if no SBOM is present.
-jankhunt supply-chain . --require-sbom
+jankhunt42 supply-chain . --require-sbom
 
 # Fail if no attestation is present.
-jankhunt supply-chain . --require-attestation
+jankhunt42 supply-chain . --require-attestation
 
 # Fail unless the exporter recorded a successful verification.
-jankhunt supply-chain . --require-verified-attestation
+jankhunt42 supply-chain . --require-verified-attestation
 
 # The same requirements participate in a review gate.
-jankhunt review . --base origin/main --require-sbom --require-attestation --fail-on major
+jankhunt42 review . --base origin/main --require-sbom --require-attestation --fail-on major
 ```
 
 Missing evidence is otherwise a warning, not a source-code finding. This is

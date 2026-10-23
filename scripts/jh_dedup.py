@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cross-file duplicate detection: "same bug, N sites."
 
-jankhunt's existing `duplicate_blocks` check is file-local by construction
+jankhunt42's existing `duplicate_blocks` check is file-local by construction
 (it slides a window over one file's lines). That misses the pattern AI
 coding assistants are shown to amplify: the same defect pasted into several
 files rather than refactored into one. CRBugBench and related industry

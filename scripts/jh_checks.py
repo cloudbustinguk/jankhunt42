@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Special (multi-line / structural) checks for jankhunt rules."""
+"""Special (multi-line / structural) checks for jankhunt42 rules."""
 from __future__ import annotations
 
 import ast
@@ -743,7 +743,7 @@ def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
             try:
                 from urllib.parse import unquote
                 clean = unquote(clean)
-            except Exception:  # jankhunt: ignore JH201,JH202
+            except Exception:  # jankhunt42: ignore JH201,JH202
                 pass
             path = os.path.normpath(os.path.join(base, clean))
             if not os.path.exists(path):

@@ -337,7 +337,7 @@ network.
 
 1. Map the entry points, data stores, external calls, and deploy path.
 2. Run the existing tests and build before changing anything.
-3. Use `jankhunt scan`, `score`, `doctor`, and `triage` for a fast inventory.
+3. Use `jankhunt42 scan`, `score`, `doctor`, and `triage` for a fast inventory.
    The scorecard tells you which dimension to inspect first; it is not a verdict.
 4. Read the code path end to end for the specific symptom; do not audit the whole
    repo.

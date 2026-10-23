@@ -3,11 +3,11 @@
 
 The industry's actual bottleneck is false-positive noise (SonarSource cites
 a 3.2% FP rate across 137M issues as the bar; untuned LLM reviewers start at
-40-80%). jankhunt's rules ship with a severity and confidence baked in at
+40-80%). jankhunt42's rules ship with a severity and confidence baked in at
 authoring time and never revisited. This module closes that loop with
 counting, not inference: every `--calibrate` run records how many times
 each rule fired and how many of those were suppressed (inline
-`# jankhunt: ignore` pragma) in *this* repo, in a small ledger file. Once a
+`# jankhunt42: ignore` pragma) in *this* repo, in a small ledger file. Once a
 rule has enough history and a high enough suppression rate, later runs
 downgrade its severity and mark its confidence `low` -- transparently, with
 the exact rate and sample size attached to every affected finding, never by
@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
-LEDGER_RELPATH = os.path.join(".jankhunt", "calibration.json")
+LEDGER_RELPATH = os.path.join(".jankhunt42", "calibration.json")
 
 MIN_OBSERVATIONS = 5
 RATE_DOWNGRADE = 0.5   # >=50% suppressed, >=MIN_OBSERVATIONS fires: drop one severity step

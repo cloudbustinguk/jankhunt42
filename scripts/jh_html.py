@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-contained HTML report renderer for jankhunt.
+"""Self-contained HTML report renderer for jankhunt42.
 
 The output is a single file: no external fonts, scripts, styles, or images.
 All repository-derived strings are HTML-escaped before they reach the document.

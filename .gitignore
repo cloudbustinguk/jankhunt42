@@ -3,9 +3,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 .DS_Store
-/jankhunt.html
-/jankhunt.json
-/jankhunt.sarif
+/jankhunt42.html
+/jankhunt42.json
+/jankhunt42.sarif
 /hunt-brief.md
 
 # Coding-agent working state never belongs in this repo (prompts, session

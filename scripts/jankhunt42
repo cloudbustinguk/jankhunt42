@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jankhunt — universal code/CI/K8s/log investigation CLI (stdlib only)."""
+"""jankhunt42 — universal code/CI/K8s/log investigation CLI (stdlib only)."""
 from __future__ import annotations
 
 import argparse
@@ -253,7 +253,7 @@ def _sarif(result: ScanResult) -> str:
                     },
                 }
             }],
-            "partialFingerprints": {"jankhunt": "%s:%s:%d" % (f.rule, f.path, f.line)},
+            "partialFingerprints": {"jankhunt42": "%s:%s:%d" % (f.rule, f.path, f.line)},
             "properties": {
                 "severity": f.severity,
                 "confidence": f.confidence,
@@ -267,7 +267,7 @@ def _sarif(result: ScanResult) -> str:
         "version": "2.1.0",
         "runs": [{
             "tool": {"driver": {
-                "name": "jankhunt",
+                "name": "jankhunt42",
                 "version": VERSION,
                 "rules": list(rules.values()),
             }},
@@ -280,7 +280,7 @@ def _sarif(result: ScanResult) -> str:
 def cmd_scan(args: argparse.Namespace) -> int:
     formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html) if enabled)
     if formats > 1:
-        print("jankhunt: choose one output format: --md, --json, --sarif, or --html",
+        print("jankhunt42: choose one output format: --md, --json, --sarif, or --html",
               file=sys.stderr)
         return 2
     tty = sys.stdout.isatty() and not args.md and not args.json and not args.sarif and not args.html
@@ -305,13 +305,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
 def cmd_review(args: argparse.Namespace) -> int:
     formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.brief) if enabled)
     if formats > 1:
-        print("jankhunt: choose one output format: --md, --json, --sarif, or --brief",
+        print("jankhunt42: choose one output format: --md, --json, --sarif, or --brief",
               file=sys.stderr)
         return 2
     try:
         data = jh_review.run_review(args)
     except jh_review.ReviewError as exc:
-        print("jankhunt: %s" % exc, file=sys.stderr)
+        print("jankhunt42: %s" % exc, file=sys.stderr)
         return 2
     if getattr(args, "save_baseline", ""):
         try:
@@ -321,7 +321,7 @@ def cmd_review(args: argparse.Namespace) -> int:
             if not args.json:
                 print("review baseline written: %s" % args.save_baseline, file=sys.stderr)
         except OSError as exc:
-            print("jankhunt: cannot write baseline: %s" % exc, file=sys.stderr)
+            print("jankhunt42: cannot write baseline: %s" % exc, file=sys.stderr)
             return 2
     review = data["review"]
     if args.json:
@@ -344,7 +344,7 @@ def cmd_review(args: argparse.Namespace) -> int:
 def cmd_supply_chain(args: argparse.Namespace) -> int:
     formats = sum(1 for enabled in (args.md, args.json) if enabled)
     if formats > 1:
-        print("jankhunt: choose one output format: --md or --json", file=sys.stderr)
+        print("jankhunt42: choose one output format: --md or --json", file=sys.stderr)
         return 2
     root = os.path.abspath(args.paths[0] if args.paths else ".")
     if os.path.isfile(root):
@@ -467,12 +467,12 @@ def cmd_merge(args: argparse.Namespace) -> int:
         if not sys.stdin.isatty():
             paths = ["-"]
         else:
-            print("jankhunt: give at least one panel JSON file (or pipe via stdin)", file=sys.stderr)
+            print("jankhunt42: give at least one panel JSON file (or pipe via stdin)", file=sys.stderr)
             return 2
     try:
         reports = jh_hunt.load_reports(paths)
     except (OSError, ValueError) as exc:
-        print("jankhunt: %s" % exc, file=sys.stderr)
+        print("jankhunt42: %s" % exc, file=sys.stderr)
         return 2
     merged = jh_hunt.merge_reports(reports)
     if args.json:
@@ -496,7 +496,7 @@ def cmd_triage(args: argparse.Namespace) -> int:
         if not sys.stdin.isatty():
             paths = ["-"]
         else:
-            print("jankhunt: give at least one log file (or pipe via stdin)", file=sys.stderr)
+            print("jankhunt42: give at least one log file (or pipe via stdin)", file=sys.stderr)
             return 2
     result = jh_triage.triage_paths(paths, grep=args.grep)
     if args.json:
@@ -643,7 +643,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="jankhunt",
+        prog="jankhunt42",
         description="Find the jank before it finds production. Code, CI, Kubernetes, secrets, CVEs, logs.",
     )
     p.add_argument("--version", action="version", version="%(prog)s " + VERSION)
@@ -665,10 +665,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--since", metavar="REF",
                         help="also score findings on lines changed since this git ref (new-code view)")
         sp.add_argument("--config", metavar="PATH",
-                        help="explicit .jankhunt.toml/.jankhunt.json (default: discovered upward from root)")
-        sp.add_argument("--no-config", action="store_true", help="ignore any .jankhunt.toml/.jankhunt.json")
+                        help="explicit .jankhunt42.toml/.jankhunt42.json (default: discovered upward from root)")
+        sp.add_argument("--no-config", action="store_true", help="ignore any .jankhunt42.toml/.jankhunt42.json")
         sp.add_argument("--calibrate", action="store_true",
-                        help="apply and update the repo-local FP calibration ledger (.jankhunt/calibration.json); "
+                        help="apply and update the repo-local FP calibration ledger (.jankhunt42/calibration.json); "
                              "the only flag besides --cve that writes anything")
 
     def add_scan_opts(sp):
