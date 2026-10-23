@@ -1,0 +1,687 @@
+#!/usr/bin/env python3
+"""Core types, language detection, sanitizing, and file discovery for jankhunt."""
+from __future__ import annotations
+
+import fnmatch
+import os
+import re
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+TOOL = "jankhunt"
+VERSION = "0.2.0"
+
+SEVERITIES = ("blocker", "critical", "major", "minor", "info")
+SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
+SEV_WEIGHT = {"blocker": 50, "critical": 20, "major": 8, "minor": 3, "info": 1}
+SEV_LABEL = {
+    "blocker": "BLOCKER",
+    "critical": "CRITICAL",
+    "major": "MAJOR",
+    "minor": "MINOR",
+    "info": "INFO",
+}
+
+
+@dataclass
+class Rule:
+    id: str
+    title: str
+    severity: str
+    category: str
+    message: str
+    fix: str
+    confidence: str = "medium"
+    langs: Tuple[str, ...] = ()
+    kinds: Tuple[str, ...] = ()
+    files: Tuple[str, ...] = ()
+    patterns: Tuple[str, ...] = ()
+    target: str = "code"  # raw | code | nocomment | comments
+    ignore: str = ""
+    check: str = ""
+    tags: Tuple[str, ...] = ()
+
+
+@dataclass
+class Finding:
+    rule: str
+    title: str
+    severity: str
+    category: str
+    path: str
+    line: int
+    column: int = 1
+    end_line: Optional[int] = None
+    evidence: str = ""
+    message: str = ""
+    fix: str = ""
+    confidence: str = "medium"
+    tags: Tuple[str, ...] = ()
+    extra: Dict[str, object] = field(default_factory=dict)
+
+    def sort_key(self) -> Tuple[int, str, int, str]:
+        return (SEV_RANK.get(self.severity, 99), self.path, self.line, self.rule)
+
+
+@dataclass
+class SourceFile:
+    rel: str
+    abspath: str
+    lang: str
+    kinds: Tuple[str, ...]
+    text: str
+    raw: List[str]
+    code: List[str]
+    nocomment: List[str]
+    comments: List[str]
+    loc: int
+
+    @property
+    def basename(self) -> str:
+        return os.path.basename(self.rel)
+
+
+# ---------------------------------------------------------------------------
+# Language and file-kind detection
+# ---------------------------------------------------------------------------
+
+EXT_LANG = {
+    ".py": "python", ".pyi": "python", ".pyw": "python",
+    ".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
+    ".ts": "ts", ".tsx": "ts", ".mts": "ts", ".cts": "ts",
+    ".java": "java", ".kt": "kotlin", ".kts": "kotlin", ".scala": "scala", ".groovy": "groovy",
+    ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp",
+    ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp", ".m": "c", ".mm": "cpp",
+    ".cs": "csharp", ".go": "go", ".rs": "rust", ".rb": "ruby", ".php": "php",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell", ".fish": "shell",
+    ".ps1": "powershell", ".psm1": "powershell",
+    ".sql": "sql", ".lua": "lua", ".r": "r", ".pl": "perl", ".pm": "perl",
+    ".swift": "swift", ".dart": "dart",
+    ".ex": "elixir", ".exs": "elixir", ".erl": "erlang", ".hrl": "erlang",
+    ".hs": "haskell", ".lhs": "haskell", ".ml": "ocaml", ".mli": "ocaml",
+    ".clj": "clojure", ".cljs": "clojure", ".cljc": "clojure",
+    ".vue": "vue", ".svelte": "svelte",
+    ".html": "html", ".htm": "html", ".xml": "xml", ".xsl": "xml", ".svg": "xml",
+    ".css": "css", ".scss": "css", ".sass": "css", ".less": "css",
+    ".yaml": "yaml", ".yml": "yaml", ".json": "json", ".jsonc": "json", ".json5": "json",
+    ".toml": "toml", ".ini": "ini", ".cfg": "ini", ".conf": "ini", ".properties": "ini",
+    ".md": "markdown", ".mdx": "markdown", ".rst": "markdown", ".txt": "text",
+    ".tf": "hcl", ".hcl": "hcl", ".tfvars": "hcl",
+    ".dockerfile": "docker",
+    ".sol": "solidity", ".zig": "zig", ".nim": "nim", ".jl": "julia",
+    ".fs": "fsharp", ".fsx": "fsharp", ".vb": "vb", ".asm": "asm", ".s": "asm",
+}
+
+TEST_PATH_RE = re.compile(
+    r"(^|/)(tests?|testing|specs?|__tests__|testdata|fixtures?|e2e|integration-tests?)(/|$)"
+    r"|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$"
+    r"|(_test\.|\.test\.|\.spec\.|_spec\.|Test\.java$|Tests?\.cs$|_test\.go$)",
+    re.IGNORECASE,
+)
+
+GENERATED_RE = re.compile(
+    r"(\.min\.(js|css)$|\.map$|\.generated\.|_pb2(_grpc)?\.py$|\.pb\.go$|"
+    r"\.designer\.cs$|\.g\.dart$|\.freezed\.dart$|lock$|\.lock$|"
+    r"(^|/)(dist|build|target|out|coverage|\.next|\.nuxt|vendor|node_modules|"
+    r"bower_components|Pods|DerivedData|__pycache__|\.venv|venv|site-packages)(/|$))",
+    re.IGNORECASE,
+)
+
+DEFAULT_SKIP_DIRS = {
+    ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target",
+    "out", "coverage", ".venv", "venv", "env", "__pycache__", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".gradle",
+    ".next", ".nuxt", ".cache", ".terraform", "bower_components", "Pods",
+    "DerivedData", "site-packages", ".yarn", ".pnpm-store", "tmp", "temp",
+}
+ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".azure"}
+
+
+def detect_lang(path: str) -> str:
+    base = os.path.basename(path)
+    low = base.lower()
+    if base == "Dockerfile" or base.startswith("Dockerfile.") or low.endswith(".dockerfile"):
+        return "docker"
+    if base in ("Makefile", "GNUmakefile"):
+        return "make"
+    if low.startswith(".env") or low.endswith(".env"):
+        return "env"
+    if base in (".gitignore", ".dockerignore", ".npmignore"):
+        return "config"
+    if base in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
+        return "yaml"
+    ext = os.path.splitext(low)[1]
+    return EXT_LANG.get(ext, "text")
+
+
+def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
+    """Classify a file for infrastructure-specific rules."""
+    kinds: Set[str] = set()
+    base = os.path.basename(rel).lower()
+    posix = rel.replace(os.sep, "/")
+    if posix.startswith(".github/workflows/") or (
+        base in ("action.yml", "action.yaml") and ".github/" in posix
+    ):
+        kinds.add("github_actions")
+    if base in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
+        kinds.add("gitlab_ci")
+    if base == "package.json":
+        kinds.add("package_json")
+    if base in ("package-lock.json", "npm-shrinkwrap.json"):
+        kinds.add("package_lock")
+    if base in ("yarn.lock", "pnpm-lock.yaml", "bun.lockb"):
+        kinds.add("package_lock")
+    if base.startswith("requirements") and base.endswith(".txt"):
+        kinds.add("requirements")
+    if base in ("pyproject.toml", "pipfile", "pipfile.lock", "poetry.lock", "uv.lock"):
+        kinds.add("python_manifest")
+    if base == "cargo.lock":
+        kinds.add("cargo_lock")
+    if base == "go.mod":
+        kinds.add("gomod")
+    if base == "go.sum":
+        kinds.add("gosum")
+    if base in ("pom.xml", "build.gradle", "build.gradle.kts"):
+        kinds.add("jvm_manifest")
+    if base.endswith((".csproj", ".fsproj", ".vbproj")):
+        kinds.add("nuget")
+    if base == "gemfile.lock":
+        kinds.add("gem_lock")
+    if base == "composer.lock":
+        kinds.add("composer_lock")
+    if base == "pubspec.lock":
+        kinds.add("pub_lock")
+    if base in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml") or base.startswith("docker-compose"):
+        kinds.add("compose")
+    if lang == "docker":
+        kinds.add("dockerfile")
+    if lang == "markdown":
+        kinds.add("markdown")
+    if lang in ("yaml", "json") and _looks_like_k8s(text):
+        kinds.add("kubernetes")
+    if lang == "hcl":
+        kinds.add("terraform")
+    if is_test_path(rel):
+        kinds.add("test")
+    if "github_actions" in kinds or "gitlab_ci" in kinds:
+        kinds.add("ci")
+    return tuple(sorted(kinds))
+
+
+def _looks_like_k8s(text: str) -> bool:
+    head = text[:12000]
+    if not re.search(r"(?m)^\s*apiVersion\s*:", head):
+        return False
+    if not re.search(r"(?m)^\s*kind\s*:", head):
+        return False
+    return bool(re.search(
+        r"(?m)^\s*kind\s*:\s*(Pod|Deployment|StatefulSet|DaemonSet|Job|CronJob|"
+        r"Service|Ingress|ConfigMap|Secret|Role|ClusterRole|RoleBinding|"
+        r"ClusterRoleBinding|ServiceAccount|NetworkPolicy|PersistentVolumeClaim|"
+        r"HorizontalPodAutoscaler|PodDisruptionBudget|CustomResourceDefinition)\s*$",
+        head,
+    ))
+
+
+def is_test_path(rel: str) -> bool:
+    return bool(TEST_PATH_RE.search(rel.replace(os.sep, "/")))
+
+
+def path_matches(rule: Rule, sf: SourceFile) -> bool:
+    if rule.langs and sf.lang not in rule.langs:
+        return False
+    if rule.kinds and not (set(rule.kinds) & set(sf.kinds)):
+        return False
+    if rule.files:
+        for pat in rule.files:
+            if fnmatch.fnmatch(sf.rel, pat) or fnmatch.fnmatch(sf.basename, pat):
+                return True
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Sanitizer: produce code / no-comment / comment views without changing lines
+# ---------------------------------------------------------------------------
+
+_ANY_LINE_COMMENTS: Dict[str, Tuple[str, ...]] = {
+    "python": ("#",), "ruby": ("#",), "perl": ("#",), "r": ("#",),
+    "js": ("//",), "ts": ("//",), "java": ("//",), "c": ("//",), "cpp": ("//",),
+    "csharp": ("//",), "go": ("//",), "rust": ("//",), "php": ("//",),
+    "swift": ("//",), "kotlin": ("//",), "scala": ("//",), "dart": ("//",),
+    "groovy": ("//",), "solidity": ("//",), "zig": ("//",), "nim": ("#",),
+    "julia": ("#",), "fsharp": ("//",), "vb": ("'",), "asm": (";",),
+    "clojure": (";",), "hcl": ("//",),
+}
+
+_WS_LINE_COMMENTS: Dict[str, Tuple[str, ...]] = {
+    "shell": ("#",), "yaml": ("#",), "toml": ("#",), "make": ("#",),
+    "docker": ("#",), "config": ("#",), "env": ("#",),
+    "ini": (";", "#"), "sql": ("--",), "lua": ("--",),
+    "haskell": ("--",), "erlang": ("%",), "hcl": ("#",),
+}
+
+_BLOCK_COMMENTS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "js": (("/*", "*/"),), "ts": (("/*", "*/"),), "java": (("/*", "*/"),),
+    "c": (("/*", "*/"),), "cpp": (("/*", "*/"),), "csharp": (("/*", "*/"),),
+    "go": (("/*", "*/"),), "rust": (("/*", "*/"),), "php": (("/*", "*/"),),
+    "swift": (("/*", "*/"),), "kotlin": (("/*", "*/"),), "scala": (("/*", "*/"),),
+    "dart": (("/*", "*/"),), "groovy": (("/*", "*/"),), "css": (("/*", "*/"),),
+    "sql": (("/*", "*/"),), "solidity": (("/*", "*/"),), "zig": (("/*", "*/"),),
+    "lua": (("--[[", "]]"),), "html": (("<!--", "-->"),), "xml": (("<!--", "-->"),),
+    "markdown": (("<!--", "-->"),), "powershell": (("<#", "#>"),),
+    "haskell": (("{-", "-}"),), "ocaml": (("(*", "*)"),), "fsharp": (("(*", "*)"),),
+    "matlab": (("%{", "%}"),),
+}
+
+_QUOTES: Dict[str, Tuple[str, ...]] = {
+    "js": ("'", '"', "`"), "ts": ("'", '"', "`"), "vue": ("'", '"', "`"),
+    "svelte": ("'", '"', "`"), "python": ("'", '"'), "ruby": ("'", '"'),
+    "shell": ("'", '"'), "sql": ("'", '"'), "sqlite": ("'", '"'),
+    "yaml": ("'", '"'), "toml": ("'", '"'), "json": ('"',), "ini": ("'", '"'),
+    "markdown": (), "text": (), "html": ("'", '"'), "xml": ("'", '"'),
+    "css": ("'", '"'), "c": ("'", '"'), "cpp": ("'", '"'), "java": ("'", '"'),
+    "csharp": ("'", '"'), "go": ('"', "`"), "rust": ("'", '"'),
+    "php": ("'", '"'), "swift": ('"',), "kotlin": ("'", '"'),
+    "scala": ("'", '"'), "dart": ("'", '"'), "groovy": ("'", '"'),
+    "hcl": ('"',), "docker": ("'", '"'), "make": ("'", '"'),
+}
+
+
+def _comment_token(line: str, i: int, lang: str) -> Optional[str]:
+    for tok in _ANY_LINE_COMMENTS.get(lang, ()):
+        if line.startswith(tok, i):
+            return tok
+    for tok in _WS_LINE_COMMENTS.get(lang, ()):
+        if line.startswith(tok, i) and (i == 0 or line[i - 1].isspace()):
+            return tok
+    return None
+
+
+def _blank(chars: List[str], start: int, end: int) -> None:
+    for k in range(start, min(end, len(chars))):
+        chars[k] = " "
+
+
+class _Sanitizer:
+    """Line-oriented comment/string masking with cross-line state."""
+
+    def __init__(self, lang: str) -> None:
+        self.lang = lang
+        self.blocks = _BLOCK_COMMENTS.get(lang, ())
+        self.quotes = _QUOTES.get(lang, ("'", '"'))
+        self.triple = lang == "python"
+        self.backtick = "`" in self.quotes and lang in ("js", "ts", "vue", "svelte")
+        self.block_end: Optional[str] = None
+        self.str_end: Optional[str] = None
+
+    def run(self, text: str) -> Tuple[List[str], List[str], List[str]]:
+        code_lines: List[str] = []
+        nc_lines: List[str] = []
+        comment_lines: List[str] = []
+        for line in text.split("\n"):
+            code = list(line)
+            nc = list(line)
+            comments: List[str] = []
+            self._scan_line(line, code, nc, comments)
+            code_lines.append("".join(code))
+            nc_lines.append("".join(nc))
+            comment_lines.append("".join(comments))
+        return code_lines, nc_lines, comment_lines
+
+    def _consume_block(self, line: str, code: List[str], nc: List[str],
+                       comments: List[str], i: int, n: int) -> int:
+        end = self.block_end
+        if end is None:
+            return n
+        j = line.find(end, i)
+        if j < 0:
+            _blank(code, i, n)
+            _blank(nc, i, n)
+            comments.append(line[i:])
+            return n
+        stop = j + len(end)
+        _blank(code, i, stop)
+        _blank(nc, i, stop)
+        comments.append(line[i:stop])
+        self.block_end = None
+        return stop
+
+    def _consume_string(self, line: str, code: List[str], i: int, n: int) -> int:
+        end = self.str_end
+        if end is None:
+            return n
+        j = line.find(end, i)
+        if j < 0:
+            _blank(code, i, n)
+            return n
+        stop = j + len(end)
+        _blank(code, i, stop)
+        self.str_end = None
+        return stop
+
+    def _start_block(self, line: str, code: List[str], nc: List[str],
+                     comments: List[str], i: int) -> Optional[int]:
+        for start, end in self.blocks:
+            if line.startswith(start, i):
+                _blank(code, i, i + len(start))
+                _blank(nc, i, i + len(start))
+                comments.append(line[i:i + len(start)])
+                self.block_end = end
+                return i + len(start)
+        return None
+
+    @staticmethod
+    def _consume_quoted(line: str, code: List[str], i: int, n: int, quote: str) -> int:
+        i += 1
+        while i < n:
+            ch = line[i]
+            if ch == "\\" and i + 1 < n:
+                code[i] = " "
+                code[i + 1] = " "
+                i += 2
+                continue
+            if ch == quote:
+                return i + 1
+            code[i] = " "
+            i += 1
+        return i
+
+    def _scan_line(self, line: str, code: List[str], nc: List[str],
+                   comments: List[str]) -> None:
+        i = 0
+        n = len(line)
+        while i < n:
+            if self.block_end is not None:
+                i = self._consume_block(line, code, nc, comments, i, n)
+                continue
+            if self.str_end is not None:
+                i = self._consume_string(line, code, i, n)
+                continue
+            block_i = self._start_block(line, code, nc, comments, i)
+            if block_i is not None:
+                i = block_i
+                continue
+            if _comment_token(line, i, self.lang):
+                _blank(code, i, n)
+                _blank(nc, i, n)
+                comments.append(line[i:])
+                return
+            ch = line[i]
+            if self.triple and ch in ("'", '"') and line.startswith(ch * 3, i):
+                _blank(code, i, i + 3)
+                i += 3
+                self.str_end = ch * 3
+                continue
+            if self.backtick and ch == "`":
+                code[i] = " "
+                i += 1
+                self.str_end = "`"
+                continue
+            if ch in self.quotes:
+                i = self._consume_quoted(line, code, i, n, ch)
+                continue
+            i += 1
+
+
+def sanitize(text: str, lang: str) -> Tuple[List[str], List[str], List[str]]:
+    """Return (code, nocomment, comments) line views.
+
+    code: comments and string contents blanked (quote delimiters kept)
+    nocomment: comments blanked, string contents kept
+    comments: comment text only (markers included)
+    """
+    return _Sanitizer(lang).run(text)
+
+
+# ---------------------------------------------------------------------------
+# File discovery and loading
+# ---------------------------------------------------------------------------
+
+SKIP_FILENAMES = {
+    "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+    "bun.lockb", "cargo.lock", "poetry.lock", "uv.lock", "pipfile.lock",
+    "go.sum", "composer.lock", "gemfile.lock", "pubspec.lock", "mix.lock",
+}
+
+
+def _is_skipped_file(path: Path) -> bool:
+    name = path.name
+    low = name.lower()
+    if low in SKIP_FILENAMES:
+        return True
+    if GENERATED_RE.search(path.as_posix()):
+        return True
+    if low.endswith((".min.js", ".min.css", ".map", ".snap")):
+        return True
+    return False
+
+
+def _git_files(root: Path) -> Optional[List[str]]:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            capture_output=True, timeout=25,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.decode("utf-8", "replace")
+    return [p for p in out.split("\0") if p]
+
+
+def discover_files(
+    paths: Sequence[str],
+    excludes: Sequence[str] = (),
+    max_files: int = 20000,
+    max_bytes: int = 1500000,
+    on_file: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[Path, List[Path]]:
+    if not paths:
+        paths = ["."]
+    roots = [Path(p).expanduser().resolve() for p in paths]
+    if len(roots) == 1 and roots[0].is_dir():
+        root = roots[0]
+    else:
+        root = Path.cwd().resolve()
+
+    exclude_patterns = list(excludes) + [
+        "*.min.js", "*.min.css", "*.map", "*.snap", "*.lock",
+    ]
+    found: List[Path] = []
+    seen: Set[str] = set()
+
+    def excluded(rel: str) -> bool:
+        for pat in exclude_patterns:
+            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat):
+                return True
+        return False
+
+    def add(p: Path, base: Optional[Path] = None, allow_symlink: bool = False) -> None:
+        if p.is_symlink() and not allow_symlink:
+            try:
+                resolved = p.resolve()
+            except OSError:
+                return
+            if base is not None:
+                try:
+                    resolved.relative_to(base)
+                except ValueError:
+                    return
+        key = str(p.resolve())
+        if key in seen:
+            return
+        if not p.is_file() or _is_skipped_file(p):
+            return
+        try:
+            if p.stat().st_size > max_bytes:
+                return
+        except OSError:
+            return
+        seen.add(key)
+        found.append(p)
+
+    for target in roots:
+        if target.is_file():
+            add(target, base=target.parent, allow_symlink=True)
+            continue
+        if not target.is_dir():
+            continue
+        git_list = _git_files(target)
+        if git_list is not None:
+            for rel in git_list:
+                if excluded(rel):
+                    continue
+                add(target / rel, base=target)
+                if len(found) >= max_files:
+                    break
+        else:
+            for dirpath, dirnames, filenames in os.walk(target):
+                rel_dir = os.path.relpath(dirpath, target)
+                rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
+                keep = []
+                for d in dirnames:
+                    if d == ".git" or d in DEFAULT_SKIP_DIRS:
+                        continue
+                    if d.startswith(".") and d not in ALLOWED_HIDDEN_DIRS:
+                        continue
+                    keep.append(d)
+                dirnames[:] = keep
+                for fn in filenames:
+                    rel = f"{rel_dir}/{fn}" if rel_dir else fn
+                    if excluded(rel):
+                        continue
+                    add(Path(dirpath) / fn, base=target)
+                    if len(found) >= max_files:
+                        break
+                if len(found) >= max_files:
+                    break
+        if len(found) >= max_files:
+            break
+
+    found.sort(key=lambda p: str(p))
+    total = len(found)
+    for idx, p in enumerate(found, 1):
+        if on_file:
+            on_file(idx, total, str(p))
+    return root, found
+
+
+def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
+    """Build a SourceFile from text that may come from the working tree or git.
+
+    Kept separate from load_source() so review mode can scan the exact tree or
+    index revision that the diff describes.
+    """
+    if not text or "\x00" in text[:8192]:
+        return None
+    rel = rel.replace(os.sep, "/")
+    lang = detect_lang(rel)
+    kinds = detect_kinds(rel, text, lang)
+    code, nocomment, comments = sanitize(text, lang)
+    raw_lines = text.split("\n")
+    loc = sum(1 for line in raw_lines if line.strip())
+    return SourceFile(
+        rel=rel, abspath=abspath, lang=lang, kinds=kinds, text=text,
+        raw=raw_lines, code=code, nocomment=nocomment, comments=comments, loc=loc,
+    )
+
+
+def load_source(path: Path, root: Path) -> Optional[SourceFile]:
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw_bytes[:8192]:
+        return None
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("utf-8", "replace")
+    if not text:
+        return None
+    rel = os.path.relpath(str(path), str(root)).replace(os.sep, "/")
+    return source_from_text(rel, str(path), text)
+
+
+# ---------------------------------------------------------------------------
+# Misc helpers
+# ---------------------------------------------------------------------------
+
+_SECRET_LINE_RE = re.compile(
+    r"(?i)(\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*['\"])([^'\"\n]{4,})(['\"])"
+)
+_TOKEN_RES = [
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{8,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"),
+    re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{16,}\b"),
+    re.compile(r"\bsk_live_[0-9a-zA-Z]{16,}\b"),
+]
+
+
+def redact_secrets(text: str) -> str:
+    out = _SECRET_LINE_RE.sub(r"\1***REDACTED***\3", text)
+    for pat in _TOKEN_RES:
+        out = pat.sub("***REDACTED-TOKEN***", out)
+    return out
+
+
+def make_finding(
+    rule: Rule,
+    sf: SourceFile,
+    line: int,
+    evidence: Optional[str] = None,
+    message: Optional[str] = None,
+    severity: Optional[str] = None,
+    confidence: Optional[str] = None,
+    end_line: Optional[int] = None,
+    column: int = 1,
+    extra: Optional[Dict[str, object]] = None,
+) -> Finding:
+    ev = evidence
+    if ev is None and 0 < line <= len(sf.raw):
+        ev = sf.raw[line - 1].strip()
+    return Finding(
+        rule=rule.id,
+        title=rule.title,
+        severity=severity or rule.severity,
+        category=rule.category,
+        path=sf.rel,
+        line=line,
+        column=max(1, column),
+        end_line=end_line,
+        evidence=trim(ev or "", 200),
+        message=message or rule.message,
+        fix=rule.fix,
+        confidence=confidence or rule.confidence,
+        tags=rule.tags,
+        extra=extra or {},
+    )
+
+
+def sev_at_least(sev: str, threshold: str) -> bool:
+    return SEV_RANK.get(sev, 99) <= SEV_RANK.get(threshold, 99)
+
+
+def trim(text: str, width: int = 160) -> str:
+    text = " ".join(text.strip().split())
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def rel_link(rel: str, line: int) -> str:
+    return f"{rel}:{line}"
+
+
+def is_probably_text(path: Path) -> bool:
+    try:
+        chunk = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    return b"\x00" not in chunk

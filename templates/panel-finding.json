@@ -1,0 +1,44 @@
+{
+  "agent": "red-team",
+  "scope": ["src/api", "deploy/"],
+  "baseline": {
+    "branch": "main",
+    "commit": "abc1234"
+  },
+  "findings": [
+    {
+      "id": "RT-01",
+      "title": "Object-level authorization missing on invoice export",
+      "rule": "NEW",
+      "severity": "critical",
+      "confidence": "high",
+      "status": "supported",
+      "path": "src/api/invoices.py",
+      "line": 87,
+      "evidence": "The route checks authentication but never compares invoice.tenant_id with the caller's tenant. `GET /invoices/<id>/export` returns the PDF for any authenticated user who knows the id.",
+      "causal_chain": "authenticated low-privilege user supplies another tenant's invoice id -> export handler loads by id -> no tenant predicate -> PDF disclosed",
+      "repro": "pytest -q tests/test_invoices.py::test_cross_tenant_export (fails before fix)",
+      "runtime_evidence": "Observed the export endpoint return tenant B's PDF while authenticated as tenant A in the local test harness.",
+      "falsification": "If a middleware enforces tenant_id on every Invoice query, this is not reachable. Check src/api/middleware.py:41 before upholding.",
+      "fix": "Scope the query by tenant_id and add a regression test for cross-tenant access.",
+      "tags": ["authz", "multi-tenant", "idor"]
+    }
+  ],
+  "rejected": [
+    {
+      "title": "SQL injection in invoice search",
+      "reason": "The query uses a bound parameter; the concatenation is only the ORDER BY column, which is allowlisted.",
+      "evidence": "src/api/invoices.py:132 and src/api/sql.py:18"
+    }
+  ],
+  "unknowns": [
+    "Whether the CDN caches the export response without a Vary: Authorization header."
+  ],
+  "next_experiments": [
+    "Create two tenants in the test fixture and assert that tenant A cannot export tenant B's invoice.",
+    "Check the CDN cache key for authenticated responses."
+  ],
+  "requires_authorization": [
+    "Running the export against a staging instance with two test tenants."
+  ]
+}
