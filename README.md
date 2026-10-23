@@ -1,5 +1,9 @@
 # JankHunt42
 
+<p align="center">
+  <img src="assets/jankhunt42.png" alt="JankHunt42 logo: a grinning, bearded hacker hunched over a green-backlit keyboard, with the jankhunt42 wordmark beneath" width="320">
+</p>
+
 **Find the jank before it finds production.**
 
 JankHunt42 is an OpenCode skill and a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
