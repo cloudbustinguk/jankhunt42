@@ -4,7 +4,39 @@ All notable changes to JankHunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [0.4.0] — 2026-10-23
+
+Acts on the three highest-leverage gaps identified by an industry/competitor
+review against Semgrep, SonarQube, Snyk Code, CodeQL, Checkmarx, and the
+AI-code-review wave (Prbl, Copilot Autofix, Endor Labs): false-positive
+noise is the market's actual bottleneck, every competing scanner has a
+config file and JankHunt42 did not, and diff-only review misses the same
+defect repeated across files. Also fixes a flaky selftest CI failure and
+adds multi-tool platform metadata.
+
+### Added
+
+- **Repo config file** (`jh_config.py`): `.jankhunt.toml` (Python 3.11+,
+  `tomllib`) or `.jankhunt.json` (always), discovered upward from the scan
+  root the way `.git` is. Disables a rule, overrides its severity globally
+  or per path glob, or ignores a subtree. Applies to `scan`, `score`, and
+  `hunt` via `--config PATH` / `--no-config`; not yet wired into `review`.
+- **Opt-in false-positive calibration** (`jh_calibrate.py`, `--calibrate`):
+  records each rule's fired/suppressed counts into `.jankhunt/calibration.json`
+  and, once a rule has enough history, downgrades its severity (confidence
+  → `low`, tagged `calibrated`) based on its measured suppression rate in
+  *this* repo — counting, not inference. The only flag besides `--cve` that
+  writes anything.
+- **Cross-file duplicate detection** (`jh_dedup.py`): clusters findings that
+  share a rule and near-identical evidence (whitespace/numeric/string
+  literals normalized) across two or more files, surfaced under
+  `cross_file_duplicates` in every `scan`/`score`/`hunt` JSON/MD/TTY output
+  with no flag needed. The existing `duplicate_blocks` check was file-local
+  by construction; this catches the same defect pasted into several files
+  instead.
+- `_FindingAcceptor` now tracks per-rule `fired`/`suppressed` counts
+  independent of `--min-severity`/`--category`/`--rule` display filters
+  (`ScanResult.fired_by_rule`, `.suppressed_by_rule`), feeding calibration.
 
 ### Fixed
 

@@ -964,6 +964,117 @@ if command -v script >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Config file, cross-file duplicates, FP calibration
+# ---------------------------------------------------------------------------
+CFG="$TMP/cfgfix"
+mkdir -p "$CFG/a" "$CFG/b"
+printf 'def handler(value):\n    return eval(value)\n' > "$CFG/a/one.py"
+printf 'def other(value):\n    return eval(value)\n' > "$CFG/b/two.py"
+
+# Baseline: both files fire JH102, and the identical evidence lines across
+# two files form one cross-file duplicate cluster.
+"$PY" "$JH" scan "$CFG" --json --min-severity info --no-config > "$TMP/cfg-base.json"
+"$PY" - "$TMP/cfg-base.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["summary"]["findings"] == 2, d["summary"]
+dupes = d["cross_file_duplicates"]
+assert len(dupes) == 1, dupes
+assert dupes[0]["rule"] == "JH102" and dupes[0]["count"] == 2, dupes[0]
+print("cross-file duplicates: %d cluster(s), %d sites" % (len(dupes), dupes[0]["count"]))
+PY
+
+# A config file can disable a rule and ignore a whole subtree.
+cat > "$CFG/.jankhunt.json" <<'JSON'
+{"rules": {"JH102": {"enabled": false}}}
+JSON
+"$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-disabled.json"
+"$PY" - "$TMP/cfg-disabled.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["summary"]["findings"] == 0, d["summary"]
+assert d["config"] and d["config"].endswith(".jankhunt.json"), d["config"]
+PY
+
+# A path-scoped severity override applies only to matching paths.
+cat > "$CFG/.jankhunt.json" <<'JSON'
+{"paths": {"a/*.py": {"severity": {"JH102": "info"}}}}
+JSON
+"$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-sev.json"
+"$PY" - "$TMP/cfg-sev.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+by_path = {f["path"]: f["severity"] for f in d["findings"]}
+assert by_path["a/one.py"] == "info", by_path
+assert by_path["b/two.py"] == "major", by_path
+PY
+rm -f "$CFG/.jankhunt.json"
+
+# TOML config needs tomllib (3.11+); older interpreters must warn and skip
+# it, never crash or silently misparse it.
+cat > "$CFG/.jankhunt.toml" <<'TOML'
+[rules.JH102]
+enabled = false
+TOML
+if "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+  "$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-toml.json" 2>"$TMP/cfg-toml.err"
+  "$PY" - "$TMP/cfg-toml.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["summary"]["findings"] == 0, d["summary"]
+assert d["config"].endswith(".jankhunt.toml"), d["config"]
+PY
+  [ -s "$TMP/cfg-toml.err" ] && fail "unexpected stderr parsing a valid .jankhunt.toml: $(cat "$TMP/cfg-toml.err")"
+else
+  "$PY" "$JH" scan "$CFG" --json --min-severity info > "$TMP/cfg-toml.json" 2>"$TMP/cfg-toml.err"
+  grep -qi "tomllib" "$TMP/cfg-toml.err" || fail "no tomllib-unavailable warning on <3.11"
+  "$PY" - "$TMP/cfg-toml.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["summary"]["findings"] == 2, d["summary"]  # config was skipped, not applied
+assert d["config"] is None, d["config"]
+PY
+fi
+rm -f "$CFG/.jankhunt.toml"
+note "config: rule disable, path severity override, TOML/JSON, and cross-file duplicates all verified"
+
+# FP calibration is opt-in, writes only on --calibrate, and needs history
+# from a *prior* run before it downgrades anything (never self-referential
+# within one run).
+CAL="$TMP/calfix"
+mkdir -p "$CAL"
+# Exactly 50% suppressed (3 of 6): lands in the one-step-downgrade band
+# (>=50%, <80%) rather than the info-floor band (>=80%), so this also
+# exercises the distinction between the two calibration tiers.
+for i in 1 2 3; do
+  printf 'def h%d(v):\n    return eval(v)  # jankhunt: ignore JH102\n' "$i" > "$CAL/s$i.py"
+done
+for i in 4 5 6; do
+  printf 'def h%d(v):\n    return eval(v)\n' "$i" > "$CAL/s$i.py"
+done
+"$PY" "$JH" scan "$CAL" --json --min-severity info > "$TMP/cal-run1.json"
+[ -f "$CAL/.jankhunt/calibration.json" ] && fail "calibration ledger written without --calibrate"
+"$PY" "$JH" scan "$CAL" --calibrate --json --min-severity info > "$TMP/cal-run1.json"
+[ -f "$CAL/.jankhunt/calibration.json" ] || fail "--calibrate did not write a ledger"
+"$PY" - "$TMP/cal-run1.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["calibration"]["downgrades"] == [], d["calibration"]
+PY
+"$PY" "$JH" scan "$CAL" --calibrate --json --min-severity info > "$TMP/cal-run2.json"
+"$PY" - "$TMP/cal-run2.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+downgrades = d["calibration"]["downgrades"]
+assert len(downgrades) == 1 and downgrades[0]["rule"] == "JH102", downgrades
+assert downgrades[0]["to"] == "minor", downgrades
+sevs = {f["severity"] for f in d["findings"]}
+assert sevs == {"minor"}, sevs
+print("calibration: JH102 downgraded major->minor after %.0f%% suppression over %d runs"
+      % (downgrades[0]["suppression_rate"] * 100, downgrades[0]["observations"]))
+PY
+
+# ---------------------------------------------------------------------------
 # Docs and packaging sanity
 # ---------------------------------------------------------------------------
 for doc in "$SKILL/SKILL.md" "$SKILL/README.md" "$SKILL/CHANGELOG.md" \

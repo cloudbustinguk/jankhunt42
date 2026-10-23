@@ -19,6 +19,9 @@ $JH scan . --sarif > jank.sarif         # SARIF 2.1.0
 $JH scan . --html > jankhunt.html       # self-contained visual report
 $JH scan . --since origin/main          # new-code view
 $JH scan . --cve                        # OSV.dev advisories (network, opt-in)
+$JH scan . --config .jankhunt.toml      # explicit config (default: discovered upward)
+$JH scan . --no-config                  # ignore any .jankhunt.toml/.jankhunt.json
+$JH scan . --calibrate                  # apply + update .jankhunt/calibration.json (writes)
 $JH review .                            # working tree + untracked files
 $JH review . --staged                   # index only
 $JH review . --commit HEAD              # committed tree
@@ -54,6 +57,22 @@ only; baseline persisting findings are excluded unless you change the baseline.
 `supply-chain` is offline/read-only. `provider-verified` means the exporter
 recorded a successful verification, not that JankHunt42 verified a signature.
 Use `gh`, `cosign`, or `jf` for independent verification.
+
+`.jankhunt.toml`/`.jankhunt.json` (discovered upward from the scan root, like
+`.git`) can disable a rule, override its severity, scope either to a path
+glob, or ignore a subtree outright; `--no-config` bypasses discovery,
+`--config PATH` pins one explicitly. TOML needs Python 3.11+ (`tomllib`);
+JSON always works. `--calibrate` is the only flag besides `--cve` that writes
+anything: it reads and updates `.jankhunt/calibration.json`, a per-rule count
+of how often that rule fired vs. was suppressed in *this* repo, and
+downgrades a rule's severity (and marks it `low` confidence, tagged
+`calibrated`) once it crosses a suppression-rate threshold with enough
+history. Commit the ledger if you want the calibration shared across a team
+or CI; gitignore it for a purely local signal. Both config and calibration
+apply to `scan`, `score`, and `hunt`; `review`'s receipt pipeline does not
+consult them yet. Cross-file duplicate clusters ("same bug, N sites") are
+always computed on `scan`/`score`/`hunt` and need no flag — see the
+`cross_file_duplicates` key in `--json` output.
 
 ## Logs and evidence
 

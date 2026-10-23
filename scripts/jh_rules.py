@@ -513,6 +513,13 @@ class ScanResult:
     files: int = 0
     loc: int = 0
     skipped: int = 0
+    # Per-rule telemetry independent of --min-severity/--category/--rule
+    # filters, so it reflects what the rule actually matched, not what the
+    # CLI chose to display. fired = every match before any filtering;
+    # suppressed = subset dropped specifically by an inline
+    # `# jankhunt: ignore` pragma. Consumed by --calibrate (jh_calibrate.py).
+    fired_by_rule: Dict[str, int] = field(default_factory=dict)
+    suppressed_by_rule: Dict[str, int] = field(default_factory=dict)
 
 
 _COMPILED: Dict[str, List[re.Pattern]] = {}
@@ -562,6 +569,8 @@ class _FindingAcceptor:
         self.per_file_rule: Dict[Tuple[str, str], int] = {}
         self.per_rule: Dict[str, int] = {}
         self.seen: Set[Tuple[str, str, int]] = set()
+        self.fired_by_rule: Dict[str, int] = {}
+        self.suppressed_by_rule: Dict[str, int] = {}
 
     def suppressed(self, finding: Finding) -> bool:
         file_ids, line_ids = self.suppression.get(finding.path, (set(), {}))
@@ -572,13 +581,17 @@ class _FindingAcceptor:
 
     def accept(self, finding: Finding) -> bool:
         opts = self.opts
+        # Telemetry first, independent of the CLI's display filters below,
+        # so it reflects the rule's actual precision in this repo.
+        self.fired_by_rule[finding.rule] = self.fired_by_rule.get(finding.rule, 0) + 1
+        if self.suppressed(finding):
+            self.suppressed_by_rule[finding.rule] = self.suppressed_by_rule.get(finding.rule, 0) + 1
+            return False
         if not sev_at_least(finding.severity, opts.min_severity):
             return False
         if opts.categories and finding.category not in opts.categories:
             return False
         if opts.rule_ids and finding.rule not in opts.rule_ids:
-            return False
-        if self.suppressed(finding):
             return False
         key = (finding.rule, finding.path, finding.line)
         if key in self.seen:
@@ -644,6 +657,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     break
 
     result.findings.sort(key=lambda f: f.sort_key())
+    result.fired_by_rule = acceptor.fired_by_rule
+    result.suppressed_by_rule = acceptor.suppressed_by_rule
     return result
 
 

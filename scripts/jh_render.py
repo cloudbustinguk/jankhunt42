@@ -201,6 +201,37 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
         out.append("")
         for warning in meta["cve_warnings"]:
             out.append("> CVE lookup: %s" % warning)
+    if meta.get("config"):
+        out.append("")
+        out.append("_Config: `%s`_" % meta["config"])
+    dupes = meta.get("cross_file_duplicates") or []
+    if dupes:
+        out.append("")
+        out.append("### Cross-file duplicates")
+        out.append("")
+        out.append("Same defect repeated across files — fix the class, not the line.")
+        out.append("")
+        out.append("| Rule | Title | Sites | Locations |")
+        out.append("|---|---|---:|---|")
+        for d in dupes[:20]:
+            locs = ", ".join("`%s:%d`" % (s["path"], s["line"]) for s in d["sites"][:6])
+            if d["count"] > 6:
+                locs += ", …"
+            out.append("| `%s` | %s | %d | %s |" % (d["rule"], d["title"], d["count"], locs))
+    calib = meta.get("calibration")
+    if calib and calib.get("downgrades"):
+        out.append("")
+        out.append("### Calibration")
+        out.append("")
+        out.append("Rules downgraded from this repo's recorded suppression history "
+                   "(`%s`):" % calib.get("ledger", ""))
+        out.append("")
+        out.append("| Rule | Observations | Suppressed | Severity |")
+        out.append("|---|---:|---:|---|")
+        for n in calib["downgrades"]:
+            out.append("| `%s` | %d | %.0f%% | %s → %s |"
+                       % (n["rule"], n["observations"], n["suppression_rate"] * 100,
+                          n["from"], n["to"]))
     out.append("")
     out.append("## Summary")
     out.append("")
@@ -336,6 +367,23 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         if warn:
             note += " · " + "; ".join(str(w) for w in warn[:1])
         out.append("  " + color.magenta("CVE") + "  " + color.grey(note))
+    if meta.get("config"):
+        out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
+    dupes = meta.get("cross_file_duplicates") or []
+    if dupes:
+        sites = sum(d["count"] for d in dupes)
+        out.append("  " + color.yellow("DUPLICATE") + "  "
+                   + color.grey("%d cluster(s) across %d sites — same bug, not one bug"
+                                % (len(dupes), sites)))
+    calib = meta.get("calibration")
+    if calib:
+        n = len(calib.get("downgrades") or [])
+        if n:
+            out.append("  " + color.cyan("CALIBRATED") + "  "
+                       + color.grey("%d rule(s) downgraded from this repo's suppression history "
+                                    "(%s)" % (n, calib.get("ledger", ""))))
+        else:
+            out.append("  " + color.grey("calibration: no rule crossed the suppression-rate threshold yet"))
     return out
 
 

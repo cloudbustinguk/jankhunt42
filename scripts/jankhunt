@@ -31,6 +31,9 @@ import jh_score  # noqa: E402
 import jh_html  # noqa: E402
 import jh_review  # noqa: E402
 import jh_supply  # noqa: E402
+import jh_config  # noqa: E402
+import jh_calibrate  # noqa: E402
+import jh_dedup  # noqa: E402
 
 
 class Spinner:
@@ -88,11 +91,28 @@ def _manifest_files(root: str, max_depth: int = 4) -> List[Tuple[str, str]]:
     return out
 
 
+def _probe_root(paths: Sequence[str]) -> str:
+    """Cheap, deterministic preview of the root discover_files() will land
+    on, needed only so config discovery can happen before the real scan."""
+    from pathlib import Path as _Path
+    roots = [_Path(p).expanduser().resolve() for p in (paths or ["."])]
+    if len(roots) == 1 and roots[0].is_dir():
+        return str(roots[0])
+    return str(_Path.cwd().resolve())
+
+
 def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
     t0 = time.time()
+    cfg = jh_config.load_config_for_root(
+        _probe_root(args.paths),
+        explicit_path=getattr(args, "config", None),
+        disabled=getattr(args, "no_config", False),
+    )
+    jh_config.emit_warnings(cfg)
+    excludes = list(args.exclude or ()) + cfg.ignore_globs
     root, files = discover_files(
         args.paths,
-        excludes=args.exclude or (),
+        excludes=excludes,
         max_files=args.max_files,
         max_bytes=args.max_file_bytes,
     )
@@ -118,12 +138,28 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None) -> Tup
         max_per_rule=args.max_per_rule,
     )
     result = scan_sources(sources, opts)
+    if cfg.source:
+        result.findings = jh_config.apply_to_findings(cfg, result.findings)
+        result.findings.sort(key=lambda f: f.sort_key())
     meta: Dict[str, object] = {
         "root": str(root),
         "elapsed": time.time() - t0,
         "skipped": skipped,
         "cve": bool(args.cve),
     }
+    if cfg.source:
+        meta["config"] = cfg.source
+    meta["cross_file_duplicates"] = [c.to_dict() for c in jh_dedup.find_cross_file_duplicates(result.findings)]
+    if getattr(args, "calibrate", False):
+        ledger = jh_calibrate.load_ledger(str(root))
+        notes = jh_calibrate.apply_calibration(result.findings, ledger, SEVERITIES)
+        result.findings.sort(key=lambda f: f.sort_key())
+        jh_calibrate.update_ledger(ledger, result.fired_by_rule, result.suppressed_by_rule)
+        jh_calibrate.save_ledger(str(root), ledger)
+        meta["calibration"] = {
+            "ledger": jh_calibrate.ledger_path(str(root)),
+            "downgrades": [n.to_dict() for n in notes],
+        }
     if args.cve:
         manifests = _manifest_files(str(root))
         deps = jh_cve.collect_dependencies(manifests)
@@ -175,6 +211,9 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
             "cve_packages": meta.get("cve_packages", 0),
         },
         "warnings": meta.get("cve_warnings", []),
+        "config": meta.get("config"),
+        "cross_file_duplicates": meta.get("cross_file_duplicates", []),
+        "calibration": meta.get("calibration"),
         "findings": [asdict(f) for f in result.findings],
     }
     return json.dumps(data, indent=2, ensure_ascii=False)
@@ -360,6 +399,9 @@ def cmd_score(args: argparse.Namespace) -> int:
             "loc": result.loc,
             "jank": report.to_dict(),
             "warnings": meta.get("cve_warnings", []),
+            "config": meta.get("config"),
+            "cross_file_duplicates": meta.get("cross_file_duplicates", []),
+            "calibration": meta.get("calibration"),
         }
         print(json.dumps(data, indent=2, ensure_ascii=False))
     elif tty and not args.no_color:
@@ -622,6 +664,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--cve", action="store_true", help=cve_help)
         sp.add_argument("--since", metavar="REF",
                         help="also score findings on lines changed since this git ref (new-code view)")
+        sp.add_argument("--config", metavar="PATH",
+                        help="explicit .jankhunt.toml/.jankhunt.json (default: discovered upward from root)")
+        sp.add_argument("--no-config", action="store_true", help="ignore any .jankhunt.toml/.jankhunt.json")
+        sp.add_argument("--calibrate", action="store_true",
+                        help="apply and update the repo-local FP calibration ledger (.jankhunt/calibration.json); "
+                             "the only flag besides --cve that writes anything")
 
     def add_scan_opts(sp):
         sp.add_argument("paths", nargs="*", help="files or directories (default: .)")
@@ -660,6 +708,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--max-file-bytes", type=int, default=1500000)
         sp.add_argument("--max-per-file-rule", type=int, default=5)
         sp.add_argument("--max-per-rule", type=int, default=200)
+        # Deliberately no --config/--calibrate here: `review` has its own
+        # evidence-gated receipt pipeline (jh_review.py) that these do not
+        # yet reach. Accepting the flags without wiring them would silently
+        # do nothing, which is worse than not offering them.
 
     sp = sub.add_parser("review", help="diff-aware review with receipts, coverage, and baseline deltas")
     sp.add_argument("paths", nargs="*", help="repository root or path filter (default: .)")

@@ -8,7 +8,7 @@
 
 JankHunt42 is an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) that runs in Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
 
-**Version:** 0.3.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 0.4.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Install as a skill
 
@@ -40,6 +40,8 @@ What makes it more than a regex wrapper:
 - **Supply-chain context** — offline parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Externally verified evidence is labeled `provider-verified`; signature material JankHunt42 did not verify is labeled `unverified`.
 - **Deep hunt (opt-in)** — a structured adversarial panel for high-risk or ambiguous work. Independent roles investigate, cross-examine, and reach an evidence-weighted consensus; `confirmed` requires a repro or direct runtime evidence, and dissent is preserved.
 - **Citizen-developer and AI-assisted jank** — a growing share of production code was never written by anyone who calls themselves an engineer: a Copilot/ChatGPT suggestion pasted in whole, a low-code workflow a citizen developer wired up, a "quick script" that became a service. That code fails in predictable ways — a secret left in from the pasted example, happy-path logic with swallowed exceptions, duplicated scaffolding from repeated regeneration, zero tests because nothing prompted for one. JankHunt42 doesn't detect "AI-written code"; its `security`, `reliability`, `maintainability`, and `tests` rule categories catch this pattern as a side effect of catching any other kind of jank, regardless of who or what wrote the line.
+- **Repo-tuned, not one-size-fits-all** — a `.jankhunt.toml`/`.jankhunt.json` config file disables a rule, overrides its severity, or ignores a subtree per repo instead of scattering inline comments. An opt-in `--calibrate` ledger goes further: it counts how often each rule is suppressed *in this repo* and downgrades one that runs hot, with the exact rate and sample size attached — calibration by counting, not vibes.
+- **Cross-file duplicates** — the same defect pasted into several files, not refactored into one, is a documented blind spot for diff-only reviewers and an AI-assisted-code growth pattern. `scan`/`score`/`hunt` cluster findings that share a rule and near-identical evidence across files, so the fix targets the class instead of one site.
 
 None of these is a substitute for compilers, tests, Semgrep, SonarQube, Trivy, signature verifiers, or human review. They are ways to spend attention better.
 
@@ -145,6 +147,9 @@ jankhunt scan . --rule JH101 --rule JH418
 jankhunt scan . --exclude 'vendor/**' --max-files 5000
 jankhunt scan . --cve                        # OSV.dev dependency advisories (network)
 jankhunt scan . --since origin/main          # whole-tree + new-code score
+jankhunt scan . --config .jankhunt.toml      # explicit config (default: discovered upward)
+jankhunt scan . --no-config                  # ignore any .jankhunt.toml/.jankhunt.json
+jankhunt scan . --calibrate                  # apply + update the FP-calibration ledger (writes)
 ```
 
 Important flags:
@@ -162,7 +167,15 @@ Important flags:
 | `--max-findings N` | Cap the human view only (default 300) |
 | `--cve` | Query OSV.dev for pinned dependencies |
 | `--since REF` | Also score findings on lines changed since `REF` |
+| `--config PATH` / `--no-config` | Explicit config file, or skip auto-discovery |
+| `--calibrate` | Apply + update `.jankhunt/calibration.json`; the only flag besides `--cve` that writes anything |
 | `--quiet` / `--no-progress` | Suppress the spinner |
+
+`scan`, `score`, and `hunt` also always compute cross-file duplicate
+clusters — the same defect repeated in two or more files, surfaced under
+`cross_file_duplicates` in `--json` and as its own section in `--md`/TTY
+output. No flag needed; it costs nothing extra since the findings already
+exist.
 
 #### HTML report
 
@@ -365,6 +378,54 @@ File-level suppressions go in the first 12 lines:
 
 Suppressed findings do not count toward totals. Do not suppress a real defect; fix it instead.
 
+### Repo-wide: a config file instead of per-line comments
+
+Inline suppression is for one confirmed false positive on one line. For a
+rule that is consistently wrong *in this repo* — too noisy for a generated
+directory, miscalibrated for your style, or simply not a risk you accept —
+put it in a config file once instead of scattering comments:
+
+```json
+{
+  "rules": { "JH205": { "enabled": false } },
+  "paths": {
+    "tests/**": { "ignore": ["JH301"] },
+    "legacy/**": { "severity": { "JH101": "info" } }
+  },
+  "ignore": ["vendor/**", "**/*.generated.*"]
+}
+```
+
+Save it as `.jankhunt.json` (always works) or `.jankhunt.toml` (needs Python
+3.11+'s `tomllib`; older interpreters print a warning and skip it rather
+than misparse it) at the scan root or any ancestor — it is discovered the
+way `.git` is, or pin one explicitly with `--config PATH`, or bypass
+discovery with `--no-config`. It applies to `scan`, `score`, and `hunt`.
+`review`'s receipt pipeline does not consult it yet.
+
+### Repo-local false-positive calibration (opt-in, `--calibrate`)
+
+A rule's severity and confidence are set once, at authoring time, and never
+revisited — the industry's actual bottleneck is exactly this kind of
+unexamined noise (SonarSource cites 3.2% FP across 137M issues as the bar
+most tools miss by a wide margin). `--calibrate` closes that loop with
+counting, not inference: every run records how often each rule fired and
+how many of those firings were suppressed (the inline pragma above) into
+`.jankhunt/calibration.json`. Once a rule has at least 5 recorded firings in
+*this* repo, later `--calibrate` runs check its suppression rate:
+
+| Suppression rate | Effect |
+|---:|---|
+| < 50% | No change |
+| ≥ 50% | Severity drops one step, confidence → `low`, tagged `calibrated` |
+| ≥ 80% | Severity floors at `info` |
+
+This is the only flag besides `--cve` that writes anything. Commit the
+ledger if you want calibration shared across a team or CI; gitignore it for
+a purely local, per-machine signal. A downgraded finding still appears —
+calibration lowers priority, it never hides a finding the way suppression
+does.
+
 ## Jank Score 2.0
 
 The score is a **prioritization device**, not a compliance metric. It is versioned (`2.0`) and transparent.
@@ -517,10 +578,13 @@ jankhunt42/
     ├── jh_hunt.py           # deep-hunt planner, prompts, consensus merger
     ├── jh_render.py         # TTY and Markdown renderers
     ├── jh_html.py           # self-contained HTML scan report
+    ├── jh_config.py         # .jankhunt.toml/.jankhunt.json discovery and application
+    ├── jh_calibrate.py      # opt-in false-positive calibration ledger
+    ├── jh_dedup.py          # cross-file duplicate clustering
     └── selftest.sh          # offline regression fixture
 ```
 
-The scanner is read-only. It does not install packages, modify the repo, or call external services unless `--cve` is passed. `review` and `supply-chain` are read-only too: review runs git diff/show commands and reads the target tree; supply-chain reads evidence files on disk and never contacts GitHub, Sigstore, JFrog, or a registry. File discovery uses `git ls-files` when available and otherwise walks the tree with conservative ignores (`.git`, `node_modules`, `vendor`, build output, generated/minified files, lockfiles for static rules).
+The scanner is read-only. It does not install packages, modify the repo, or call external services unless `--cve` or `--calibrate` is passed (`--calibrate` writes only `.jankhunt/calibration.json`). `review` and `supply-chain` are read-only too: review runs git diff/show commands and reads the target tree; supply-chain reads evidence files on disk and never contacts GitHub, Sigstore, JFrog, or a registry. File discovery uses `git ls-files` when available and otherwise walks the tree with conservative ignores (`.git`, `node_modules`, `vendor`, build output, generated/minified files, lockfiles for static rules).
 
 ## Development
 
@@ -553,6 +617,8 @@ When adding a rule:
 - `review --pr` requires `gh` and a checked-out PR head; it does not fetch or merge a remote branch itself. Binary files, generated paths, excluded globs, oversized files, and files beyond `--max-files` are listed as skipped rather than silently ignored.
 - Supply-chain parsing does not verify cryptography, transparency logs, certificate chains, artifact-to-source binding, SBOM completeness, or license policy. `provider-verified` is the exporter's recorded result. Use `gh attestation verify`, `cosign verify-attestation`, or `jf evd verify` in trusted CI when independent verification is required.
 - Deep hunt quality depends on the host's subagent support and the panelists' evidence discipline. A unanimous panel is not proof; only a repro or direct runtime evidence is `confirmed`.
+- `--calibrate` is counting, not inference: it has no notion of *why* a rule was suppressed, so a team that suppresses real defects instead of fixing them will calibrate itself into blindness. The ledger is per-rule, repo-wide — not yet per-path — so a rule that is genuinely noisy in one directory and genuinely important in another will calibrate as one average. `.jankhunt.toml`/`.jankhunt.json` and `--calibrate` do not yet apply to `review`.
+- Cross-file duplicate detection matches on exact rule + normalized evidence (whitespace, numeric literals, and string literals collapsed); it does not catch renamed variables, reordered logic, or duplication expressed differently, only copy-paste-shaped repetition.
 
 If a finding is wrong, confirm it in context, then suppress it with a reason or improve the rule. A scanner that cries wolf is worse than no scanner.
 
@@ -566,7 +632,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 - [ ] README commands verified from a different working directory.
 - [ ] `references/scoring.md`, `references/review.md`, `references/supply-chain.md`, and `references/deep-hunt.md` are linked from `SKILL.md`.
 - [ ] The receipt schema and review/supply-chain docs are included in the release archive.
-- [ ] `git status` is clean, the tag matches `0.3.0`, and the release archive is rebuilt from the clean tree.
+- [ ] `git status` is clean, the tag matches `0.4.0`, and the release archive is rebuilt from the clean tree.
 - [ ] Tag the release and publish the folder/repo. If using an OpenCode skill catalog, point it at `SKILL.md`; keep `scripts/`, `references/`, and `templates/` alongside it.
 
 ## License
