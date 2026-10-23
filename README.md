@@ -420,6 +420,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 ## Development
 
 ```sh
+export PYTHONDONTWRITEBYTECODE=1              # selftest.sh rejects stray __pycache__ in the skill dir
 python3 -m unittest discover -s tests         # fast suite
 bash scripts/selftest.sh                       # end-to-end regression
 python3 scripts/jankhunt42 selftest --full     # everything, with a gate

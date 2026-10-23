@@ -11,6 +11,10 @@ permissions:
 jobs:
   selftest:
     runs-on: ${{ matrix.os }}
+    env:
+      # selftest.sh rejects generated caches in the skill directory, so the
+      # unittest step must not leave tests/__pycache__ behind.
+      PYTHONDONTWRITEBYTECODE: "1"
     strategy:
       fail-fast: false
       matrix:
