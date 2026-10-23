@@ -1,0 +1,446 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cloudbustinguk/jankhunt42/templates/map.schema.json",
+  "title": "jankhunt42 blast radius map (jankhunt.map.v1)",
+  "description": "Output of `jankhunt42 map --json`. generated_at is the only volatile field and is excluded from scan_id. Every claim is static evidence: verification states distinguish observed, declared, inferred, provider-verified (operator inventory outside the repository), unknown and refuted.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool",
+    "tool_version",
+    "source_revision",
+    "scan_id",
+    "generated_at",
+    "scope",
+    "coverage",
+    "warnings",
+    "evidence",
+    "truncation",
+    "unknowns",
+    "graph",
+    "assessment"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "jankhunt.map.v1"
+      ]
+    },
+    "tool": {
+      "type": "string",
+      "enum": [
+        "jankhunt42"
+      ]
+    },
+    "tool_version": {
+      "type": "string"
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "scan_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "root",
+        "name",
+        "snapshot",
+        "redaction",
+        "max_depth"
+      ],
+      "properties": {
+        "redaction": {
+          "type": "string",
+          "enum": [
+            "none",
+            "share"
+          ]
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "files_considered",
+        "files_inspected",
+        "by_adapter",
+        "status",
+        "partial_reasons",
+        "parse_failures",
+        "skipped"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "none",
+            "partial",
+            "complete-for-supported-types"
+          ]
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "detail"
+        ]
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "line",
+          "adapter",
+          "snippet",
+          "hash",
+          "state",
+          "source_snapshot",
+          "assumptions",
+          "counterevidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "provider-verified",
+              "declared",
+              "inferred",
+              "unknown",
+              "refuted"
+            ]
+          },
+          "source_snapshot": {
+            "type": "string"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "counterevidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "display_label",
+              "trust_domain",
+              "environment",
+              "criticality",
+              "sensitivity",
+              "attributes",
+              "evidence_refs",
+              "classification_source"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "application",
+                  "workload",
+                  "identity",
+                  "database",
+                  "api",
+                  "storage",
+                  "queue",
+                  "external",
+                  "unknown"
+                ]
+              },
+              "display_label": {
+                "type": "string"
+              },
+              "trust_domain": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "internal",
+                  "external",
+                  "unknown"
+                ]
+              },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "non-production",
+                  "unknown"
+                ]
+              },
+              "sensitivity": {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "internal",
+                  "confidential",
+                  "restricted",
+                  "unknown"
+                ]
+              },
+              "criticality": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical",
+                  "unknown"
+                ]
+              },
+              "attributes": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "classification_source": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "source",
+              "target",
+              "kind",
+              "capability",
+              "identity_ref",
+              "verification",
+              "confidence",
+              "source_trust",
+              "evidence_refs",
+              "assumptions",
+              "trust_boundary"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "connects",
+                  "authenticates-as",
+                  "reads",
+                  "writes",
+                  "deletes",
+                  "administers",
+                  "calls",
+                  "publishes",
+                  "exports",
+                  "depends-on"
+                ]
+              },
+              "capability": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "read",
+                  "write",
+                  "delete",
+                  "admin",
+                  "unknown"
+                ]
+              },
+              "identity_ref": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "verification": {
+                "type": "string",
+                "enum": [
+                  "observed",
+                  "provider-verified",
+                  "declared",
+                  "inferred",
+                  "unknown",
+                  "refuted"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "source_trust": {
+                "type": "string",
+                "enum": [
+                  "repository",
+                  "repository-inventory",
+                  "operator-inventory"
+                ]
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "assumptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "trust_boundary": {
+                "type": "object",
+                "required": [
+                  "domain",
+                  "environment"
+                ]
+              },
+              "data_sensitivity": {
+                "type": "string",
+                "enum": [
+                  "public",
+                  "internal",
+                  "confidential",
+                  "restricted",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "required": [
+        "model",
+        "exposure",
+        "evidence_tiers",
+        "unknown_capability_edges",
+        "breadth",
+        "truncated_reachability",
+        "blast_radius"
+      ],
+      "properties": {
+        "exposure": {
+          "type": "object",
+          "required": [
+            "class",
+            "per_principal",
+            "basis"
+          ],
+          "properties": {
+            "class": {
+              "type": "string",
+              "enum": [
+                "Low",
+                "Moderate",
+                "High",
+                "Critical",
+                "Unknown"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "truncation": {
+      "type": "object",
+      "required": [
+        "truncated",
+        "reasons"
+      ]
+    },
+    "delta": {
+      "type": "object",
+      "required": [
+        "base",
+        "head",
+        "nodes",
+        "edges",
+        "permission_escalations",
+        "newly_reachable",
+        "newly_reachable_sensitive",
+        "trust_boundaries",
+        "exposure",
+        "coverage"
+      ]
+    }
+  }
+}

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (
     Finding,
+    safe_text,
     GENERATED_RE,
     SEV_RANK,
     TOOL,
@@ -853,7 +854,7 @@ def _receipt_block(receipt: Dict[str, Any], index: int) -> List[str]:
         % (receipt["scope"], receipt["verification"], receipt["confidence"]),
     ]
     if receipt.get("evidence"):
-        out.append("- **Evidence:** `%s`" % receipt["evidence"].replace("`", "\\`"))
+        out.append("- **Evidence:** `%s`" % safe_text(receipt["evidence"]).replace("`", "\\`"))
     if receipt.get("message"):
         out.append("- **Why:** %s" % receipt["message"])
     out.append("- **Counterevidence:** %s" % receipt["counterevidence"])
@@ -868,7 +869,7 @@ def _receipt_block(receipt: Dict[str, Any], index: int) -> List[str]:
 def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
     scope = review["scope"]
     summary = review["summary"]
-    out: List[str] = ["# JankHunt42 review", ""]
+    out: List[str] = ["# jankhunt42 review", ""]
     out.append("**%s**" % _scope_line(review))
     out.append("")
     out.append("**New-code Jank:** %d/100 · %s · %s · policy **%s** · gate **%s**"
@@ -1076,10 +1077,10 @@ def tty(review: Dict[str, Any], max_findings: int = 300, no_color: bool = False)
             out.append("  %02d  %s  %s  %s" % (
                 idx, color.chip(r["severity"]), color.bold(r["rule"]),
                 color.bold(jh_render._truncate(r["title"], width - 30))))
-            out.append("      " + color.cyan("%s:%d" % (r["path"], r["line"]))
+            out.append("      " + color.cyan("%s:%d" % (safe_text(r["path"]), r["line"]))
                        + color.grey("  ·  %s  ·  %s" % (r["scope"], r["verification"])))
             if r.get("evidence"):
-                out.append("      " + color.grey("│ ") + color.dim(jh_render._truncate(r["evidence"], width - 10)))
+                out.append("      " + color.grey("│ ") + color.dim(jh_render._truncate(safe_text(r["evidence"]), width - 10)))
             out.append("      " + color.grey("repro ") + color.cyan(r["repro"]))
             out.append("      " + color.grey("receipt ") + r["id"])
             out.append("")

@@ -1,17 +1,17 @@
 # Supply-chain evidence
 
-JankHunt42 treats SBOMs, provenance attestations, and AppTrust evidence as
+jankhunt42 treats SBOMs, provenance attestations, and AppTrust evidence as
 review context. It parses evidence that is already on disk, correlates subjects
 and provenance, and reports gaps. It is offline and read-only by default.
 
 The core rule is simple: **never fabricate cryptographic verification**.
-JankHunt42 has no Sigstore trust root, transparency-log client, or JFrog API
+jankhunt42 has no Sigstore trust root, transparency-log client, or JFrog API
 client in its stdlib-only runtime. Therefore:
 
 | Label | Meaning |
 |---|---|
 | `provider-verified` | The exporter recorded a successful verification result, for example JFrog's `verificationResult`. This is the exporter's claim. |
-| `unverified` | A signature or DSSE envelope is present, but JankHunt42 did not verify it. |
+| `unverified` | A signature or DSSE envelope is present, but jankhunt42 did not verify it. |
 | `unsigned` | No signature material was found in the evidence. |
 | `failed` | The exporter recorded a failed verification result. |
 
@@ -124,7 +124,7 @@ extracts the in-toto statement. It reports:
 * verification status and hint.
 
 A GitHub attestation downloaded with `gh attestation download` is usually a
-JSONL file named after the artifact digest, with one bundle per line. JankHunt42
+JSONL file named after the artifact digest, with one bundle per line. jankhunt42
 reads each line independently. A JSON object with an `attestations` array or a
 single bundle/attestation wrapper is also accepted.
 
@@ -143,7 +143,7 @@ JFrog AppTrust exports and `jf evd verify --format json` output can contain:
 * a direct `predicate` for evidence types that are not in-toto statements,
 * a `downloadPath` pointing at a separately stored evidence payload.
 
-JankHunt42 parses the nested bundle, records the JFrog verification result, and
+jankhunt42 parses the nested bundle, records the JFrog verification result, and
 attempts to load a relative `downloadPath` from the evidence file's directory
 or the current directory. It does not follow remote URLs.
 

@@ -1,0 +1,8 @@
+{
+  "passport": {
+    "assets": [
+      {"match": "ledger-db", "sensitivity": "restricted", "criticality": "critical"},
+      {"match": "demo-reports-prod", "sensitivity": "confidential"}
+    ]
+  }
+}

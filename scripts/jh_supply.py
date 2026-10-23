@@ -988,7 +988,7 @@ def markdown(report: Dict[str, Any], heading: str = "## Supply chain evidence") 
                           bundle.get("evidence_count", 0), bundle.get("verified", 0),
                           bundle.get("failed", 0)))
     out.append("")
-    out.append("> JankHunt42 parses evidence but does not perform cryptographic verification itself. "
+    out.append("> jankhunt42 parses evidence but does not perform cryptographic verification itself. "
                "`provider-verified` means the exporter recorded a successful verification result; "
                "otherwise run the listed verification command with `gh`, `cosign`, or `jf`.")
     if report.get("warnings"):

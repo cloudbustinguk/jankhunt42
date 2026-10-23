@@ -1,0 +1,9 @@
+services:
+  api:
+    build: .
+    environment:
+      REDIS_URL: redis://cache:6379/0
+    depends_on:
+      - cache
+  cache:
+    image: redis:7

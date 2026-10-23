@@ -1,6 +1,6 @@
 # Deep hunt: adversarial panel protocol
 
-A deep hunt is the opt-in, multi-agent mode of JankHunt42. It is built for the
+A deep hunt is the opt-in, multi-agent mode of jankhunt42. It is built for the
 cases where one investigator's attention is not enough: a security review, a
 release gate, a migration, a stubborn production bug, a postmortem with
 disagreement, or a codebase nobody trusts yet.

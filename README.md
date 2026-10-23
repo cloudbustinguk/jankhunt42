@@ -1,18 +1,310 @@
-# JankHunt42
+# jankhunt42
 
 <p align="center">
-  <img src="assets/jankhunt42.png" alt="JankHunt42 logo: a grinning, bearded hacker hunched over a green-backlit keyboard, with the jankhunt42 wordmark beneath" width="320">
+  <img src="assets/jankhunt42.png" alt="jankhunt42 logo: a grinning, bearded hacker hunched over a green-backlit keyboard, with the jankhunt42 wordmark beneath" width="320">
 </p>
 
-**Find the jank before it finds production.**
+**Find the jank before it finds production, then work out what it can hurt and whether you can ship it.**
 
-JankHunt42 is an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) that runs in Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
+jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for CVE data.
 
-**Version:** 1.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.0.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
-## Install as a skill
+## Three questions
 
-JankHunt42 is one `SKILL.md` directory, so installing it is just putting that directory where your tool already looks for skills. Clone/copy this repo (or `git submodule add`) into one of:
+| Question | Command | What you get |
+|---|---|---|
+| **What's broken?** | `scan`, `score`, `review`, `triage`, `doctor`, `hunt` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets and dependencies; Jank Score 2.0; diff review with receipts and baselines; log clustering; an opt-in adversarial deep hunt |
+| **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph (apps, workloads, identities, databases, APIs, storage, queues, external services) with a receipt per edge, confidentiality/integrity/availability blast radius, trust-boundary crossings, explicit unknowns, and a graph diff |
+| **Can we responsibly ship it?** | `passport` | A software passport linking ownership, provenance, data sources, operations evidence, the Jank Score and the exposure class to an explainable `pass` / `review` / `insufficient-evidence` / `block` decision |
+
+Each answer keeps its own evidence model. A Jank Score is not an exposure class, and neither is a release decision. A scanner lead is not a confirmed defect, a graph path is not proven access, and a passport is not an approval.
+
+## 60-second quick start
+
+```sh
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.config/opencode/skills/jankhunt42
+alias jankhunt42="python3 ~/.config/opencode/skills/jankhunt42/scripts/jankhunt42"
+
+cd your-repo
+jankhunt42 scan .                  # what's broken?
+jankhunt42 map .                   # what can it hurt?
+jankhunt42 passport .              # can we responsibly ship it?
+jankhunt42 map . --html > map.html # the blast radius explorer, offline
+```
+
+An interactive terminal gets the rich views. Pipes get clean Markdown. `--json` gives versioned machine output, and `--html` gives one self-contained file.
+
+## Example: the synthetic demo repository
+
+Everything below is real output from the checked-in synthetic fixture `tests/fixtures/demo-app`. It is a fictional payments service with a Postgres ledger, a Redis cache, an S3 report export, an LLM call, a Kubernetes deployment, a GitHub Actions deploy workflow, and some Terraform. The test suite regenerates this output and fails if the README drifts from it.
+
+`jankhunt42 map tests/fixtures/demo-app` at 100 columns:
+
+<!-- sample:map-100 -->
+```text
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   J A N K H U N T 4 2   // blast radius explorer                                               │
+│ demo-app  ·  working-tree  ·  19 nodes  ·  19 edges                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+╭─ what can it hurt? ────────────────────────────────────────────────────────────────────────────╮
+│ EXPOSURE              High  qualitative; a path is a possibility, not proof                    │
+│ evidence coverage     complete-for-supported-types  (11/13 files, 8 adapters)                  │
+│ edge evidence         0 [verified]  17 [supported]  2 [inferred]  0 [unknown]                  │
+│ reach                 0 known [verified]  ·  37 potential  ·  7 unknown-capability             │
+│ breadth               1.264 over 4 trust domains (informational, never blocks)                 │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+connected systems
+  2 api   1 application   3 database   3 external   5 identity   1 storage   1 unknown   3 workload
+
+trust-boundary crossings
+  internal→external
+
+highest-impact admissible paths
+  High integrity [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[deletes/delete, observed]→ postgresql ledger-db.prod.internal
+  High availability [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[deletes/delete, observed]→ postgresql ledger-db.prod.internal
+  High confidentiality [supported] X-HIGH-EGRESS
+    sensitive source and external destination are reachable from the same principal (possible
+    egress path; no data-flow evidence implied)
+    demo-app -[reads/read, observed]→ postgresql ledger-db.prod.internal
+  High integrity [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[writes/write, observed]→ s3 bucket demo-reports-prod
+  High confidentiality [supported] X-HIGH-READ
+    supported read reach to restricted data
+    k8s Deployment payments-prod/payments-api -[authenticates-as/unknown, declared]→ k8s service
+      account payments-prod/payments-api -[reads/read, declared]→ kubernetes secrets
+      (cluster)
+
+unknowns  (unknown is not safe, and not dangerous)
+  ? effective-privileges: effective grants are not verified for 19 edge(s); static evidence
+      cannot prove privileges
+  ? unresolved-targets: 1 endpoint(s) are resolved only at runtime (environment, secrets, or SDK
+      defaults)
+  ? unknown-capability: 7 connection(s) have unknown capability; treated as possibly read,
+      write, or destructive
+  ? data-classification: 6 asset(s) have no declared data sensitivity
+  ? environment: 7 asset(s) have unknown environment (production vs non-production)
+  ? code-to-workload-binding: which workload runs the repository code is not inferred; declare
+      it via an inventory grant if needed
+  ? runtime-reachability: static analysis only: network reachability, firewalls, and live data
+      movement were not tested
+
+  explore: jankhunt42 map . --html > map.html   ·   data: --json   ·   shareable: --redact
+```
+<!-- /sample -->
+
+`jankhunt42 passport tests/fixtures/demo-app` at 100 columns:
+
+<!-- sample:passport-100 -->
+```text
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│   J A N K H U N T 4 2   // software passport                                                   │
+│ demo-app  ·  revision unknown                                                                  │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+╭─ can we responsibly ship it? ──────────────────────────────────────────────────────────────────╮
+│ RELEASE ASSESSMENT    REVIEW  advisory                                                         │
+│ technical jank score  78/100  grade E  policy fail                                             │
+│ exposure              High  separate from the Jank Score                                       │
+│ evidence coverage     4/9 areas observed, declared, or inferred                                │
+│ lifecycle             assessed  ·  acceptance [not-supplied]                                   │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+why  (rule outcomes, not a weighted score)
+  REVIEW P-DAT-002 possible mutating, destructive, or unknown authority over a production,
+      critical, or restricted asset; verify effective grants
+  REVIEW P-JNK-001 Jank Score policy fail; 0 blocker-severity lead(s) (leads, not confirmed
+      defects)
+
+evidence
+  ownership [observed]   provenance [not-observed]   data inventory [observed]   ci [observed]
+  tests [not-observed]   observability [not-observed]   health checks [observed]
+  runbook [not-observed]   security policy [not-observed]
+  owners: @demo-org/payments-team
+
+next steps
+  1. Verify effective grants for the flagged connections and scope them to least privilege;
+     record the result in an operator inventory to turn leads into verified evidence.
+  2. Work down the weakest Jank Score dimension first (`jankhunt42 score`), then the
+     highest-severity leads (`jankhunt42 scan --min-severity critical`).
+  3. Add or declare observability evidence (currently not observed).
+  4. Add or declare runbook evidence (currently not observed).
+  5. Generate an SBOM and build provenance for released artifacts.
+
+  export: jankhunt42 passport . --json | --html > passport.html   ·   shareable: --redact
+```
+<!-- /sample -->
+
+Read it the way the tool means it:
+
+- The exposure is **High** because of *possible* destructive authority: an observed `DELETE` statement against a database declared `restricted`/`critical`. The edge is `observed`, not `verified`, which is why the reach reads "0 known".
+- The decision is **review**, not **block**. Static leads ask for grant verification; they never block on their own.
+- The co-reachability of the restricted ledger and an external endpoint raises exposure, but it is reported as a *possible* egress path, not a data flow.
+- Runbook and observability are **not-observed**, which means unknown, not absent.
+
+## The evidence model
+
+| State | Meaning |
+|---|---|
+| `observed` | The repository directly contains it: a literal endpoint, an SQL verb in a string, an HTTP call |
+| `declared` | Configuration or a manifest says so: env values, Kubernetes RBAC, workflow `permissions:`, `.jankhunt42.json` declarations |
+| `inferred` | A heuristic: an SDK import, a manifest dependency, an endpoint resolved by environment-variable name |
+| `provider-verified` / `verified` | From an operator-supplied inventory **outside** the repository, or an exporter-recorded attestation verification. jankhunt42 itself verifies no signatures |
+| `unknown` | Not established. Never treated as safe, never as proven dangerous |
+| `refuted` / `disproven` | Explicitly refuted by a trusted operator inventory, and excluded |
+
+Terminal, HTML, JSON, the skill, and this README all use the same words. Paths take the strength of their weakest edge. "Known" reach means verified; everything else is potential.
+
+## What can it hurt? `map`
+
+```sh
+jankhunt42 map .                              # exposure, coverage, crossings, top paths, unknowns
+jankhunt42 map . --json                       # jankhunt.map.v1 (templates/map.schema.json)
+jankhunt42 map . --html > map.html            # blast radius explorer
+jankhunt42 map . --base HEAD~1 --json         # graph delta from committed git objects only
+jankhunt42 map . --redact --json              # shareable: pseudonymous IDs, no hosts or snippets
+jankhunt42 map . --inventory ../inventory.json # operator inventory: classifications and verified grants
+```
+
+**Discovery** is offline and static. It reads Python, JavaScript/TypeScript and .NET code; `.env`, config and appsettings files; Kubernetes workloads and RBAC; docker-compose; GitHub Actions permissions and cloud logins; Terraform data stores and privileged role grants; and dependency manifests (as weak evidence). Secret references are recorded by name and never dereferenced. Dynamic endpoints become explicit unresolved targets rather than invented hosts.
+
+**Blast radius** walks each principal's admissible edges separately for confidentiality, integrity and availability. It uses a bounded, deterministic traversal with witness paths, and every reachable asset is counted once. Unknown capability counts as *possibly* anything, never read-only. An independent brute-force oracle checks the traversal on thousands of seeded graphs.
+
+**Exposure** is one qualitative class: Low, Moderate, High, Critical, or Unknown. Its rules are monotone, so more authority, sensitivity or reach can never lower it. There is no probabilistic score and no claim of exploitability.
+
+**The HTML explorer** is one file with a `default-src 'none'` Content-Security-Policy, so it makes no requests. It has:
+
+- a column graph with pan, zoom and keyboard navigation;
+- an inspector that shows every node and edge with its receipts (`file:line`, adapter, sanitized snippet, assumptions);
+- filters by kind and minimum evidence, a search box, an unknowns overlay, and a per-principal confidentiality/integrity/availability highlight with witness paths;
+- a coverage and unknowns tab, an edges table (shown first for graphs over 300 nodes), and a graph-delta tab for `--base`.
+
+**`--base REF`** builds both sides from committed git objects only. Dirty or untracked files cannot contaminate the diff. It reports new and removed edges, permission escalations, newly reachable sensitive assets, trust-boundary changes, and coverage regression.
+
+Semantics, adapters, inventory format, and limits: [`references/connectivity.md`](references/connectivity.md).
+
+## Can we responsibly ship it? `passport`
+
+```sh
+jankhunt42 passport .                          # decision, reasons, evidence areas, next steps
+jankhunt42 passport . --json                   # jankhunt.passport.v1 (templates/passport.schema.json)
+jankhunt42 passport . --html > passport.html   # printable, offline
+jankhunt42 passport . --policy ../policy.json  # operator policy (outside the repo)
+jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
+```
+
+The decision is the most severe of seven named rules. These cover coverage (a hard floor), owner, sensitive external export, production authority, mandatory supply-chain evidence, the Jank Score policy, and maximum exposure. It is never a weighted average, and `insufficient-evidence` can never become `pass`.
+
+Policy precedence is defaults < operator `--policy` (outside the repository) < hard floors. Repository config (`passport.policy`, or a `--policy` file inside the repo) can only tighten. Lifecycle is `draft` or `assessed`; acceptance is a separate, externally authorized act that this tool does not create.
+
+Rules, precedence, declarations, and schema: [`references/passport.md`](references/passport.md).
+
+## What's broken? Investigation
+
+These are the established 1.x capabilities, unchanged in behaviour and machine output.
+
+### Scan and score
+
+```sh
+jankhunt42 scan .                       # TTY "code autopsy"; Markdown when piped
+jankhunt42 scan . --json                # full machine report
+jankhunt42 scan . --sarif > jank.sarif  # SARIF 2.1.0 for code scanning
+jankhunt42 scan . --html > jankhunt42.html
+jankhunt42 scan . --fail-on critical    # explicit CI gate
+jankhunt42 scan . --since HEAD          # whole-tree plus new-code score
+jankhunt42 score . --json               # Jank Score 2.0 breakdown
+jankhunt42 rules --category security    # the rule catalog
+```
+
+There are 79 static rules. They cover:
+
+- secrets and credentials;
+- injection, unsafe deserialization and archives, and crypto/TLS/JWT/CORS mistakes;
+- swallowed errors, missing timeouts, blocking calls in async code;
+- complexity, and test hygiene;
+- Docker and Compose, Kubernetes security context, GitHub Actions and GitLab CI pitfalls;
+- lockfiles, unpinned dependencies, and broken Markdown links.
+
+`scan --cve` adds OSV.dev advisories. It is opt-in, and only package name, version and ecosystem leave the machine.
+
+**Jank Score 2.0** is a transparent prioritization device with four dimensions (security, reliability, maintainability, tests) and A-E grades. Its headline is anchored to the worst dimension, so a security problem cannot be averaged away:
+
+```text
+points    = severity_weight × confidence_factor × exposure_factor
+dimension = max(100 × (1 − e^(−points_per_KLOC / K)), severity_floor)
+headline  = round(0.70 × worst_dimension + 0.30 × weighted_average)
+```
+
+The arithmetic is unchanged in 2.0. Details: [`references/scoring.md`](references/scoring.md).
+
+### Review a diff
+
+```sh
+jankhunt42 review . --json                          # working tree, staged, untracked
+jankhunt42 review . --base HEAD~1 --json            # committed changes; scans HEAD, never a dirty tree
+jankhunt42 review . --staged --md
+jankhunt42 review . --commit HEAD --brief           # handoff for a semantic reviewer
+jankhunt42 review . --base HEAD~1 --save-baseline baseline.json --json
+jankhunt42 review . --base HEAD~1 --baseline baseline.json --fail-on major
+```
+
+`review` is the deterministic evidence layer. It provides exact scope, separates new lines from context, and emits receipts with hashes, repro commands and counterevidence, plus coverage, baselines and supply-chain context. A receipt is `supported` or `unverified`, never `confirmed` without a repro. Protocol: [`references/review.md`](references/review.md).
+
+### Supply chain, logs, environment, reports
+
+```sh
+jankhunt42 supply-chain . --json                    # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog AppTrust
+jankhunt42 supply-chain . --require-sbom
+jankhunt42 triage app.log --top 25                  # fingerprint and rank log clusters
+jankhunt42 doctor --system                          # repo and host health
+jankhunt42 report . --logs app.log --out report.md  # scan + doctor + logs
+```
+
+Supply-chain parsing is offline. `provider-verified` means the exporter recorded a verification, and jankhunt42 never claims to have checked a signature. See [`references/supply-chain.md`](references/supply-chain.md).
+
+### Deep hunt (opt-in)
+
+```sh
+jankhunt42 hunt . --focus security --panel 6 --json > hunt.json
+jankhunt42 merge panel-*.json --md
+```
+
+A deep hunt is a structured adversarial panel: independent roles, cross-examination, and an evidence-weighted consensus that preserves dissent. In the skill it runs only when the user explicitly says "deep hunt". `confirmed` requires a repro or runtime evidence. Protocol: [`references/deep-hunt.md`](references/deep-hunt.md).
+
+## Configuration, privacy, and security
+
+**`.jankhunt42.json`** (or `.toml` on Python 3.11+) is discovered upward from the scan root. It tunes rules, severities, path scopes and ignores for `scan`, `score` and `hunt`. Its `passport` section holds repository declarations: owners, asset sensitivity and criticality, operations evidence, and tighten-only policy.
+
+```json
+{
+  "rules": {"JH205": {"enabled": false}},
+  "paths": {"legacy/**": {"severity": {"JH101": "info"}}},
+  "ignore": ["vendor/**"],
+  "passport": {
+    "owners": ["@example-org/payments"],
+    "assets": [{"match": "ledger-db", "sensitivity": "restricted", "criticality": "critical"}],
+    "policy": {"require": {"owner": true}}
+  }
+}
+```
+
+- **Suppressions:** add `# jankhunt42: ignore JH201` inline, with a reason, for a confirmed false positive only. A file-level `# jankhunt42: ignore-file JH305` goes in the first 12 lines. The pre-0.4 `jankhunt:` prefix is still honoured.
+- **Calibration:** `scan --calibrate` maintains `.jankhunt42/calibration.json` and downgrades rules that this repository consistently suppresses. It is opt-in, and with `--cve` it is one of only two flags that write or send anything.
+- **Offline by default:** no command contacts a network except `--cve`. `map` and `passport` never resolve, probe, or connect to anything they find.
+- **Redaction:** credentials, URL userinfo, query strings and paths, connection-string secrets, keys, tokens and emails are removed before anything is hashed, displayed or stored. Repository control characters are neutralized before they reach a terminal. HTML output escapes everything and runs under a no-network CSP.
+- **Sensitive architecture:** a connectivity graph can reveal internal topology. Use `--redact` for anything you share. Generated artifacts contain relative paths only.
+- **Untrusted repositories:** jankhunt42 never executes repository code or scripts. Instructions embedded in repository content are data, not commands.
+
+## Install as an agent skill
+
+jankhunt42 is one `SKILL.md` directory. Put it where your tool already looks for skills:
 
 | Tool | Project scope | User scope |
 | --- | --- | --- |
@@ -21,445 +313,21 @@ JankHunt42 is one `SKILL.md` directory, so installing it is just putting that di
 | Codex CLI | `.codex/skills/jankhunt42/` (also reads `.agents/skills/`) | `~/.codex/skills/jankhunt42/` |
 | OpenCode | `.opencode/skills/jankhunt42/` (also reads `.claude/skills/`, `.agents/skills/`) | `~/.config/opencode/skills/jankhunt42/` |
 
-Or install via [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42): `npx @skills-hub-ai/cli install jankhunt42`. The scanner itself (`scripts/jankhunt42`) is plain Python 3.9+ stdlib and works identically regardless of which tool invokes it — nothing in this repo is tool-specific.
+The skill routes debugging and scanning requests, mapping/exposure/blast-radius requests, and passport/release-readiness requests to the matching command and reference. It never starts a deep hunt without explicit permission.
+
+The listing on [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42) carries the `SKILL.md` instructions only. Clone the repository to get the CLI.
 
 ### Verifying a release
 
-Every tag (`vX.Y.Z`) is built into a source tarball and signed in CI with a [GitHub Artifact Attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) (keyless Sigstore, tied to this repo's GitHub Actions identity — see `.github/workflows/provenance.yml`). This is independent of any registry's own badge; verify it yourself with the GitHub CLI:
+Every `vX.Y.Z` tag is built into a source tarball and attested in CI with a [GitHub Artifact Attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) (keyless Sigstore, tied to this repository's Actions identity; see `.github/workflows/provenance.yml`):
 
 ```sh
 gh attestation verify jankhunt42-<version>.tar.gz -R cloudbustinguk/jankhunt42
 ```
 
-This confirms the tarball was produced by this repo's CI from the tagged commit and hasn't been altered since. It does not imply any particular third-party marketplace has independently reviewed the skill's behavior.
-
-What makes it more than a regex wrapper:
-
-- **Jank Score 2.0** — a transparent, dimension-based prioritization model inspired by SonarQube's ratings and Veracode's severity × confidence philosophy. It grades security, reliability, maintainability, and test confidence separately, anchors the headline to the weakest dimension, and can score only the lines changed since a git ref.
-- **Evidence-gated diff review** — `jankhunt42 review` establishes exact scope, separates new lines from changed-hunk context, emits stable receipts with counterevidence and repro commands, measures coverage, and compares against a baseline. It is a deterministic pre-pass for `/review`, not a replacement for it.
-- **Supply-chain context** — offline parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Externally verified evidence is labeled `provider-verified`; signature material JankHunt42 did not verify is labeled `unverified`.
-- **Deep hunt (opt-in)** — a structured adversarial panel for high-risk or ambiguous work. Independent roles investigate, cross-examine, and reach an evidence-weighted consensus; `confirmed` requires a repro or direct runtime evidence, and dissent is preserved.
-- **Citizen-developer and AI-assisted jank** — a growing share of production code was never written by anyone who calls themselves an engineer: a Copilot/ChatGPT suggestion pasted in whole, a low-code workflow a citizen developer wired up, a "quick script" that became a service. That code fails in predictable ways — a secret left in from the pasted example, happy-path logic with swallowed exceptions, duplicated scaffolding from repeated regeneration, zero tests because nothing prompted for one. JankHunt42 doesn't detect "AI-written code"; its `security`, `reliability`, `maintainability`, and `tests` rule categories catch this pattern as a side effect of catching any other kind of jank, regardless of who or what wrote the line.
-- **Repo-tuned, not one-size-fits-all** — a `.jankhunt42.toml`/`.jankhunt42.json` config file disables a rule, overrides its severity, or ignores a subtree per repo instead of scattering inline comments. An opt-in `--calibrate` ledger goes further: it counts how often each rule is suppressed *in this repo* and downgrades one that runs hot, with the exact rate and sample size attached — calibration by counting, not vibes.
-- **Cross-file duplicates** — the same defect pasted into several files, not refactored into one, is a documented blind spot for diff-only reviewers and an AI-assisted-code growth pattern. `scan`/`score`/`hunt` cluster findings that share a rule and near-identical evidence across files, so the fix targets the class instead of one site.
-
-None of these is a substitute for compilers, tests, Semgrep, SonarQube, Trivy, signature verifiers, or human review. They are ways to spend attention better.
-
-```text
-  ╭──────────────────────────────────────────────────────────────────────╮
-  │  J A N K H U N T 4 2   // code autopsy lab                          │
-  │  /srv/api  ·  1,284 files  ·  96,420 LOC  ·  1.82s                   │
-  ╰──────────────────────────────────────────────────────────────────────╯
-
-  JANK  ██████████████░░░░░░  44/100  D · grimy  policy fail
-  Security          ██████████████  55  D  2 findings
-  Reliability       ███████░░░░░░░  30  C  4 findings
-  Maintainability   ██░░░░░░░░░░░░   4  A  21 findings
-  Test confidence   ░░░░░░░░░░░░░░   0  A  0 findings
-  CRITICAL 2   MAJOR 7   MINOR 23   INFO 41
-
-  TOP OFFENDERS
-    src/api/auth.ts            ██████████████  9 findings
-    .github/workflows/ci.yml   ████████        5 findings
-    deploy/deployment.yaml     ██████          4 findings
-
-  FINDINGS  ·  2 findings  ·  worst first
-
-  ┃ 01   CRITICAL   JH101  Hardcoded secret
-  ┃     src/api/auth.ts:42  security  confidence high
-  ┃     │ evidence const API_KEY = "***REDACTED***"
-  ┃     └ why A credential-like literal is embedded in source.
-  ┃       fix Rotate the credential now, purge it from history, and…
-```
-
-TTY output uses a colored banner, a dimension scorecard, severity chips, bars, and ranked cards. Finding cards have a severity-colored rail, bold index/rule/location, and labeled `evidence` / `why` / `fix` lines. Piped output, `--md`, `NO_COLOR`, or `TERM=dumb` produces clean Markdown. `--json` and `--sarif` are stable machine formats; JSON includes the full score arithmetic and, with `--since`, a new-code view. `review --json` adds exact diff scope, receipt hashes, baseline deltas, coverage, and supply-chain evidence.
-
-`scan --html` writes a single, self-contained visual report: score ring, dimension cards, hot spots, severity filters, and search, with embedded CSS/JS and no external assets. Redirect it to a file:
-
-```sh
-jankhunt42 scan . --html > jankhunt42.html
-```
-
-## Why this exists
-
-Most scanners answer “does this line match a rule?” JankHunt42 is organized around the debugging question: **what is most likely to explain the failure, and what evidence should I collect next?** It combines a fast static pass with log fingerprinting and an environment doctor, so you can move from symptom to hypothesis without assembling five tools first.
-
-It is deliberately dependency-free: one Python 3.9+ interpreter, no `pip install`, no network unless you ask for CVE data. That makes it usable on locked-down CI runners, random customer machines, and air-gapped boxes.
-
-## How review fits together
-
-JankHunt42 is not trying to win the code-review chatbot contest. It does not build a code graph, run forty linters, chat in a PR, or auto-fix a branch. It provides the **deterministic evidence layer** around a semantic reviewer:
-
-| Layer | Owns |
-|---|---|
-| `jankhunt42 review` | Exact diff scope, changed-line/context separation, static receipts, coverage, baseline deltas, supply-chain evidence, reproducible gates |
-| Built-in `/review` or another semantic reviewer | Intent, design, reachability, impact, test design, adjudication, and prose |
-| Compiler/tests/native tools | Correctness, build, type, lint, and runtime proof |
-
-Run the deterministic pass first, send the diff and `--brief` to the semantic reviewer, and require new evidence before any lead is upgraded to `confirmed`. The receipt contract is in [`references/review.md`](references/review.md); evidence-format boundaries are in [`references/supply-chain.md`](references/supply-chain.md).
-
-## Quick start
-
-### As an OpenCode skill
-
-Copy this folder into either location:
-
-```sh
-# Global (available in every project)
-git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.config/opencode/skills/jankhunt42
-
-# Or project-local (committed with the repo)
-mkdir -p .opencode/skills
-cp -R /path/to/jankhunt42 .opencode/skills/jankhunt42
-```
-
-OpenCode discovers `SKILL.md` automatically. The model can invoke **JankHunt42** for debugging and audit work. Restart the session if the skill list was already loaded.
-
-### As a standalone CLI
-
-```sh
-SKILL_DIR=~/.config/opencode/skills/jankhunt42
-python3 "$SKILL_DIR/scripts/jankhunt42" --version
-
-# Optional: put it on PATH (the launcher resolves symlinks)
-mkdir -p ~/.local/bin
-ln -sf "$SKILL_DIR/scripts/jankhunt42" ~/.local/bin/jankhunt42
-jankhunt42 --version
-```
-
-Requirements: Python 3.9+ (3.11+ recommended), Linux/macOS. Windows works for the scanner; `doctor --system` degrades gracefully where Linux-only probes are unavailable. No third-party packages.
-
-## Commands
-
-### Scan
-
-```sh
-jankhunt42 scan .                              # TTY autopsy, Markdown when piped
-jankhunt42 scan src tests --md                 # force Markdown on a TTY
-jankhunt42 scan . --json > jank.json           # machine-readable
-jankhunt42 scan . --sarif > jank.sarif         # SARIF 2.1.0 for code scanning
-jankhunt42 scan . --html > jankhunt42.html       # self-contained visual report
-jankhunt42 scan . --fail-on critical           # exit 1 if a critical+ finding exists
-jankhunt42 scan . --min-severity major         # only major and above
-jankhunt42 scan . --min-severity info          # include context/style findings
-jankhunt42 scan . --category security --category ci
-jankhunt42 scan . --rule JH101 --rule JH418
-jankhunt42 scan . --exclude 'vendor/**' --max-files 5000
-jankhunt42 scan . --cve                        # OSV.dev dependency advisories (network)
-jankhunt42 scan . --since origin/main          # whole-tree + new-code score
-jankhunt42 scan . --config .jankhunt42.toml      # explicit config (default: discovered upward)
-jankhunt42 scan . --no-config                  # ignore any .jankhunt42.toml/.jankhunt42.json
-jankhunt42 scan . --calibrate                  # apply + update the FP-calibration ledger (writes)
-```
-
-Important flags:
-
-| Flag | Meaning |
-|---|---|
-| `--md` | Force Markdown even on a TTY |
-| `--html` | Self-contained HTML report on stdout; mutually exclusive with `--md`, `--json`, `--sarif` |
-| `--no-color` | Disable ANSI colors |
-| `--json` / `--sarif` | Stable machine output; ignores `--max-findings` |
-| `--fail-on SEV` | Exit `1` when any finding is at least that severe |
-| `--min-severity SEV` | Filter findings; default `minor` (use `info` for context) |
-| `--category`, `--rule` | Narrow the rule set |
-| `--exclude GLOB` | Skip paths (repeatable) |
-| `--max-findings N` | Cap the human view only (default 300) |
-| `--cve` | Query OSV.dev for pinned dependencies |
-| `--since REF` | Also score findings on lines changed since `REF` |
-| `--config PATH` / `--no-config` | Explicit config file, or skip auto-discovery |
-| `--calibrate` | Apply + update `.jankhunt42/calibration.json`; the only flag besides `--cve` that writes anything |
-| `--quiet` / `--no-progress` | Suppress the spinner |
-
-`scan`, `score`, and `hunt` also always compute cross-file duplicate
-clusters — the same defect repeated in two or more files, surfaced under
-`cross_file_duplicates` in `--json` and as its own section in `--md`/TTY
-output. No flag needed; it costs nothing extra since the findings already
-exist.
-
-#### HTML report
-
-```sh
-jankhunt42 scan . --html > jankhunt42.html
-open jankhunt42.html                 # macOS; use xdg-open on Linux
-```
-
-The report is one portable file: embedded CSS/JS, no external fonts, scripts, styles, or images. It includes the Jank Score headline and dimensions, severity counts, top offenders, top rules, and filterable/searchable finding cards. Every repository-derived string is HTML-escaped, and secret redaction still applies. `--max-findings N` caps the human view; `--json` and `--sarif` keep the full set. Choosing `--html` together with `--md`, `--json`, or `--sarif` is a usage error (exit `2`).
-
-### Review a diff
-
-```sh
-jankhunt42 review .                              # working tree + untracked files
-jankhunt42 review . --staged                     # index only
-jankhunt42 review . --commit HEAD                # one committed tree
-jankhunt42 review . --base origin/main           # BASE...HEAD, scans HEAD tree
-jankhunt42 review . --pr 123                     # checked-out GitHub PR
-jankhunt42 review . --base origin/main --json > review.json
-jankhunt42 review . --base origin/main --sarif > review.sarif
-jankhunt42 review . --base origin/main --brief   # reviewer handoff pack
-```
-
-`review` scans the exact revision described by the diff: the working tree, the index, a commit tree, or `HEAD`. A committed review never silently picks up dirty working-tree edits. It separates findings into:
-
-- **new** — overlaps an added line and participates in the new-code score and gate;
-- **contextual** — in a changed hunk but on an unchanged line; useful context, not a gate finding;
-- **unchanged** — in a changed file but outside every hunk; counted as suppressed.
-
-Every machine-readable finding is a receipt: rule, location, evidence, counterevidence, a `jankhunt42 scan …` repro command, `supported`/`unverified` verification, scan ID, and SHA-256 `receipt_hash`. A receipt is never `confirmed` without runtime evidence. The review also reports coverage and skipped-file reasons so a zero-finding result cannot hide a scope collapse.
-
-```sh
-# Save an accepted baseline, then gate only new findings.
-jankhunt42 review . --base origin/main --json --save-baseline .jankhunt42/baseline.json
-jankhunt42 review . --base origin/main \
-  --baseline .jankhunt42/baseline.json --fail-on major
-
-# Gate unverified leads too (off by default).
-jankhunt42 review . --base origin/main --baseline .jankhunt42/baseline.json \
-  --fail-on major --include-unverified
-```
-
-Important flags:
-
-| Flag | Meaning |
-|---|---|
-| `--staged`, `--commit SHA`, `--base REF`, `--pr N` | Mutually exclusive diff modes |
-| `--baseline PATH` | Compare with prior review JSON, scan JSON, or findings list |
-| `--save-baseline PATH` | Write this review as the next baseline |
-| `--fail-on SEV` | Exit `1` for **new** supported findings at/above `SEV`; persisting baseline findings are excluded |
-| `--include-unverified` | Include unverified leads in the `--fail-on` gate |
-| `--brief` | Markdown reviewer pack with scope, receipts, score, supply chain, and the evidence contract |
-| `--no-supply-chain` | Skip SBOM/attestation discovery for this review |
-| `--require-sbom`, `--require-attestation`, `--require-verified-attestation` | Add supply-chain requirements to the review gate |
-
-The review protocol, receipt schema, baseline semantics, and reviewer handoff contract are documented in [`references/review.md`](references/review.md). The machine schema is [`templates/review-receipt.schema.json`](templates/review-receipt.schema.json).
-
-### Supply-chain evidence
-
-```sh
-jankhunt42 supply-chain . --json
-jankhunt42 supply-chain . --md
-jankhunt42 supply-chain . --require-sbom --require-attestation
-jankhunt42 supply-chain . --jfrog-evidence apptrust-evidence.json
-jankhunt42 supply-chain . --no-discover --sbom build/app.spdx.json
-```
-
-| Evidence | Accepted forms |
-|---|---|
-| SPDX 2.x | JSON and tag-value |
-| SPDX 3 | JSON-LD `@graph` |
-| CycloneDX | JSON and XML |
-| GitHub attestations | Sigstore/DSSE bundles and JSONL from `gh attestation download` |
-| in-toto / Sigstore | Direct statements, SLSA v0.2/v1 provenance, DSSE envelopes |
-| JFrog AppTrust | `evidenceVerifications`, nested `sigstoreBundle`, direct predicates, relative `downloadPath` |
-
-The inspector is offline and read-only. `provider-verified` means the **exporter** recorded a successful verification (for example, JFrog's `verificationResult`); it is not a fresh JankHunt42 verification. GitHub/Sigstore signature material is `unverified` with a `gh attestation verify` or `cosign` hint; statements without signature material are `unsigned`. JankHunt42 does not perform cryptography. Missing evidence is a warning unless a `--require-*` flag makes it a gate. Full format and trust-boundary notes: [`references/supply-chain.md`](references/supply-chain.md).
-
-### Score
-
-```sh
-jankhunt42 score .                         # dimension scorecard (TTY)
-jankhunt42 score . --md                    # Markdown
-jankhunt42 score . --json                  # full arithmetic, dimensions, policy
-jankhunt42 score . --since origin/main     # new-code score
-jankhunt42 score . --fail-policy           # advisory exit 1 when policy is fail
-```
-
-The scorecard separates **security, reliability, maintainability, and test confidence**, assigns A-E grades, and reports an advisory `pass`/`warn`/`fail` policy. It is a prioritization device, not a compliance certificate. The full model — weights, floors, saturation, new-code behavior, worked examples, and limitations — is in [`references/scoring.md`](references/scoring.md).
-
-### Triage logs
-
-```sh
-jankhunt42 triage app.log
-jankhunt42 triage app.log api.log --top 25
-jankhunt42 triage --grep 'timeout|refused|panic' *.log
-gzip -dc prod.log.gz | jankhunt42 triage -
-jankhunt42 triage app.log --json
-```
-
-Triage parses plain text, JSONL, and gzip. It extracts severity and timestamps, detects stack traces, attaches continuations, normalizes volatile values (UUIDs, IPs, hex, paths, numbers, quoted strings), and clusters identical fingerprints. The result ranks clusters by severity and frequency, with line spans and samples.
-
-### Doctor
-
-```sh
-jankhunt42 doctor
-jankhunt42 doctor --json
-jankhunt42 doctor --system          # + listening ports, failed units, kernel warnings
-jankhunt42 doctor /path/to/project
-```
-
-Reports repository state (branch, HEAD, dirty files, conflicts, stashes), manifests and lockfiles, language mix, test count, installed toolchains and versions, CPU/RAM/disk, load, inotify and file-descriptor limits, proxy/PATH-related environment, and optional Linux system health. It flags mismatches such as “package.json with no lockfile” and “disk almost full.”
-
-### Report
-
-```sh
-jankhunt42 report . --logs app.log --out jankhunt42-report.md
-jankhunt42 report . --system --cve --out report.md
-```
-
-Builds a Markdown investigation report with an executive summary, the Jank Score 2.0 scorecard, environment snapshot, static findings, log clusters, an investigation worksheet, and next moves. Safe to attach to an issue or PR. Add `--since origin/main` to include a new-code score.
-
-### Deep hunt (opt-in)
-
-```sh
-jankhunt42 hunt . --focus security --panel 6 --rounds 3 --json > hunt.json
-jankhunt42 hunt . --md --prompts > hunt-brief.md
-jankhunt42 merge panel-*.json --md
-```
-
-A deep hunt is an adversarial panel, not a vote. It runs only when the user explicitly asks for one. The generated brief includes role prompts, a scenario deck, the lead board, guardrails, and the consensus contract. Independent panelists investigate first; cross-examination tries to falsify each claim; `merge` groups duplicates, preserves conflicts and dissent, and classifies findings as `confirmed`, `supported`, `contested`, `unverified`, or `rejected`.
-
-`confirmed` requires a repro command/test or direct runtime evidence. Votes never upgrade a claim. The merger enforces the rule: a declared `confirmed` claim without that evidence is downgraded to `supported` with a gate note. Permission to spawn agents does not grant permission to edit code, touch production, run exploits, or start load tests. See [`references/deep-hunt.md`](references/deep-hunt.md) for the full protocol.
-
-### Rules
-
-```sh
-jankhunt42 rules
-jankhunt42 rules --category security
-jankhunt42 rules --min-severity major
-jankhunt42 rules --json
-```
-
-Prints the catalog with severity, category, confidence, and title. `JH901` is populated dynamically by `scan --cve`.
-
-## What it detects
-
-79 built-in rules, plus OSV advisories:
-
-| Area | Examples |
-|---|---|
-| Secrets & credentials | Cloud keys, GitHub/Slack/Stripe tokens, private keys, generic `api_key = "..."`, committed `.env`/key files (values redacted) |
-| Injection & execution | SQL concatenation/interpolation, `shell=True`, `os.system`, `child_process.exec`, `eval`, `new Function`, `document.write`, `innerHTML`, `dangerouslySetInnerHTML`, Vue `v-html`, Angular security bypasses |
-| Deserialization & files | `pickle.loads`, unsafe YAML, Java `readObject`, `tarfile`/`zipfile` `extractall`, `tempfile.mktemp` |
-| Crypto & auth | MD5/SHA-1/DES/RC4/ECB, `verify=False`, `rejectUnauthorized: false`, JWT verification disabled, `algorithms=["none"]`, insecure RNG near secrets, wildcard `ALLOWED_HOSTS` |
-| Web hardening | Debug mode, wildcard CORS, `0.0.0.0` binds, XML parser review |
-| Reliability | Empty handlers, bare/broad catches, `return` in `finally`, blocking calls in `async def`, HTTP/subprocess calls without timeouts, mutable defaults, `None` comparisons, suspicious sleeps |
-| Maintainability | Long functions, deep nesting, very long lines, large files, duplicated blocks, commented-out code, TODO/FIXME, wildcard imports, suppressions, dead branches |
-| Tests | Skipped/disabled tests, tests without assertions, focused tests (`.only`), tautological assertions, sleeps |
-| Docker & Compose | Root final stage, unpinned base images, `ADD` from URL, privileged containers, host networking, dangerous capabilities |
-| Kubernetes | Privileged pods, host namespaces, `allowPrivilegeEscalation`, root UID, `seccompProfile: Unconfined`, `hostPath`, `:latest`, deprecated APIs, plaintext `Secret` values |
-| GitHub Actions | `pull_request_target` + PR-head checkout, event-expression shell injection, unpinned actions (tag/branch), `write-all`, `continue-on-error`, `npm install` |
-| GitLab CI | Remote includes, unpinned `image:latest`, `allow_failure` |
-| Supply chain | Missing lockfiles, unpinned npm ranges, OSV CVEs with fixed versions |
-| Docs | Broken relative Markdown links |
-
-See `jankhunt42 rules` for the live catalog. IDs are stable; new rules may be added without renumbering.
-
-## CVE awareness
-
-`scan --cve` parses pinned dependencies from:
-
-- `package.json`, `package-lock.json`, `npm-shrinkwrap.json`
-- `requirements*.txt`, `pyproject.toml` (exact `==` pins), `Pipfile.lock`, `poetry.lock`
-- `Cargo.lock`, `go.mod`
-- `pom.xml`, `build.gradle(.kts)`, `*.csproj`
-- `Gemfile.lock`, `composer.lock`, `pubspec.lock`
-
-It batches queries to [OSV.dev](https://osv.dev), then fetches full advisories because `querybatch` returns only IDs and modification times. Findings include advisory IDs, CVE aliases, severity, fixed versions, and references.
-
-**Privacy:** only package name, version, and ecosystem leave the machine. Source code and manifests are never uploaded. `--cve` is opt-in; without it, everything is offline. If the network fails, the scan continues with a warning—CVE lookup is best-effort, not a build gate.
-
-**Limits:** ranges such as `^1.2.3` and `*` are skipped because the installed version is unknown; lockfiles are preferred. OSV severity is mapped: critical→critical, high→major, medium→minor, low→info. Always confirm advisory applicability against the actual resolved dependency tree.
-
-## Suppressions
-
-For confirmed false positives, add a reason and rule IDs:
-
-```python
-# jankhunt42: ignore JH201,JH202
-except Exception:  # jankhunt42: ignore JH201
-    pass
-```
-
-File-level suppressions go in the first 12 lines:
-
-```python
-# jankhunt42: ignore-file JH305
-```
-
-Suppressed findings do not count toward totals. Do not suppress a real defect; fix it instead. The pre-0.4 `# jankhunt: ignore …` prefix is still honored, so existing suppressions keep working; new ones should use `jankhunt42:`.
-
-### Repo-wide: a config file instead of per-line comments
-
-Inline suppression is for one confirmed false positive on one line. For a
-rule that is consistently wrong *in this repo* — too noisy for a generated
-directory, miscalibrated for your style, or simply not a risk you accept —
-put it in a config file once instead of scattering comments:
-
-```json
-{
-  "rules": { "JH205": { "enabled": false } },
-  "paths": {
-    "tests/**": { "ignore": ["JH301"] },
-    "legacy/**": { "severity": { "JH101": "info" } }
-  },
-  "ignore": ["vendor/**", "**/*.generated.*"]
-}
-```
-
-Save it as `.jankhunt42.json` (always works) or `.jankhunt42.toml` (needs Python
-3.11+'s `tomllib`; older interpreters print a warning and skip it rather
-than misparse it) at the scan root or any ancestor — it is discovered the
-way `.git` is, or pin one explicitly with `--config PATH`, or bypass
-discovery with `--no-config`. It applies to `scan`, `score`, and `hunt`.
-`review`'s receipt pipeline does not consult it yet.
-
-### Repo-local false-positive calibration (opt-in, `--calibrate`)
-
-A rule's severity and confidence are set once, at authoring time, and never
-revisited — the industry's actual bottleneck is exactly this kind of
-unexamined noise (SonarSource cites 3.2% FP across 137M issues as the bar
-most tools miss by a wide margin). `--calibrate` closes that loop with
-counting, not inference: every run records how often each rule fired and
-how many of those firings were suppressed (the inline pragma above) into
-`.jankhunt42/calibration.json`. Once a rule has at least 5 recorded firings in
-*this* repo, later `--calibrate` runs check its suppression rate:
-
-| Suppression rate | Effect |
-|---:|---|
-| < 50% | No change |
-| ≥ 50% | Severity drops one step, confidence → `low`, tagged `calibrated` |
-| ≥ 80% | Severity floors at `info` |
-
-This is the only flag besides `--cve` that writes anything. Commit the
-ledger if you want calibration shared across a team or CI; gitignore it for
-a purely local, per-machine signal. A downgraded finding still appears —
-calibration lowers priority, it never hides a finding the way suppression
-does.
-
-## Jank Score 2.0
-
-The score is a **prioritization device**, not a compliance metric. It is versioned (`2.0`) and transparent.
-
-**Inspiration, not imitation:**
-
-- **SonarQube:** separate ratings, A-E grades, density over raw counts, severity floors, new-code focus, quality-gate thinking.
-- **Veracode:** severity × confidence, coarse exposure weighting, policy gates, false positives as first-class results.
-
-**Model in one screen:**
-
-```text
-points    = severity_weight × confidence_factor × exposure_factor
-dimension = max(100 × (1 − e^(−points_per_KLOC / K)), severity_floor)
-headline  = round(0.70 × worst_dimension + 0.30 × weighted_average)
-```
-
-Per-rule contribution saturates after 10 findings. A single blocker or critical floors its dimension, mirroring rating-by-worst-issue. The 70% worst-dimension anchor prevents a security catastrophe from being averaged away by clean style.
-
-| Grade | Score | Reading |
-|---|---:|---|
-| A | 0-5 | Clean enough to stop looking at the scanner |
-| B | 6-15 | Minor drag; fix on touch |
-| C | 16-35 | Worth a planned pass |
-| D | 36-60 | Serious; prioritize before the next release |
-| E | 61-100 | Stop and fix; risk is concentrated |
-
-The advisory policy is `pass`, `warn`, or `fail`; `score --fail-policy` exits `1` on `fail`. That is not the CI gate. Gate CI on `--fail-on` and native tests. Use `--since REF` to score only changed lines, so legacy debt does not block a clean fix.
-
-Full formula, weights, floors, worked examples, calibration, and limitations: [`references/scoring.md`](references/scoring.md).
+This confirms that the tarball came from this repository's CI at the tagged commit. It says nothing about any marketplace's review.
 
 ## CI integration
-
-### GitHub Actions
 
 ```yaml
 name: jankhunt42
@@ -468,172 +336,117 @@ permissions:
   contents: read
   security-events: write
 jobs:
-  scan:
+  assure:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4   # pin to a SHA in production
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Scan
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --sarif > jankhunt42.sarif
-      - name: Score
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 score . --json > jankhunt42-score.json
-      - name: Review new lines
+      - run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --sarif > jankhunt42.sarif
+      - run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 map . --json > map.json
+      - name: What changed in what it can reach
         if: github.event_name == 'pull_request'
-        run: |
-          python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --json > review.json
-          python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --fail-on major
-      - name: Supply-chain evidence
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 map . --base "${{ github.event.pull_request.base.sha }}" --md >> "$GITHUB_STEP_SUMMARY"
+      - name: Passport (enforced)
+        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 passport . --json --fail-on block > passport.json
+      - uses: github/codeql-action/upload-sarif@v3
         if: always()
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 supply-chain . --json > supply-chain.json
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: jankhunt42.sarif
-      - name: Gate
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --fail-on critical
-      - name: HTML report
-        if: always()
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --html > jankhunt42.html
-      - name: Upload reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: jankhunt42-reports
-          path: |
-            jankhunt42.html
-            jankhunt42-score.json
-            review.json
-            supply-chain.json
 ```
 
-For a baseline gate, keep an accepted `review.json` artifact (or `.jankhunt42/baseline.json`) and add `--baseline`. Without a baseline, `--fail-on` gates every new-line finding in the diff.
-
-### GitLab CI
-
-```yaml
-jankhunt42:
-  image: python:3.12-slim
-  script:
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --json > jankhunt42.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --json > review.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 supply-chain . --json > supply-chain.json
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --html > jankhunt42.html
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 review . --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --fail-on major
-    - python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --fail-on critical
-  artifacts:
-    when: always
-    paths: [jankhunt42.json, review.json, supply-chain.json, jankhunt42.html]
-```
-
-SARIF works with GitHub code scanning, GitLab SAST ingestion, and most Sonar-style dashboards that accept SARIF 2.1.0.
+Keep enforcement explicit. `scan --fail-on SEV`, `review --fail-on SEV` with a baseline, and `passport --fail-on OUTCOME` are the gates; everything else is advisory. GitLab CI works the same way, since every command is plain `python3`.
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Ran successfully; no finding met `--fail-on`, no review/supply-chain gate failed, and `--fail-policy` was not tripped |
-| `1` | A finding met `--fail-on`, a review/supply-chain requirement failed, a confirmed finding met `merge --fail-on`, or `score --fail-policy` saw policy `fail` |
-| `2` | Usage error, unreadable input, or a diff/reference that cannot be resolved |
+| `0` | Ran successfully and no explicit gate tripped (`map` and an advisory `passport` always exit 0) |
+| `1` | A gate tripped: `scan`/`review --fail-on`, a supply-chain requirement, `merge --fail-on`, `score --fail-policy`, `passport --fail-on`, or a failing `selftest` |
+| `2` | Usage error, unreadable input, unresolvable git ref, or invalid inventory/policy file |
 | `130` | Interrupted |
+
+## Self-assurance
+
+```sh
+jankhunt42 selftest           # the unit suite
+jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-evidence gate
+```
+
+`selftest --full` runs:
+
+- the unittest suite: an independent reference oracle for reachability, metamorphic and monotonicity properties, adapter fixtures, policy precedence, `--base` isolation, seeded fuzzing, golden terminal snapshots, schema checks, and cross-version compatibility against the previous local release tag;
+- the end-to-end shell regression suite;
+- a self-map compared with a hand-maintained ground truth;
+- a self-scan and self-passport, reported but never self-approving;
+- seven mutants that the tests must kill, each with an unmutated control;
+- a privacy scan of shipped files and generated artifacts;
+- a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
+- the suite on locally cached Python 3.9/3.12/3.13 container images, which are never pulled.
+
+Missing optional tools are reported as `skip`, never as a pass. A perfect self-score is not evidence of correctness; the independent checks are.
 
 ## Architecture
 
 ```text
-jankhunt42/
-├── SKILL.md                 # OpenCode doctrine + workflow
-├── README.md
-├── LICENSE
-├── CHANGELOG.md
-├── references/
-│   ├── method.md            # evidence-driven debugging method
-│   ├── playbooks.md         # stack/domain playbooks
-│   ├── toolbox.md           # copy-paste commands
-│   ├── scoring.md           # Jank Score 2.0 philosophy and formula
-│   ├── review.md            # diff review, receipts, baselines, coverage
-│   ├── supply-chain.md      # SBOM/attestation evidence and trust boundaries
-│   └── deep-hunt.md         # adversarial panel protocol
-├── templates/
-│   ├── report.md            # investigation report template
-│   ├── hunt-report.md       # deep-hunt report template
-│   ├── panel-finding.json   # panelist output contract
-│   └── review-receipt.schema.json  # receipt JSON Schema
-└── scripts/
-    ├── jankhunt42             # CLI entry point (stdlib only)
-    ├── jh_core.py           # types, file discovery, language detection, sanitizer
-    ├── jh_rules.py          # rule catalog + pattern engine
-    ├── jh_checks.py         # structural/multi-line checks
-    ├── jh_triage.py         # log parsing and clustering
-    ├── jh_doctor.py         # project/system diagnostics
-    ├── jh_cve.py            # manifest parsers + OSV client
-    ├── jh_score.py          # Jank Score 2.0 + new-code diff
-    ├── jh_review.py         # diff scope, receipts, baselines, review renderers
-    ├── jh_supply.py         # SBOM, attestation, and JFrog evidence parsers
-    ├── jh_hunt.py           # deep-hunt planner, prompts, consensus merger
-    ├── jh_render.py         # TTY and Markdown renderers
-    ├── jh_html.py           # self-contained HTML scan report
-    ├── jh_config.py         # .jankhunt42.toml/.jankhunt42.json discovery and application
-    ├── jh_calibrate.py      # opt-in false-positive calibration ledger
-    ├── jh_dedup.py          # cross-file duplicate clustering
-    └── selftest.sh          # offline regression fixture
+SKILL.md                 routing doctrine for agents (three questions, permission gates)
+references/              method, playbooks, toolbox, scoring, review, supply-chain, deep-hunt,
+                         connectivity (map), passport (passport, exposure, policy)
+templates/               report templates; review-receipt, map, and passport JSON Schemas
+scripts/jankhunt42       CLI entry point
+scripts/jh_core.py       types, discovery, sanitizer, safe_text      scripts/jh_rules.py, jh_checks.py  scanner rules
+scripts/jh_score.py      Jank Score 2.0                              scripts/jh_review.py   diff review and receipts
+scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_hunt.py     deep hunt and merge
+scripts/jh_graph.py      graph model, sanitizing, reachability, exposure, diff, redaction
+scripts/jh_map.py        discovery adapters, coverage, map views    scripts/jh_yaml.py     bounded YAML subset reader
+scripts/jh_policy.py     passport rules and precedence              scripts/jh_passport.py passport assembly
+scripts/jh_views.py      map/passport terminal views                scripts/jh_explorer.py offline HTML explorer
+scripts/jh_selftest.py   self-assurance orchestrator                scripts/selftest.sh    shell regression suite
+tests/                   unittest suite, oracle, fixtures (synthetic), golden snapshots
 ```
 
-The scanner is read-only. It does not install packages, modify the repo, or call external services unless `--cve` or `--calibrate` is passed (`--calibrate` writes only `.jankhunt42/calibration.json`). `review` and `supply-chain` are read-only too: review runs git diff/show commands and reads the target tree; supply-chain reads evidence files on disk and never contacts GitHub, Sigstore, JFrog, or a registry. File discovery uses `git ls-files` when available and otherwise walks the tree with conservative ignores (`.git`, `node_modules`, `vendor`, build output, generated/minified files, lockfiles for static rules).
+There is no circular dependency between scoring, the graph and the passport: they share only the canonical JSON shapes. `scan` never computes a passport.
+
+## Migrating from 1.x
+
+- Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
+- New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
+- The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
+- Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.
 
 ## Development
 
 ```sh
-cd jankhunt42/scripts
-python3 -m py_compile jh_core.py jh_rules.py jh_checks.py jh_triage.py jh_doctor.py jh_cve.py jh_score.py jh_review.py jh_supply.py jh_hunt.py jh_render.py jh_html.py jankhunt42
-./selftest.sh
+python3 -m unittest discover -s tests         # fast suite
+bash scripts/selftest.sh                       # end-to-end regression
+python3 scripts/jankhunt42 selftest --full     # everything, with a gate
+JH_UPDATE_SNAPSHOTS=1 python3 -m unittest discover -s tests -p test_terminal.py   # accept an intended view change
 ```
 
-The self-test builds temporary fixtures covering Python, CI, Kubernetes, Docker, tests, secrets, logs, git review modes, baselines, SBOMs, attestations, and JFrog evidence. It asserts that representative rules fire, that secrets are redacted, that JSON/SARIF parse, that the HTML report is parseable, self-contained, and escaped, that Jank Score 2.0 and the new-code view work, that review separates new/contextual/unchanged findings and gates only new baseline findings, that supply-chain evidence gets honest verification labels, that log clusters merge volatile values, and that hunt/merge preserve conflicts and dissent while downgrading unsupported `confirmed` claims. It does not require network.
+To add a rule, add it to `RULES` in `jh_rules.py` (or a `check=` in `jh_checks.py`), add a fixture case to `selftest.sh`, and run the self-scan. To add a map adapter, add it to `jh_map.py` with positive *and* negative fixtures in `tests/test_map.py`. Keep every claim's `verification` honest, and update `tests/fixtures/self-expected.json` by hand if this repository's own connectivity changes. Fixtures must be synthetic.
 
-When adding a rule:
+## Limitations
 
-1. Add it to `RULES` in `jh_rules.py` with a unique `JHxxx` ID, severity, category, confidence, message, and fix.
-2. Prefer a line pattern; use a `check=` function in `jh_checks.py` for multi-line/structural logic.
-3. Add a fixture case to `selftest.sh`.
-4. Run the self-scan (`jankhunt42 scan scripts`) and the fixture.
-5. Update `README.md` if the rule introduces a new category.
-
-## Limitations and false positives
-
-- Heuristics, not semantic analysis. Regex rules can miss data flow and can fire on examples, generated code, or documentation.
-- Language coverage is uneven: Python/JS/TS/Go/Java/C-family are strongest; other languages get generic checks.
-- Kubernetes rules inspect YAML text, not the rendered Helm chart or live cluster. `kubectl diff`/`kubeconform`/policy engines are still required.
-- CI rules see static workflow text; expressions and reusable workflows can change behavior at runtime.
-- Lockfile-based CVE checks only see pinned versions; ranges are skipped.
-- `doctor --system` is Linux-centric. On macOS/Windows, some probes are skipped.
-- The Jank Score 2.0 is a prioritization heuristic, not a vulnerability count, coverage percentage, or compliance certificate. Its dimension scores are not comparable across repositories with different rule sets or scan flags.
-- `review` is a static pre-pass: it does not run tests, execute code, infer full data flow, or re-review unchanged files. A receipt is a reason to investigate, not a verdict. Baseline matching uses stable rule/path/evidence fingerprints, not semantic identity across refactors. The new-code score density includes added lines from every reviewed file; a very large data/evidence file can dilute it.
-- `review --pr` requires `gh` and a checked-out PR head; it does not fetch or merge a remote branch itself. Binary files, generated paths, excluded globs, oversized files, and files beyond `--max-files` are listed as skipped rather than silently ignored.
-- Supply-chain parsing does not verify cryptography, transparency logs, certificate chains, artifact-to-source binding, SBOM completeness, or license policy. `provider-verified` is the exporter's recorded result. Use `gh attestation verify`, `cosign verify-attestation`, or `jf evd verify` in trusted CI when independent verification is required.
-- Deep hunt quality depends on the host's subagent support and the panelists' evidence discipline. A unanimous panel is not proof; only a repro or direct runtime evidence is `confirmed`.
-- `--calibrate` is counting, not inference: it has no notion of *why* a rule was suppressed, so a team that suppresses real defects instead of fixing them will calibrate itself into blindness. The ledger is per-rule, repo-wide — not yet per-path — so a rule that is genuinely noisy in one directory and genuinely important in another will calibrate as one average. `.jankhunt42.toml`/`.jankhunt42.json` and `--calibrate` do not yet apply to `review`.
-- Cross-file duplicate detection matches on exact rule + normalized evidence (whitespace, numeric literals, and string literals collapsed); it does not catch renamed variables, reordered logic, or duplication expressed differently, only copy-paste-shaped repetition.
+- **Heuristics:** findings and edges come from static text, not data flow or runtime observation. They can miss things and can fire on examples.
+- **Map:** no Helm, Kustomize, HCL or variable evaluation. No live network, firewall or IAM evaluation. Which workload runs the repository code is not inferred. Monorepos map as one application. `.sql` migrations and tests are not mapped.
+- **Effective privileges:** these are never proven from repository evidence. Verified authority needs an operator inventory, and jankhunt42 does not verify that inventory's own provenance.
+- **Exposure and decisions:** these are explainable heuristics, not calibrated probabilities or compliance results. Adapter accuracy is measured only on this repository's synthetic fixtures and its own ground truth.
+- **Supply chain:** parsing verifies no cryptography. Use `gh attestation verify`, `cosign` or `jf evd verify` in trusted CI.
+- **Deep hunt:** quality depends on the host's subagents and the evidence discipline of its panel.
+- **Calibration:** calibration is counting, not judgement. `.jankhunt42.json` rules do not yet apply to `review`.
 
 If a finding is wrong, confirm it in context, then suppress it with a reason or improve the rule. A scanner that cries wolf is worse than no scanner.
 
 ## Publishing checklist
 
-- [ ] `SKILL.md` frontmatter has name, description, license, compatibility, and metadata.
-- [ ] Version synchronized in `SKILL.md`, `jh_core.py`, `README.md`, and `CHANGELOG.md`.
-- [ ] `LICENSE` present.
-- [ ] `scripts/selftest.sh` passes on a clean checkout.
-- [ ] No `__pycache__`, `.pyc`, secrets, generated reports, or private user prompt text committed.
-- [ ] README commands verified from a different working directory.
-- [ ] `references/scoring.md`, `references/review.md`, `references/supply-chain.md`, and `references/deep-hunt.md` are linked from `SKILL.md`.
-- [ ] The receipt schema and review/supply-chain docs are included in the release archive.
-- [ ] `git status` is clean, the tag matches `1.1.0`, and the release archive is rebuilt from the clean tree.
-- [ ] Tag the release and publish the folder/repo. If using an OpenCode skill catalog, point it at `SKILL.md`; keep `scripts/`, `references/`, and `templates/` alongside it.
+- [ ] `jankhunt42 selftest --full` gate is `pass` on a clean checkout.
+- [ ] The version is synchronized in `SKILL.md`, `scripts/jh_core.py`, this README, and `CHANGELOG.md`.
+- [ ] No `__pycache__`, generated reports, secrets, private prompts, or agent working files are committed.
+- [ ] README and SKILL commands are exercised by `tests/test_docs.py`.
+- [ ] The tag matches the version, and the release archive is built from the clean tree by `provenance.yml`.
 
 ## License
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "1.1.0"
+VERSION = "2.0.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -668,6 +668,20 @@ def make_finding(
 
 def sev_at_least(sev: str, threshold: str) -> bool:
     return SEV_RANK.get(sev, 99) <= SEV_RANK.get(threshold, 99)
+
+
+_UNSAFE_CHARS_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+
+
+def safe_text(text: object) -> str:
+    """Neutralize control, escape, and bidi-override characters from
+    repository-sourced strings before they reach a terminal or report.
+
+    Repository content is untrusted: an ANSI escape inside a string literal
+    must not be able to recolor, hide, or rewrite the reviewer's terminal.
+    Each unsafe character becomes U+FFFD so its presence stays visible.
+    """
+    return _UNSAFE_CHARS_RE.sub("\ufffd", str(text))
 
 
 def trim(text: str, width: int = 160) -> str:

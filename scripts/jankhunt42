@@ -34,6 +34,12 @@ import jh_supply  # noqa: E402
 import jh_config  # noqa: E402
 import jh_calibrate  # noqa: E402
 import jh_dedup  # noqa: E402
+import jh_graph  # noqa: E402
+import jh_map  # noqa: E402
+import jh_policy  # noqa: E402
+import jh_passport  # noqa: E402
+import jh_views  # noqa: E402
+import jh_explorer  # noqa: E402
 
 
 class Spinner:
@@ -527,7 +533,7 @@ def cmd_rules(args: argparse.Namespace) -> int:
             "tags": list(r.tags), "dynamic": r.id == "JH901",
         } for r in rows], indent=2, ensure_ascii=False))
         return 0
-    print("# JankHunt42 rule catalog\n")
+    print("# jankhunt42 rule catalog\n")
     print("| Rule | Severity | Category | Confidence | Title |")
     print("|---|---|---|---|---|")
     for r in rows:
@@ -547,7 +553,7 @@ def _report_markdown(root: str, scan: ScanResult, meta: Dict[str, object],
     if meta.get("new_code"):
         score.new_code = meta["new_code"]
     out: List[str] = []
-    out.append("# JankHunt42 report")
+    out.append("# jankhunt42 report")
     out.append("")
     out.append("**Root:** `%s` · **Generated:** %s · **Files:** %d · **LOC:** %d"
                % (root, now, scan.files, scan.loc))
@@ -641,10 +647,130 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _one_format(args: argparse.Namespace, names: Sequence[str]) -> bool:
+    if sum(1 for n in names if getattr(args, n, False)) > 1:
+        print("jankhunt42: choose one output format: %s" % ", ".join("--" + n for n in names), file=sys.stderr)
+        return False
+    return True
+
+
+def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, html) -> None:
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    elif args.html:
+        print(html(report))
+    elif args.md or not sys.stdout.isatty():
+        print(md(report))
+    else:
+        color = jh_render.color_enabled(args.no_color)
+        print(tty_view(report, color=color, ascii_only=jh_views.want_ascii()))
+
+
+def _map_inputs(args: argparse.Namespace) -> Tuple[str, List[str], object]:
+    root = os.path.abspath(args.path)
+    if not os.path.isdir(root):
+        raise ValueError("not a directory: %s" % args.path)
+    cfg = jh_config.load_config_for_root(root, explicit_path=args.config, disabled=args.no_config)
+    jh_config.emit_warnings(cfg)
+    return root, list(args.exclude or ()) + cfg.ignore_globs, cfg
+
+
+def cmd_map(args: argparse.Namespace) -> int:
+    if not _one_format(args, ("json", "html", "md")):
+        return 2
+    depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
+    try:
+        root, excludes, cfg = _map_inputs(args)
+        common = (root, [root], excludes, args.max_files, args.max_file_bytes, cfg.passport, args.inventory, depth)
+        if args.base:
+            base = jh_map.run_map(*common, rev=args.base)
+            report = jh_map.run_map(*common, rev="HEAD")
+            report["delta"] = jh_graph.diff(base, report)
+            if jh_map.git_dirty(root):
+                report["warnings"] = sorted(set(report["warnings"]) | {
+                    "working-tree changes are ignored in --base mode: both sides come from committed git objects"})
+            report = jh_map.finalize_report(report)
+        else:
+            report = jh_map.run_map(*common)
+    except jh_map.GitError as exc:
+        print("jankhunt42: map --base: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print("jankhunt42: map: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
+    if args.redact:
+        report = jh_map.finalize_report(jh_graph.pseudonymize(report))
+    _emit(args, report, jh_map.markdown, jh_views.map_tty, jh_explorer.render_map)
+    return 0
+
+
+def jh_core_safe(text: str) -> str:
+    from jh_core import safe_text
+    return jh_graph.sanitize_text(safe_text(text), 300)
+
+
+def cmd_passport(args: argparse.Namespace) -> int:
+    if not _one_format(args, ("json", "html", "md")):
+        return 2
+    depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
+    try:
+        root, excludes, cfg = _map_inputs(args)
+        map_report, col = jh_map.run_map(root, [root], excludes, args.max_files, args.max_file_bytes,
+                                         cfg.passport, args.inventory, depth, with_items=True)
+    except (OSError, ValueError, jh_map.GitError) as exc:
+        print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
+    scan_args = argparse.Namespace(
+        paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
+        min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
+        since=None, config=args.config, no_config=args.no_config, calibrate=False)
+    _, result, _meta = run_scan(scan_args)
+    counts: Dict[str, int] = {}
+    for f in result.findings:
+        counts[f.severity] = counts.get(f.severity, 0) + 1
+    jank = jh_score.compute(result.findings, result.loc).to_dict()
+    supply = jh_supply.inspect(root, discover=True)
+    operator, op_label, repo_extra, repo_paths, warnings = None, "", [], [], []
+    if cfg.source and isinstance(cfg.passport.get("policy"), dict):
+        repo_paths.append(os.path.basename(cfg.source))
+    if args.policy:
+        try:
+            pol = jh_policy.load_policy_file(args.policy)
+        except jh_policy.PolicyError as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        if jh_map.inside(args.policy, root):
+            repo_extra.append(pol)
+            repo_paths.append(os.path.relpath(os.path.realpath(args.policy), os.path.realpath(root)))
+            warnings.append("--policy file is inside the scanned repository: applied tighten-only, like repository config")
+        else:
+            operator, op_label = pol, os.path.basename(args.policy)
+    top = jh_map.git_toplevel(root)
+    passport = jh_passport.build(
+        name=os.path.basename(root) or "application",
+        source_revision=jh_map.git_revision(root) if top else None,
+        dirty=jh_map.git_dirty(root) if top else None,
+        items=col.items, scan_files=result.files, scan_loc=result.loc, jank=jank, findings_counts=counts,
+        supply=supply, map_report=map_report, passport_cfg=cfg.passport,
+        config_path=os.path.basename(cfg.source) if cfg.source else None,
+        operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
+        fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra)
+    if args.redact:
+        passport = jh_map.finalize_report(jh_passport.redact(passport))
+    _emit(args, passport, jh_passport.markdown, jh_views.passport_tty, jh_explorer.render_passport)
+    return 1 if jh_policy.fails(passport["assessment"]["decision"]["result"], args.fail_on) else 0
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    import jh_selftest
+    return jh_selftest.main(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jankhunt42",
-        description="Find the jank before it finds production. Code, CI, Kubernetes, secrets, CVEs, logs.",
+        description="What's broken? What can it hurt? Can we responsibly ship it? "
+                    "Offline investigation (scan, review, hunt), blast-radius maps (map), and software passports (passport).",
     )
     p.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     sub = p.add_subparsers(dest="command", required=True)
@@ -815,6 +941,49 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-findings", type=int, default=300)
     sp.add_argument("--fail-on", choices=SEVERITIES)
     sp.set_defaults(func=cmd_report)
+
+    def add_map_inputs(sp):
+        sp.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
+        sp.add_argument("--json", action="store_true", help="versioned JSON (stdout carries only JSON)")
+        sp.add_argument("--html", action="store_true", help="self-contained offline HTML (stdout)")
+        sp.add_argument("--md", action="store_true", help="force Markdown output")
+        sp.add_argument("--no-color", action="store_true")
+        sp.add_argument("--redact", action="store_true",
+                        help="shareable output: pseudonymous IDs/labels, no hostnames, owners, or snippets")
+        sp.add_argument("--inventory", metavar="PATH",
+                        help="JSON inventory of assets/grants; provider-verified only if the file is outside the repo")
+        sp.add_argument("--max-depth", type=int, default=jh_graph.DEFAULT_DEPTH,
+                        help="reachability depth bound (1-%d, default %d)" % (jh_graph.MAX_DEPTH, jh_graph.DEFAULT_DEPTH))
+        sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
+        sp.add_argument("--max-files", type=int, default=20000)
+        sp.add_argument("--max-file-bytes", type=int, default=1500000)
+        sp.add_argument("--config", metavar="PATH", help="explicit .jankhunt42.toml/.jankhunt42.json")
+        sp.add_argument("--no-config", action="store_true", help="ignore repository config and declarations")
+
+    sp = sub.add_parser("map", help="what can it hurt? connectivity graph, CIA blast radius, --base graph diff",
+                        description="Offline, static connectivity discovery and blast-radius reasoning. "
+                                    "Paths are possibilities, not proof of access; unknown is never treated as safe.")
+    add_map_inputs(sp)
+    sp.add_argument("--base", metavar="REF",
+                    help="graph delta REF -> HEAD from committed git objects only (dirty files are ignored)")
+    sp.set_defaults(func=cmd_map)
+
+    sp = sub.add_parser("passport", help="can we responsibly ship it? evidence, ownership, explainable decision",
+                        description="Software passport: links scan, map, supply-chain, ownership and operations "
+                                    "evidence to a pass/review/insufficient-evidence/block assessment. "
+                                    "Advisory unless --fail-on is given. Never an approval.")
+    add_map_inputs(sp)
+    sp.add_argument("--policy", metavar="PATH",
+                    help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
+    sp.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),
+                    help="enforce: exit 1 when the decision is at or above this outcome")
+    sp.set_defaults(func=cmd_passport)
+
+    sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")
+    sp.add_argument("--full", action="store_true",
+                    help="also run the shell regression suite, mutation tests, perf bounds, and dogfooding")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_selftest)
 
     sp = sub.add_parser("rules", help="print the rule catalog")
     sp.add_argument("--json", action="store_true")

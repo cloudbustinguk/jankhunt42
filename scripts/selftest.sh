@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline regression test for JankHunt42. Builds a fixture, runs every command,
+# Offline regression test for jankhunt42. Builds a fixture, runs every command,
 # and asserts representative rules, redaction, scores, triage, and consensus.
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
@@ -356,7 +356,7 @@ print("finally check: nested loop ignored")
 PY
 
 "$PY" "$JH" scan "$FIX" --md --no-progress > "$TMP/scan.md"
-grep -q "JankHunt42 scan" "$TMP/scan.md" || fail "scan --md missing title"
+grep -q "jankhunt42 scan" "$TMP/scan.md" || fail "scan --md missing title"
 grep -q "Score by dimension" "$TMP/scan.md" || fail "scan --md missing scorecard"
 grep -q "JH101" "$TMP/scan.md" || fail "scan --md missing secret finding"
 
@@ -386,7 +386,7 @@ import os, sys
 
 text = Path(sys.argv[1]).read_text()
 assert text.startswith("<!DOCTYPE html>"), text[:40]
-assert "JankHunt42" in text, "missing product name"
+assert "jankhunt42" in text, "missing product name"
 assert "Hardcoded secret" in text, "missing expected finding"
 assert 'data-filter="critical"' in text, "missing severity filter"
 assert os.environ["FAKE_KEY"] not in text, "secret leaked into HTML"
@@ -953,7 +953,7 @@ grep -q "downgraded" "$TMP/merge.md" || fail "merge --md missing evidence-gate n
 # Report
 # ---------------------------------------------------------------------------
 "$PY" "$JH" report "$FIX" --logs "$FIX/app.log" --out "$TMP/report.md" --no-progress >/dev/null
-grep -q "JankHunt42 report" "$TMP/report.md" || fail "report missing title"
+grep -q "jankhunt42 report" "$TMP/report.md" || fail "report missing title"
 grep -q "Jank score" "$TMP/report.md" || fail "report missing score"
 grep -q "Investigation worksheet" "$TMP/report.md" || fail "report missing worksheet"
 grep -q "Log triage" "$TMP/report.md" || fail "report missing triage"
@@ -1098,6 +1098,35 @@ print("calibration: JH102 downgraded major->minor after %.0f%% suppression over 
 PY
 
 # ---------------------------------------------------------------------------
+# What can it hurt? / Can we ship it? (smoke; depth lives in tests/)
+# ---------------------------------------------------------------------------
+cp -R "$SKILL/tests/fixtures/demo-app" "$TMP/demo-app"
+"$PY" "$JH" map "$TMP/demo-app" --json > "$TMP/map.json" || fail "map --json failed"
+"$PY" - "$TMP/map.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["schema_version"] == "jankhunt.map.v1", d["schema_version"]
+assert d["assessment"]["exposure"]["class"] == "High", d["assessment"]["exposure"]
+assert d["graph"]["nodes"] and d["graph"]["edges"]
+assert "example-only" not in json.dumps(d), "fixture credential leaked"
+PY
+"$PY" "$JH" map "$TMP/demo-app" --html > "$TMP/map.html" || fail "map --html failed"
+grep -q "default-src 'none'" "$TMP/map.html" || fail "map HTML lacks the no-network CSP"
+"$PY" "$JH" passport "$TMP/demo-app" --json > "$TMP/passport.json" || fail "passport --json failed"
+"$PY" - "$TMP/passport.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+assert p["schema_version"] == "jankhunt.passport.v1"
+assert p["assessment"]["decision"]["result"] in ("pass", "review", "insufficient-evidence", "block")
+assert p["lifecycle"]["acceptance"]["state"] == "not-supplied"
+PY
+set +e
+"$PY" "$JH" passport "$TMP/demo-app" --fail-on review >/dev/null 2>&1; rc=$?
+set -e
+[ "$rc" = 1 ] || fail "passport --fail-on review should exit 1 on the demo (got $rc)"
+note "map/passport: versioned JSON, offline HTML, enforcement opt-in"
+
+# ---------------------------------------------------------------------------
 # Docs and packaging sanity
 # ---------------------------------------------------------------------------
 for doc in "$SKILL/SKILL.md" "$SKILL/README.md" "$SKILL/CHANGELOG.md" \
@@ -1106,13 +1135,18 @@ for doc in "$SKILL/SKILL.md" "$SKILL/README.md" "$SKILL/CHANGELOG.md" \
            "$SKILL/references/scoring.md" "$SKILL/references/review.md" \
            "$SKILL/references/supply-chain.md" "$SKILL/templates/report.md" \
            "$SKILL/templates/hunt-report.md" "$SKILL/templates/panel-finding.json" \
-           "$SKILL/templates/review-receipt.schema.json"; do
+           "$SKILL/templates/review-receipt.schema.json" \
+           "$SKILL/references/connectivity.md" "$SKILL/references/passport.md" \
+           "$SKILL/templates/map.schema.json" "$SKILL/templates/passport.schema.json"; do
   [ -s "$doc" ] || fail "missing or empty doc: $doc"
 done
 grep -q '^license: MIT' "$SKILL/SKILL.md" || fail "SKILL.md missing top-level license"
 grep -q '^compatibility:' "$SKILL/SKILL.md" || fail "SKILL.md missing top-level compatibility"
 grep -q 'references/review.md' "$SKILL/SKILL.md" || fail "SKILL.md missing review reference"
 grep -q 'references/supply-chain.md' "$SKILL/SKILL.md" || fail "SKILL.md missing supply-chain reference"
+grep -q 'references/connectivity.md' "$SKILL/SKILL.md" || fail "SKILL.md missing connectivity reference"
+grep -q 'references/passport.md' "$SKILL/SKILL.md" || fail "SKILL.md missing passport reference"
+grep -q '^name: jankhunt42$' "$SKILL/SKILL.md" || fail "SKILL.md name must be lowercase jankhunt42"
 "$PY" - "$SKILL/templates/review-receipt.schema.json" <<'PY'
 import json, sys
 schema = json.load(open(sys.argv[1]))

@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, trim
+from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, safe_text, trim
 from jh_doctor import DoctorResult
 from jh_triage import LogCluster, TriageResult
 import jh_score
@@ -294,7 +294,7 @@ def _scan_markdown_findings(findings: Sequence[Finding], max_findings: int) -> L
                 out.append("- **[%s] %s · %s — %s** `%s:%d` · confidence %s"
                            % (f.rule, f.severity.upper(), f.category, f.title, f.path, f.line, f.confidence))
                 if f.evidence:
-                    out.append("  - evidence: `%s`" % f.evidence.replace("`", "\\`"))
+                    out.append("  - evidence: `%s`" % safe_text(f.evidence).replace("`", "\\`"))
                 if f.message:
                     out.append("  - why: %s" % f.message)
                 if f.fix:
@@ -315,7 +315,7 @@ def scan_markdown(result, meta: Dict[str, object], max_findings: int = 300) -> s
     findings: List[Finding] = result.findings
     root = str(meta.get("root", "."))
     report = jh_score.compute(findings, result.loc)
-    out: List[str] = ["# JankHunt42 scan", ""]
+    out: List[str] = ["# jankhunt42 scan", ""]
     out.append("**Root:** `%s` · **Files:** %d · **LOC:** %d · **Findings:** %d · **Jank:** %d/100 (%s · %s) · policy **%s**"
                % (root, result.files, result.loc, len(findings), report.score,
                   report.grade, report.label, report.policy))
@@ -432,7 +432,7 @@ def _tty_finding_cards(findings: Sequence[Finding], max_findings: int, width: in
         out.append(head)
         out.append("  %s     %s  %s  %s %s" % (
             rail,
-            color.bold(f.path) + color.sev(f.severity, ":%d" % f.line, strong=True),
+            color.bold(safe_text(f.path)) + color.sev(f.severity, ":%d" % f.line, strong=True),
             color.blue(f.category),
             color.grey("confidence"),
             color.confidence(f.confidence, f.confidence),
@@ -442,7 +442,7 @@ def _tty_finding_cards(findings: Sequence[Finding], max_findings: int, width: in
                 rail,
                 color.dim("│ "),
                 color.bold(color.grey("evidence ")),
-                _truncate(f.evidence, width - 23),
+                _truncate(safe_text(f.evidence), width - 23),
             ))
         if f.message:
             out.append("  %s     %s%s%s" % (

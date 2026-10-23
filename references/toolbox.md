@@ -7,7 +7,7 @@ record the exact command, cwd, environment, and exit code.
 interrupt service, or change the host. Do not run them without explicit consent.
 Most commands below are read-only.
 
-## JankHunt42
+## jankhunt42
 
 ```sh
 SKILL_DIR=~/.config/opencode/skills/jankhunt42
@@ -45,6 +45,24 @@ $JH hunt . --focus security --json > hunt.json
 $JH hunt . --md --prompts > hunt-brief.md
 $JH merge panel-*.json --md
 $JH rules --category security
+
+# What can it hurt? (offline connectivity + blast radius; references/connectivity.md)
+$JH map .                               # TTY explorer; Markdown when piped
+$JH map . --json > map.json             # jankhunt.map.v1
+$JH map . --html > map.html             # offline graph + evidence inspector
+$JH map . --base origin/main --json     # graph delta from committed trees only
+$JH map . --redact --json               # shareable: pseudonyms, no hosts/snippets
+$JH map . --inventory ../inventory.json # operator inventory outside the repo
+
+# Can we responsibly ship it? (references/passport.md)
+$JH passport .                          # decision + rule reasons + evidence areas
+$JH passport . --json > passport.json   # jankhunt.passport.v1
+$JH passport . --html > passport.html
+$JH passport . --policy ../policy.json --fail-on block
+
+# Is the tool trustworthy? (oracle tests, fuzzing, mutants, dogfood, privacy)
+$JH selftest                            # unit suite only
+$JH selftest --full --json              # everything, with a pass/fail/insufficient-evidence gate
 ```
 
 `--html` is one portable file with embedded CSS/JS and no external assets. It
@@ -55,7 +73,7 @@ caps the HTML view. Repository strings are escaped and secrets stay redacted.
 without a repro or runtime evidence. `--fail-on` gates new supported findings
 only; baseline persisting findings are excluded unless you change the baseline.
 `supply-chain` is offline/read-only. `provider-verified` means the exporter
-recorded a successful verification, not that JankHunt42 verified a signature.
+recorded a successful verification, not that jankhunt42 verified a signature.
 Use `gh`, `cosign`, or `jf` for independent verification.
 
 `.jankhunt42.toml`/`.jankhunt42.json` (discovered upward from the scan root, like

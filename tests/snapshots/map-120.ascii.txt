@@ -1,0 +1,50 @@
++--------------------------------------------------------------------------------------------------------------------+
+|   JANKHUNT42   // blast radius explorer                                                                            |
+| demo-app  -  working-tree  -  19 nodes  -  19 edges                                                                |
++--------------------------------------------------------------------------------------------------------------------+
+
++- what can it hurt? ------------------------------------------------------------------------------------------------+
+| EXPOSURE              High  qualitative; a path is a possibility, not proof                                        |
+| evidence coverage     complete-for-supported-types  (11/13 files, 8 adapters)                                      |
+| edge evidence         0 [verified]  17 [supported]  2 [inferred]  0 [unknown]                                      |
+| reach                 0 known [verified]  -  37 potential  -  7 unknown-capability                                 |
+| breadth               1.264 over 4 trust domains (informational, never blocks)                                     |
++--------------------------------------------------------------------------------------------------------------------+
+
+connected systems
+  2 api   1 application   3 database   3 external   5 identity   1 storage   1 unknown   3 workload
+
+trust-boundary crossings
+  internal->external
+
+highest-impact admissible paths
+  High integrity [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[deletes/delete, observed]-> postgresql ledger-db.prod.internal
+  High availability [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[deletes/delete, observed]-> postgresql ledger-db.prod.internal
+  High confidentiality [supported] X-HIGH-EGRESS
+    sensitive source and external destination are reachable from the same principal (possible egress path; no
+    data-flow evidence implied)
+    demo-app -[reads/read, observed]-> postgresql ledger-db.prod.internal
+  High integrity [supported] X-HIGH-AUTH
+    possible mutating/destructive authority over a production, critical, or sensitive asset
+    demo-app -[writes/write, observed]-> s3 bucket demo-reports-prod
+  High confidentiality [supported] X-HIGH-READ
+    supported read reach to restricted data
+    k8s Deployment payments-prod/payments-api -[authenticates-as/unknown, declared]-> k8s service account
+      payments-prod/payments-api -[reads/read, declared]-> kubernetes secrets (cluster)
+
+unknowns  (unknown is not safe, and not dangerous)
+  ? effective-privileges: effective grants are not verified for 19 edge(s); static evidence cannot prove privileges
+  ? unresolved-targets: 1 endpoint(s) are resolved only at runtime (environment, secrets, or SDK defaults)
+  ? unknown-capability: 7 connection(s) have unknown capability; treated as possibly read, write, or destructive
+  ? data-classification: 6 asset(s) have no declared data sensitivity
+  ? environment: 7 asset(s) have unknown environment (production vs non-production)
+  ? code-to-workload-binding: which workload runs the repository code is not inferred; declare it via an inventory
+      grant if needed
+  ? runtime-reachability: static analysis only: network reachability, firewalls, and live data movement were not
+      tested
+
+  explore: jankhunt42 map . --html > map.html   -   data: --json   -   shareable: --redact

@@ -321,7 +321,7 @@ def render_scan(result, meta: Dict[str, object], max_findings: int = 300) -> str
     if meta.get("new_code"):
         report.new_code = meta["new_code"]
     counts = _counts(findings)
-    title = "JankHunt42 · %s" % root
+    title = "jankhunt42 · %s" % root
     return "\n".join([
         "<!DOCTYPE html>",
         '<html lang="en">',

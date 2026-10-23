@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cloudbustinguk/jankhunt42/templates/passport.schema.json",
+  "title": "jankhunt42 software passport (jankhunt.passport.v1)",
+  "description": "Output of `jankhunt42 passport --json`: a local assessment, never an approval or certificate. lifecycle.state is draft or assessed; acceptance requires separately supplied trusted evidence and is reported as not-supplied.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool",
+    "tool_version",
+    "source_revision",
+    "scan_id",
+    "generated_at",
+    "scope",
+    "coverage",
+    "warnings",
+    "evidence",
+    "truncation",
+    "subject",
+    "assessment",
+    "ownership",
+    "provenance",
+    "data",
+    "operations",
+    "lifecycle",
+    "remediation",
+    "unknowns",
+    "limitations",
+    "graph_ref"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "jankhunt.passport.v1"
+      ]
+    },
+    "tool": {
+      "type": "string",
+      "enum": [
+        "jankhunt42"
+      ]
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "name",
+        "revision",
+        "artifact_digests",
+        "environment"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "root",
+        "files_scanned",
+        "loc",
+        "redaction"
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "evidence_areas",
+        "evidence_areas_present",
+        "evidence_areas_total",
+        "map"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "area",
+          "state",
+          "path",
+          "line",
+          "detail"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "declared",
+              "inferred"
+            ]
+          }
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "required": [
+        "jank",
+        "findings",
+        "exposure",
+        "decision"
+      ],
+      "properties": {
+        "exposure": {
+          "type": "object",
+          "required": [
+            "class"
+          ],
+          "properties": {
+            "class": {
+              "type": "string",
+              "enum": [
+                "Low",
+                "Moderate",
+                "High",
+                "Critical",
+                "Unknown"
+              ]
+            }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "required": [
+            "result",
+            "reasons",
+            "rules",
+            "mode",
+            "policy",
+            "note"
+          ],
+          "properties": {
+            "result": {
+              "type": "string",
+              "enum": [
+                "pass",
+                "review",
+                "insufficient-evidence",
+                "block"
+              ]
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "rule",
+                  "title",
+                  "outcome",
+                  "message",
+                  "evidence_refs",
+                  "hard_floor"
+                ],
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "review",
+                      "insufficient-evidence",
+                      "block"
+                    ]
+                  }
+                }
+              }
+            },
+            "policy": {
+              "type": "object",
+              "required": [
+                "hash",
+                "effective",
+                "sources"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "required": [
+        "state",
+        "owners",
+        "declared_owners",
+        "evidence_refs"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "declared",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "operations": {
+      "type": "object"
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": [
+        "state",
+        "acceptance"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "assessed"
+          ]
+        },
+        "acceptance": {
+          "type": "object",
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "not-supplied"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "remediation": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

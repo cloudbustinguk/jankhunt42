@@ -6,7 +6,7 @@ name: provenance
 # verification badge — it lets anyone clone this repo, build the same
 # tarball, and confirm with `gh attestation verify` or `cosign
 # verify-attestation` that it was built by this repo's CI and has not been
-# tampered with since. See references/supply-chain.md for how JankHunt42
+# tampered with since. See references/supply-chain.md for how jankhunt42
 # itself parses this class of evidence.
 
 on:

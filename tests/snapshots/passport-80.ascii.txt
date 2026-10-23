@@ -1,0 +1,38 @@
++----------------------------------------------------------------------------+
+|   JANKHUNT42   // software passport                                        |
+| demo-app  -  revision unknown                                              |
++----------------------------------------------------------------------------+
+
++- can we responsibly ship it? ----------------------------------------------+
+| RELEASE ASSESSMENT    REVIEW  advisory                                     |
+| technical jank score  78/100  grade E  policy fail                         |
+| exposure              High  separate from the Jank Score                   |
+| evidence coverage     4/9 areas observed, declared, or inferred            |
+| lifecycle             assessed  -  acceptance [not-supplied]               |
++----------------------------------------------------------------------------+
+
+why  (rule outcomes, not a weighted score)
+  REVIEW P-DAT-002 possible mutating, destructive, or unknown authority over a
+      production, critical, or restricted asset; verify effective grants
+  REVIEW P-JNK-001 Jank Score policy fail; 0 blocker-severity lead(s) (leads,
+      not confirmed defects)
+
+evidence
+  ownership [observed]   provenance [not-observed]
+  data inventory [observed]   ci [observed]   tests [not-observed]
+  observability [not-observed]   health checks [observed]
+  runbook [not-observed]   security policy [not-observed]
+  owners: @demo-org/payments-team
+
+next steps
+  1. Verify effective grants for the flagged connections and scope them to
+     least privilege; record the result in an operator inventory to
+     turn leads into verified evidence.
+  2. Work down the weakest Jank Score dimension first (`jankhunt42 score`),
+     then the highest-severity leads (`jankhunt42 scan --min-severity
+     critical`).
+  3. Add or declare observability evidence (currently not observed).
+  4. Add or declare runbook evidence (currently not observed).
+  5. Generate an SBOM and build provenance for released artifacts.
+
+  export: jankhunt42 passport . --json | --html > passport.html   -   shareable: --redact

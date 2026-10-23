@@ -1,0 +1,1583 @@
+#!/usr/bin/env python3
+"""Offline connectivity discovery for `jankhunt42 map` (What can it hurt?).
+
+Adapters read repository text (from the working tree or from git objects;
+both arrive as (path, text) pairs) and emit typed nodes and edges into
+jh_graph.Graph with a sanitized receipt for every claim. Nothing is
+executed, resolved, probed, or connected to. Every adapter is line- or
+structure-based and bounded.
+
+Evidence states used here:
+  observed  - the artifact directly contains the statement (a literal
+              client endpoint, an SQL verb in a string, an HTTP call)
+  declared  - configuration or manifest says so (env value, k8s spec,
+              workflow permissions, IaC role assignment)
+  inferred  - heuristic only (an SDK import, a manifest dependency, an
+              endpoint resolved through an environment-variable name)
+  provider-verified - only from an operator-supplied inventory that lives
+              outside the scanned repository
+"""
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import subprocess
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+import jh_graph as G
+import jh_yaml
+from jh_core import (TOOL, VERSION, DEFAULT_SKIP_DIRS, discover_files, is_test_path,
+                     safe_text, sanitize, detect_lang, _is_skipped_file)
+
+
+# ---------------------------------------------------------------------------
+# Inputs
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Item:
+    rel: str
+    text: str
+
+
+@dataclass
+class Collected:
+    items: List[Item] = field(default_factory=list)
+    considered: int = 0
+    skipped: Dict[str, int] = field(default_factory=dict)
+    skipped_paths: List[str] = field(default_factory=list)
+    max_files_reached: bool = False
+
+    def skip(self, reason: str, rel: str) -> None:
+        self.skipped[reason] = self.skipped.get(reason, 0) + 1
+        if len(self.skipped_paths) < 5000:
+            self.skipped_paths.append(rel)
+
+
+def _decode(raw: bytes) -> Optional[str]:
+    if b"\x00" in raw[:8192]:
+        return None
+    return raw.decode("utf-8", "replace")
+
+
+def collect_worktree(root: str, paths: Sequence[str], excludes: Sequence[str],
+                     max_files: int, max_bytes: int) -> Tuple[str, Collected]:
+    base, files = discover_files(paths or [root], excludes=excludes, max_files=max_files,
+                                 max_bytes=max_bytes)
+    col = Collected(considered=len(files), max_files_reached=len(files) >= max_files)
+    for p in files:
+        rel = os.path.relpath(str(p), str(base)).replace(os.sep, "/")
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            col.skip("unreadable", rel)
+            continue
+        text = _decode(raw)
+        if text is None:
+            col.skip("binary", rel)
+            continue
+        col.items.append(Item(rel, text))
+    return str(base), col
+
+
+class GitError(Exception):
+    pass
+
+
+def _git(root: str, args: Sequence[str], data: Optional[bytes] = None, timeout: int = 60) -> bytes:
+    try:
+        proc = subprocess.run(["git", "-C", root] + list(args), input=data, capture_output=True,
+                              timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitError(str(exc))
+    if proc.returncode != 0:
+        msg = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise GitError(msg[0] if msg else "git %s failed" % args[0])
+    return proc.stdout
+
+
+def git_toplevel(path: str) -> Optional[str]:
+    try:
+        return _git(path, ["rev-parse", "--show-toplevel"]).decode().strip()
+    except GitError:
+        return None
+
+
+def git_revision(path: str, rev: str = "HEAD") -> Optional[str]:
+    try:
+        return _git(path, ["rev-parse", "--verify", "--quiet", rev + "^{commit}"]).decode().strip() or None
+    except GitError:
+        return None
+
+
+def git_dirty(path: str) -> Optional[bool]:
+    try:
+        out = _git(path, ["status", "--porcelain", "--untracked-files=normal"])
+    except GitError:
+        return None
+    return bool(out.strip())
+
+
+def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
+                max_bytes: int, prefix: str = "") -> Collected:
+    """Read a committed tree from git objects only. The working tree is never
+    consulted, so dirty or untracked files cannot leak into a --base diff."""
+    listing = _git(root, ["ls-tree", "-r", "-z", "--long", rev] + ([prefix] if prefix else []))
+    col = Collected()
+    wanted: List[Tuple[str, str]] = []
+    pats = list(excludes) + ["*.min.js", "*.min.css", "*.map", "*.snap", "*.lock"]
+    for entry in listing.decode("utf-8", "replace").split("\0"):
+        if not entry:
+            continue
+        meta, _, rel = entry.partition("\t")
+        parts = meta.split()
+        if len(parts) < 4:
+            continue
+        mode, otype, sha_, size = parts[0], parts[1], parts[2], parts[3]
+        col.considered += 1
+        if otype != "blob" or mode in ("120000", "160000"):
+            col.skip("symlink-or-submodule", rel)
+            continue
+        segs = rel.split("/")
+        if any(s in DEFAULT_SKIP_DIRS for s in segs[:-1]):
+            col.skip("excluded", rel)
+            continue
+        if any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(segs[-1], p) for p in pats) \
+                or _is_skipped_file(Path(rel)):
+            col.skip("excluded", rel)
+            continue
+        try:
+            if int(size) > max_bytes:
+                col.skip("too-large", rel)
+                continue
+        except ValueError:
+            size = "unknown"  # unexpected ls-tree size field: read it; the byte cap still applies on load
+        if len(wanted) >= max_files:
+            col.max_files_reached = True
+            col.skip("file-cap", rel)
+            continue
+        wanted.append((rel, sha_))
+    if not wanted:
+        return col
+    out = _git(root, ["cat-file", "--batch"], data="".join(s + "\n" for _, s in wanted).encode(), timeout=120)
+    pos = 0
+    for rel, _ in wanted:
+        nl = out.index(b"\n", pos)
+        header = out[pos:nl].split()
+        size = int(header[2])
+        body = out[nl + 1: nl + 1 + size]
+        pos = nl + 1 + size + 1
+        text = _decode(body)
+        if text is None:
+            col.skip("binary", rel)
+            continue
+        col.items.append(Item(rel, text))
+    return col
+
+
+# ---------------------------------------------------------------------------
+# Context shared by adapters
+# ---------------------------------------------------------------------------
+
+_ENDPOINTISH = re.compile(r"(?i)(URL|URI|DSN|CONN|DATABASE|(^|_)DB($|_)|HOST|ENDPOINT|BROKER|REDIS|MONGO|"
+                          r"POSTGRES|PG|MYSQL|AMQP|KAFKA|BUCKET|STORAGE|QUEUE|SERVICE_BUS|COSMOS|API_BASE|BASE_ADDRESS)")
+_SECRETISH = re.compile(r"(?i)(PASSWORD|PASSWD|SECRET|TOKEN|(^|_)KEY($|_)|APIKEY|USER(NAME)?$|PWD|CREDENTIAL)")
+MAX_LINE = 4000
+
+
+def endpointish(name: str) -> bool:
+    return bool(_ENDPOINTISH.search(name)) and not _SECRETISH.search(name)
+
+
+class Ctx:
+    def __init__(self, graph: G.Graph, app_name: str):
+        self.g = graph
+        self.app = graph.add_node("application", ["repository"], app_name, trust_domain="internal",
+                                  attributes={"role": "repository code"})
+        self.g.nodes[self.app]["classification_source"] = "assumption"
+        # env/config definitions: NAME -> [(endpoint, evidence id, env hint, path)]
+        self.defs: Dict[str, List[Tuple[Dict[str, Any], str, str, str]]] = {}
+        # code-side env usages: (NAME, path, line, families in file)
+        self.uses: List[Tuple[str, str, int, Set[Tuple[str, str]], str]] = []
+        self.families_seen: Set[Tuple[str, str]] = set()
+        self.k8s_roles: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+        self.k8s_bindings: List[Tuple[Dict[str, Any], str, int]] = []
+        self.manifest_deps: List[Tuple[Tuple[str, str], str, int, str]] = []
+        self.parse_failures: List[Dict[str, str]] = []
+        self.by_adapter: Dict[str, int] = {}
+        self.inspected: List[str] = []
+        self.warnings: List[str] = []
+
+    def endpoint_node(self, ep: Dict[str, Any], env_hint: str = "unknown", unresolved_hint: str = "",
+                      evidence: Optional[str] = None, label_suffix: str = "") -> Optional[str]:
+        kind = ep["kind"]
+        engine = ep.get("engine") or kind
+        if ep.get("resolved"):
+            env = G.infer_environment(ep.get("host", ""), ep.get("path", ""))
+            if env == "unknown":
+                env = env_hint
+            host = ep.get("host", "")
+            td = G.trust_domain_for_host(host, engine)
+            key = [engine, host, ep.get("port") or "", env]
+            attrs: Dict[str, Any] = {"engine": engine}
+            if host:
+                attrs["host"] = host
+            if ep.get("path"):
+                attrs["databases" if kind == "database" else "paths"] = [ep["path"]]
+            label = G.endpoint_label({**ep, "path": ""}) if kind == "database" else G.endpoint_label(ep)
+            return self.g.add_node(kind, key, label + label_suffix, trust_domain=td, environment=env,
+                                   attributes=attrs, evidence=evidence)
+        hint = unresolved_hint or "unresolved"
+        label = "%s (unresolved target%s)" % (engine, ": " + hint if unresolved_hint else "")
+        return self.g.add_node(kind, [engine, "unresolved", hint], label, trust_domain="unknown",
+                               environment=env_hint,
+                               attributes={"engine": engine, "unresolved": True,
+                                           **({"via": [unresolved_hint]} if unresolved_hint else {})},
+                               evidence=evidence)
+
+    def define(self, name: str, ep: Dict[str, Any], ev: str, env_hint: str, path: str) -> None:
+        for n in {name, name.upper(), name.replace(":", "__"), name.split(":")[-1]}:
+            self.defs.setdefault(n, []).append((ep, ev, env_hint, path))
+
+
+def _file_env(rel: str) -> str:
+    base = rel.lower()
+    return G.infer_environment(*re.split(r"[/\\]", base))
+
+
+# ---------------------------------------------------------------------------
+# Language adapters (Python, JS/TS, .NET)
+# ---------------------------------------------------------------------------
+
+# module/package -> (kind, engine, known host or "")
+PY_IMPORTS = {
+    "psycopg": ("database", "postgresql", ""), "psycopg2": ("database", "postgresql", ""),
+    "asyncpg": ("database", "postgresql", ""), "pg8000": ("database", "postgresql", ""),
+    "pymysql": ("database", "mysql", ""), "MySQLdb": ("database", "mysql", ""),
+    "mysql.connector": ("database", "mysql", ""), "aiomysql": ("database", "mysql", ""),
+    "pyodbc": ("database", "sqlserver", ""), "pymssql": ("database", "sqlserver", ""),
+    "sqlite3": ("database", "sqlite", ""), "aiosqlite": ("database", "sqlite", ""),
+    "pymongo": ("database", "mongodb", ""), "motor": ("database", "mongodb", ""),
+    "redis": ("database", "redis", ""), "aioredis": ("database", "redis", ""),
+    "cassandra": ("database", "cassandra", ""), "neo4j": ("database", "neo4j", ""),
+    "databricks": ("database", "databricks", ""), "snowflake": ("database", "snowflake", ""),
+    "google.cloud.bigquery": ("database", "bigquery", ""),
+    "azure.cosmos": ("database", "cosmos", ""),
+    "boto3": ("external", "aws", ""), "botocore": ("external", "aws", ""),
+    "azure.storage.blob": ("storage", "azure-blob", ""), "azure.servicebus": ("queue", "servicebus", ""),
+    "google.cloud.storage": ("storage", "gcs", ""), "google.cloud.pubsub": ("queue", "pubsub", ""),
+    "pika": ("queue", "amqp", ""), "aio_pika": ("queue", "amqp", ""), "kafka": ("queue", "kafka", ""),
+    "confluent_kafka": ("queue", "kafka", ""), "aiokafka": ("queue", "kafka", ""),
+    "openai": ("external", "openai", "api.openai.com"),
+    "anthropic": ("external", "anthropic", "api.anthropic.com"),
+    "smtplib": ("external", "smtp", ""),
+}
+JS_IMPORTS = {
+    "pg": ("database", "postgresql", ""), "postgres": ("database", "postgresql", ""),
+    "pg-promise": ("database", "postgresql", ""), "mysql": ("database", "mysql", ""),
+    "mysql2": ("database", "mysql", ""), "mssql": ("database", "sqlserver", ""),
+    "tedious": ("database", "sqlserver", ""), "mongodb": ("database", "mongodb", ""),
+    "mongoose": ("database", "mongodb", ""), "redis": ("database", "redis", ""),
+    "ioredis": ("database", "redis", ""), "better-sqlite3": ("database", "sqlite", ""),
+    "sqlite3": ("database", "sqlite", ""), "@prisma/client": ("database", "sql", ""),
+    "typeorm": ("database", "sql", ""), "sequelize": ("database", "sql", ""),
+    "knex": ("database", "sql", ""), "@aws-sdk/client-s3": ("storage", "s3", ""),
+    "@aws-sdk/client-sqs": ("queue", "sqs", ""), "@aws-sdk/client-dynamodb": ("database", "dynamodb", ""),
+    "aws-sdk": ("external", "aws", ""), "@azure/storage-blob": ("storage", "azure-blob", ""),
+    "@azure/service-bus": ("queue", "servicebus", ""), "@azure/cosmos": ("database", "cosmos", ""),
+    "@google-cloud/storage": ("storage", "gcs", ""), "@google-cloud/pubsub": ("queue", "pubsub", ""),
+    "kafkajs": ("queue", "kafka", ""), "amqplib": ("queue", "amqp", ""),
+    "openai": ("external", "openai", "api.openai.com"),
+    "@anthropic-ai/sdk": ("external", "anthropic", "api.anthropic.com"),
+    "nodemailer": ("external", "smtp", ""),
+}
+CS_PATTERNS = [
+    (re.compile(r"\bnew\s+SqlConnection\b|\bUseSqlServer\s*\("), ("database", "sqlserver", "")),
+    (re.compile(r"\bNpgsql(Connection|DataSource)\b|\bUseNpgsql\s*\("), ("database", "postgresql", "")),
+    (re.compile(r"\bMySqlConnection\b|\bUseMySql\s*\("), ("database", "mysql", "")),
+    (re.compile(r"\bUseSqlite\s*\(|\bSqliteConnection\b"), ("database", "sqlite", "")),
+    (re.compile(r"\bConnectionMultiplexer\.Connect"), ("database", "redis", "")),
+    (re.compile(r"\bnew\s+MongoClient\b"), ("database", "mongodb", "")),
+    (re.compile(r"\bnew\s+CosmosClient\b"), ("database", "cosmos", "")),
+    (re.compile(r"\bnew\s+Blob(Service|Container)Client\b"), ("storage", "azure-blob", "")),
+    (re.compile(r"\bnew\s+ServiceBusClient\b"), ("queue", "servicebus", "")),
+    (re.compile(r"\bnew\s+(OpenAIClient|ChatClient)\b"), ("external", "openai", "api.openai.com")),
+]
+PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items() if k not in ("smtplib", "sqlite3")},
+                **{k.lower(): v for k, v in JS_IMPORTS.items()},
+                "psycopg2-binary": ("database", "postgresql", ""), "npgsql": ("database", "postgresql", ""),
+                "microsoft.data.sqlclient": ("database", "sqlserver", ""),
+                "system.data.sqlclient": ("database", "sqlserver", ""),
+                "stackexchange.redis": ("database", "redis", ""), "mongodb.driver": ("database", "mongodb", ""),
+                "azure.storage.blobs": ("storage", "azure-blob", ""),
+                "azure.messaging.servicebus": ("queue", "servicebus", ""),
+                "redis-py": ("database", "redis", ""), "mysqlclient": ("database", "mysql", "")}
+PKG_FAMILIES.pop("redis", None)
+PKG_FAMILIES["redis"] = ("database", "redis", "")
+
+_PY_IMPORT_RE = re.compile(r"^\s*(?:from\s+([A-Za-z_][\w.]*)\s+import\b|import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*))")
+_JS_IMPORT_RE = re.compile(r"""(?:\bfrom\s+|\brequire\s*\(\s*|\bimport\s*\(\s*|^\s*import\s+)["']([@\w./\-]+)["']""")
+_HTTP_CALL_RE = re.compile(
+    r"""(?:\.(get|post|put|patch|delete|head)|\b(fetch|urlopen|axios|request|got|ky)|\bnew\s+Uri)\s*\(\s*[rbfu]?["'`](https?://[^"'`\s]+)""",
+    re.I)
+_URL_CONST_RE = re.compile(r"""^\s*(?:(?:export\s+)?(?:const|let|var|static\s+readonly\s+string|private\s+const\s+string|const\s+string)\s+)?([A-Za-z_]\w*)\s*=\s*[rbu]?["'`](https?://[^"'`\s]+)["'`]""")
+_CALL_TOKEN_RE = re.compile(r"(?:\.(?:get|post|put|patch|delete|head|request)|\b(?:urlopen|Request|fetch|axios|GetAsync|PostAsync|PutAsync|DeleteAsync|SendAsync))\s*\(\s*([A-Za-z_]\w*)")
+_ASSIGN_FROM_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*=\s*.*?\b([A-Z_][A-Z0-9_]*)\b")
+_METHOD_RE = re.compile(r"""method\s*[=:]\s*["'](\w+)["']""", re.I)
+_ENV_RES = [
+    re.compile(r"""os\.environ\s*\[\s*["']([A-Za-z_]\w*)["']\s*\]"""),
+    re.compile(r"""os\.(?:environ\.get|getenv)\s*\(\s*["']([A-Za-z_]\w*)["']"""),
+    re.compile(r"""process\.env\.([A-Za-z_]\w*)"""),
+    re.compile(r"""process\.env\s*\[\s*["']([A-Za-z_]\w*)["']\s*\]"""),
+    re.compile(r"""Environment\.GetEnvironmentVariable\s*\(\s*"([A-Za-z_]\w*)\""""),
+    re.compile(r"""GetConnectionString\s*\(\s*"([\w.\-]+)"\s*\)"""),
+    re.compile(r"""Configuration\s*\[\s*"([\w:.\-]+)"\s*\]"""),
+    re.compile(r"""settings\.([A-Z][A-Z0-9_]+)\b"""),
+]
+_SQL_SRC = [
+    ("read", r"SELECT\b[^;]{0,200}?\bFROM\b"),
+    ("write", r"INSERT\s+INTO\b|UPDATE\s+[\w.\"`\[\]]+\s+SET\b|MERGE\s+INTO\b"),
+    ("delete", r"DELETE\s+FROM\b|TRUNCATE\s+TABLE\b|DROP\s+(?:TABLE|DATABASE|SCHEMA)\b"),
+    ("admin", r"GRANT\s+[\w ,]{1,60}?\s+ON\s|ALTER\s+(?:DATABASE|ROLE|USER)\b|CREATE\s+(?:USER|ROLE)\b"),
+]
+# Upper-case SQL anywhere in a string literal, or any case when the keyword
+# opens the literal. Lower-case prose ("please select a file from...")
+# is not SQL.
+_SQL = [(cap, re.compile(r"\b(?:%s)" % src)) for cap, src in _SQL_SRC] + \
+       [(cap, re.compile(r"(?<=[\"'`])\s*(?:%s)" % src, re.I)) for cap, src in _SQL_SRC]
+CAP_EDGE = {"read": "reads", "write": "writes", "delete": "deletes", "admin": "administers"}
+# storage/queue operations: regex -> (kind filter, capability)
+_OPS = [
+    (re.compile(r"\.(get_object|download_file|download_fileobj|download_blob|download_to_filename|download_as_bytes|GetObject)\b"), ("storage", "read")),
+    (re.compile(r"\.(put_object|upload_file|upload_fileobj|upload_blob|upload_from_filename|upload_from_string|PutObject)\b"), ("storage", "write")),
+    (re.compile(r"\.(delete_object|delete_objects|delete_blob|DeleteObject)\b"), ("storage", "delete")),
+    (re.compile(r"\.(send_message|send_messages|basic_publish|publish|produce|sendMessage|SendMessageAsync)\s*\("), ("queue", "write")),
+]
+_BOTO_RE = re.compile(r"""boto3\.(?:client|resource)\s*\(\s*["'](\w+)["']""")
+_BOTO_SERVICES = {"s3": ("storage", "s3"), "sqs": ("queue", "sqs"), "sns": ("queue", "sns"),
+                  "dynamodb": ("database", "dynamodb"), "rds": ("database", "rds-api"),
+                  "secretsmanager": ("external", "aws-secrets-manager"), "kinesis": ("queue", "kinesis")}
+_BUCKET_RE = re.compile(r"""\bBucket\s*=\s*["']([a-z0-9][a-z0-9.\-]{1,62})["']""")
+_DB_URL_RE = re.compile(r"""["'`]((?:%s)://[^"'`\s]+)""" % "|".join(
+    re.escape(s) for s in sorted(set(G.DB_SCHEMES) | set(G.QUEUE_SCHEMES) | {"s3", "gs", "abfss", "wasbs"},
+                                 key=len, reverse=True)), re.I)
+
+
+def _in_string(code_line: str, pos: int) -> bool:
+    return pos < len(code_line) and code_line[pos] == " " or pos >= len(code_line)
+
+
+def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
+    code, nocomment, _ = sanitize(item.text, {"javascript": "js", "typescript": "ts"}.get(lang, lang))
+    g = ctx.g
+    families: Dict[Tuple[str, str], Tuple[str, int, str]] = {}  # family -> (host, line, snippet)
+    targets: Dict[str, Set[str]] = {}  # node kind -> node ids touched in this file
+    adapter = {"python": "python", "csharp": "dotnet"}.get(lang, "javascript")
+
+    def touch(nid: Optional[str]) -> None:
+        if nid:
+            targets.setdefault(g.nodes[nid]["kind"], set()).add(nid)
+
+    env_hint = _file_env(item.rel)
+    for idx, line in enumerate(nocomment, 1):
+        if len(line) > MAX_LINE:
+            continue
+        # imports
+        mods: List[str] = []
+        if lang == "python":
+            m = _PY_IMPORT_RE.match(line)
+            if m:
+                mods = [m.group(1)] if m.group(1) else [x.strip() for x in m.group(2).split(",")]
+        elif lang in ("javascript", "typescript"):
+            mods = [m.group(1) for m in _JS_IMPORT_RE.finditer(line)]
+        for mod in mods:
+            table = PY_IMPORTS if lang == "python" else JS_IMPORTS
+            fam = None
+            for cand in (mod, ".".join(mod.split(".")[:3]), ".".join(mod.split(".")[:2]), mod.split(".")[0]):
+                if cand in table:
+                    fam = table[cand]
+                    break
+            if lang != "python" and not fam and mod.startswith("@aws-sdk/"):
+                fam = ("external", "aws", "")
+            if fam:
+                families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
+        if lang == "csharp":
+            for rx, fam in CS_PATTERNS:
+                if rx.search(line):
+                    families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
+        # literal data endpoints in strings
+        for m in _DB_URL_RE.finditer(line):
+            if not _in_string(code[idx - 1] if idx - 1 < len(code) else "", m.start(1)):
+                continue
+            ep = G.parse_endpoint(m.group(1))
+            if not ep:
+                continue
+            ev = g.add_evidence(item.rel, idx, adapter + ":endpoint-literal", line, "observed")
+            nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
+            touch(nid)
+            g.add_edge(ctx.app, nid, "connects", "unknown", "observed", "medium", evidence=ev,
+                       assumptions=["literal endpoint in code; effective grants and live reachability not verified"])
+        # HTTP calls with a literal URL
+        for m in _HTTP_CALL_RE.finditer(line):
+            ep = G.parse_endpoint(m.group(3))
+            if not ep:
+                continue
+            method = (m.group(1) or "").lower()
+            cap = {"get": "read", "head": "read", "post": "write", "put": "write", "patch": "write",
+                   "delete": "delete"}.get(method, "unknown")
+            if m.group(2) and m.group(2).lower() == "fetch":
+                window = " ".join(nocomment[idx - 1: idx + 3])
+                mm = re.search(r"""method\s*:\s*["'](\w+)["']""", window, re.I)
+                cap = {"GET": "read", "HEAD": "read", "DELETE": "delete"}.get(mm.group(1).upper(), "write") if mm else "read"
+            ev = g.add_evidence(item.rel, idx, adapter + ":http-call", line, "observed")
+            nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
+            touch(nid)
+            g.add_edge(ctx.app, nid, "calls", cap, "observed", "medium", evidence=ev,
+                       assumptions=["HTTP call observed in code; whether it executes, and what data it carries, is not verified"])
+        # boto3 service clients
+        for m in _BOTO_RE.finditer(line):
+            svc = _BOTO_SERVICES.get(m.group(1).lower())
+            if svc:
+                families[svc] = ("", idx, line)
+        # env usages
+        for rx in _ENV_RES:
+            for m in rx.finditer(line):
+                ctx.uses.append((m.group(1), item.rel, idx, set(), line))
+        # SQL verbs inside string literals
+        cl = code[idx - 1] if idx - 1 < len(code) else ""
+        for cap, rx in _SQL:
+            m = rx.search(line)
+            if m and _in_string(cl, m.start()):
+                targets.setdefault("_sql", set()).add("%s|%d|%s" % (cap, idx, line))
+        for rx, (kind, cap) in _OPS:
+            if rx.search(line):
+                targets.setdefault("_op", set()).add("%s|%s|%d|%s" % (kind, cap, idx, line))
+    # URL constants passed to an HTTP client (directly or via one assignment).
+    consts: Dict[str, Tuple[str, int, str]] = {}
+    for idx, line in enumerate(nocomment, 1):
+        if len(line) <= MAX_LINE:
+            m = _URL_CONST_RE.match(line)
+            if m:
+                consts[m.group(1)] = (m.group(2), idx, line)
+    if consts:
+        aliases: Dict[str, str] = {}
+        for idx, line in enumerate(nocomment, 1):
+            if len(line) > MAX_LINE:
+                continue
+            m = _ASSIGN_FROM_RE.match(line)
+            if m and m.group(2) in consts and m.group(1) not in consts:
+                aliases[m.group(1)] = m.group(2)
+            joined = line + " " + nocomment[idx].strip() if line.rstrip().endswith("(") and idx < len(nocomment) else line
+            for cm in _CALL_TOKEN_RE.finditer(joined):
+                name = cm.group(1)
+                const = name if name in consts else aliases.get(name)
+                if not const:
+                    continue
+                url, cidx, cline = consts[const]
+                ep = G.parse_endpoint(url)
+                if not ep:
+                    continue
+                window = " ".join(nocomment[max(0, idx - 2): idx + 3])
+                mm = _METHOD_RE.search(window)
+                verb = (mm.group(1).upper() if mm else
+                        {"post": "POST", "put": "PUT", "patch": "PATCH", "delete": "DELETE"}.get(
+                            cm.group(0).split("(")[0].strip(". ").lower(), "GET"))
+                cap = {"GET": "read", "HEAD": "read", "DELETE": "delete"}.get(verb, "write")
+                ev = g.add_evidence(item.rel, idx, adapter + ":http-call", line, "observed",
+                                    assumptions=["URL from constant %s defined at line %d" % (const, cidx)])
+                nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
+                touch(nid)
+                g.add_edge(ctx.app, nid, "calls", cap, "observed", "medium", evidence=ev,
+                           assumptions=["HTTP call observed in code; whether it executes, and what data it carries, is not verified"])
+    # Buckets named literally become concrete storage nodes.
+    if ("storage", "s3") in families:
+        for idx, line in enumerate(nocomment, 1):
+            for m in _BUCKET_RE.finditer(line):
+                ev = g.add_evidence(item.rel, idx, adapter + ":s3-bucket", line, "observed")
+                nid = g.add_node("storage", ["s3", m.group(1), "", env_hint], "s3 bucket %s" % m.group(1),
+                                 trust_domain="external", environment=G.infer_environment(m.group(1), env_hint),
+                                 attributes={"engine": "s3"}, evidence=ev)
+                touch(nid)
+                g.add_edge(ctx.app, nid, "connects", "unknown", "observed", "medium", evidence=ev,
+                           assumptions=["bucket name observed in code; IAM permissions not verified"])
+    # Record env usages with the families in this file.
+    fams = set(families)
+    ctx.uses = [(n, p, l, fams if p == item.rel else f, s) for (n, p, l, f, s) in ctx.uses]
+    # Import-only families: an unresolved target, weak evidence.
+    specific_aws = any(f in families for f in _BOTO_SERVICES.values())
+    for (kind, engine), (host, idx, line) in sorted(families.items()):
+        ctx.families_seen.add((kind, engine))
+        if (kind, engine) == ("external", "aws") and specific_aws:
+            continue  # the specific service client below is the better evidence
+        concrete = [nid for nid in targets.get(kind, set())
+                    if g.nodes[nid]["attributes"].get("engine") == engine]
+        if concrete:
+            continue
+        if host:
+            ev = g.add_evidence(item.rel, idx, adapter + ":sdk", line, "inferred",
+                                assumptions=["SDK presence is a hypothesis of use, not a confirmed data flow"])
+            nid = ctx.endpoint_node({"kind": kind, "engine": engine, "host": host, "port": None,
+                                     "path": "", "resolved": True}, evidence=ev)
+            touch(nid)
+            g.add_edge(ctx.app, nid, "calls", "unknown", "inferred", "low", evidence=ev,
+                       assumptions=["SDK presence is a hypothesis of use, not a confirmed data flow"])
+            continue
+        if any(endpointish(n) for (n, p, _, _, _) in ctx.uses if p == item.rel):
+            continue  # resolved later through environment definitions
+        ev = g.add_evidence(item.rel, idx, adapter + ":import", line, "inferred",
+                            assumptions=["import or client type only; target, reachability and grants unknown"])
+        nid = ctx.endpoint_node({"kind": kind, "engine": engine, "resolved": False}, env_hint, "", evidence=ev)
+        touch(nid)
+        g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "low", evidence=ev,
+                   assumptions=["import or client type only; target, reachability and grants unknown"])
+    ctx._pending_ops = getattr(ctx, "_pending_ops", [])
+    ctx._pending_ops.append((item.rel, adapter, targets))
+
+
+def _attach_ops(ctx: Ctx) -> None:
+    """Attach observed SQL/storage/queue operations to the targets in the
+    same file. One target: `observed`; several or none: `inferred`."""
+    g = ctx.g
+    resolved_by_file: Dict[str, Set[str]] = {}
+    for e in g.edges.values():
+        if e["source"] != ctx.app:
+            continue
+        for ref in e["evidence_refs"]:
+            ev = g.evidence.get(ref)
+            if ev:
+                resolved_by_file.setdefault(ev["path"], set()).add(e["target"])
+    for rel, adapter, targets in getattr(ctx, "_pending_ops", []):
+        file_targets = resolved_by_file.get(rel, set())
+        for entry in sorted(targets.get("_sql", ())):
+            cap, idx, line = entry.split("|", 2)
+            dbs = sorted(n for n in file_targets if g.nodes[n]["kind"] in ("database", "unknown"))
+            _op_edges(ctx, rel, adapter, int(idx), line, cap, dbs, "database", "sql")
+        for entry in sorted(targets.get("_op", ())):
+            kind, cap, idx, line = entry.split("|", 3)
+            nodes = sorted(n for n in file_targets if g.nodes[n]["kind"] in (kind, "unknown"))
+            _op_edges(ctx, rel, adapter, int(idx), line, cap, nodes, kind, kind)
+
+
+def _op_edges(ctx: Ctx, rel: str, adapter: str, idx: int, line: str, cap: str,
+              nodes: List[str], kind: str, engine: str) -> None:
+    g = ctx.g
+    assumption = "operation observed in code; it does not prove the runtime identity holds this grant"
+    if len(nodes) == 1:
+        state, conf = "observed", "medium"
+    else:
+        state, conf = "inferred", "low"
+    ev = g.add_evidence(rel, idx, adapter + ":%s-%s" % (kind, cap), line, state, assumptions=[assumption])
+    if not nodes:
+        nodes = [ctx.endpoint_node({"kind": kind, "engine": engine, "resolved": False}, _file_env(rel),
+                                   "operation without a resolved target", evidence=ev)]
+    for nid in nodes:
+        g.add_edge(ctx.app, nid, CAP_EDGE[cap] if kind != "queue" else "publishes", cap, state, conf,
+                   evidence=ev, assumptions=[assumption] + ([] if len(nodes) == 1 else
+                                                            ["several possible targets in this file; attribution ambiguous"]))
+
+
+# ---------------------------------------------------------------------------
+# Configuration adapters
+# ---------------------------------------------------------------------------
+
+_KV_RE = re.compile(r"""^\s*(?:export\s+)?["']?([A-Za-z_][\w.\-:]*)["']?\s*[:=]\s*(.+?)\s*,?\s*$""")
+
+
+def adapt_config(ctx: Ctx, item: Item) -> None:
+    env_hint = _file_env(item.rel)
+    for idx, line in enumerate(item.text.split("\n"), 1):
+        if len(line) > MAX_LINE or line.lstrip().startswith(("#", "//", ";")):
+            continue
+        m = _KV_RE.match(line)
+        if not m:
+            continue
+        name, value = m.group(1), m.group(2).strip().strip(",").strip("\"'")
+        ep = G.parse_endpoint(value)
+        if not ep:
+            continue
+        if ep["kind"] in ("api", "external") and not endpointish(name):
+            continue
+        ev = ctx.g.add_evidence(item.rel, idx, "config:endpoint", line, "declared")
+        nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=name, evidence=ev)
+        ctx.define(name, ep, ev, env_hint, item.rel)
+        ctx.g.add_edge(ctx.app, nid, "connects", "unknown", "declared", "medium", evidence=ev,
+                       assumptions=["configured endpoint; use at runtime, reachability and grants not verified"])
+
+
+def adapt_appsettings(ctx: Ctx, item: Item) -> None:
+    try:
+        data = json.loads(item.text)
+    except ValueError as exc:
+        ctx.parse_failures.append({"path": item.rel, "reason": "invalid JSON: %s" % str(exc)[:80]})
+        return
+    env_hint = _file_env(item.rel.replace("appsettings.", "appsettings/"))
+    lines = item.text.split("\n")
+
+    def line_of(needle: str) -> int:
+        for i, ln in enumerate(lines, 1):
+            if needle in ln:
+                return i
+        return 1
+
+    def walk(obj: Any, path: List[str], depth: int = 0) -> None:
+        if depth > 20:
+            return
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                walk(v, path + [str(k)], depth + 1)
+        elif isinstance(obj, str) and path:
+            name = ":".join(path)
+            ep = G.parse_endpoint(obj)
+            if not ep:
+                return
+            if ep["kind"] in ("api", "external") and not endpointish(path[-1]):
+                return
+            idx = line_of('"%s"' % path[-1])
+            ev = ctx.g.add_evidence(item.rel, idx, "dotnet:appsettings", lines[idx - 1], "declared")
+            nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=name, evidence=ev)
+            ctx.define(name, ep, ev, env_hint, item.rel)
+            ctx.g.add_edge(ctx.app, nid, "connects", "unknown", "declared", "medium", evidence=ev,
+                           assumptions=["configured connection; effective database grants not verified"])
+    walk(data, [])
+
+
+_IMAGE_ENGINES = [
+    (re.compile(r"(^|/)(postgres|postgis|timescaledb)"), ("database", "postgresql")),
+    (re.compile(r"(^|/)(mysql|mariadb)"), ("database", "mysql")),
+    (re.compile(r"(^|/)mongo"), ("database", "mongodb")),
+    (re.compile(r"(^|/)(redis|valkey|keydb)"), ("database", "redis")),
+    (re.compile(r"(^|/)rabbitmq"), ("queue", "amqp")),
+    (re.compile(r"(^|/)(kafka|cp-kafka|redpanda)"), ("queue", "kafka")),
+    (re.compile(r"(^|/)minio"), ("storage", "s3")),
+    (re.compile(r"mssql"), ("database", "sqlserver")),
+    (re.compile(r"(^|/)(elasticsearch|opensearch)"), ("database", "search")),
+]
+
+
+def _image_family(image: str) -> Optional[Tuple[str, str]]:
+    img = image.lower().split("@")[0]
+    for rx, fam in _IMAGE_ENGINES:
+        if rx.search(img):
+            return fam
+    return None
+
+
+def _line_of(lines: List[str], needle: str, start: int = 0) -> int:
+    for i in range(start, len(lines)):
+        if needle in lines[i]:
+            return i + 1
+    return 1
+
+
+def _env_items(env: Any) -> List[Tuple[str, Any]]:
+    if isinstance(env, dict):
+        return [(str(k), v) for k, v in env.items()]
+    out = []
+    if isinstance(env, list):
+        for e in env:
+            if isinstance(e, str) and "=" in e:
+                k, v = e.split("=", 1)
+                out.append((k, v))
+            elif isinstance(e, dict) and "name" in e:
+                out.append((str(e["name"]), e))
+    return out
+
+
+def adapt_compose(ctx: Ctx, item: Item, docs: List[Any]) -> None:
+    g = ctx.g
+    lines = item.text.split("\n")
+    env_hint = _file_env(item.rel)
+    for doc in docs:
+        services = doc.get("services") if isinstance(doc, dict) else None
+        if not isinstance(services, dict):
+            continue
+        ids: Dict[str, str] = {}
+        for name, svc in sorted(services.items()):
+            if not isinstance(svc, dict):
+                continue
+            idx = _line_of(lines, "%s:" % name)
+            ev = g.add_evidence(item.rel, idx, "compose:service", lines[idx - 1], "declared")
+            fam = _image_family(str(svc.get("image", "")))
+            if fam:
+                ids[name] = g.add_node(fam[0], [fam[1], name.lower(), "", env_hint], "%s %s" % (fam[1], name),
+                                       trust_domain="internal", environment=env_hint,
+                                       attributes={"engine": fam[1], "host": name.lower(),
+                                                   "compose_service": name}, evidence=ev)
+            else:
+                ids[name] = g.add_node("workload", ["compose", item.rel, name], "compose service %s" % name,
+                                       trust_domain="internal", environment=env_hint,
+                                       attributes={"platform": "docker-compose"}, evidence=ev)
+        for name, svc in sorted(services.items()):
+            if not isinstance(svc, dict) or name not in ids:
+                continue
+            src = ids[name]
+            deps = svc.get("depends_on") or []
+            for dep in (sorted(deps) if isinstance(deps, (dict, list)) else []):
+                if dep in ids:
+                    idx = _line_of(lines, str(dep), _line_of(lines, "%s:" % name) - 1)
+                    ev = g.add_evidence(item.rel, idx, "compose:depends_on", lines[idx - 1], "declared")
+                    g.add_edge(src, ids[dep], "depends-on", "none", "declared", "high", evidence=ev,
+                               assumptions=["start-up ordering dependency; not a data-access grant"])
+            for key, value in _env_items(svc.get("environment")):
+                if not isinstance(value, str):
+                    continue
+                ep = G.parse_endpoint(value)
+                if not ep or (ep["kind"] in ("api", "external") and not endpointish(key)):
+                    continue
+                idx = _line_of(lines, key)
+                ev = g.add_evidence(item.rel, idx, "compose:environment", lines[idx - 1], "declared")
+                nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=key, evidence=ev)
+                ctx.define(key, ep, ev, env_hint, item.rel)
+                if nid != src:
+                    g.add_edge(src, nid, "connects", "unknown", "declared", "medium", evidence=ev,
+                               assumptions=["configured endpoint; grants and live reachability not verified"])
+
+
+_WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod", "ReplicaSet"}
+_VERB_CAP = [({"*", "escalate", "bind", "impersonate"}, "admin"), ({"delete", "deletecollection"}, "delete"),
+             ({"create", "update", "patch"}, "write"), ({"get", "list", "watch"}, "read")]
+
+
+def _pod_spec(doc: Dict[str, Any]) -> Dict[str, Any]:
+    spec = doc.get("spec") or {}
+    if doc.get("kind") == "CronJob":
+        spec = ((spec.get("jobTemplate") or {}).get("spec") or {})
+    if doc.get("kind") != "Pod":
+        spec = ((spec.get("template") or {}).get("spec") or {}) if isinstance(spec, dict) else {}
+    return spec if isinstance(spec, dict) else {}
+
+
+def adapt_k8s(ctx: Ctx, item: Item, docs: List[Any]) -> None:
+    g = ctx.g
+    lines = item.text.split("\n")
+    for doc in docs:
+        if not isinstance(doc, dict) or not isinstance(doc.get("kind"), str):
+            continue
+        kind = doc["kind"]
+        meta = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        name = str(meta.get("name", "unnamed"))
+        ns = str(meta.get("namespace", "default"))
+        env_hint = G.infer_environment(ns, name)
+        if env_hint == "unknown":
+            env_hint = _file_env(item.rel)
+        idx = _line_of(lines, "name: %s" % name)
+        if kind in _WORKLOAD_KINDS:
+            ev = g.add_evidence(item.rel, _line_of(lines, "kind: %s" % kind), "k8s:workload",
+                                "kind: %s %s/%s" % (kind, ns, name), "declared")
+            pod = _pod_spec(doc)
+            wid = g.add_node("workload", ["k8s", ns, kind, name], "k8s %s %s/%s" % (kind, ns, name),
+                             trust_domain="internal", environment=env_hint,
+                             attributes={"platform": "kubernetes"}, evidence=ev)
+            sa = pod.get("serviceAccountName") or pod.get("serviceAccount")
+            if sa:
+                sidx = _line_of(lines, "serviceAccountName: %s" % sa)
+                sev = g.add_evidence(item.rel, sidx, "k8s:serviceaccount", lines[sidx - 1], "declared")
+                iid = g.add_node("identity", ["k8s-sa", ns, sa], "k8s service account %s/%s" % (ns, sa),
+                                 trust_domain="internal", environment=env_hint, evidence=sev)
+                g.add_edge(wid, iid, "authenticates-as", "unknown", "declared", "high", evidence=sev,
+                           assumptions=["the workload runs as this service account; its effective RBAC comes from bindings"])
+            if pod.get("automountServiceAccountToken") is False:
+                g.nodes[wid]["attributes"]["automount_token"] = "disabled"
+            containers = list(pod.get("containers") or []) + list(pod.get("initContainers") or [])
+            for c in containers:
+                if not isinstance(c, dict):
+                    continue
+                for ename, val in _env_items(c.get("env")):
+                    if isinstance(val, dict):
+                        vf = val.get("valueFrom") or {}
+                        ref = vf.get("secretKeyRef") if isinstance(vf, dict) else None
+                        if isinstance(ref, dict):
+                            g.nodes[wid]["attributes"].setdefault("credential_refs", [])
+                            g.add_node("workload", ["k8s", ns, kind, name], "", attributes={
+                                "credential_refs": ["secret %s:%s" % (ref.get("name"), ref.get("key"))]})
+                            if endpointish(ename):
+                                eidx = _line_of(lines, ename)
+                                eev = g.add_evidence(item.rel, eidx, "k8s:secretKeyRef", lines[eidx - 1], "declared",
+                                                     assumptions=["value lives in a Secret; not dereferenced"])
+                                nid = ctx.endpoint_node({"kind": "unknown", "engine": "endpoint", "resolved": False},
+                                                        env_hint, "secret %s" % ref.get("name"), evidence=eev)
+                                g.add_edge(wid, nid, "connects", "unknown", "declared", "low", evidence=eev,
+                                           assumptions=["endpoint supplied by a Secret reference; target unknown"])
+                            continue
+                        val = val.get("value")
+                    if not isinstance(val, str):
+                        continue
+                    ep = G.parse_endpoint(val)
+                    if not ep or (ep["kind"] in ("api", "external") and not endpointish(ename)):
+                        continue
+                    eidx = _line_of(lines, ename)
+                    eev = g.add_evidence(item.rel, eidx, "k8s:env", lines[min(eidx, len(lines) - 1)], "declared")
+                    nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=ename, evidence=eev)
+                    ctx.define(ename, ep, eev, env_hint, item.rel)
+                    g.add_edge(wid, nid, "connects", "unknown", "declared", "medium", evidence=eev,
+                               assumptions=["configured endpoint; grants and live reachability not verified"])
+                for ef in c.get("envFrom") or []:
+                    if isinstance(ef, dict):
+                        for k in ("secretRef", "configMapRef"):
+                            ref = ef.get(k)
+                            if isinstance(ref, dict) and ref.get("name"):
+                                g.add_node("workload", ["k8s", ns, kind, name], "", attributes={
+                                    "credential_refs" if k == "secretRef" else "config_refs":
+                                        ["%s %s" % ("secret" if k == "secretRef" else "configmap", ref["name"])]})
+        elif kind in ("Role", "ClusterRole"):
+            rules = [r for r in (doc.get("rules") or []) if isinstance(r, dict)]
+            ctx.k8s_roles[(kind, ns if kind == "Role" else "", name)] = rules
+            ctx.k8s_roles[(kind, ns if kind == "Role" else "", name)].append({"_path": item.rel, "_line": idx})
+        elif kind in ("RoleBinding", "ClusterRoleBinding"):
+            ctx.k8s_bindings.append((doc, item.rel, idx))
+
+
+def _resolve_k8s_rbac(ctx: Ctx) -> None:
+    g = ctx.g
+    for doc, rel, idx in ctx.k8s_bindings:
+        meta = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        ns = str(meta.get("namespace", "default"))
+        ref = doc.get("roleRef") or {}
+        rkind, rname = ref.get("kind"), ref.get("name")
+        rules = ctx.k8s_roles.get((rkind, ns if rkind == "Role" else "", rname))
+        scope = "cluster" if doc.get("kind") == "ClusterRoleBinding" else "namespace %s" % ns
+        if rules is None:
+            ctx.warnings.append("k8s %s %s references role %s/%s that was not found in scanned files"
+                                % (doc.get("kind"), meta.get("name"), rkind, rname))
+            continue
+        ev = g.add_evidence(rel, idx, "k8s:rbac-binding", "%s %s -> %s %s" % (doc.get("kind"), meta.get("name"), rkind, rname),
+                            "declared", assumptions=["declared RBAC; the cluster may differ from the repository"])
+        env_hint = G.infer_environment(ns)
+        for subj in doc.get("subjects") or []:
+            if not isinstance(subj, dict) or subj.get("kind") != "ServiceAccount":
+                continue
+            sns = str(subj.get("namespace", ns))
+            iid = g.add_node("identity", ["k8s-sa", sns, subj.get("name")], "k8s service account %s/%s" % (sns, subj.get("name")),
+                             trust_domain="internal", environment=G.infer_environment(sns), evidence=ev)
+            for rule in rules:
+                if "_path" in rule:
+                    continue
+                verbs = {str(v) for v in (rule.get("verbs") or [])}
+                resources = {str(r) for r in (rule.get("resources") or [])}
+                cap = next((c for vs, c in _VERB_CAP if verbs & vs), None)
+                if not cap:
+                    continue
+                if resources & {"secrets", "*"}:
+                    tid = g.add_node("api", ["kubernetes-secrets", scope], "kubernetes secrets (%s)" % scope,
+                                     trust_domain="internal", environment=env_hint, sensitivity="restricted",
+                                     attributes={"engine": "kubernetes"}, evidence=ev)
+                    g.nodes[tid]["classification_source"] = "resource-type: credentials"
+                    g.add_edge(iid, tid, CAP_EDGE[cap], cap, "declared", "high", evidence=ev,
+                               assumptions=["declared RBAC rule; effective cluster state not verified"])
+                if resources - {"secrets"}:
+                    tid = g.add_node("api", ["kubernetes", scope], "kubernetes API (%s)" % scope,
+                                     trust_domain="internal", environment=env_hint,
+                                     attributes={"engine": "kubernetes"}, evidence=ev)
+                    g.add_edge(iid, tid, CAP_EDGE[cap], cap, "declared", "high", evidence=ev,
+                               assumptions=["declared RBAC rule; effective cluster state not verified"])
+
+
+_SECRET_REF_RE = re.compile(r"\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_CLOUD_ACTIONS = {"azure/login": "azure", "aws-actions/configure-aws-credentials": "aws",
+                  "google-github-actions/auth": "gcp"}
+
+
+def adapt_actions(ctx: Ctx, item: Item, docs: List[Any]) -> None:
+    g = ctx.g
+    lines = item.text.split("\n")
+    doc = docs[0] if docs and isinstance(docs[0], dict) else {}
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    envs = set()
+    for job in jobs.values():
+        if isinstance(job, dict):
+            env = job.get("environment")
+            if isinstance(env, dict):
+                env = env.get("name")
+            if isinstance(env, str):
+                envs.add(env)
+    environment = G.infer_environment(*envs) if envs else "unknown"
+    ev = g.add_evidence(item.rel, 1, "actions:workflow", "workflow %s" % item.rel, "declared")
+    wid = g.add_node("workload", ["gha", item.rel], "CI workflow %s" % os.path.basename(item.rel),
+                     trust_domain="internal", environment=environment,
+                     attributes={"platform": "github-actions", **({"environments": sorted(envs)} if envs else {})},
+                     evidence=ev)
+    secrets = sorted(set(_SECRET_REF_RE.findall(item.text)))
+    if secrets:
+        g.nodes[wid]["attributes"]["credential_refs"] = ["secret %s" % s for s in secrets[:50]]
+    tid = g.add_node("identity", ["github-token", item.rel], "GITHUB_TOKEN (%s)" % os.path.basename(item.rel),
+                     trust_domain="internal", environment=environment, evidence=ev)
+    g.add_edge(wid, tid, "authenticates-as", "unknown", "declared", "high", evidence=ev,
+               assumptions=["every workflow run receives a GITHUB_TOKEN"])
+    repo = g.add_node("api", ["github", "repository"], "GitHub repository (this repo)", trust_domain="external",
+                      attributes={"engine": "github"})
+    perm_blocks = [(doc.get("permissions"), "permissions:")]
+    perm_blocks += [(j.get("permissions"), "permissions:") for j in jobs.values() if isinstance(j, dict)]
+    any_perm = False
+    for perms, needle in perm_blocks:
+        if perms is None:
+            continue
+        any_perm = True
+        pidx = _line_of(lines, needle)
+        pev = g.add_evidence(item.rel, pidx, "actions:permissions", lines[pidx - 1], "declared")
+        if isinstance(perms, str):
+            cap = {"write-all": "admin", "read-all": "read"}.get(perms)
+            if cap:
+                g.add_edge(tid, repo, CAP_EDGE[cap], cap, "declared", "high", evidence=pev,
+                           assumptions=["workflow-declared token permissions"])
+            continue
+        if isinstance(perms, dict):
+            for scope, level in sorted(perms.items()):
+                if scope == "id-token" and level == "write":
+                    fid = g.add_node("identity", ["oidc-federation", item.rel], "OIDC federation (%s)" % os.path.basename(item.rel),
+                                     trust_domain="external", environment=environment, evidence=pev)
+                    g.add_edge(tid, fid, "authenticates-as", "unknown", "declared", "medium", evidence=pev,
+                               assumptions=["id-token: write lets the job request a cloud OIDC token; the cloud-side trust is not visible here"])
+                elif level in ("write", "read"):
+                    cap = "write" if level == "write" else "read"
+                    g.add_edge(tid, repo, CAP_EDGE[cap], cap, "declared", "high", evidence=pev,
+                               assumptions=["token scope %s: %s" % (scope, level)])
+    if not any_perm:
+        g.add_edge(tid, repo, "connects", "unknown", "declared", "medium", evidence=ev,
+                   assumptions=["no permissions block: token scope falls back to repository/org defaults, which are not visible here"])
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps") or []:
+            if not isinstance(step, dict) or not isinstance(step.get("uses"), str):
+                continue
+            action = step["uses"].split("@")[0].lower()
+            provider = _CLOUD_ACTIONS.get(action)
+            if provider:
+                sidx = _line_of(lines, step["uses"])
+                sev = g.add_evidence(item.rel, sidx, "actions:cloud-login", lines[sidx - 1], "declared")
+                cid = g.add_node("identity", ["cloud-deploy", provider, item.rel], "%s deploy identity (%s)" % (provider, os.path.basename(item.rel)),
+                                 trust_domain="external", environment=environment, evidence=sev)
+                g.add_edge(wid, cid, "authenticates-as", "unknown", "declared", "high", evidence=sev,
+                           assumptions=["cloud login step; the identity's cloud permissions are not visible in the repository"])
+                xid = g.add_node("external", ["cloud", provider], "%s cloud control plane" % provider,
+                                 trust_domain="external", attributes={"engine": provider})
+                g.add_edge(cid, xid, "connects", "unknown", "inferred", "medium", evidence=sev,
+                           assumptions=["effective cloud role assignments unknown"])
+
+
+_TF_RES_RE = re.compile(r'^\s*resource\s+"([\w-]+)"\s+"([\w-]+)"\s*\{')
+_TF_KINDS = [
+    (re.compile(r"(db_instance|rds_cluster|sql_server|sql_database|mssql|postgresql|mysql|cosmosdb|dynamodb|sql_database_instance|bigquery)"), "database"),
+    (re.compile(r"(s3_bucket$|storage_account$|storage_bucket$|storage_container$)"), "storage"),
+    (re.compile(r"(sqs_queue|sns_topic|servicebus|pubsub_topic|eventhub|kinesis)"), "queue"),
+]
+_TF_ADMIN_ROLES = re.compile(r'(?i)role_definition_name\s*=\s*"(Owner|Contributor|User Access Administrator)"|role\s*=\s*"roles/(owner|editor)"|"Action"\s*:\s*"\*"|actions\s*=\s*\[\s*"\*"\s*\]')
+
+
+def adapt_terraform(ctx: Ctx, item: Item) -> None:
+    g = ctx.g
+    lines = item.text.split("\n")
+    env_hint = _file_env(item.rel)
+    current: Optional[Tuple[str, str, int]] = None
+    depth = 0
+    for idx, line in enumerate(lines, 1):
+        if len(line) > MAX_LINE:
+            continue
+        m = _TF_RES_RE.match(line)
+        if m and depth == 0:
+            current = (m.group(1), m.group(2), idx)
+            rtype = m.group(1)
+            for rx, kind in _TF_KINDS:
+                if rx.search(rtype):
+                    ev = g.add_evidence(item.rel, idx, "terraform:resource", line, "declared",
+                                        assumptions=["best-effort HCL reading; variables, modules and count/for_each are not evaluated"])
+                    g.add_node(kind, ["terraform", rtype, m.group(2), env_hint], "%s.%s" % (rtype, m.group(2)),
+                               trust_domain="unknown", environment=G.infer_environment(m.group(2), env_hint),
+                               attributes={"engine": rtype.split("_")[0], "iac": "terraform"}, evidence=ev)
+                    break
+        if current and _TF_ADMIN_ROLES.search(line):
+            rtype, rname, _ = current
+            ev = g.add_evidence(item.rel, idx, "terraform:privileged-grant", line, "declared",
+                                assumptions=["best-effort HCL reading; the grant's principal and scope are not resolved"])
+            provider = {"azurerm": "azure", "azuread": "azure", "google": "gcp"}.get(rtype.split("_")[0], rtype.split("_")[0])
+            iid = g.add_node("identity", ["terraform-principal", rtype, rname], "principal of %s.%s" % (rtype, rname),
+                             trust_domain="external", environment=env_hint, evidence=ev)
+            xid = g.add_node("external", ["cloud", provider], "%s cloud control plane" % provider,
+                             trust_domain="external", attributes={"engine": provider})
+            g.add_edge(iid, xid, "administers", "admin", "declared", "medium", evidence=ev,
+                       assumptions=["administrative role declared in IaC; applied state not verified"])
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            depth = 0
+            current = None
+
+
+def adapt_manifest(ctx: Ctx, item: Item) -> None:
+    base = os.path.basename(item.rel).lower()
+    names: List[Tuple[str, int, str]] = []
+    lines = item.text.split("\n")
+    if base == "package.json":
+        try:
+            data = json.loads(item.text)
+        except ValueError:
+            ctx.parse_failures.append({"path": item.rel, "reason": "invalid JSON"})
+            return
+        for sect in ("dependencies", "optionalDependencies"):
+            for k in sorted((data.get(sect) or {}) if isinstance(data, dict) else {}):
+                idx = _line_of(lines, '"%s"' % k)
+                names.append((k.lower(), idx, lines[idx - 1]))
+    elif base.endswith(".csproj"):
+        for idx, line in enumerate(lines, 1):
+            for m in re.finditer(r'PackageReference\s+Include="([^"]+)"', line):
+                names.append((m.group(1).lower(), idx, line))
+    else:
+        for idx, line in enumerate(lines, 1):
+            m = re.match(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._\-]*)""", line)
+            if m and not line.lstrip().startswith(("#", "[")):
+                names.append((m.group(1).lower(), idx, line))
+    for name, idx, line in names:
+        fam = PKG_FAMILIES.get(name) or PKG_FAMILIES.get(name.replace("_", "-"))
+        if fam:
+            ctx.manifest_deps.append(((fam[0], fam[1]), item.rel, idx, line))
+
+
+def _resolve_manifests(ctx: Ctx) -> None:
+    g = ctx.g
+    present = {(n["kind"], n["attributes"].get("engine")) for n in g.nodes.values()}
+    for (kind, engine), rel, idx, line in sorted(ctx.manifest_deps):
+        if (kind, engine) in present or (kind, engine) in ctx.families_seen:
+            continue
+        ev = g.add_evidence(rel, idx, "manifest:dependency", line, "inferred",
+                            assumptions=["dependency declared in a manifest; usage not observed in code"])
+        nid = ctx.endpoint_node({"kind": kind, "engine": engine, "resolved": False}, "unknown",
+                                "manifest dependency", evidence=ev)
+        g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "low", evidence=ev,
+                   assumptions=["dependency declared in a manifest; usage not observed in code"])
+
+
+def _resolve_env(ctx: Ctx) -> None:
+    """Join code-side environment reads to configuration definitions."""
+    g = ctx.g
+    for name, rel, line, fams, snippet in sorted(ctx.uses, key=lambda u: (u[1], u[2], u[0])):
+        defs = ctx.defs.get(name) or ctx.defs.get(name.split(":")[-1])
+        if defs:
+            for ep, def_ev, env_hint, def_path in defs:
+                ev = g.add_evidence(rel, line, "env:resolved", snippet, "inferred",
+                                    assumptions=["endpoint resolved by environment-variable name %s from %s" % (name, def_path)])
+                nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=name, evidence=def_ev)
+                g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "medium", evidence=ev,
+                           assumptions=["the deployed value of %s may differ from the repository definition" % name])
+            continue
+        if not endpointish(name):
+            continue
+        kinds = sorted(fams)
+        fam = kinds[0] if len(kinds) == 1 else ("unknown", "endpoint")
+        ev = g.add_evidence(rel, line, "env:unresolved", snippet, "inferred",
+                            assumptions=["endpoint supplied at runtime via %s; no definition found in the repository" % name])
+        nid = ctx.endpoint_node({"kind": fam[0], "engine": fam[1], "resolved": False}, _file_env(rel),
+                                "env %s" % name, evidence=ev)
+        g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "low", evidence=ev,
+                   assumptions=["dynamic endpoint; the target is unknown, not absent"])
+
+
+# ---------------------------------------------------------------------------
+# Classification overlays: repository declarations and operator inventory
+# ---------------------------------------------------------------------------
+
+def _matches(node: Dict[str, Any], pattern: str) -> bool:
+    p = str(pattern).lower().strip()
+    if not p:
+        return False
+    if node["id"] == pattern:
+        return True
+    label = node["display_label"].lower()
+    engine = str(node["attributes"].get("engine", "")).lower()
+    return p in label or p == engine or p == node["kind"]
+
+
+def apply_assets(g: G.Graph, assets: Sequence[Dict[str, Any]], source: str, warnings: List[str],
+                 allow_lower: bool) -> None:
+    for spec in assets:
+        if not isinstance(spec, dict):
+            continue
+        pattern = spec.get("match", "")
+        hits = [n for n in g.nodes.values() if _matches(n, pattern)]
+        if not hits:
+            warnings.append("%s asset declaration matched nothing: %s" % (source, safe_text(str(pattern))[:60]))
+        for node in hits:
+            for fld, allowed in (("sensitivity", G.SENSITIVITIES), ("criticality", G.CRITICALITIES),
+                                 ("environment", G.ENVIRONMENTS), ("trust_domain", G.TRUST_DOMAINS)):
+                val = spec.get(fld)
+                if val is None:
+                    continue
+                if val not in allowed:
+                    warnings.append("%s asset declaration: invalid %s %r" % (source, fld, safe_text(str(val))[:30]))
+                    continue
+                if node["classification_source"] == "operator-inventory" and not allow_lower:
+                    continue  # repository declarations never override operator inventory
+                node[fld] = val
+            node["classification_source"] = source
+
+
+def apply_inventory(g: G.Graph, inv: Dict[str, Any], trusted: bool, warnings: List[str], label: str) -> None:
+    verification = "provider-verified" if trusted else "declared"
+    source_trust = "operator-inventory" if trusted else "repository-inventory"
+    apply_assets(g, inv.get("assets") or [], "operator-inventory" if trusted else "repository-declaration",
+                 warnings, allow_lower=trusted)
+    for grant in inv.get("grants") or []:
+        if not isinstance(grant, dict):
+            continue
+        cap = grant.get("capability", "unknown")
+        if cap not in G.CAPABILITIES:
+            warnings.append("inventory grant: invalid capability %r" % safe_text(str(cap))[:20])
+            continue
+        claimed = grant.get("verification", "declared")
+        ver = verification if claimed == "provider-verified" else ("declared" if claimed not in G.VERIFICATIONS
+                                                                  or claimed == "refuted" else claimed)
+        if claimed == "provider-verified" and not trusted:
+            warnings.append("inventory claims provider-verified but is repository-controlled or untrusted; treated as declared")
+        srcs = [n for n in g.nodes.values() if _matches(n, grant.get("principal", ""))]
+        tgts = [n for n in g.nodes.values() if _matches(n, grant.get("target", ""))]
+        if not tgts and grant.get("target_kind") in G.NODE_KINDS:
+            tid = g.add_node(grant["target_kind"], ["inventory", grant.get("target", "")], str(grant.get("target", "")),
+                             trust_domain=grant.get("target_trust_domain", "unknown")
+                             if grant.get("target_trust_domain") in G.TRUST_DOMAINS else "unknown")
+            tgts = [g.nodes[tid]] if tid else []
+        if not srcs or not tgts:
+            warnings.append("inventory grant matched no principal/target: %s -> %s"
+                            % (safe_text(str(grant.get("principal")))[:40], safe_text(str(grant.get("target")))[:40]))
+            continue
+        kind = grant.get("kind") if grant.get("kind") in G.EDGE_KINDS else CAP_EDGE.get(cap, "connects")
+        ev = g.add_evidence(label, 0, "inventory:grant", "%s %s -> %s" % (kind, grant.get("principal"), grant.get("target")),
+                            ver, assumptions=["imported from inventory '%s'%s" % (label, "" if trusted else
+                                                                                   " (not trusted: declared only)")])
+        for s in srcs:
+            for t in tgts:
+                eid = g.add_edge(s["id"], t["id"], kind, cap, ver, "high", evidence=ev, source_trust=source_trust,
+                                 assumptions=["inventory claim; jankhunt42 did not verify it cryptographically"])
+                ds = grant.get("data_sensitivity")
+                if eid and ds in G.SENSITIVITIES:
+                    g.edges[eid]["data_sensitivity"] = ds
+    if trusted:
+        for ref in inv.get("refute") or []:
+            if not isinstance(ref, dict):
+                continue
+            for e in g.edges.values():
+                if _matches(g.nodes[e["source"]], ref.get("principal", "")) and \
+                        _matches(g.nodes[e["target"]], ref.get("target", "")) and \
+                        (not ref.get("capability") or ref["capability"] == e["capability"]):
+                    e["verification"] = "refuted"
+                    e["source_trust"] = source_trust
+                    e["assumptions"] = sorted(set(e["assumptions"]) | {"refuted by operator inventory"})
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
+    low = rel.lower()
+    base = os.path.basename(low)
+    if is_test_path(rel):
+        return "test", None
+    if low.endswith((".md", ".rst", ".txt")) and not base.startswith("requirements"):
+        return "doc", None
+    if base.startswith("requirements") and base.endswith(".txt") or base in ("pyproject.toml", "pipfile", "package.json") \
+            or base.endswith(".csproj"):
+        return "manifest", None
+    if base.startswith("appsettings") and base.endswith(".json"):
+        return "appsettings", None
+    if low.endswith(".tf"):
+        return "terraform", None
+    if low.endswith((".yml", ".yaml")):
+        if "/.github/workflows/" in "/" + low:
+            kind = "actions"
+        elif re.match(r"(docker-)?compose([.\-][\w.\-]+)?\.ya?ml$", base):
+            kind = "compose"
+        else:
+            kind = "yaml"
+        try:
+            docs = jh_yaml.load_all(text)
+        except jh_yaml.YamlError as exc:
+            return "yaml-error:" + str(exc)[:80], None
+        if kind == "yaml" and any(isinstance(d, dict) and "kind" in d and "apiVersion" in d for d in docs):
+            kind = "k8s"
+        return kind, docs
+    if base.startswith(".env") or base.endswith((".env", ".properties", ".ini", ".cfg", ".conf", ".toml")) \
+            or (low.endswith(".json") and ("config" in low or "settings" in low)):
+        return "config", None
+    lang = detect_lang(rel)
+    lang = {"js": "javascript", "ts": "typescript"}.get(lang, lang)
+    if lang in ("python", "javascript", "typescript", "csharp"):
+        return "code:" + lang, None
+    return "unsupported", None
+
+
+ADAPTERS = ("python", "javascript", "dotnet", "config", "appsettings", "kubernetes", "compose",
+            "github-actions", "terraform", "manifest")
+
+
+def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.Graph, Ctx, Dict[str, Any]]:
+    g = G.Graph(snapshot=snapshot)
+    ctx = Ctx(g, app_name)
+    counts: Dict[str, int] = {}
+    unsupported = 0
+    tests = 0
+    for item in sorted(items, key=lambda i: i.rel):
+        kind, docs = _classify_file(item.rel, item.text)
+        if kind.startswith("yaml-error:"):
+            ctx.parse_failures.append({"path": item.rel, "reason": kind.split(":", 1)[1]})
+            continue
+        if kind == "test":
+            tests += 1
+            continue
+        if kind in ("doc", "unsupported", "yaml"):
+            unsupported += 1
+            continue
+        adapter = {"code:python": "python", "code:javascript": "javascript", "code:typescript": "javascript",
+                   "code:csharp": "dotnet", "k8s": "kubernetes", "actions": "github-actions"}.get(kind, kind)
+        try:
+            if kind.startswith("code:"):
+                adapt_code(ctx, item, kind.split(":", 1)[1])
+            elif kind == "config":
+                adapt_config(ctx, item)
+            elif kind == "appsettings":
+                adapt_appsettings(ctx, item)
+            elif kind == "k8s":
+                adapt_k8s(ctx, item, docs or [])
+            elif kind == "compose":
+                adapt_compose(ctx, item, docs or [])
+            elif kind == "actions":
+                adapt_actions(ctx, item, docs or [])
+            elif kind == "terraform":
+                adapt_terraform(ctx, item)
+            elif kind == "manifest":
+                adapt_manifest(ctx, item)
+        except (RecursionError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            # A malformed file degrades coverage; it never aborts the map.
+            ctx.parse_failures.append({"path": item.rel, "reason": "%s: %s" % (type(exc).__name__, safe_text(str(exc))[:60])})
+            continue
+        counts[adapter] = counts.get(adapter, 0) + 1
+        ctx.inspected.append(item.rel)
+    _resolve_env(ctx)
+    _attach_ops(ctx)
+    _resolve_k8s_rbac(ctx)
+    _resolve_manifests(ctx)
+    stats = {"by_adapter": dict(sorted(counts.items())), "unsupported_files": unsupported,
+             "test_files_excluded": tests}
+    return g, ctx, stats
+
+
+def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
+    nodes = list(g.nodes.values())
+    edges = list(g.edges.values())
+    out = []
+    static = [e for e in edges if e["verification"] not in ("provider-verified", "refuted")]
+    if static:
+        out.append({"id": "effective-privileges", "count": len(static),
+                    "detail": "effective grants are not verified for %d edge(s); static evidence cannot prove privileges" % len(static)})
+    unres = [n for n in nodes if n["attributes"].get("unresolved")]
+    if unres:
+        out.append({"id": "unresolved-targets", "count": len(unres),
+                    "detail": "%d endpoint(s) are resolved only at runtime (environment, secrets, or SDK defaults)" % len(unres)})
+    unk = [e for e in edges if e["capability"] == "unknown" and e["kind"] in ("connects", "calls")]
+    if unk:
+        out.append({"id": "unknown-capability", "count": len(unk),
+                    "detail": "%d connection(s) have unknown capability; treated as possibly read, write, or destructive" % len(unk)})
+    assets = [n for n in nodes if n["kind"] in ("database", "storage", "queue", "api", "external", "unknown")]
+    uncls = [n for n in assets if n["sensitivity"] == "unknown"]
+    if uncls:
+        out.append({"id": "data-classification", "count": len(uncls),
+                    "detail": "%d asset(s) have no declared data sensitivity" % len(uncls)})
+    env = [n for n in assets if n["environment"] == "unknown"]
+    if env:
+        out.append({"id": "environment", "count": len(env),
+                    "detail": "%d asset(s) have unknown environment (production vs non-production)" % len(env)})
+    has_code = any(e["source"] == ctx.app for e in edges)
+    workloads = [n for n in nodes if n["kind"] == "workload" and n["attributes"].get("platform") != "github-actions"]
+    if has_code and workloads:
+        out.append({"id": "code-to-workload-binding", "count": len(workloads),
+                    "detail": "which workload runs the repository code is not inferred; declare it via an inventory grant if needed"})
+    out.append({"id": "runtime-reachability", "count": None,
+                "detail": "static analysis only: network reachability, firewalls, and live data movement were not tested"})
+    return out
+
+
+def load_json_file(path: str) -> Dict[str, Any]:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object")
+    return data
+
+
+def inside(path: str, root: str) -> bool:
+    try:
+        rp, rr = os.path.realpath(path), os.path.realpath(root)
+        return os.path.commonpath([rp, rr]) == rr
+    except ValueError:
+        return False
+
+
+def generated_at() -> str:
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch and epoch.isdigit():
+        return datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_report(col: Collected, root: str, app_name: str, snapshot: str, source_revision: Optional[str],
+                 declarations: Optional[Dict[str, Any]] = None, inventory: Optional[Dict[str, Any]] = None,
+                 inventory_trusted: bool = False, inventory_label: str = "", max_depth: int = G.DEFAULT_DEPTH,
+                 extra_warnings: Sequence[str] = ()) -> Dict[str, Any]:
+    g, ctx, stats = build_graph(col.items, app_name, snapshot)
+    warnings = list(extra_warnings) + ctx.warnings
+    if declarations:
+        apply_assets(g, declarations.get("assets") or [], "repository-declaration", warnings, allow_lower=False)
+    if inventory:
+        apply_inventory(g, inventory, inventory_trusted, warnings, inventory_label or "inventory")
+    g.finalize()
+    graph = {"nodes": g.node_list(), "edges": g.edge_list()}
+    coverage = {
+        "files_considered": col.considered,
+        "files_read": len(col.items),
+        "files_inspected": len(ctx.inspected),
+        "by_adapter": stats["by_adapter"],
+        "adapters_available": list(ADAPTERS),
+        "unsupported_files": stats["unsupported_files"],
+        "test_files_excluded": stats["test_files_excluded"],
+        "skipped": dict(sorted(col.skipped.items())),
+        "parse_failures": sorted(ctx.parse_failures, key=lambda p: p["path"]),
+        "max_files_reached": col.max_files_reached,
+        "inspected_paths": sorted(ctx.inspected)[:5000],
+        "skipped_paths": sorted(col.skipped_paths)[:5000],
+    }
+    partial_reasons = []
+    if col.max_files_reached:
+        partial_reasons.append("file cap reached")
+    if ctx.parse_failures:
+        partial_reasons.append("%d file(s) could not be parsed" % len(ctx.parse_failures))
+    if g.truncated:
+        partial_reasons.extend(g.truncated)
+    if not ctx.inspected:
+        partial_reasons.append("no supported files inspected")
+    coverage["status"] = "none" if not ctx.inspected else ("partial" if partial_reasons else "complete-for-supported-types")
+    coverage["partial_reasons"] = partial_reasons
+    assessment = G.assess(graph, len(ctx.inspected), max_depth)
+    report: Dict[str, Any] = {
+        "schema_version": G.MAP_SCHEMA,
+        "tool": TOOL,
+        "tool_version": VERSION,
+        "source_revision": source_revision,
+        "scan_id": "",
+        "generated_at": "",
+        "scope": {"root": ".", "name": safe_text(app_name), "snapshot": snapshot, "redaction": "none",
+                  "max_depth": max_depth},
+        "coverage": coverage,
+        "warnings": sorted(set(warnings)),
+        "unknowns": _unknowns(g, ctx),
+        "evidence": g.evidence_list(),
+        "graph": graph,
+        "assessment": assessment,
+        "truncation": {"truncated": bool(g.truncated or assessment["truncated_reachability"]),
+                       "reasons": list(g.truncated) + (["reachability depth limit %d reached" % max_depth]
+                                                       if assessment["truncated_reachability"] else [])},
+    }
+    return finalize_report(report)
+
+
+def finalize_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    body = {k: v for k, v in report.items() if k not in ("scan_id", "generated_at")}
+    report["scan_id"] = G.sha(G.canonical_json(body), 32)
+    report["generated_at"] = generated_at()
+    return report
+
+
+def _declarations_from_items(items: Sequence[Item], warnings: List[str]) -> Optional[Dict[str, Any]]:
+    """In --base mode the `passport` declarations come from the same git
+    revision as the code, never from the (possibly dirty) working tree."""
+    by_rel = {i.rel: i for i in items}
+    if ".jankhunt42.json" in by_rel:
+        try:
+            data = json.loads(by_rel[".jankhunt42.json"].text)
+            sect = data.get("passport") if isinstance(data, dict) else None
+            return sect if isinstance(sect, dict) else None
+        except ValueError:
+            warnings.append(".jankhunt42.json at this revision is not valid JSON; declarations ignored")
+            return None
+    if ".jankhunt42.toml" in by_rel:
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            warnings.append(".jankhunt42.toml needs Python 3.11+ (tomllib); declarations at this revision ignored")
+            return None
+        try:
+            sect = tomllib.loads(by_rel[".jankhunt42.toml"].text).get("passport")
+            return sect if isinstance(sect, dict) else None
+        except (ValueError, AttributeError):
+            warnings.append(".jankhunt42.toml at this revision could not be parsed; declarations ignored")
+    return None
+
+
+def run_map(root: str, paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
+            declarations: Optional[Dict[str, Any]], inventory_path: Optional[str], max_depth: int,
+            rev: Optional[str] = None, with_items: bool = False) -> Any:
+    """Build a map report for the working tree (rev=None) or a git revision.
+    With with_items=True, returns (report, collected) so `passport` can reuse
+    the same file read for ownership and operations evidence."""
+    warnings: List[str] = []
+    inventory = None
+    trusted = False
+    label = ""
+    if inventory_path:
+        inventory = load_json_file(inventory_path)
+        trusted = not inside(inventory_path, root)
+        label = os.path.basename(inventory_path)
+        if not trusted:
+            warnings.append("inventory %s is inside the scanned repository: its claims are treated as declared, never provider-verified" % label)
+    top = git_toplevel(root)
+    if rev:
+        if not top:
+            raise GitError("--base needs a git repository")
+        prefix = os.path.relpath(os.path.realpath(root), os.path.realpath(top)).replace(os.sep, "/")
+        prefix = "" if prefix == "." else prefix + "/"
+        col = collect_git(top, rev, excludes, max_files, max_bytes, prefix)
+        if prefix:
+            for it in col.items:
+                it.rel = it.rel[len(prefix):] if it.rel.startswith(prefix) else it.rel
+        declarations = _declarations_from_items(col.items, warnings)
+        snapshot = "git:%s" % (git_revision(top, rev) or rev)
+        source_revision = git_revision(top, rev)
+        base_dir = root
+    else:
+        base_dir, col = collect_worktree(root, paths, excludes, max_files, max_bytes)
+        source_revision = git_revision(base_dir) if top else None
+        dirty = git_dirty(base_dir) if top else None
+        snapshot = "working-tree" + (" (dirty)" if dirty else "")
+    app_name = os.path.basename(os.path.realpath(base_dir)) or "application"
+    report = build_report(col, base_dir, app_name, snapshot, source_revision, declarations, inventory,
+                          trusted, label, max_depth, warnings)
+    return (report, col) if with_items else report
+
+
+# ---------------------------------------------------------------------------
+# Views: Markdown (redirected) and TTY (interactive)
+# ---------------------------------------------------------------------------
+
+def _node_label(report: Dict[str, Any], nid: str) -> str:
+    for n in report["graph"]["nodes"]:
+        if n["id"] == nid:
+            return n["display_label"]
+    return nid
+
+
+def _labels(report: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {n["id"]: n for n in report["graph"]["nodes"]}
+
+
+def summary(report: Dict[str, Any]) -> Dict[str, Any]:
+    nodes = report["graph"]["nodes"]
+    edges = report["graph"]["edges"]
+    by_kind: Dict[str, int] = {}
+    for n in nodes:
+        by_kind[n["kind"]] = by_kind.get(n["kind"], 0) + 1
+    ass = report["assessment"]
+    known = 0
+    potential = 0
+    crossings: Set[str] = set()
+    for br in ass["blast_radius"].values():
+        for imp in G.IMPACTS:
+            for info in br["impacts"][imp].values():
+                potential += 1
+                if info["tier"] == 3:
+                    known += 1
+        crossings.update(br["trust_boundary_crossings"])
+    return {"by_kind": dict(sorted(by_kind.items())), "nodes": len(nodes), "edges": len(edges),
+            "known_reach": known, "potential_reach": potential, "crossings": sorted(crossings)}
+
+
+def top_paths(report: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
+    out = []
+    for p, br in sorted(report["assessment"]["blast_radius"].items()):
+        for d in br.get("drivers", []):
+            out.append({"principal": p, **d})
+    out.sort(key=lambda d: (-G.EXPOSURE_RANK[d["level"]], -G.TIER_BY_NAME[d["tier"]], d["principal"], d["node"]))
+    seen = set()
+    uniq = []
+    for d in out:
+        k = (d["principal"], d["node"], d["impact"])
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(d)
+    return uniq[:limit]
+
+
+def path_text(report: Dict[str, Any], principal: str, path: Sequence[str]) -> str:
+    labels = _labels(report)
+    edges = {e["id"]: e for e in report["graph"]["edges"]}
+    parts = [labels.get(principal, {}).get("display_label", principal)]
+    for eid in path:
+        e = edges.get(eid)
+        if not e:
+            continue
+        parts.append("-[%s/%s, %s]-> %s" % (e["kind"], e["capability"], e["verification"],
+                                            labels.get(e["target"], {}).get("display_label", e["target"])))
+    return " ".join(parts)
+
+
+def markdown(report: Dict[str, Any]) -> str:
+    s = summary(report)
+    ass = report["assessment"]
+    cov = report["coverage"]
+    lines = ["# Blast radius map", "",
+             "- Exposure: **%s** (qualitative; %s)" % (ass["exposure"]["class"], ass["exposure"]["basis"]),
+             "- Evidence coverage: %s; %d of %d files inspected by %d adapter(s)" % (
+                 cov["status"], cov["files_inspected"], cov["files_considered"], len(cov["by_adapter"])),
+             "- Graph: %d nodes, %d edges; evidence tiers: %s" % (
+                 s["nodes"], s["edges"], ", ".join("%d %s" % (v, k) for k, v in ass["evidence_tiers"].items())),
+             "- Reach: %d known (verified) vs %d potential impact pairs; %d unknown-capability connection(s)" % (
+                 s["known_reach"], s["potential_reach"], ass["unknown_capability_edges"]),
+             "- Trust-boundary crossings: %s" % (", ".join(s["crossings"]) or "0 observed"),
+             "- Breadth indicator: %.3f over %d trust domain(s) (informational)" % (
+                 ass["breadth"]["indicator"], ass["breadth"]["distinct_trust_domains"]),
+             ""]
+    lines += ["## Connected systems", ""]
+    if s["by_kind"]:
+        lines += ["| kind | count |", "|---|---:|"] + ["| %s | %d |" % kv for kv in s["by_kind"].items()]
+    else:
+        lines.append("0 observed (this is not proof that none exist).")
+    lines += ["", "## Highest-impact admissible paths", ""]
+    tp = top_paths(report)
+    if not tp:
+        lines.append("0 observed.")
+    for d in tp:
+        lines.append("- **%s** %s (%s, %s): %s" % (d["level"], d["impact"], d["tier"], d["rule"], d["why"]))
+        lines.append("  - `%s`" % path_text(report, d["principal"], d["path"]).replace("`", "'"))
+    lines += ["", "## Unknowns", ""]
+    for u in report["unknowns"]:
+        lines.append("- %s: %s" % (u["id"], u["detail"]))
+    if report["warnings"]:
+        lines += ["", "## Warnings", ""] + ["- %s" % w for w in report["warnings"]]
+    if report["truncation"]["truncated"]:
+        lines += ["", "**Truncated:** %s. Results are partial, not clean." % "; ".join(report["truncation"]["reasons"])]
+    if report.get("delta"):
+        lines += ["", delta_markdown(report["delta"], report)]
+    lines += ["", "_Static evidence only: inferred connectivity is not verified access. "
+                  "Export: `jankhunt42 map . --json` or `--html > map.html`._"]
+    return "\n".join(safe_text(l) if "\n" not in l else l for l in lines)
+
+
+def delta_markdown(delta: Dict[str, Any], report: Dict[str, Any]) -> str:
+    out = ["## Graph delta (%s -> %s)" % (delta["base"], delta["head"]), ""]
+    out.append("- Nodes: +%d / -%d; edges: +%d / -%d" % (len(delta["nodes"]["added"]), len(delta["nodes"]["removed"]),
+                                                      len(delta["edges"]["added"]), len(delta["edges"]["removed"])))
+    out.append("- Exposure: %s -> %s" % (delta["exposure"]["base"], delta["exposure"]["head"]))
+    out.append("- Permission escalations: %d; newly reachable sensitive assets: %d" % (
+        len(delta["permission_escalations"]), len(delta["newly_reachable_sensitive"])))
+    out.append("- Trust boundaries added: %s; removed: %s" % (", ".join(delta["trust_boundaries"]["added"]) or "none",
+                                                           ", ".join(delta["trust_boundaries"]["removed"]) or "none"))
+    for esc in delta["permission_escalations"][:10]:
+        out.append("  - escalation: %s -> %s: %s => %s" % (_node_label(report, esc["source"]), _node_label(report, esc["target"]),
+                                                          "/".join(esc["before"]), "/".join(esc["after"])))
+    for n in delta["newly_reachable"][:10]:
+        out.append("  - newly reachable (%s, %s): %s" % (n["impact"], n["tier"], _node_label(report, n["node"])))
+    if delta["coverage"]["regressed"]:
+        out.append("- Coverage regressed: %d -> %d files inspected" % (delta["coverage"]["base_files_inspected"],
+                                                                      delta["coverage"]["head_files_inspected"]))
+    return "\n".join(out)

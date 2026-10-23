@@ -585,7 +585,7 @@ def role_prompt(plan: Dict[str, Any], role: str, index: int, total: int) -> str:
     questions = "\n".join("- " + q for q in info["questions"])
     scope = ", ".join(str(s) for s in plan["mission"]["scope"])
     exclusions = ", ".join(str(s) for s in plan["mission"]["exclusions"]) or "(none)"
-    return """You are panelist {index}/{total}: {name} ({lens}) in a JankHunt42 DEEP HUNT.
+    return """You are panelist {index}/{total}: {name} ({lens}) in a jankhunt42 DEEP HUNT.
 
 MISSION
 {mission}
@@ -651,7 +651,7 @@ your mind. Stop when the leads and scenarios are covered or the budget is exhaus
 
 
 def cross_exam_prompt(plan: Dict[str, Any]) -> str:
-    return """You are a JankHunt42 cross-examiner. You did not write the findings below.
+    return """You are a jankhunt42 cross-examiner. You did not write the findings below.
 Your job is to attack them, not to reach consensus.
 
 FOR EACH ASSIGNED FINDING
@@ -1225,7 +1225,7 @@ def _prompts_markdown(plan: Dict[str, Any], include_prompts: bool) -> List[str]:
 
 def hunt_markdown(plan: Dict[str, Any], include_prompts: bool = False) -> str:
     out: List[str] = [
-        "# JankHunt42 deep hunt brief",
+        "# jankhunt42 deep hunt brief",
         "",
         "**Root:** `%s` · **Focus:** %s · **Generated:** %s · **Version:** %s"
         % (plan["root"], plan["focus"], plan["generated"], plan["version"]),
@@ -1250,7 +1250,7 @@ def hunt_markdown(plan: Dict[str, Any], include_prompts: bool = False) -> str:
 def merge_markdown(merged: Dict[str, Any]) -> str:
     s = merged["summary"]
     out: List[str] = []
-    out.append("# JankHunt42 panel consensus")
+    out.append("# jankhunt42 panel consensus")
     out.append("")
     out.append("**Sources:** %d · **Raw findings:** %d · **Merged findings:** %d · **Conflicts:** %d"
                % (s["sources"], s["raw_findings"], s["merged_findings"], s["conflicts"]))

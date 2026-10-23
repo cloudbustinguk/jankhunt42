@@ -1,8 +1,82 @@
 # Changelog
 
-All notable changes to JankHunt42 are documented here. The format follows
+All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
+
+## [2.0.0] — 2026-10-23
+
+jankhunt42 now answers three questions instead of one: **what's broken?**
+(unchanged scanner, review, supply chain, Jank Score 2.0, deep hunt),
+**what can it hurt?** (`map`), and **can we responsibly ship it?**
+(`passport`). Everything stays local, offline, and stdlib-only.
+
+### Added
+
+- `map`: offline connectivity discovery and blast radius. Adapters for
+  Python, JavaScript/TypeScript, .NET, `.env`/config/appsettings,
+  Kubernetes workloads and RBAC, docker-compose, GitHub Actions
+  permissions and cloud logins, Terraform data stores and privileged grants,
+  and dependency manifests. A typed directed multigraph with stable IDs, a
+  sanitized receipt (path, line, hash, assumptions) for every claim, and
+  explicit evidence states (`observed`, `declared`, `inferred`,
+  `provider-verified`, `unknown`, `refuted`). Per-impact (C/I/A) bounded
+  reachability with witness paths, trust-boundary crossings, a monotone
+  qualitative exposure class (Low/Moderate/High/Critical/Unknown), a
+  saturating breadth indicator (informational only), explicit unknowns, and
+  coverage. JSON (`jankhunt.map.v1`), Markdown, a terminal "blast radius
+  explorer" view, and a self-contained offline HTML explorer (CSP
+  `default-src 'none'`, evidence inspector, filters, C/I/A highlighting).
+- `map --base REF`: graph delta built from committed git objects only
+  (added/removed nodes and edges, permission escalations, newly reachable
+  sensitive assets, trust-boundary changes, coverage regression).
+- `map --inventory PATH`: operator inventory for classifications and grants;
+  `provider-verified` only when the file is outside the scanned repository.
+- `map/passport --redact`: shareable pseudonymized output.
+- `passport`: software passport (`jankhunt.passport.v1`) linking Jank Score,
+  exposure, ownership (CODEOWNERS/declared), provenance (SBOM/attestations,
+  exporter-reported), data sources, operations evidence, unknowns, and
+  remediation steps, with an explainable decision (pass / review /
+  insufficient-evidence / block) from seven named rules, hard floors,
+  tighten-only repository policy, operator `--policy`, and opt-in
+  `--fail-on` enforcement. Lifecycle stops at `assessed`; acceptance is
+  never inferred.
+- `selftest [--full] [--json]`: independent self-assurance (oracle-checked
+  tests, metamorphic and monotonicity properties, seeded fuzzing, golden
+  terminal snapshots, cross-version compatibility, a hand-maintained
+  self-map ground truth, seven mutants with controls, a privacy scan, and an
+  offline Python 3.9/3.12/3.13 container matrix when images are cached).
+- `tests/`: stdlib unittest suite, independent brute-force reachability
+  oracle, synthetic `demo-app` fixture, golden snapshots, executable-docs test.
+- `references/connectivity.md`, `references/passport.md`,
+  `templates/map.schema.json`, `templates/passport.schema.json`.
+- `.jankhunt42.json` `passport` section: owners, asset classifications,
+  operations declarations, tighten-only policy.
+
+### Changed
+
+- `SKILL.md` is now a routing document organized by the three questions
+  (257 lines, down from 405); detail moved to references. Debugging doctrine
+  and the deep-hunt permission gate are preserved.
+- `README.md` rewritten around the three questions; its sample output is
+  generated from the synthetic fixture and checked by the test suite.
+- The product name is written `jankhunt42` everywhere, including the
+  `SKILL.md` `name` field and human-readable Markdown/HTML titles
+  (`# jankhunt42 scan`). Machine formats were already lowercase.
+- `--help` leads with the three questions.
+
+### Security
+
+- Repository-sourced strings in terminal and Markdown output (scan, review,
+  map, passport) have control, escape, and bidi characters replaced with
+  U+FFFD, so a hostile repository cannot rewrite the reviewer's terminal.
+
+### Compatibility
+
+- `scan`, `score`, `review`, `supply-chain`, `hunt`, `merge`, `triage`,
+  `doctor`, `report`, and `rules` keep their options, exit codes, JSON, and
+  SARIF. Verified by running 1.1.0 and 2.0.0 side by side on the demo fixture.
+  Jank Score 2.0 arithmetic is unchanged; `scan` never computes a passport.
 
 ## [1.1.0] — 2026-10-23
 
@@ -23,7 +97,7 @@ Acts on the three highest-leverage gaps identified by an industry/competitor
 review against Semgrep, SonarQube, Snyk Code, CodeQL, Checkmarx, and the
 AI-code-review wave (Prbl, Copilot Autofix, Endor Labs): false-positive
 noise is the market's actual bottleneck, every competing scanner has a
-config file and JankHunt42 did not, and diff-only review misses the same
+config file and jankhunt42 did not, and diff-only review misses the same
 defect repeated across files. Also fixes a flaky selftest CI failure and
 adds multi-tool platform metadata.
 
@@ -122,7 +196,7 @@ changed; this release makes explicit what the rule catalog already covered.
 
 ## [0.2.0] — 2026-10-23
 
-Review-layer release. JankHunt42 now reviews a diff deterministically, emits
+Review-layer release. jankhunt42 now reviews a diff deterministically, emits
 evidence receipts, measures coverage, compares against a baseline, and reads
 supply-chain evidence without pretending to verify signatures.
 
@@ -155,7 +229,7 @@ supply-chain evidence without pretending to verify signatures.
 - **Honest evidence labels**: `provider-verified` only when the exporter
   records a successful verification result (for example JFrog); GitHub/Sigstore
   signature material is reported as `unverified` with a `gh attestation verify`
-  or `cosign` hint. Unsigned statements are labeled `unsigned`. JankHunt42
+  or `cosign` hint. Unsigned statements are labeled `unsigned`. jankhunt42
   does not perform cryptography itself.
 - Supply-chain requirements and gates: `--require-sbom`,
   `--require-attestation`, and `--require-verified-attestation` on both
@@ -184,7 +258,7 @@ supply-chain evidence without pretending to verify signatures.
 
 - Supply-chain inspection is offline and read-only. It parses files on disk and
   never contacts a registry, transparency log, JFrog instance, or GitHub.
-- `provider-verified` is the exporter's claim, not a fresh JankHunt42
+- `provider-verified` is the exporter's claim, not a fresh jankhunt42
   cryptographic verification. Use `gh`, `cosign`, or `jf` when an independent
   verification result is required.
 - The review command is a deterministic pre-pass, not a replacement for the

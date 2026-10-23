@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://jankhunt42.invalid/schemas/review-receipt-1.0.json",
-  "title": "JankHunt42 review receipt",
+  "title": "jankhunt42 review receipt",
   "description": "A static-evidence review finding. A receipt is not a runtime confirmation.",
   "type": "object",
   "required": [
