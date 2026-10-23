@@ -8,7 +8,7 @@
 
 JankHunt42 is an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) that runs in Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone, stdlib-only investigation CLI. It scans code, CI pipelines, Kubernetes manifests, containers, dependencies, and logs, then ranks what is likely to hurt you. It is built for debugging and triage, not just linting: every finding is a **lead** with evidence, a rationale, and a fix direction.
 
-**Version:** 0.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 0.3.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Install as a skill
 
@@ -39,6 +39,7 @@ What makes it more than a regex wrapper:
 - **Evidence-gated diff review** — `jankhunt review` establishes exact scope, separates new lines from changed-hunk context, emits stable receipts with counterevidence and repro commands, measures coverage, and compares against a baseline. It is a deterministic pre-pass for `/review`, not a replacement for it.
 - **Supply-chain context** — offline parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Externally verified evidence is labeled `provider-verified`; signature material JankHunt42 did not verify is labeled `unverified`.
 - **Deep hunt (opt-in)** — a structured adversarial panel for high-risk or ambiguous work. Independent roles investigate, cross-examine, and reach an evidence-weighted consensus; `confirmed` requires a repro or direct runtime evidence, and dissent is preserved.
+- **Citizen-developer and AI-assisted jank** — a growing share of production code was never written by anyone who calls themselves an engineer: a Copilot/ChatGPT suggestion pasted in whole, a low-code workflow a citizen developer wired up, a "quick script" that became a service. That code fails in predictable ways — a secret left in from the pasted example, happy-path logic with swallowed exceptions, duplicated scaffolding from repeated regeneration, zero tests because nothing prompted for one. JankHunt42 doesn't detect "AI-written code"; its `security`, `reliability`, `maintainability`, and `tests` rule categories catch this pattern as a side effect of catching any other kind of jank, regardless of who or what wrote the line.
 
 None of these is a substitute for compilers, tests, Semgrep, SonarQube, Trivy, signature verifiers, or human review. They are ways to spend attention better.
 
@@ -565,7 +566,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 - [ ] README commands verified from a different working directory.
 - [ ] `references/scoring.md`, `references/review.md`, `references/supply-chain.md`, and `references/deep-hunt.md` are linked from `SKILL.md`.
 - [ ] The receipt schema and review/supply-chain docs are included in the release archive.
-- [ ] `git status` is clean, the tag matches `0.2.0`, and the release archive is rebuilt from the clean tree.
+- [ ] `git status` is clean, the tag matches `0.3.0`, and the release archive is rebuilt from the clean tree.
 - [ ] Tag the release and publish the folder/repo. If using an OpenCode skill catalog, point it at `SKILL.md`; keep `scripts/`, `references/`, and `templates/` alongside it.
 
 ## License

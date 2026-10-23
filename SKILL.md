@@ -1,6 +1,6 @@
 ---
 name: JankHunt42
-description: Universal debugging, code-quality, and diff-review skill for any bug, crash, hang, leak, flaky test, build failure, performance regression, security smell, data problem, or "why is this broken" question. It produces evidence-backed fixes and reviews with deterministic scope, receipts, coverage, baseline deltas, and supply-chain evidence. Includes Jank Score 2.0, a transparent SonarQube/Veracode-inspired prioritization model, an opt-in deep-hunt protocol for adversarial multi-agent panels, and parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Works across languages, stacks, and systems; runs a built-in multi-language jank scanner (code, GitHub Actions, GitLab CI, Kubernetes, Docker, secrets, dependencies/CVEs), log triage, project doctor, and structured debugging playbooks.
+description: Universal debugging, code-quality, and diff-review skill for any bug, crash, hang, leak, flaky test, build failure, performance regression, security smell, data problem, or "why is this broken" question. It produces evidence-backed fixes and reviews with deterministic scope, receipts, coverage, baseline deltas, and supply-chain evidence. Includes Jank Score 2.0, a transparent SonarQube/Veracode-inspired prioritization model, an opt-in deep-hunt protocol for adversarial multi-agent panels, and parsers for SPDX/CycloneDX SBOMs, GitHub/Sigstore/in-toto attestations, and JFrog AppTrust evidence. Works across languages, stacks, and systems; runs a built-in multi-language jank scanner (code, GitHub Actions, GitLab CI, Kubernetes, Docker, secrets, dependencies/CVEs), log triage, project doctor, and structured debugging playbooks. Equally effective on AI-assisted and citizen-developer code — pasted-in secrets, untested happy-path logic, swallowed errors, and duplicated scaffolding score the same whether a human or a copilot wrote them.
 license: MIT
 compatibility: "Claude Code · Cursor · Codex CLI · OpenCode V2 · Python 3.9+ · Linux/macOS/Windows"
 platforms:
@@ -9,12 +9,14 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # JankHunt42 — universal debugging doctrine
 
 **Prime directive:** find the root cause and prove it. A change that makes the symptom disappear without a causal explanation is not a fix — it is a new bug with better marketing.
+
+**Jank doesn't check who or what wrote the line.** A growing share of production code never passed through anyone who calls themselves an engineer: a copilot suggestion pasted in whole, a low-code workflow wired up by a citizen developer, a "quick script" that quietly became a service. That code tends to fail the same four ways — a secret or API key pasted straight from the example (`security`), happy-path-only logic with swallowed exceptions because the error case was never exercised (`reliability`), duplicated or orphaned scaffolding left behind by repeated regeneration (`maintainability`), and shipped with zero tests because nothing prompted for one (`tests`). JankHunt42's rule catalog is organized around exactly those four dimensions, so it catches this class of jank as a side effect of catching any other kind — not because it detects "AI-generated" code, but because it scores what the code actually does.
 
 This skill is a workflow plus a toolkit. The workflow is mandatory; the toolkit is an accelerant. Load `references/method.md` for the full doctrine and `references/playbooks.md` for the domain that matches the problem. Use `references/toolbox.md` for copy-paste commands. Load `references/scoring.md` for the Jank Score 2.0 model, `references/review.md` for the diff-review and receipt protocol, `references/supply-chain.md` for SBOM/attestation boundaries, and `references/deep-hunt.md` only when the user explicitly authorizes a deep hunt.
 

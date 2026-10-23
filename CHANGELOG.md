@@ -4,7 +4,10 @@ All notable changes to JankHunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [0.3.0] — 2026-10-23
+
+Positioning and distribution release. No scanner or scoring behavior
+changed; this release makes explicit what the rule catalog already covered.
 
 ### Added
 
@@ -18,6 +21,14 @@ semantic versioning.
   Attestation (keyless Sigstore), verifiable with `gh attestation verify`.
   This is independent of, and does not change, any third-party marketplace's
   own verification badge for this skill.
+- **Citizen-developer and AI-assisted jank, named explicitly.** `SKILL.md`
+  and the README now call out that the `security`, `reliability`,
+  `maintainability`, and `tests` rule categories catch the failure pattern
+  typical of pasted-in copilot suggestions and citizen-developer/low-code
+  workflows — hardcoded secrets, untested happy-path logic, swallowed
+  errors, duplicated scaffolding — as a side effect of catching any other
+  kind of jank. No new rules were added; this documents existing coverage
+  under a name buyers are searching for.
 
 ## [0.2.0] — 2026-10-23
 
