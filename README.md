@@ -149,6 +149,22 @@ Read it the way the tool means it:
 - The co-reachability of the restricted ledger and an external endpoint raises exposure, but it is reported as a *possible* egress path, not a data flow.
 - Runbook and observability are **not-observed**, which means unknown, not absent.
 
+### The HTML views
+
+The same fixture with `--html`: each view is one self-contained, offline file (no external assets, a no-network content security policy, everything escaped). These are screenshots of real output in the dark theme; unlike the text samples above, the test suite does not regenerate them.
+
+`jankhunt42 map tests/fixtures/demo-app --html` is the blast radius explorer. Here it is opened with the deep link `#principal=application:4be897baf0fc1700&impact=integrity&select=database:a497c14ce27e2ace`: the magenta paths are everything the application could modify, dashed where the evidence is only inferred, and the inspector shows the selected ledger database with its sanitized evidence receipt.
+
+![The jankhunt42 blast radius explorer: summary cards (exposure High, 19 nodes and edges, 7 unknown capabilities), then the connectivity graph with the application's integrity blast radius highlighted in magenta towards the ledger database, an S3 bucket, a Redis cache and external endpoints, and an inspector panel describing the restricted, critical production ledger database](assets/readme/blast-radius-explorer.png)
+
+`jankhunt42 passport tests/fixtures/demo-app --html` is the software passport: the decision, the rules that produced it, and the evidence behind each area. It is printable.
+
+![The jankhunt42 software passport: release assessment review, Jank Score 67/100 grade E, exposure High, evidence coverage 4 of 9, lifecycle assessed, followed by the two review reasons and the table of all seven rules with their outcomes](assets/readme/software-passport.png)
+
+`jankhunt42 scan tests/fixtures/demo-app --html` is the scan report: the Jank Score, the severity mix, the four-dimension scorecard, hot spots, and every finding with its evidence.
+
+![The jankhunt42 scan report: Jank Score 67 out of 100, grade E, labelled biohazard with a policy fail and Security as the weakest dimension, severity counts, and a scorecard for security, reliability, maintainability and test confidence](assets/readme/scan-report.png)
+
 ## The evidence model
 
 | State | Meaning |
