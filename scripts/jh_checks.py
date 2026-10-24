@@ -933,10 +933,13 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
         else:
             code = sf.code[i] if i < len(sf.code) else line
             for m in _PUBLIC_SECRET_NAME.finditer(line):
-                # read in code (import.meta.env.X, process.env["X"]), not
-                # mentioned in a sentence inside a string
+                # read in code (import.meta.env.X, process.env["X"], also inside
+                # a template literal) or defined as a config key, not mentioned
+                # in a sentence inside a string
                 in_code = code[m.start():m.end()] == m.group(1)
-                if not in_code and not re.search(r"env\s*\[\s*[\"'`]$", line[:m.start()]):
+                read = re.search(r"(?:\benv\.|\benv\s*\[\s*[\"'`])$", line[:m.start()])
+                key = sf.lang in ("json", "yaml", "toml", "docker") and re.match(r"""\s*["']?\s*[:=]""", line[m.end():])
+                if not (in_code or read or key):
                     continue
                 if not _PUBLIC_BY_DESIGN.search(m.group(1)):
                     hit = (m.group(1), "is named as a secret")
@@ -1009,7 +1012,10 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
         for rx, severity, message in _SQL_STATEMENT_RES:
             for m in rx.finditer(text):
                 sev, msg = severity, message
-                role = re.search(r"(?is)\bto\s+([\w\",\s]+?)\s+(?:using|with\s+check)\b", m.group(0))
+                # the TO clause after ON <table>; a quoted policy name may say "to" too
+                stmt = re.sub(r'(?i)(\bpolicy\s+)"[^"]*"', r'\1""', m.group(0), count=1)
+                role = re.search(r"(?is)\bon\s+[\w.\"]+(?:\s+as\s+\w+)?(?:\s+for\s+\w+)?\s+to\s+([\w\",\s]+?)"
+                                 r"\s+(?:using|with\s+check)\b", stmt)
                 if "policy" in m.group(0).lower() and role and not re.search(
                         r"(?i)\b(public|anon|authenticated)\b", role.group(1)):
                     # every row, but only for one named (often internal service) role

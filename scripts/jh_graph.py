@@ -846,7 +846,7 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
 
 _SENS_NAME_RE = re.compile(
     r"(?i)(?:^|[^a-z])(customer|patient|payment|payroll|salar(?:y|ies)|hr|pii|ledger|billing|invoice|card|"
-    r"ssn|medical|health|clinical|employee|tax|bank|finance|kyc|gdpr|phi|identity|passport|credit)(?:s)?(?=$|[^a-z])")
+    r"ssn|medical|healthcare|clinical|employee|tax|bank|finance|kyc|gdpr|phi|passport|credit)(?:s)?(?=$|[^a-z])")
 
 
 def sensitivity_hints(*names: str) -> List[str]:

@@ -142,6 +142,15 @@ class Spark(unittest.TestCase):
         self.assertEqual(caps(rep, "app", "catalog src_c"), ["read"])
         self.assertIsNone(node(rep, "catalog desc_c"))
 
+    def test_spark_sql_two_part_and_variable_names(self):
+        rep = build({"jobs/clean.py": (
+            'spark.sql("DELETE FROM sales.orders WHERE d < 1")\n'
+            'spark.sql(f"INS' 'ERT INTO {target_tbl} SELECT 1")\n'
+            'spark.sql("""\nSELECT * FROM ops.audit\n""")\n'
+            'msg = "loaded from sales.orders"\n')})
+        self.assertEqual(caps(rep, "app", "databricks catalog default"), ["delete", "read"])
+        self.assertEqual(caps(rep, "app", "catalog (unresolved target: target_tbl)"), ["write"])
+
     def test_sql_server_three_part_names_are_not_catalogs(self):
         rep = build({"app/report.py": 'import pyodbc\ncur.execute("SELECT * FROM finance.dbo.invoices")\n'})
         self.assertIsNone(node(rep, "databricks catalog"))
@@ -363,11 +372,59 @@ resource "azurerm_key_vault_access_policy" "ops" {
         self.assertEqual(node(rep, "azure management group")["criticality"], "critical")
 
 
+class TerraformReview(unittest.TestCase):
+    def test_custom_roles_kubelet_scopes_and_other_types(self):
+        rep = build({"infra/main.tf": '''resource "azurerm_role_definition" "god" {
+  name  = "everything"
+  scope = data.azurerm_subscription.primary.id
+  permissions {
+    actions = ["*"]
+  }
+}
+
+resource "azurerm_role_definition" "reader" {
+  name = "blob-reader"
+  permissions {
+    actions      = []
+    data_actions = ["Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read"]
+  }
+}
+
+resource "azurerm_kubernetes_cluster" "aks" {
+  name = "aks-prod"
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_role_assignment" "god" {
+  scope              = data.azurerm_subscription.primary.id
+  role_definition_id = azurerm_role_definition.god.role_definition_resource_id
+  principal_id       = var.ops_principal
+}
+
+resource "azurerm_role_assignment" "pull" {
+  scope                = "/subscriptions/${var.sub}/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/sa"
+  role_definition_name = azurerm_role_definition.reader.name
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+}
+
+resource "azurerm_cosmosdb_gremlin_database" "g" {
+  name = "graph"
+}
+'''})
+        self.assertEqual(caps(rep, "var.ops_principal", "azure subscription"), ["admin"])
+        self.assertEqual(caps(rep, "kubelet identity of azurerm_kubernetes_cluster.aks", "azure scope"), ["read"])
+        self.assertEqual(caps(rep, "managed identity of aks-prod", "azure scope"), [])
+        self.assertNotIn("broad-scope", cred(rep, "kubelet identity")["flags"])
+        self.assertIsNotNone(node(rep, "azurerm_cosmosdb_gremlin_database.g"))
+
+
 class SensitivityHints(unittest.TestCase):
     def test_words(self):
         self.assertEqual(G.sensitivity_hints("payroll_db"), ["payroll"])
         self.assertEqual(G.sensitivity_hints("hr-records", "patients"), ["hr", "patient"])
-        for benign in ("chrome", "syntax", "cardinal", "throughput", "orders"):
+        for benign in ("chrome", "syntax", "cardinal", "throughput", "orders", "health", "identity"):
             self.assertEqual(G.sensitivity_hints(benign), [], benign)
 
     def test_hint_never_sets_sensitivity(self):

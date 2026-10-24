@@ -31,7 +31,8 @@ PostgreSQL and Snowflake repositories.
   - Jupyter notebooks and Databricks source notebooks, including `%sql`
     and `# MAGIC %sql` cells.
   - Three-part SQL names count only in Spark files, so SQL Server's
-    `database.dbo.table` is not taken for a catalog.
+    `database.dbo.table` is not taken for a catalog; inside `spark.sql`
+    text, `schema.table` and `{table}` names count too.
 - **More languages:** Go, Rust, Java and Kotlin imports and environment
   reads, plus `go.mod`, `Cargo.toml`, `pom.xml` and `build.gradle`
   manifests.
@@ -42,15 +43,18 @@ PostgreSQL and Snowflake repositories.
   - Terraform `azurerm` read in depth: managed identities on any resource
     with an `identity` block, user-assigned identities, role assignments
     with capabilities taken from the role name or built-in GUID (including
-    `<resource>.identity[0].principal_id` principals), Key Vault access
-    policies, multi-line lists, and `data` blocks for existing resources.
+    `<resource>.identity[0].principal_id` principals and AKS kubelet
+    identities), custom role definitions (capability from their actions),
+    Key Vault access policies, multi-line lists, and `data` blocks for
+    existing resources. Scopes are labelled by depth: only a subscription,
+    resource group or management group is a broad scope.
 - **Credential blast radius**, a new graph heuristic: for each identity,
   what it unlocks if misused or leaked, and who holds it. Flags: `shared`,
   `secret-store-pivot`, `broad-scope`, `holder-not-visible`. It is shown
   in every map view and never changes the exposure class.
 - Key Vault is `restricted` by resource type, as Kubernetes Secrets already
-  were. Names that suggest personal, health or financial data add a
-  `sensitivity_hint` and the `sensitive-by-name` unknown, never a
+  were. Data store names that suggest personal, health or financial data
+  add a `sensitivity_hint` and the `sensitive-by-name` unknown, never a
   sensitivity.
 - `JH134` flags database firewall rules open to every IPv4 address and
   `publicly_accessible = true` database instances.
@@ -64,21 +68,30 @@ TypeScript, C#, Go, Rust and C++ projects.
 - `JH101`:
   - The `sk-` pattern needs a word boundary; URL slugs such as
     `Risk-Management-…` matched it.
-  - These are not secrets: URLs without a password, a key's own name as its
-    value, the xkcd example passphrase, concatenations, and descriptive
-    fixture tokens with short ids.
-  - Translation files are skipped, and documentation is minor.
+  - These are not secrets: URLs without a password or token material, a
+    key's own name as its value, the xkcd example passphrase,
+    concatenations, and test-data tokens with short ids
+    (`test_redaction_d84e11`).
+  - Capitalised words with a number (`Summer_Pass_2024`) read as a chosen
+    password and stay secrets, as they were before.
+  - Translation files are skipped, and Markdown and `.txt` documentation is
+    minor. Other text files such as `.pypirc` keep their severity.
 - `JH401` treats Supabase publishable and anon keys as public. Without a
   telling key name, only base62-like tokens count, not hex ids or hashes.
 - `JH104` looks for concatenation in the SQL literal or the query's first
-  argument, not in later, parameterized arguments.
+  argument, not in later, parameterized arguments. The literal's own quote
+  ends it, so `"… name = '" + name` is caught and `LIKE '%is back'` is no
+  longer read as `%` formatting.
 - `JH106` accepts `Loader=Loader` aliased from `SafeLoader`.
 - `JH112` no longer treats a bare `key` (React and history keys) as a
   secret.
 - `JH131` is minor in test data, where hostile Unicode is deliberate.
-- `JH132` needs the variable to be read in code, not mentioned in a string.
+- `JH132` needs the variable to be read in code (also inside a template
+  literal) or defined as a JSON, YAML or TOML key, not mentioned in a
+  sentence inside a string.
 - `JH134` rates a `USING (true)` policy for one named role as minor.
-  `public`, `anon` and `authenticated` stay major.
+  `public`, `anon` and `authenticated` stay major, and so does a policy
+  with no `TO` clause, whatever its quoted name says.
 
 ## [2.4.2] — 2026-10-24
 

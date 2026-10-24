@@ -100,8 +100,13 @@ RULES: List[Rule] = [
           # arithmetic inside the SQL text (`value + 1`)
           # (inside the SQL literal itself, not in a later argument:
           # exec("UPDATE t SET url = ?", base + "/x") is parameterized)
-          r"(?i)\b(?:select\b[^\"'`\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\"'`\n]*"
-          r"(?:#\{|\$\{|[\"'`]\s*(?:\+|\.format\s*\(|%\s*[\w(\[{]))",
+          # (the literal's own quote ends it; `'` inside a "..." literal is SQL text)
+          r"(?i)([\"'`])(?:(?!\1)[^\n]){0,200}?\b(?:select\b(?:(?!\1)[^\n]){0,200}\bfrom|insert\s+into|"
+          r"update\s+\w+\s+set|delete\s+from)\b(?:(?!\1)[^\n]){0,400}?"
+          r"(?:#\{|\$\{|\1\s*(?:\+|\.format\s*\(|%\s*[\w(\[{]))",
+          # ${...} or #{...} after SQL text, also on a later line of a
+          # template literal or heredoc whose opening quote is lines above
+          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\$\{|#\{)",
           # an f-string that interpolates into SQL-shaped text
           r"(?i)\bf([\"'])(?=[^\"']*\{)[^\"']*\b(?:select\b[^\"']{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
           # a query call built by concatenation; not `"query("` inside a
@@ -642,10 +647,31 @@ _SECRET_RUN_RE = re.compile(r"abcdefgh|01234567|12345678|(.)\1{7,}", re.IGNORECA
 # "9f8a7c6b5d4e" is token material
 _SECRET_WORDS_RE = re.compile(r"^[a-z]+(?:[-_.](?:[a-z]+|\d{1,4}))+$", re.IGNORECASE)
 _SECRET_CAMEL_RE = re.compile(r"^(?:[a-z]+[-_])*(?:[A-Z][a-z]+){3,}$")
+# words that mark a value as test data, unlike "secret" or "key", which
+# people also put in real passwords ("Prod-Admin-Secret-91")
+_SECRET_FIXTURE_RE = re.compile(
+    r"(?:^|[-_.])(?:test|testing|tests|mock|fake|dummy|fixture|stub|sample|example|placeholder|synthetic|"
+    r"redacted|changeme)(?=[-_.]|$)", re.IGNORECASE)
 _SECRET_DESCRIPTIVE_RE = re.compile(
     r"(?:^|[-_.])(?:test|testing|mock|fake|dummy|fixture|stub|static|sample|example|placeholder|local|dev|"
     r"synthetic|managed|token|secret|key|password|passwd|pass|credential|creds?|api|apikey|auth|issuer|client)(?=[-_.]|$)",
     re.IGNORECASE)
+
+
+def _human_chosen(value: str) -> bool:
+    """Capitalised words with a number ("Summer_Pass_2024", "Acme_Client_Key7")
+    read as a password someone chose, not as a fixture name."""
+    return bool(re.search(r"\d", value) and re.search(r"(?:^|[-_.])[A-Z][a-z]+", value)
+                and not _SECRET_FIXTURE_RE.search(value))
+
+
+def _url_without_secret(value: str) -> bool:
+    """A URL with no password, no token-like query value, and no long mixed
+    path segment (webhook secrets live in paths)."""
+    if not re.match(r"https?://(?![^/\s]*:[^/\s]*@)", value):
+        return False
+    mixed = r"(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]"
+    return not (re.search(r"[?&#][\w.\-]*=%s{10,}" % mixed, value) or re.search(r"/%s{20,}" % mixed, value))
 
 
 def secret_placeholder(match_text: str) -> bool:
@@ -659,7 +685,7 @@ def secret_placeholder(match_text: str) -> bool:
         key = re.match(r"[\w-]*", match_text).group(0).lower()
         # a URL without a password, the key's own name as its value
         # (password: "password"), the xkcd example passphrase, a concatenation
-        if re.match(r"https?://(?![^/\s]*:[^/\s]*@)", value) or \
+        if _url_without_secret(value) or \
                 re.sub(r"[\W_]", "", value.lower()) == re.sub(r"[\W_]", "", key) or \
                 re.fullmatch(r"(?i)correct[ _-]?horse[ _-]?battery(?:[ _-]?staple)?", value) or re.match(r"\s+\+\s", value):
             return True
@@ -672,13 +698,15 @@ def secret_placeholder(match_text: str) -> bool:
             return True
     if _SECRET_TEXT_RE.match(value):
         return bool(_SECRET_DESCRIPTIVE_RE.search(value.replace(" ", "-")))
+    if _human_chosen(value):
+        return False
     # descriptive words, also after a provider prefix ("sk-proj-SYNTHETIC_CREDENTIAL")
     tail = _SECRET_PREFIX_RE.sub("", value)
     for v in (value, tail):
-        # two or more words, one descriptive, plus at most short ids ("test_redaction_d84e11")
+        # two or more words, one marking test data, plus at most short ids ("test_redaction_d84e11")
         segs = [x for x in re.split(r"[-_.]", v) if x]
         words = [x for x in segs if x.isalpha()]
-        if len(words) >= 2 and any(_SECRET_DESCRIPTIVE_RE.search(w) for w in words) \
+        if len(words) >= 2 and any(_SECRET_FIXTURE_RE.search(w) for w in words) \
                 and all(len(x) <= 8 for x in segs if not x.isalpha()):
             return True
     if tail != value and (re.fullmatch(r"[a-z]+(?:[-_](?:[a-z]+|\d{1,4}))+", tail) or _SECRET_CAMEL_RE.match(tail)):
@@ -850,7 +878,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "[:=]" in pat.pattern:
                             if _I18N_PATH_RE.search(sf.rel):
                                 continue
-                            if "test" in sf.kinds or is_test_path(sf.rel) or sf.lang in ("markdown", "text"):
+                            if "test" in sf.kinds or is_test_path(sf.rel) or sf.lang == "markdown" or \
+                                    sf.rel.lower().endswith(".txt"):
                                 severity, confidence = "minor", "low"
                                 message = rule.message + " It is in test code or documentation: confirm it is an " \
                                                          "example, not a real credential."

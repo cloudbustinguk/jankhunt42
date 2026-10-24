@@ -73,8 +73,9 @@ tokens such as `prod`/`staging` in hostnames, namespaces, or file names. The
 one exception is a credential store: Kubernetes Secrets and Azure Key Vault
 are `restricted` by resource type (`classification_source: resource-type:
 credentials`). Names that suggest personal, health or financial data
-(`payroll`, `patient`, `ledger`, `customer`…) add a `sensitivity_hint`
-attribute and the `sensitive-by-name` unknown, never a sensitivity.
+(`payroll`, `patient`, `ledger`, `customer`…) on a data store add a
+`sensitivity_hint` attribute and the `sensitive-by-name` unknown, never a
+sensitivity.
 
 Edges: `connects`, `authenticates-as`, `reads`, `writes`, `deletes`,
 `administers`, `calls`, `publishes`, `exports`, `depends-on`, each with a
@@ -174,7 +175,7 @@ monotonicity guarantee above still holds.
 | kubernetes | workloads, `serviceAccountName`, env values, `secretKeyRef` (name only, never dereferenced), `envFrom`, Role/ClusterRole + bindings | workloads, identities, RBAC authority over the Kubernetes API and Secrets |
 | compose | services, data-store images, `depends_on`, environment | workloads, data stores, dependencies |
 | github-actions | `permissions:` (top-level and per job), `environment:`, cloud login actions, `secrets.*` names | workflow, `GITHUB_TOKEN` scopes, OIDC and deploy identities |
-| terraform | `resource` blocks for data stores; Owner/Contributor/`roles/owner`/`Action: "*"` grants. `azurerm`/`azuread` in depth: data stores, Key Vault, Databricks, Synapse, Service Bus and AI accounts (also `data` blocks for existing ones); compute with `identity {}` blocks; user-assigned identities; `azurerm_role_assignment` (role by name or built-in GUID, scope and principal resolved by reference); Key Vault access policies | assets, workloads, managed identities, and declared grants with capabilities from the role (best effort; no HCL evaluation) |
+| terraform | `resource` blocks for data stores; Owner/Contributor/`roles/owner`/`Action: "*"` grants. `azurerm`/`azuread` in depth: data stores, Key Vault, Databricks, Synapse, Service Bus and AI accounts (also `data` blocks for existing ones); compute with `identity {}` blocks; user-assigned identities; `azurerm_role_assignment` (role by name, built-in GUID, or a custom `azurerm_role_definition` whose actions set the capability; scope and principal resolved by reference, including `<resource>.identity` and AKS `kubelet_identity`); Key Vault access policies | assets, workloads, managed identities, and declared grants with capabilities from the role (best effort; no HCL evaluation) |
 | manifest | `requirements*.txt`, `pyproject.toml`, `package.json`, `*.csproj`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle(.kts)` | weak `inferred` evidence, only when code shows nothing for that family |
 | openapi | OpenAPI 3 / Swagger 2 documents (YAML or JSON): servers and operations | **no edges**: enriches an `api`/`external` node the code already calls (`openapi_operations`), otherwise records the operations the application `exposes` |
 | mcp | MCP server definitions: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`, `.codex/config.toml` MCP tables, `opencode.json(c)`, `claude_desktop_config.json`, and any JSON with `mcpServers` | an **AI agent** principal per file (`platform: ai-agent`), `calls` to each enabled server (local process or remote endpoint), `connects` from a server to endpoints in its args/env, `authenticates-as` to credentials by name; every capability `unknown`, every edge `declared` |
@@ -202,11 +203,16 @@ removed.
 
 **Spark and Unity Catalog.** `spark.read.table`, `spark.table` and
 `DeltaTable.forName` read; `saveAsTable`, `insertInto` and `toTable` write,
-and a write with `mode("overwrite")` counts as delete. `spark.sql` text with
-three-part names (`catalog.schema.table`) reads (`FROM`/`JOIN`), writes
-(`INTO`/`UPDATE`), deletes (`DELETE FROM`, `TRUNCATE`, `DROP`), or
-administers (`ALTER TABLE`). Each catalog is one `database` node; a two-part
-name is the workspace's `default` catalog. `dbutils.secrets.get(scope, key)`
+and a write with `mode("overwrite")` counts as delete. SQL text with
+three-part names (`catalog.schema.table`) in a Spark file, and also
+`schema.table` or `{table}` names inside a `spark.sql(...)` literal, reads
+(`FROM`/`JOIN`/`USING`), writes (`INTO`/`UPDATE`, `CREATE TABLE/VIEW`),
+deletes (`DELETE FROM`, `TRUNCATE`, `DROP`, `CREATE OR REPLACE TABLE`,
+`INSERT OVERWRITE`), or administers (`ALTER TABLE`). Each catalog is one
+`database` node; a two-part name is the workspace's `default` catalog.
+f-string names are resolved through simple string assignments (the file's
+own, then a name with one value anywhere in the repository); a catalog that
+stays unresolved gets its own node. `dbutils.secrets.get(scope, key)`
 becomes an identity named by scope and key; the value is never read.
 
 **Azure identity.** `DefaultAzureCredential`, `ManagedIdentityCredential`,

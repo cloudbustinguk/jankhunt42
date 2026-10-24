@@ -56,6 +56,17 @@ class Scanner(unittest.TestCase):
         "ops/long_call.py": ("resp = requests.get(\n    u,\n    headers={},\n    timeout=3,\n    params={},\n"
                              "    cookies={},\n    verify=False)\n"
                              "self.session.verify = False\n"),
+        # review of 2.5.0: quotes inside SQL, env reads in template literals, policy names, human passwords
+        "db/inject.py": ("q = \"SEL" + "ECT * FROM users WHERE name = '\" + name + \"'\"\n"
+                         "q2 = \"SEL" + "ECT * FROM t WHERE x = '{}'\".format(v)\n"
+                         "q3 = \"SEL" + "ECT title FROM n WHERE title LIKE '%is back'\"\n"),
+        "db/probe.ts": "const q = `\n  WHERE EXISTS (SEL" + "ECT 1 FROM t WHERE ${probes.join(' OR ')})`\n",
+        "web/client.ts": "const h = { Authorization: `Bearer ${import.meta.env.VITE_API_" + "SECRET}` }\n",
+        "cfg/app.json": "{\"NEXT_PUBLIC_STRIPE_" + "SECRET_KEY\": \"x\"}\n",
+        "db/named.sql": "create policy \"Write access to everyone\" on t for all using (true);\n",
+        "app/human.py": ("pass" + "word = \"Summer_Pass_" + "2024\"\napi_" + "key = \"Acme_Client_" + "Key7\"\n"
+                         "tok" + "en = \"https://api.acme-hooks.io/hook?t=" + "Zk82KdpQ1aVv93\"\n"),
+        "conf/credentials": "pass" + "word = \"RealP4ss!x" + "q\"\n",
         # round three: a wider field trial
         "conf/.env.example": "# JWT_PRIVATE_KEY=\"-----BEGIN " + "PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\"\n",
         "tests/tls/server.key": PEM_KEY,
@@ -267,6 +278,15 @@ class Scanner(unittest.TestCase):
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH134", "db/policies.sql")),
                          [(1, "minor"), (2, "major")])
         self.assertEqual(self.lines("JH112", "web/router.js"), [2])
+
+    def test_review_of_250(self):
+        self.assertEqual(self.lines("JH104", "db/inject.py"), [1, 2])     # not LIKE '%is back'
+        self.assertEqual(self.lines("JH104", "db/probe.ts"), [2])
+        self.assertEqual(self.lines("JH132", "web/client.ts"), [1])
+        self.assertEqual(self.lines("JH132", "cfg/app.json"), [1])
+        self.assertEqual([f["severity"] for f in self.hits("JH134", "db/named.sql")], ["major"])
+        self.assertEqual(self.lines("JH101", "app/human.py"), [1, 2, 3])
+        self.assertEqual([f["severity"] for f in self.hits("JH101", "conf/credentials")], ["critical"])
 
     def test_secrets(self):
         self.assertEqual(self.hits("JH101", "app/settings.py"), [])
