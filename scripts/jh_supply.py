@@ -635,7 +635,8 @@ def _syft_doc(data: Dict[str, Any]) -> Dict[str, Any]:
     tool = " ".join(x for x in (_scalar(desc.get("name")), _scalar(desc.get("version"))) if x)
     return {"timestamp": "",                            # syft JSON records no creation time
             "authors": [], "tools": [tool] if tool else [],
-            "dependencies": sum(1 for r in rels if r.get("type") in ("dependency-of", "contains")),
+            # `contains` is ownership (a package holds files), not a dependency
+            "dependencies": sum(1 for r in rels if r.get("type") == "dependency-of"),
             "primary": bool(src.get("name")), "context": []}
 
 

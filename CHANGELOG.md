@@ -26,8 +26,9 @@ GitHub dependency-graph exports. JSON and SARIF fields are unchanged.
 ### Fixed
 
 - `JH101`:
-  - A PEM header counts only when key material follows it, so `...` and
-    `NOTAREALKEY` placeholders don't.
+  - A PEM or PGP key header counts only when key material follows it. Armor
+    headers such as `Proc-Type:` are skipped. `...` and `NOTAREALKEY`
+    placeholders don't count.
   - Private keys in test data are major instead of critical.
   - These are no longer reported: a provider prefix followed by words, CamelCase
     text or a short counter (`sk-lf-RandomString…`, `sk-…-secret-0001`); a

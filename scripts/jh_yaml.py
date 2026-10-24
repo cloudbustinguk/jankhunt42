@@ -196,7 +196,7 @@ class _Parser:
         return not nxt.startswith(("- ", "[", "{", "#")) and nxt != "-" and _split_key(nxt) is None
 
     def _value(self, rest: str, ind: int, depth: int) -> Any:
-        if rest in ("|", ">", "|-", ">-", "|+", ">+"):
+        if re.fullmatch(r"[|>][-+0-9]*", rest):           # |, >-, |2, >+1 ...
             return self._block_scalar(ind)
         if rest == "" or rest.startswith(("&", "!")) and " " not in rest:
             if rest == "" and self._continues_plain(ind):

@@ -137,7 +137,8 @@ SYFT_JSON = {
          "cpes": ["cpe:2.3:a:left-pad:left-pad:1.3.0:*:*:*:*:*:*:*"], "licenses": ["WTFPL"],
          "metadata": {"author": "Example Author"}},
     ],
-    "artifactRelationships": [{"parent": "a1", "child": "a2", "type": "dependency-of"}],
+    "artifactRelationships": [{"parent": "a1", "child": "a2", "type": "dependency-of"},
+                              {"parent": "a1", "child": "f1", "type": "contains"}],
     "source": {"type": "file", "name": "app.tar.gz"},
     "descriptor": {"name": "syft", "version": "1.0.0"},
     "schema": {"version": "16.1.0", "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.1.0.json"},
@@ -236,6 +237,8 @@ class Formats(unittest.TestCase):
         self.assertEqual(q["minimum_elements"], "partial")
         self.assertIn("timestamp", q["missing"])
         self.assertTrue(q["document"]["dependency_relationships"] and q["document"]["tool"])
+        only_contains = dict(SYFT_JSON, artifactRelationships=[{"parent": "a1", "child": "f1", "type": "contains"}])
+        self.assertFalse(parse("b.syft.json", json.dumps(only_contains))["quality"]["document"]["dependency_relationships"])
 
     def test_no_components_is_not_met(self):
         q = parse("empty.cdx.json", json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6"}))["quality"]

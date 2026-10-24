@@ -77,6 +77,22 @@ class Scanner(unittest.TestCase):
                           "console.log(config)\n"),
         "deploy/secret.yaml": ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\nstringData:\n  type: \"postgresql\"\n"
                                "  host: \"db\"\n  port: \"5432\"\n  username: \"app\"\n  password: \"pass\"\n"),
+        # second review of 2.4.2
+        "keys/pgp.asc": ("-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\n\n"
+                         "lQOYBF8xY2kBCADkq9m2T0aQp7Vx3LzW8nR4cJ6uE1sK9dF2gH5jL0qM3wN7pB4vXyZz\n"
+                         "-----END PGP PRIVATE KEY BLOCK-----\n"),
+        "keys/enc.pem": ("-----BEGIN RSA " + "PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,0011\n\n"
+                         "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaZ0jvKq9Tq8m1f2+Q\n"
+                         "-----END RSA PRIVATE KEY-----\n"),
+        "app/global_eval.js": "const r = window.eval(userCode)\nconst s = globalThis.eval(body)\n",
+        "app/pw.js": "const v = { pass" + "word: '+Zx8kq2Lm!' }\n",
+        "deploy/ssh-secret.yaml": ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: ssh\ndata:\n"
+                                   "  id_rsa: LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0K/+dzc2\n  host: ZGI=\n"),
+        "app/safe_yaml.py": ("import yaml\ne = yaml.load(f, yaml.SafeLoader)\n"
+                             "g = yaml.load(\n    f,\n    Loader=yaml.SafeLoader,\n)\n"),
+        "app/Imports.java": "import java.beans.XMLDecoder;\nclass A {}\n",
+        "app/noqa.py": "try:\n    a()\nexcept:  # noqa: E722\n    pass\n",
+        "app/eslint.ts": "try {\n  a()\n} catch { // eslint-disable-line no-empty\n}\n",
         "tools/extract_multi.py": "import tarfile\nt = tarfile.open(p)\nt.extractall(\n    dest,\n    filter=\"data\",\n)\n",
         "core/src/session_tests.rs": "let secret = \"%s\";\n" % RANDOM,
         "tests/test_client.py": "api_key = \"%s\"\nGITHUB = \"%s\"\n" % (RANDOM, GH_TOKEN),
@@ -203,6 +219,17 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH204", "src/server.js"), [3])
         self.assertEqual(self.lines("JH415", "deploy/secret.yaml"), [10])
 
+    def test_review_of_242(self):
+        self.assertEqual([f["severity"] for f in self.hits("JH101", "keys/pgp.asc")], ["critical"])
+        self.assertEqual([f["severity"] for f in self.hits("JH101", "keys/enc.pem")], ["critical"])
+        self.assertEqual(self.lines("JH102", "app/global_eval.js"), [1, 2])
+        self.assertEqual(len(self.hits("JH101", "app/pw.js")), 1)
+        self.assertEqual(self.lines("JH415", "deploy/ssh-secret.yaml"), [6])
+        self.assertEqual(self.hits("JH106", "app/safe_yaml.py"), [])
+        self.assertEqual(self.hits("JH106", "app/Imports.java"), [])
+        self.assertEqual(self.lines("JH201", "app/noqa.py"), [3])
+        self.assertEqual(self.lines("JH201", "app/eslint.ts"), [3])
+
     def test_secrets(self):
         self.assertEqual(self.hits("JH101", "app/settings.py"), [])
         self.assertEqual(self.hits("JH101", "app/labels.rs"), [])
@@ -274,6 +301,9 @@ class YamlReader(unittest.TestCase):
         self.assertEqual(docs[0]["steps"], [{"name": "b", "run": "docker build . --file X --tag y"},
                                             {"run": "echo a continued"}])
 
+    def test_block_scalar_indentation_indicator(self):
+        self.assertEqual(jh_yaml.load_all("a: |2\n   x\n   y\n"), [{"a": "x\ny"}])
+
     def test_a_scalar_document(self):
         self.assertEqual(jh_yaml.load_all("Initial Commit\n"), ["Initial Commit"])
 
@@ -328,6 +358,13 @@ class MapCoverage(unittest.TestCase):
         engines = {n["attributes"].get("engine") for n in self.map["graph"]["nodes"]}
         for engine in ("vercel-ai-gateway", "xai", "azure-openai", "openai"):
             self.assertIn(engine, engines)
+
+    def test_azure_openai_replaces_the_openai_import(self):
+        ev = {x["id"]: x["path"] for x in self.map["evidence"]}
+        engine = {n["id"]: n["attributes"].get("engine") for n in self.map["graph"]["nodes"]}
+        paths = {ev.get(r) for e in self.map["graph"]["edges"] for r in e["evidence_refs"] if engine.get(e["target"]) == "openai"}
+        self.assertIn("agent/chain.py", paths)            # a genuine OpenAI client elsewhere stays
+        self.assertNotIn("chat/backend.py", paths)        # the Azure-only file does not reach api.openai.com
 
 
 if __name__ == "__main__":

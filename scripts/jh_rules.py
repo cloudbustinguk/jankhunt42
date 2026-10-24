@@ -72,7 +72,8 @@ RULES: List[Rule] = [
       "Replace with a parser, dispatch table, or serialization format; never evaluate untrusted input.",
       confidence="medium", langs=JS + PY + ("php", "ruby", "lua"),
       check="dynamic_exec",
-      patterns=(r"(?<![\w.$])eval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
+      patterns=(r"(?:(?<![\w.$])|(?<=\bwindow\.)|(?<=\bglobalThis\.)|(?<=\bglobal\.)|(?<=\bself\.))eval\s*\(",
+                r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
     R("JH103", "Shell command construction", "major", "security",
       "A shell is invoked with a string, so metacharacters in any interpolated value become commands.",
       "Use an argument array with shell disabled, then validate/allowlist values.",
@@ -653,7 +654,7 @@ def secret_placeholder(match_text: str) -> bool:
     if quoted:
         key = re.match(r"[\w-]*", match_text).group(0).lower()
         # the match ran across string boundaries into code: split('secret=')[1]
-        if re.match(r"[)\]\[,.;+]", value):
+        if re.match(r"[)\]]", value) and re.search(r"[.(]\w", value):
             return True
         # a lowercase name ("identifier", "attribute.name") is not a credential,
         # unless the key says it may be a password
@@ -675,8 +676,16 @@ def pem_has_body(sf: SourceFile, idx: int, end: int) -> bool:
     """A PEM header is a key only when key material follows it, on the same
     line (after a literal \\n) or on the next line; `...` or NOTAREALKEY is not."""
     rest = sf.raw[idx - 1][end:] if 0 < idx <= len(sf.raw) else ""
-    nxt = sf.raw[idx].strip() if idx < len(sf.raw) else ""
-    return bool(_PEM_BODY_RE.search(rest) or _PEM_BODY_RE.match(nxt.strip("'\"`")))
+    if _PEM_BODY_RE.search(rest):
+        return True
+    # the next lines, past armor headers (Proc-Type:, DEK-Info:, Version:,
+    # Comment:) and blank lines, as encrypted PEM and PGP keys have them
+    for k in range(idx, min(idx + 8, len(sf.raw))):
+        line = sf.raw[k].strip().strip("'\"`")
+        if not line or re.match(r"^[A-Za-z][\w-]*:\s", line):
+            continue
+        return bool(_PEM_BODY_RE.match(line))
+    return False
 
 
 def _compile_rules() -> None:

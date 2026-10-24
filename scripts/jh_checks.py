@@ -105,6 +105,25 @@ def c_functions(sf: SourceFile) -> Iterator[Tuple[int, int]]:
         i += 1
 
 
+# Comments that silence a tool are not a reason for ignoring an error.
+_PRAGMA_RE = re.compile(r"(?i)^\s*(?:#|//|/\*+|\*)?\s*(?:noqa|pragma|type:\s*ignore|pylint:|nosec|fmt:|isort:|"
+                        r"eslint-disable|ts-ignore|@ts-ignore|@ts-expect-error|istanbul|c8\s|prettier-ignore|nolint)")
+
+
+def _explains(text: str, marker: str) -> bool:
+    """True when `text` carries a comment that is more than a tool pragma."""
+    if marker == "#":
+        if "#" not in text:
+            return False
+        comment = text.split("#", 1)[1]
+        return bool(comment.strip()) and not _PRAGMA_RE.match(comment)
+    m = re.search(r"//(.*)$|/\*+(.*?)(?:\*/|$)|^\s*\*\s?(.*)$", text)
+    if not m:
+        return False
+    comment = next(g for g in m.groups() if g is not None)
+    return bool(comment.strip()) and not _PRAGMA_RE.match(comment)
+
+
 @check("empty_handler")
 def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
@@ -116,14 +135,14 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
             base = indent_of(line)
             same = m.group(2)
             if same:
-                if "#" not in sf.raw[i]:          # a comment says why it is ignored
+                if not _explains(sf.raw[i], "#"):          # a comment saying why makes it deliberate
                     out.append(make_finding(rule, sf, i + 1, message="The except block contains only '%s'." % same))
                 continue
             j = i + 1
             while j < len(sf.code) and not sf.code[j].strip():
                 j += 1
             if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]) \
-                    and not any("#" in sf.raw[k] for k in range(i, j + 1)):
+                    and not any(_explains(sf.raw[k], "#") for k in range(i, j + 1)):
                 out.append(make_finding(rule, sf, i + 1, end_line=j + 1,
                                         message="The except block contains only '%s'." % sf.code[j].strip()))
     else:
@@ -132,7 +151,7 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             # a block holding only a comment is deliberate (as ESLint's no-empty treats it)
             if re.search(r"\bcatch\b[^{]*\{\s*\}\s*;?\s*$", line):
-                if not re.search(r"/\*|//", sf.raw[i].split("catch", 1)[-1]):
+                if not _explains(sf.raw[i].split("catch", 1)[-1], "//"):
                     out.append(make_finding(rule, sf, i + 1))
                 continue
             if re.search(r"\bcatch\b[^{]*\{\s*$", line):
@@ -140,7 +159,8 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
                 while j < len(sf.code) and not sf.code[j].strip():
                     j += 1
                 if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]) \
-                        and not any(re.search(r"/\*|//|^\s*\*", sf.raw[k]) for k in range(i + 1, j)):
+                        and not _explains(sf.raw[i].split("catch", 1)[-1], "//") \
+                        and not any(_explains(sf.raw[k], "//") for k in range(i + 1, j)):
                     out.append(make_finding(rule, sf, i + 1, end_line=j + 1))
     return out
 
@@ -588,6 +608,10 @@ def dockerfile_base(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
+_K8S_NOT_SECRET = {"type", "provider", "host", "hostname", "port", "database", "dbname", "db", "username", "user",
+                   "endpoint", "url", "uri", "region", "namespace", "name", "ca.crt", "sslmode", "schema"}
+
+
 @check("k8s_secret_literal")
 def k8s_secret_literal(sf: SourceFile, rule: Rule) -> List[Finding]:
     if not re.search(r"(?m)^\s*kind\s*:\s*Secret\s*$", "\n".join(sf.nocomment)):
@@ -614,8 +638,7 @@ def k8s_secret_literal(sf: SourceFile, rule: Rule) -> List[Finding]:
                 val = km.group(2).strip().strip("'\"")
                 # connection details (type, host, port, database, username) are not secrets
                 if val and not val.startswith(("|", ">", "{{", "$")) and val not in ("null", "~") \
-                        and not _FAKE_VALUES.match(val) \
-                        and (_secret_key_name(km.group(1)) or _looks_secret_value(val, km.group(1))):
+                        and not _FAKE_VALUES.match(val) and km.group(1).lower() not in _K8S_NOT_SECRET:
                     out.append(make_finding(rule, sf, j + 1,
                                             evidence="%s: ***REDACTED***" % km.group(1),
                                             message="Secret value for key '%s' is committed in plaintext." % km.group(1)))
@@ -1697,7 +1720,7 @@ _DESERIALIZERS = {
                r"\byaml\.load\s*\(", r"\byaml\.unsafe_load\s*\("),
     "php": (r"\bunserialize\s*\(",),
     "js": (r"\bunserialize\s*\(",),                 # node-serialize; js-yaml 4's load is the safe loader
-    "jvm": (r"\bnew\s+ObjectInputStream\b", r"\bXMLDecoder\b", r"\.readObject\s*\(\s*\)"),
+    "jvm": (r"\bnew\s+ObjectInputStream\b", r"\bnew\s+XMLDecoder\b", r"\.readObject\s*\(\s*\)"),
     "csharp": (r"\bnew\s+BinaryFormatter\b", r"\bNetDataContractSerializer\b"),
     "ruby": (r"\bMarshal\.load\s*\(",),
 }
@@ -1717,9 +1740,16 @@ def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
             m = re.search(p, line)           # the call itself, never text inside a string
             if not m:
                 continue
-            # yaml.load(..., Loader=yaml.SafeLoader) is the safe form
-            if "yaml" in p and re.search(r"\bLoader\s*=\s*(?:yaml\.)?(?:Safe|CSafe|Base)Loader", raw[m.start():]):
-                continue
+            # yaml.load(f, SafeLoader) or Loader=yaml.SafeLoader, also over several lines
+            if "yaml" in p:
+                call, depth = [], 0
+                for k in range(i, min(i + 8, len(sf.code))):
+                    call.append((sf.nocomment[k] if k < len(sf.nocomment) else sf.code[k])[m.start() if k == i else 0:])
+                    depth += sf.code[k][m.start() if k == i else 0:].count("(") - sf.code[k][m.start() if k == i else 0:].count(")")
+                    if depth <= 0:
+                        break
+                if re.search(r"\b(?:Safe|CSafe|Base)Loader\b", "\n".join(call)):
+                    continue
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
             break
         if len(out) >= 5:

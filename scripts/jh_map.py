@@ -607,6 +607,10 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 touch(nid)
                 g.add_edge(ctx.app, nid, "connects", "unknown", "observed", "medium", evidence=ev,
                            assumptions=["bucket name observed in code; IAM permissions not verified"])
+    # An Azure OpenAI client means the `openai` import serves Azure, not api.openai.com.
+    if ("external", "azure-openai") in families and ("external", "openai") in families \
+            and not re.search(r"api\.openai\.com", "\n".join(nocomment)):
+        families.pop(("external", "openai"))
     # Record env usages with the families in this file.
     fams = set(families)
     ctx.uses = [(n, p, l, fams if p == item.rel else f, s) for (n, p, l, f, s) in ctx.uses]
