@@ -49,6 +49,7 @@ RULES = {
     "P-DAT-003": "reachable data stores without a declared classification",
     "P-SEC-001": "credentials or data exposed to the public",
     "P-AGT-001": "AI agent guardrails bypassed, or agent tooling unpinned",
+    "P-AI-001": "sensitive data and an external AI service are reachable together",
     "P-OPS-001": "automated tests or CI not observed",
     "P-EVD-001": "mandatory supply-chain evidence missing",
     "P-JNK-001": "Jank Score policy failed or blocker-severity leads present",
@@ -59,12 +60,13 @@ PROFILES = ("standard", "citizen")
 DEFAULT_POLICY: Dict[str, Any] = {
     "schema_version": POLICY_SCHEMA,
     "profile": "standard",
-    "require": {"owner": False, "sbom": False, "attestation": False, "verified_attestation": False,
-                "custodian": False, "tests": False, "ci": False, "classification": False},
+    "require": {"owner": False, "sbom": False, "sbom_minimum": False, "attestation": False,
+                "verified_attestation": False, "custodian": False, "tests": False, "ci": False,
+                "classification": False},
     "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
-                "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence", "P-JNK-001": "review",
-                "P-EXP-001": "review"},
+                "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
+                "P-JNK-001": "review", "P-EXP-001": "review"},
     "max_exposure": None,
     # What unverified (static) authority and export leads may do at most.
     "static_leads": "review",
@@ -76,7 +78,7 @@ CITIZEN_PRESET: Dict[str, Any] = {
     "require": {"owner": True, "custodian": True, "tests": True, "ci": True, "classification": True},
     "actions": {"P-OWN-001": "block", "P-CUS-001": "block", "P-DAT-001": "block", "P-DAT-002": "block",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
-                "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block"},
+                "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block"},
     "max_exposure": "Moderate",
     "static_leads": "block",
 }
@@ -387,6 +389,24 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
                 ["finding:%s:%s:%s" % (f["rule"], f["path"], f["line"]) for f in found])
         else:
             add(rule, "pass", "0 %s leads" % what)
+    # P-AI-001: co-reachability, not a data flow; it asks for the provider's
+    # data handling to be checked before release.
+    pairs = list(facts.get("ai_sensitive_pairs") or [])
+    if pairs:
+        by_service: Dict[str, List[str]] = {}
+        for p in pairs:
+            by_service.setdefault(p["ai_service"], [])
+            if p["data"] not in by_service[p["ai_service"]]:
+                by_service[p["ai_service"]].append(p["data"])
+        shown = "; ".join("%s with %s" % (svc, ", ".join(stores))
+                          for svc, stores in sorted(by_service.items())[:3])
+        add("P-AI-001", _outcome_for(acts["P-AI-001"]),
+            "%d confidential or restricted data store(s) are reachable alongside an external AI service; confirm "
+            "what data reaches the provider and how it is handled (retention, training use, region) before "
+            "release: %s" % (len({p["data"] for p in pairs}), shown),
+            [p["data_id"] for p in pairs] + [p["ai_service_id"] for p in pairs])
+    else:
+        add("P-AI-001", "pass", "no confidential or restricted data store is reachable alongside an external AI service")
     # P-OPS-001
     ops = facts.get("operations") or {}
     missing_ops = [area for area in ("tests", "ci") if policy["require"][area] and ops.get(area) != "observed"]
@@ -402,6 +422,8 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     missing = []
     if policy["require"]["sbom"] and not sup.get("sbom"):
         missing.append("SBOM")
+    if policy["require"]["sbom_minimum"] and sup.get("sbom_minimum") != "met":
+        missing.append("an SBOM meeting the NTIA minimum elements (best: %s)" % sup.get("sbom_minimum", "none"))
     if policy["require"]["attestation"] and not sup.get("attestations"):
         missing.append("attestation")
     if policy["require"]["verified_attestation"] and not sup.get("verified_attestations"):

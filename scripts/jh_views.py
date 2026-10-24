@@ -248,6 +248,20 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
     out.append(line.rstrip())
     own = p["ownership"]
     out.append("  owners: " + (clean(", ".join(own["owners"] + own["declared_owners"])) or "unknown"))
+    ai = p.get("ai") or {}
+    if ai.get("observed"):
+        out += ["", c.bold("ai use") + c.grey("  (static inventory, not proof of use)")]
+        services = ai.get("model_services") or []
+        if services:
+            shown = ", ".join("%s %s" % (clean(s["label"]), t.label(s["evidence"])) for s in services[:3])
+            out.append("  services: " + shown + (c.grey("  +%d more" % (len(services) - 3)) if len(services) > 3 else ""))
+        out.append("  agents: %d tool server(s) · %d instruction file(s) · %s" % (
+            ai.get("agent_tool_servers", 0), len(ai.get("instruction_files") or []), ai.get("human_oversight", "unknown")))
+        subs = list((p.get("alignment") or {}).get("subcategories") or {})
+        if subs:
+            body = _wrap("NIST AI RMF " + ", ".join(subs) + "  (orientation, not conformity)", t.width - 14, "")
+            out.append("  frameworks: " + body[0])
+            out += ["              " + b.strip() for b in body[1:]]
     if p["remediation"]:
         out += ["", c.bold("next steps")]
         for i, s in enumerate(p["remediation"][:5], 1):

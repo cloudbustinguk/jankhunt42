@@ -79,6 +79,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-DAT-003` data classification | not required | every reachable data store needs a declared sensitivity (insufficient-evidence) |
 | `P-SEC-001` secrets or data exposed to the public | review | **block** |
 | `P-AGT-001` agent guardrails bypassed, agent tooling unpinned | review | **block** |
+| `P-AI-001` sensitive data reachable alongside an external AI service | review | **block** until the provider's data handling is decided and recorded (an operator exception) |
 | `P-OPS-001` tests and CI | not required | must be **observed**; a declaration is not enough |
 | `P-JNK-001` Jank Score policy fail | review | **block** |
 | `P-EXP-001` exposure ceiling | none | above **Moderate** blocks |

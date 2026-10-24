@@ -43,7 +43,7 @@ signed, fetchable by digest, and verifiable offline after download.
 | Input | Forms |
 |---|---|
 | SPDX 2.x | JSON (`spdxVersion`, `packages`) and tag-value (`SPDXVersion:`, `PackageName:`) |
-| SPDX 3 | JSON-LD `@graph` with `software_Package` elements |
+| SPDX 3 | JSON-LD `@graph` with SPDX 3.0.1 elements: `software_Package` (`software_packageVersion`, `software_packageUrl`, `suppliedBy`, `verifiedUsing`, `externalIdentifier`), `CreationInfo`, `software_Sbom`, licence and dependency `Relationship`s |
 | CycloneDX | JSON (`bomFormat: CycloneDX`) and XML `<bom>` |
 | GitHub artifact attestations | Raw Sigstore bundle / DSSE JSON, JSONL from `gh attestation download` |
 | Sigstore / in-toto | DSSE envelope, direct in-toto statement, SLSA provenance v0.2/v1 |
@@ -177,11 +177,43 @@ internally consistent but not who signed it; such a record carries a warning
 and shows as `provider-verified (bundle key)`. In verification mode it is
 `signature-only` unless cosign re-checks the signer identity (below).
 
+## SBOM quality: minimum elements
+
+An SBOM that names packages but not who supplies them, how to identify them,
+or how they depend on each other cannot answer the questions it exists for.
+Every parsed SBOM carries a `quality` block that counts, per component and
+per document, the NTIA minimum elements (*The Minimum Elements for a Software
+Bill of Materials*, July 2021):
+
+| Element | Where jankhunt42 reads it |
+|---|---|
+| supplier | SPDX `supplier` / `PackageSupplier` / 3.0.1 `suppliedBy`; CycloneDX `supplier`, `manufacturer`, `publisher`, `author` (never `group`, which is a namespace) |
+| component name and version | package name and version fields |
+| unique identifier | a purl or a CPE (SPDX external references or identifiers, CycloneDX `purl`, `cpe`, SWID tag) |
+| dependency relationships | SPDX `DEPENDS_ON`/`CONTAINS`-style relationships, 3.0.1 `dependsOn`/`contains`; CycloneDX `dependencies` with `dependsOn` |
+| author of the SBOM data | SPDX `Person:`/`Organization:` creators (a `Tool:` creator also counts), 3.0.1 `createdBy`; CycloneDX `metadata.authors`, `manufacturer`, `supplier` |
+| timestamp | SPDX `created`; CycloneDX `metadata.timestamp` |
+
+`minimum_elements` is `met` when every element is present for every
+component, `partial` when some are missing (the `missing` list names them,
+with counts), and `not-met` when the SBOM lists no components. The CISA 2025
+draft additions (component hash, licence, tool name, generation context) are
+listed separately as `cisa_2025_draft_missing`: they are reported, never
+required, until that guidance is final. A field is present or it is not;
+this is counting, not a judgement of the SBOM's accuracy.
+
+The report summary carries `sbom_minimum_elements` for the most complete SBOM,
+the Markdown view adds a column and a line per SBOM naming what is missing,
+and the passport records the same in `provenance`.
+
 ## Requirements and gates
 
 ```bash
 # Fail if no SBOM is present.
 jankhunt42 supply-chain . --require-sbom
+
+# Fail unless an SBOM covers the NTIA minimum elements.
+jankhunt42 supply-chain . --require-sbom-minimum
 
 # Fail if no attestation is present.
 jankhunt42 supply-chain . --require-attestation

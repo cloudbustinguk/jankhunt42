@@ -20,7 +20,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_graph as G
 import jh_map
+import jh_frameworks
 import jh_policy
+import jh_supply
 from jh_core import SEV_RANK, TOOL, VERSION, is_agent_context, is_mcp_config, is_test_path, safe_text
 
 PASSPORT_SCHEMA = "jankhunt.passport.v1"
@@ -86,6 +88,52 @@ def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"configs": sorted({str(nodes[a]["attributes"].get("config", "")) for a in agents}), "servers": servers[:50]}
 
 
+# Map engines that are external AI model services.
+AI_ENGINES = {"openai", "anthropic", "google-ai", "groq", "mistral", "cohere", "replicate", "huggingface",
+              "together", "deepseek", "openrouter", "perplexity", "xai", "bedrock", "azure-openai", "vertex-ai"}
+_TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
+
+
+def ai_inventory(map_report: Optional[Dict[str, Any]], items: Sequence[jh_map.Item],
+                 agent_leads: Sequence[Dict[str, Any]], agent: Dict[str, Any]) -> Dict[str, Any]:
+    """What the repository shows about AI use: the model services the software
+    can reach, the agent tooling and instructions it carries, whether agent
+    approvals are weakened, and sensitive data reachable alongside an AI
+    service. A static inventory (NIST AI RMF GOVERN 1.6), not proof of use."""
+    files = sorted(i.rel for i in items if is_agent_context(i.rel))[:20]
+    oversight = ("approval bypass observed" if any(l["rule"] in ("JH702", "JH703", "JH704") for l in agent_leads)
+                 else "no approval bypass observed")
+    base = {"instruction_files": files, "agent_tool_servers": len(agent.get("servers", [])),
+            "human_oversight": oversight,
+            "note": "a static inventory of what the repository shows; not proof of what runs or of what data moves"}
+    in_use = bool(files or base["agent_tool_servers"] or agent_leads)
+    if map_report is None:
+        return dict(base, state="not assessed", observed=in_use, model_services=[], sensitive_data_with_ai=[])
+    nodes = {n["id"]: n for n in map_report["graph"]["nodes"]}
+    label = {nid: n["display_label"] for nid, n in nodes.items()}
+    radii = map_report["assessment"].get("blast_radius", {})
+    services = []
+    for nid in sorted(n for n in nodes if nodes[n]["attributes"].get("engine") in AI_ENGINES):
+        tiers = [info["tier"] for br in radii.values() for impact in br["impacts"].values()
+                 for target, info in impact.items() if target == nid]
+        services.append({"label": label[nid], "engine": nodes[nid]["attributes"]["engine"],
+                         "evidence": _TIER[max(tiers)] if tiers else "unknown",
+                         "reached_by": sorted({label[p] for p, br in radii.items()
+                                               if any(nid in impact for impact in br["impacts"].values())})})
+    pairs = []
+    for p, br in sorted(radii.items()):
+        conf = br["impacts"].get("confidentiality", {})
+        ai = [n for n in conf if nodes.get(n, {}).get("attributes", {}).get("engine") in AI_ENGINES]
+        sensitive = [n for n in conf if nodes.get(n, {}).get("sensitivity") in ("confidential", "restricted")
+                     and nodes[n]["kind"] in ("database", "storage", "queue", "api")]
+        for a in sorted(ai):
+            for d in sorted(sensitive):
+                pairs.append({"principal": label[p], "data": label[d], "data_id": d,
+                              "sensitivity": nodes[d]["sensitivity"], "ai_service": label[a], "ai_service_id": a})
+    return dict(base, state="assessed", observed=in_use or bool(services), model_services=services[:20],
+                sensitive_data_with_ai=pairs[:20])
+
+
 _PLAIN = {
     "P-COV-001": "We could not see enough of the project to judge it.",
     "P-OWN-001": "Nobody is named as the owner.",
@@ -96,6 +144,7 @@ _PLAIN = {
     "P-DAT-003": "Nobody has said how sensitive the data it touches is.",
     "P-SEC-001": "Secret keys or data are exposed to the public.",
     "P-AGT-001": "The AI agent set-up can act without asking, or pulls tools that can change without notice.",
+    "P-AI-001": "It may send sensitive data to an outside AI service; nobody has checked how that service handles it.",
     "P-OPS-001": "There are no automated tests or CI to catch mistakes before they ship.",
     "P-EVD-001": "Required build records are missing.",
     "P-JNK-001": "The code has serious quality or security problems.",
@@ -117,6 +166,7 @@ def plain_brief(p: Dict[str, Any]) -> List[str]:
     lines = [_VERDICT[d["result"]]]
     for r in d["reasons"]:
         lines.append("- %s" % _PLAIN.get(r["rule"], r["title"]))
+    services = (p.get("ai") or {}).get("model_services", [])
     servers = gov.get("agent", {}).get("servers", [])
     agent_only = {label for sv in servers for label in sv.get("reaches", [])}
     sources = p["data"].get("sources", [])
@@ -126,6 +176,9 @@ def plain_brief(p: Dict[str, Any]) -> List[str]:
             "%s (%s%s)" % (s["label"], s["environment"] if s["environment"] != "unknown" else "environment unknown",
                            ", %s data" % s["sensitivity"] if s["sensitivity"] != "unknown" else "")
             for s in stores[:5]))
+    if services:
+        lines.append("It uses AI services: %s." % "; ".join(
+            "%s (%s)" % (sv["label"], sv["evidence"]) for sv in services[:5]))
     if servers:
         lines.append("Its AI agent set-up connects to %d tool server(s): %s." % (len(servers), "; ".join(
             "%s%s%s%s" % (sv["name"], " (unpinned)" if sv.get("pinned") is False else "",
@@ -261,7 +314,10 @@ def provenance(supply: Optional[Dict[str, Any]], evidence: List[Dict[str, Any]])
         _ev(evidence, "provenance", "observed", os.path.basename(str(rel)) if os.path.isabs(str(rel)) else str(rel),
             0, "SBOM %s with %s packages" % (sb.get("format", "?"), sb.get("package_count", 0)))
     state = "observed" if (s.get("sboms") or s.get("attestations")) else "not-observed"
+    best = jh_supply.best_sbom_quality(supply.get("sboms", []))
     out = {"state": state, "sboms": s.get("sboms", 0), "packages": s.get("packages", 0),
+           "sbom_minimum_elements": best["minimum_elements"],
+           "sbom_missing": best["missing"][:6] if best["minimum_elements"] != "none" else [],
            "attestations": atts, "verified_attestations_reported": s.get("verified_attestations", 0),
            "artifact_digests": sorted(digests, key=lambda d: d["digest"])[:20],
            "note": "%s parses provenance files; it does not verify signatures or signer identity" % TOOL}
@@ -326,6 +382,9 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
                          "and pin every MCP server (`jankhunt42 scan . --category agent`).")
         elif rule == "P-OPS-001":
             steps.append("Add automated tests and a CI workflow that runs them on every change.")
+        elif rule == "P-AI-001":
+            steps.append("Check what data reaches the AI provider and its terms (retention, training use, region), "
+                         "record the decision, or keep restricted data away from AI calls.")
         elif rule == "P-DAT-003":
             steps.append("Declare the sensitivity of every data store in `passport.assets` "
                          "(public, internal, confidential, or restricted).")
@@ -391,6 +450,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     exposure = map_report["assessment"]["exposure"]["class"] if map_report else "Unknown"
     if map_report:
         warns.extend(map_report.get("warnings", []))
+    agent = agent_tooling(map_report)
+    ai = ai_inventory(map_report, items, agent_leads, agent)
     facts = {
         "files_scanned": scan_files,
         "map_files_inspected": map_report["coverage"]["files_inspected"] if map_report else 0,
@@ -402,12 +463,14 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "owner_state": own["state"],
         "jank_policy": jank.get("policy", "pass"),
         "blocker_leads": findings_counts.get("blocker", 0),
-        "supply": {"sbom": prov.get("sboms", 0), "attestations": len(prov.get("attestations", [])),
+        "supply": {"sbom": prov.get("sboms", 0), "sbom_minimum": prov.get("sbom_minimum_elements", "none"),
+                   "attestations": len(prov.get("attestations", [])),
                    "verified_attestations": prov.get("verified_attestations_reported", 0),
                    "verification_problems": (prov.get("verification") or {}).get("problems", [])},
         "declared_custodians": declared_custodians,
         "exposure_findings": exposure_leads,
         "agent_findings": agent_leads,
+        "ai_sensitive_pairs": ai["sensitive_data_with_ai"],
         "operations": {k: v["state"] for k, v in ops.items()},
     }
     if governance_truncated:
@@ -473,12 +536,16 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             "public_exposure_leads": exposure_leads[:50],
             "agent_leads": agent_leads[:50],
             "repository_suppressed_leads": suppressed,
-            "agent": agent_tooling(map_report),
+            "agent": agent,
             "brief": [],
             "note": ("the citizen profile governs software built by people who are not software engineers: "
                      "it requires a named engineering custodian and blocks on unverified authority"
                      if eff["profile"] == "citizen" else "standard profile"),
         },
+        "ai": {k: v for k, v in ai.items() if k != "sensitive_data_with_ai"} | {
+            "sensitive_data_with_ai": [{k: v for k, v in p.items() if not k.endswith("_id")}
+                                       for p in ai["sensitive_data_with_ai"]]},
+        "alignment": jh_frameworks.alignment(r["rule"] for r in decision["reasons"]),
         "provenance": prov,
         "data": data,
         "operations": ops,
@@ -499,7 +566,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     return jh_map.finalize_report(report)
 
 
-_DETAILED_RULES = ("P-COV-001", "P-CUS-001", "P-DAT-003", "P-SEC-001", "P-AGT-001")
+_DETAILED_RULES = ("P-COV-001", "P-CUS-001", "P-DAT-003", "P-SEC-001", "P-AGT-001", "P-AI-001")
 
 
 def redact(report: Dict[str, Any]) -> Dict[str, Any]:
@@ -533,6 +600,14 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
             r["subject"] = "subject-%d" % i
             r["reason"] = r["outcome"]
         ver["problems"] = ["verification problem %d" % i for i, _ in enumerate(ver.get("problems", []), 1)]
+    ai = rep.get("ai")
+    if ai:
+        for i, sv in enumerate(ai.get("model_services", []), 1):
+            sv["label"] = "ai-service-%d" % i
+            sv["reached_by"] = ["principal-%d" % j for j, _ in enumerate(sv["reached_by"], 1)]
+        ai["sensitive_data_with_ai"] = [{"principal": "principal", "data": "data-store-%d" % i,
+                                         "sensitivity": p["sensitivity"], "ai_service": "ai-service"}
+                                        for i, p in enumerate(ai.get("sensitive_data_with_ai", []), 1)]
     gov = rep.get("governance")
     if gov:
         gov["custodians"] = ["custodian-%d" % i for i, _ in enumerate(gov["custodians"], 1)]
@@ -593,6 +668,26 @@ def markdown(p: Dict[str, Any]) -> str:
     for r in (prov.get("verification") or {}).get("results", []):
         lines.append("  - verification `%s` (%s): **%s**: %s" % (r.get("subject"), r.get("verifier"), r.get("outcome"), r.get("reason")))
     lines.append("- Data sources: %d (%s)" % (len(p["data"].get("sources", [])), p["data"]["state"]))
+    ai = p.get("ai") or {}
+    if ai.get("observed"):
+        lines += ["", "## AI use", ""]
+        for sv in ai.get("model_services", []):
+            lines.append("- AI service: %s (%s; reached by %s)" % (sv["label"], sv["evidence"],
+                                                                  ", ".join(sv["reached_by"]) or "nothing"))
+        if ai.get("agent_tool_servers"):
+            lines.append("- AI agent tool servers: %d" % ai["agent_tool_servers"])
+        if ai.get("instruction_files"):
+            lines.append("- Agent instruction files: %s" % ", ".join("`%s`" % f for f in ai["instruction_files"][:8]))
+        lines.append("- Human oversight of agents: %s" % ai.get("human_oversight", "unknown"))
+        for pair in ai.get("sensitive_data_with_ai", [])[:5]:
+            lines.append("- Reachable together: %s (%s) and %s" % (pair["data"], pair["sensitivity"], pair["ai_service"]))
+        lines.append("- _%s_" % ai.get("note", ""))
+    al = p.get("alignment") or {}
+    if ai.get("observed") and al.get("triggered"):
+        lines += ["", "## Framework orientation (NIST AI RMF, AIGP)", "", "_%s._" % al["note"], ""]
+        for rule, ref in al["triggered"].items():
+            lines.append("- `%s`: NIST AI RMF %s; AIGP domain %s" % (rule, ", ".join(ref["nist_ai_rmf"]),
+                                                                   "; ".join(ref["aigp"])))
     if p["remediation"]:
         lines += ["", "## Top remediation steps", ""] + ["%d. %s" % (i, s) for i, s in enumerate(p["remediation"], 1)]
     lines += ["", "## Unknowns", ""] + ["- %s: %s" % (u["id"], u["detail"]) for u in p["unknowns"]]

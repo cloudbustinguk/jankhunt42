@@ -14,6 +14,9 @@
 why  (rule outcomes, not a weighted score)
   REVIEW P-DAT-002 possible mutating, destructive, or unknown authority over a production, critical, or restricted
       asset; verify effective grants
+  REVIEW P-AI-001 2 confidential or restricted data store(s) are reachable alongside an external AI service; confirm
+      what data reaches the provider and how it is handled (retention, training use, region) before release: openai
+      api.openai.com with postgresql ledger-db.prod.internal, s3 bucket demo-reports-prod
   REVIEW P-JNK-001 Jank Score policy fail; 0 blocker-severity lead(s) (leads, not confirmed defects)
 
 evidence
@@ -22,13 +25,20 @@ evidence
   security policy [not-observed]
   owners: @demo-org/payments-team
 
+ai use  (static inventory, not proof of use)
+  services: openai api.openai.com [inferred]
+  agents: 0 tool server(s) · 0 instruction file(s) · no approval bypass observed
+  frameworks: NIST AI RMF GOVERN 6.1, MAP 4.1, MAP 5.1, MEASURE 2.5, MEASURE 2.7, MEASURE 2.10, MANAGE 1.3, MANAGE 3.1
+              (orientation, not conformity)
+
 next steps
   1. Verify effective grants for the flagged connections and scope them to least privilege; record the result in an
      operator inventory to turn leads into verified evidence.
-  2. Work down the weakest Jank Score dimension first (`jankhunt42 score`), then the highest-severity leads
+  2. Check what data reaches the AI provider and its terms (retention, training use, region), record the decision,
+     or keep restricted data away from AI calls.
+  3. Work down the weakest Jank Score dimension first (`jankhunt42 score`), then the highest-severity leads
      (`jankhunt42 scan --min-severity critical`).
-  3. Add or declare observability evidence (currently not observed).
-  4. Add or declare runbook evidence (currently not observed).
-  5. Generate an SBOM and build provenance for released artifacts.
+  4. Add or declare observability evidence (currently not observed).
+  5. Add or declare runbook evidence (currently not observed).
 
   export: jankhunt42 passport . --json | --html > passport.html   ·   shareable: --redact

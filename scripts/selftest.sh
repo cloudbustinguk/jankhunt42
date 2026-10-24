@@ -782,6 +782,25 @@ assert any(a["verification"] == "unsigned" for a in d["attestations"]), d["attes
 PY
 "$PY" "$JH" supply-chain "$SC" --no-discover --require-sbom --json \
   > "$TMP/sc-require.json" 2>/dev/null && fail "supply-chain --require-sbom did not fail"
+# The review SBOM names no suppliers, identifiers, dependencies or author.
+"$PY" "$JH" supply-chain --no-discover --sbom "$REVIEW/evidence/app.spdx.json" --require-sbom-minimum \
+  --json > "$TMP/sc-minimum.json" && fail "supply-chain --require-sbom-minimum passed an incomplete SBOM"
+"$PY" - "$TMP/sc-minimum.json" "$TMP/complete.cdx.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["summary"]["sbom_minimum_elements"] == "partial", d["summary"]
+assert "dependency relationships" in d["sboms"][0]["quality"]["missing"], d["sboms"][0]["quality"]
+assert any("NTIA minimum elements" in r for r in d["gate"]["reasons"]), d["gate"]
+json.dump({"bomFormat": "CycloneDX", "specVersion": "1.6",
+           "metadata": {"timestamp": "2026-01-01T00:00:00Z", "authors": [{"name": "Example Org"}],
+                        "component": {"bom-ref": "app", "name": "app", "version": "1.0.0",
+                                      "supplier": {"name": "Example Org"}, "purl": "pkg:pypi/app@1.0.0"}},
+           "components": [{"bom-ref": "lib", "name": "lib", "version": "2.0.0",
+                           "supplier": {"name": "Example Org"}, "purl": "pkg:pypi/lib@2.0.0"}],
+           "dependencies": [{"ref": "app", "dependsOn": ["lib"]}]}, open(sys.argv[2], "w"))
+PY
+"$PY" "$JH" supply-chain --no-discover --sbom "$TMP/complete.cdx.json" --require-sbom-minimum --json \
+  >/dev/null || fail "supply-chain --require-sbom-minimum rejected a complete SBOM"
 "$PY" "$JH" supply-chain --no-discover --sbom "$TMP/forced.dat" \
   --jfrog-evidence "$TMP/forced.jfrog" --require-verified-attestation --json \
   >/dev/null || fail "supply-chain --require-verified-attestation rejected JFrog proof"

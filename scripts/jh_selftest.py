@@ -75,6 +75,11 @@ MUTANTS = [
      "jh_passport.py", 'reasons.append("accepted_by is not a custodian named by the operator policy (citizen profile)")',
      'pass',
      "test_citizen.py"),
+    ("M17-ai-pairs-ignored", "sensitive data reachable alongside an external AI service never reaches P-AI-001",
+     "jh_policy.py", 'pairs = list(facts.get("ai_sensitive_pairs") or [])', 'pairs = []', "test_ai_governance.py"),
+    ("M18-sbom-always-met", "every SBOM counts as meeting the NTIA minimum elements", "jh_supply.py",
+     'status = "not-met" if not total else ("met" if not missing else "partial")', 'status = "met"',
+     "test_sbom.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

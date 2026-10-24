@@ -47,7 +47,9 @@ decision is at or above that outcome (`pass < review < insufficient-evidence
 | `assessment.decision` | policy rules below | pass / review / insufficient-evidence / block |
 | `ownership` | `CODEOWNERS` (observed), `passport.owners` (declared) | observed / declared / unknown |
 | `governance` | profile, custodians, public-exposure and agent leads, AI agent tooling from the map, plain-language brief | standard / citizen |
-| `provenance` | SBOMs and attestations via `supply-chain` parsers | observed / not-observed |
+| `provenance` | SBOMs and attestations via `supply-chain` parsers; `sbom_minimum_elements` and `sbom_missing` for the most complete SBOM | observed / not-observed; met / partial / not-met / none |
+| `ai` | AI-use inventory: model services the software can reach (with evidence tier and who reaches them), agent tool servers and instruction files, human-oversight posture, sensitive data reachable alongside an AI service | assessed / not assessed; `observed` |
+| `alignment` | orientation crosswalk from every rule and evidence area to NIST AI RMF subcategories and AIGP domains ([`ai-governance.md`](ai-governance.md)) | orientation only |
 | `data` | data sources from the map, with classifications and who classified them | assessed / not assessed |
 | `operations` | CI config, tests, observability SDKs, health probes, runbooks, `SECURITY.md` | observed / inferred / declared / not-observed |
 | `subject` | git revision, dirty flag, artifact digests from attestation subjects | digests labeled exporter-reported |
@@ -75,8 +77,9 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
 | `P-SEC-001` | scanner leads that expose credentials or data to the public: `JH132`, `JH133`, `JH134` (major or above), critical `JH101`/`JH401`/`JH415` | review |
 | `P-AGT-001` | agent-guardrail leads: any `agent`-category rule (`JH701`-`JH708`) at major or above, or hidden Unicode in an agent file | review |
+| `P-AI-001` | a confidential or restricted data store and an external AI model service are reachable from the same principal (co-reachability, not a data flow) | review |
 | `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
-| `P-EVD-001` | `require.sbom`, `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
+| `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
 
@@ -88,14 +91,17 @@ production, critical, or restricted data, and a declared or observed
 sensitive export, block until an operator inventory verifies the grants or
 the flow is removed. Co-reachability of a sensitive source and an external
 destination raises exposure but is not a transfer and does not trigger
-`P-DAT-001`.
+`P-DAT-001`. The one exception is an external AI model service: `P-AI-001`
+asks for a review when sensitive data is reachable alongside one, because
+what a provider retains, trains on, or where it processes data is a
+governance decision someone has to record. It still claims no data flow.
 
 ## Policy files and precedence
 
 ```json
 {
   "schema_version": "jankhunt.policy.v1",
-  "require": {"owner": true, "sbom": true, "attestation": false, "verified_attestation": false},
+  "require": {"owner": true, "sbom": true, "sbom_minimum": false, "attestation": false, "verified_attestation": false},
   "actions": {"P-JNK-001": "block", "P-DAT-002": "block", "P-OWN-001": "insufficient-evidence"},
   "max_exposure": "High",
   "profile": "citizen",

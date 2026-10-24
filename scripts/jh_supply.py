@@ -176,44 +176,141 @@ def _walk_candidates(root: str) -> List[str]:
     return out
 
 
+def _known(value: Any) -> bool:
+    """A value that states something (SPDX writes NOASSERTION/NONE for gaps)."""
+    text = _scalar(value).strip()
+    return bool(text) and text.upper() not in ("NOASSERTION", "NONE")
+
+
+# SPDX 2 relationship types that describe how components depend on each other.
+_SPDX2_DEPENDENCY_TYPES = {"DEPENDS_ON", "DEPENDENCY_OF", "CONTAINS", "CONTAINED_BY", "DYNAMIC_LINK", "STATIC_LINK",
+                           "BUILD_DEPENDENCY_OF", "DEV_DEPENDENCY_OF", "OPTIONAL_DEPENDENCY_OF",
+                           "PROVIDED_DEPENDENCY_OF", "RUNTIME_DEPENDENCY_OF", "TEST_DEPENDENCY_OF",
+                           "DEPENDENCY_MANIFEST_OF", "PREREQUISITE_FOR", "HAS_PREREQUISITE"}
+
+
 def _spdx2_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
     packages: List[Dict[str, str]] = []
     for p in _as_list(data.get("packages")):
         if not isinstance(p, dict):
             continue
-        purl = ""
+        purl, cpe = "", ""
         for ref in _as_list(p.get("externalRefs")):
-            if isinstance(ref, dict) and "purl" in str(ref.get("referenceType", "")).lower():
+            if not isinstance(ref, dict):
+                continue
+            kind = str(ref.get("referenceType", "")).lower()
+            if "purl" in kind:
                 purl = str(ref.get("referenceLocator", ""))
+            elif kind.startswith("cpe") and not cpe:
+                cpe = str(ref.get("referenceLocator", ""))
         packages.append({
             "name": _scalar(p.get("name")),
             "version": _scalar(p.get("versionInfo")),
             "supplier": _scalar(p.get("supplier")),
             "license": _license(p.get("licenseConcluded") or p.get("licenseDeclared")),
             "purl": purl,
+            "cpe": cpe,
+            "hashes": sorted({_scalar(c.get("algorithm")) for c in _as_list(p.get("checksums"))
+                              if isinstance(c, dict) and c.get("algorithm")}),
             "id": _scalar(p.get("SPDXID")),
         })
     return packages
 
 
+def _spdx2_doc(data: Dict[str, Any]) -> Dict[str, Any]:
+    ci = data.get("creationInfo") if isinstance(data.get("creationInfo"), dict) else {}
+    creators = [str(c) for c in _as_list(ci.get("creators"))]
+    rels = [r for r in _as_list(data.get("relationships")) if isinstance(r, dict)]
+    return {
+        "timestamp": _scalar(ci.get("created")),
+        "authors": [c for c in creators if c.startswith(("Person:", "Organization:"))],
+        "tools": [c for c in creators if c.startswith("Tool:")],
+        "dependencies": sum(1 for r in rels if str(r.get("relationshipType", "")).upper() in _SPDX2_DEPENDENCY_TYPES),
+        "primary": bool(_as_list(data.get("documentDescribes"))) or any(
+            str(r.get("relationshipType", "")).upper() == "DESCRIBES" for r in rels),
+        "context": [],
+    }
+
+
+def _spdx3_graph(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [n for n in (_as_list(data.get("@graph")) or _as_list(data.get("graph"))) if isinstance(n, dict)]
+
+
+def _spdx3_type(node: Dict[str, Any]) -> str:
+    return str(node.get("type") or node.get("@type") or "")
+
+
+def _spdx3_id(node: Dict[str, Any]) -> str:
+    return _scalar(node.get("spdxId") or node.get("@id"))
+
+
+def _spdx3_names(graph: List[Dict[str, Any]], refs: Any) -> List[str]:
+    """Agent or tool references resolved to their names where the graph has them."""
+    by_id = {_spdx3_id(n): n for n in graph}
+    out = []
+    for ref in _as_list(refs):
+        node = by_id.get(ref) if isinstance(ref, str) else (ref if isinstance(ref, dict) else None)
+        out.append(_scalar(node.get("name")) if node and node.get("name") else _scalar(ref))
+    return [o for o in out if o]
+
+
 def _spdx3_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
-    graph = _as_list(data.get("@graph")) or _as_list(data.get("graph"))
+    graph = _spdx3_graph(data)
+    by_id = {_spdx3_id(n): n for n in graph}
+    licenses: Dict[str, str] = {}
+    for rel in graph:
+        if "Relationship" in _spdx3_type(rel) and rel.get("relationshipType") in ("hasConcludedLicense",
+                                                                                   "hasDeclaredLicense"):
+            target = by_id.get(_scalar(next(iter(_as_list(rel.get("to"))), "")), {})
+            expr = _scalar(target.get("simplelicensing_licenseExpression") or target.get("licenseExpression")
+                           or target.get("name"))
+            if expr and (rel["relationshipType"] == "hasConcludedLicense" or _scalar(rel.get("from")) not in licenses):
+                licenses[_scalar(rel.get("from"))] = expr
     packages: List[Dict[str, str]] = []
     for node in graph:
-        if not isinstance(node, dict):
-            continue
-        typ = str(node.get("type") or node.get("@type") or "")
+        typ = _spdx3_type(node)
         if "Package" not in typ and "package" not in typ:
             continue
+        ids = [i for i in _as_list(node.get("externalIdentifier")) if isinstance(i, dict)]
+        purl = _scalar(node.get("software_packageUrl") or node.get("packageUrl") or node.get("purl")) or next(
+            (_scalar(i.get("identifier")) for i in ids if str(i.get("externalIdentifierType")) == "packageUrl"), "")
+        cpe = next((_scalar(i.get("identifier")) for i in ids
+                    if str(i.get("externalIdentifierType")) in ("cpe22", "cpe23")), "")
+        supplier = _spdx3_names(graph, node.get("suppliedBy") or node.get("supplier") or node.get("originatedBy"))
         packages.append({
             "name": _scalar(node.get("name")),
-            "version": _scalar(node.get("packageVersion") or node.get("version")),
-            "supplier": _scalar(node.get("supplier") or node.get("originatedBy")),
-            "license": _license(node.get("licenseConcluded") or node.get("licenseDeclared")),
-            "purl": _scalar(node.get("purl") or node.get("packageUrl")),
-            "id": _scalar(node.get("spdxId") or node.get("@id")),
+            "version": _scalar(node.get("software_packageVersion") or node.get("packageVersion") or node.get("version")),
+            "supplier": ", ".join(supplier),
+            "license": licenses.get(_spdx3_id(node), "") or _license(node.get("licenseConcluded")
+                                                                        or node.get("licenseDeclared")),
+            "purl": purl,
+            "cpe": cpe,
+            "hashes": sorted({_scalar(h.get("algorithm")) for h in _as_list(node.get("verifiedUsing"))
+                              if isinstance(h, dict) and _spdx3_type(h) == "Hash" and h.get("algorithm")}),
+            "id": _spdx3_id(node),
         })
     return packages
+
+
+def _spdx3_doc(data: Dict[str, Any]) -> Dict[str, Any]:
+    graph = _spdx3_graph(data)
+    infos = [n for n in graph if _spdx3_type(n) == "CreationInfo"]
+    infos += [n.get("creationInfo") for n in graph if isinstance(n.get("creationInfo"), dict)]
+    info = infos[0] if infos else {}
+    rels = [n for n in graph if "Relationship" in _spdx3_type(n)]
+    roots = [n for n in graph if _spdx3_type(n) in ("SpdxDocument", "software_Sbom") and _as_list(n.get("rootElement"))]
+    return {
+        "timestamp": _scalar(info.get("created")),
+        "spec_version": _scalar(info.get("specVersion")),
+        "authors": _spdx3_names(graph, info.get("createdBy")),
+        "tools": _spdx3_names(graph, info.get("createdUsing")),
+        "dependencies": sum(1 for r in rels if str(r.get("relationshipType", "")) in (
+            "dependsOn", "contains", "hasDynamicLink", "hasStaticLink", "hasProvidedDependency",
+            "hasOptionalDependency", "hasDevelopmentDependency", "hasTestDependency", "hasPrerequisite")),
+        "primary": bool(roots) or any(r.get("relationshipType") == "describes" for r in rels),
+        "context": sorted({_scalar(t) for n in graph if _spdx3_type(n) == "software_Sbom"
+                           for t in _as_list(n.get("software_sbomType"))}),
+    }
 
 
 def _cyclonedx_components(data: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -224,12 +321,18 @@ def _cyclonedx_components(data: Dict[str, Any]) -> List[Dict[str, str]]:
             return
         name = _scalar(component.get("name"))
         if name:
+            swid = component.get("swid") if isinstance(component.get("swid"), dict) else {}
             out.append({
                 "name": name,
                 "version": _scalar(component.get("version")),
-                "supplier": _scalar(component.get("supplier") or component.get("group")),
+                # group is a namespace, not who supplies the component
+                "supplier": _scalar(component.get("supplier") or component.get("manufacturer")
+                                    or component.get("publisher") or component.get("author")),
                 "license": _license(component.get("licenses")),
                 "purl": _scalar(component.get("purl")),
+                "cpe": _scalar(component.get("cpe")) or _scalar(swid.get("tagId")),
+                "hashes": sorted({_scalar(h.get("alg")) for h in _as_list(component.get("hashes"))
+                                  if isinstance(h, dict) and h.get("alg")}),
                 "id": _scalar(component.get("bom-ref")),
             })
         for child in _as_list(component.get("components")):
@@ -243,10 +346,31 @@ def _cyclonedx_components(data: Dict[str, Any]) -> List[Dict[str, str]]:
     return out
 
 
+def _cyclonedx_doc(data: Dict[str, Any]) -> Dict[str, Any]:
+    md = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    tools = md.get("tools")
+    if isinstance(tools, dict):                          # 1.5+: {"components": [...], "services": [...]}
+        tools = _as_list(tools.get("components")) + _as_list(tools.get("services"))
+    authors = [_scalar(a) for a in _as_list(md.get("authors"))]
+    for key in ("manufacturer", "manufacture", "supplier"):
+        if md.get(key):
+            authors.append(_scalar(md.get(key)))
+    return {
+        "timestamp": _scalar(md.get("timestamp")),
+        "authors": [a for a in authors if a],
+        "tools": [t for t in (_scalar(t) for t in _as_list(tools)) if t],
+        "dependencies": sum(1 for d in _as_list(data.get("dependencies"))
+                            if isinstance(d, dict) and _as_list(d.get("dependsOn"))),
+        "primary": isinstance(md.get("component"), dict) and bool(md["component"].get("name")),
+        "context": sorted({_scalar(l.get("phase") or l.get("name")) for l in _as_list(md.get("lifecycles"))
+                           if isinstance(l, dict) and (l.get("phase") or l.get("name"))}),
+    }
+
+
 def _spdx_tag_value(text: str) -> Dict[str, Any]:
-    meta: Dict[str, str] = {}
-    packages: List[Dict[str, str]] = []
-    current: Optional[Dict[str, str]] = None
+    meta: Dict[str, Any] = {"creators": [], "dependencies": 0, "describes": False}
+    packages: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
 
     def flush() -> None:
         nonlocal current
@@ -260,57 +384,171 @@ def _spdx_tag_value(text: str) -> Dict[str, Any]:
             continue
         key, value = line.split(":", 1)
         key, value = key.strip(), value.strip()
+        if key == "Relationship":
+            parts = value.split()
+            if len(parts) >= 3:
+                if parts[1].upper() in _SPDX2_DEPENDENCY_TYPES:
+                    meta["dependencies"] += 1
+                elif parts[1].upper() == "DESCRIBES":
+                    meta["describes"] = True
+            continue
+        if key == "Creator":
+            meta["creators"].append(value)
+            continue
         if key == "PackageName":
             flush()
-            current = {"name": value, "version": "", "supplier": "", "license": "", "purl": "", "id": ""}
+            current = {"name": value, "version": "", "supplier": "", "license": "", "purl": "", "cpe": "",
+                       "hashes": [], "id": ""}
             continue
         if current is not None:
             if key == "PackageVersion":
                 current["version"] = value
             elif key == "PackageSupplier":
                 current["supplier"] = value
-            elif key in ("PackageLicenseConcluded", "PackageLicenseDeclared"):
+            elif key in ("PackageLicenseConcluded", "PackageLicenseDeclared") and not _known(current["license"]):
                 current["license"] = value
-            elif key == "PackageDownloadLocation":
-                current["purl"] = value
+            elif key == "PackageChecksum" and ":" in value:
+                current["hashes"] = sorted(set(current["hashes"]) | {value.split(":", 1)[0].strip()})
+            elif key == "ExternalRef":
+                parts = value.split()
+                if len(parts) >= 3 and parts[1].lower() == "purl":
+                    current["purl"] = parts[2]
+                elif len(parts) >= 3 and parts[1].lower().startswith("cpe") and not current["cpe"]:
+                    current["cpe"] = parts[2]
             elif key == "SPDXID" and not current.get("id"):
                 current["id"] = value
             continue
-        if key in ("SPDXVersion", "DocumentName", "DocumentNamespace", "Created", "Creator"):
+        if key in ("SPDXVersion", "DocumentName", "DocumentNamespace", "Created"):
             meta[key] = value
     flush()
     return {"meta": meta, "packages": packages}
 
 
-def _cyclonedx_xml(text: str) -> List[Dict[str, str]]:
-    out: List[Dict[str, str]] = []
+def _xml_tag(node: Any) -> str:
+    return node.tag.rsplit("}", 1)[-1].lower() if isinstance(node.tag, str) else ""
+
+
+def _xml_find(node: Any, *path: str) -> Optional[Any]:
+    for step in path:
+        node = next((c for c in node if _xml_tag(c) == step), None)
+        if node is None:
+            return None
+    return node
+
+
+def _cyclonedx_xml(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    doc: Dict[str, Any] = {"timestamp": "", "authors": [], "tools": [], "dependencies": 0, "primary": False,
+                           "context": []}
     try:
         root = ET.fromstring(text)
     except ET.ParseError:
-        return out
-    for node in root.iter():
-        tag = node.tag.rsplit("}", 1)[-1].lower()
-        if tag != "component":
+        return out, doc
+
+    def text_of(node: Any, *path: str) -> str:
+        found = _xml_find(node, *path) if node is not None else None
+        return (found.text or "").strip() if found is not None else ""
+
+    md = _xml_find(root, "metadata")
+    if md is not None:
+        doc["timestamp"] = text_of(md, "timestamp")
+        authors = _xml_find(md, "authors")
+        doc["authors"] = [text_of(a, "name") or (a.text or "").strip() for a in (authors if authors is not None else [])
+                          if _xml_tag(a) == "author"]
+        if text_of(md, "manufacturer", "name") or text_of(md, "supplier", "name"):
+            doc["authors"].append(text_of(md, "manufacturer", "name") or text_of(md, "supplier", "name"))
+        tools = _xml_find(md, "tools")
+        doc["tools"] = [text_of(t, "name") for t in (tools.iter() if tools is not None else [])
+                        if _xml_tag(t) in ("tool", "component", "service") and text_of(t, "name")]
+        doc["primary"] = bool(text_of(md, "component", "name"))
+        lifecycles = _xml_find(md, "lifecycles")
+        doc["context"] = sorted({(p.text or "").strip() for p in (lifecycles.iter() if lifecycles is not None else [])
+                                 if _xml_tag(p) in ("phase", "name") and (p.text or "").strip()})
+        doc["authors"] = [a for a in doc["authors"] if a]
+    deps = _xml_find(root, "dependencies")
+    if deps is not None:
+        doc["dependencies"] = sum(1 for d in deps.iter() if _xml_tag(d) == "dependency" and len(list(d)))
+    # Like the JSON walker: the primary component first, then every listed
+    # (and nested) component; tool components under metadata are not packages.
+    components = _xml_find(root, "components")
+    primary = _xml_find(md, "component") if md is not None else None
+    nodes = ([primary] if primary is not None else []) + list(components.iter() if components is not None else [])
+    for node in nodes:
+        if _xml_tag(node) != "component" or not text_of(node, "name"):
             continue
-        vals: Dict[str, str] = {}
-        for child in node:
-            ctag = child.tag.rsplit("}", 1)[-1].lower()
-            if ctag in ("name", "version", "purl", "bom-ref"):
-                vals[ctag] = (child.text or "").strip()
-        if vals.get("name"):
-            out.append({
-                "name": vals.get("name", ""),
-                "version": vals.get("version", ""),
-                "supplier": "",
-                "license": "",
-                "purl": vals.get("purl", ""),
-                "id": vals.get("bom-ref", ""),
-            })
-    return out
+        licenses = _xml_find(node, "licenses")
+        licence = ""
+        for entry in (licenses if licenses is not None else []):
+            licence = (text_of(entry, "id") or text_of(entry, "name")) if _xml_tag(entry) == "license" \
+                else (entry.text or "").strip()
+            if licence:
+                break
+        hashes = _xml_find(node, "hashes")
+        out.append({
+            "name": text_of(node, "name"),
+            "version": text_of(node, "version"),
+            "supplier": text_of(node, "supplier", "name") or text_of(node, "manufacturer", "name")
+            or text_of(node, "publisher") or text_of(node, "author"),
+            "license": licence,
+            "purl": text_of(node, "purl"),
+            "cpe": text_of(node, "cpe"),
+            "hashes": sorted({h.get("alg", "") for h in (hashes if hashes is not None else [])
+                              if _xml_tag(h) == "hash" and h.get("alg")}),
+            "id": node.get("bom-ref", ""),
+        })
+    return out, doc
+
+
+QUALITY_BASIS = ("NTIA minimum elements (2021); the CISA 2025 draft additions are reported separately and are "
+                 "not a requirement")
+QUALITY_RANK = {"met": 3, "partial": 2, "not-met": 1, "none": 0}
+
+
+def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any]) -> Dict[str, Any]:
+    """How completely one SBOM covers the minimum elements. Counting, not
+    judgement: a field is present or it is not."""
+    total = len(packages)
+
+    def count(pred: Any) -> int:
+        return sum(1 for p in packages if pred(p))
+
+    comps = {"total": total,
+             "with_version": count(lambda p: _known(p.get("version"))),
+             "with_supplier": count(lambda p: _known(p.get("supplier"))),
+             "with_identifier": count(lambda p: _known(p.get("purl")) or _known(p.get("cpe"))),
+             "with_hash": count(lambda p: bool(p.get("hashes"))),
+             "with_license": count(lambda p: _known(p.get("license")))}
+    document = {"timestamp": bool(doc.get("timestamp")), "author": bool(doc.get("authors") or doc.get("tools")),
+                "tool": bool(doc.get("tools")), "dependency_relationships": bool(doc.get("dependencies")),
+                "primary_component": bool(doc.get("primary")), "generation_context": bool(doc.get("context"))}
+    missing: List[str] = []
+    for key, label in (("with_supplier", "supplier"), ("with_version", "version"),
+                       ("with_identifier", "a unique identifier (purl or CPE)")):
+        if comps[key] < total:
+            missing.append("%s for %d of %d components" % (label, total - comps[key], total))
+    if not document["dependency_relationships"]:
+        missing.append("dependency relationships")
+    if not document["author"]:
+        missing.append("author of the SBOM data")
+    if not document["timestamp"]:
+        missing.append("timestamp")
+    draft: List[str] = []
+    if comps["with_hash"] < total:
+        draft.append("component hash for %d of %d components" % (total - comps["with_hash"], total))
+    if comps["with_license"] < total:
+        draft.append("license for %d of %d components" % (total - comps["with_license"], total))
+    if not document["tool"]:
+        draft.append("tool name")
+    if not document["generation_context"]:
+        draft.append("generation context")
+    status = "not-met" if not total else ("met" if not missing else "partial")
+    return {"basis": QUALITY_BASIS, "minimum_elements": status, "missing": missing,
+            "cisa_2025_draft_missing": draft, "components": comps, "document": document}
 
 
 def _finalize_sbom(path: str, rel: str, fmt: str, data: Optional[Dict[str, Any]],
-                   packages: List[Dict[str, str]], source: Dict[str, Any]) -> Dict[str, Any]:
+                   packages: List[Dict[str, str]], source: Dict[str, Any],
+                   doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     packages = [p for p in packages if p.get("name")][:MAX_PACKAGES]
     licenses: Dict[str, int] = {}
     for p in packages:
@@ -328,6 +566,7 @@ def _finalize_sbom(path: str, rel: str, fmt: str, data: Optional[Dict[str, Any]]
         "unique_components": len({(p.get("name"), p.get("version")) for p in packages}),
         "licenses": dict(sorted(licenses.items(), key=lambda kv: (-kv[1], kv[0]))[:12]),
         "packages": packages,
+        "quality": sbom_quality(packages, doc or {}),
         "warnings": [],
     }
 
@@ -346,7 +585,7 @@ def parse_sbom(path: str, rel: str, text: str) -> Optional[Dict[str, Any]]:
                 "namespace": data.get("documentNamespace"),
                 "created": (data.get("creationInfo") or {}).get("created")
                 if isinstance(data.get("creationInfo"), dict) else "",
-            })
+            }, _spdx2_doc(data))
         if data.get("bomFormat") == "CycloneDX":
             packages = _cyclonedx_components(data)
             md = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
@@ -356,31 +595,37 @@ def parse_sbom(path: str, rel: str, text: str) -> Optional[Dict[str, Any]]:
                 "spec_version": data.get("specVersion"),
                 "namespace": data.get("serialNumber"),
                 "created": md.get("timestamp"),
-            })
+            }, _cyclonedx_doc(data))
         if data.get("@graph") or data.get("graph"):
             packages = _spdx3_packages(data)
+            doc = _spdx3_doc(data)
             return _finalize_sbom(path, rel, "spdx-jsonld", data, packages, {
-                "name": data.get("name"),
-                "spec_version": data.get("spdxVersion") or "SPDX-3",
+                "name": data.get("name") or next((_scalar(n.get("name")) for n in _spdx3_graph(data)
+                                                  if _spdx3_type(n) in ("SpdxDocument", "software_Sbom")), ""),
+                "spec_version": data.get("spdxVersion") or (("SPDX-" + doc["spec_version"]) if doc["spec_version"]
+                                                            else "SPDX-3"),
                 "namespace": data.get("@id"),
-                "created": _scalar((data.get("creationInfo") or {}).get("created"))
-                if isinstance(data.get("creationInfo"), dict) else "",
-            })
+                "created": doc["timestamp"],
+            }, doc)
         return None
     low = text.lower()
     if "spdxversion:" in low or "packagename:" in low:
         parsed = _spdx_tag_value(text)
+        meta = parsed["meta"]
         return _finalize_sbom(path, rel, "spdx-tag-value", None, parsed["packages"], {
-            "name": parsed["meta"].get("DocumentName"),
-            "spec_version": parsed["meta"].get("SPDXVersion"),
-            "namespace": parsed["meta"].get("DocumentNamespace"),
-            "created": parsed["meta"].get("Created"),
-        })
+            "name": meta.get("DocumentName"),
+            "spec_version": meta.get("SPDXVersion"),
+            "namespace": meta.get("DocumentNamespace"),
+            "created": meta.get("Created"),
+        }, {"timestamp": meta.get("Created", ""),
+            "authors": [c for c in meta["creators"] if c.startswith(("Person:", "Organization:"))],
+            "tools": [c for c in meta["creators"] if c.startswith("Tool:")],
+            "dependencies": meta["dependencies"], "primary": meta["describes"], "context": []})
     if "<bom" in low and "cyclonedx" in low:
-        packages = _cyclonedx_xml(text)
+        packages, doc = _cyclonedx_xml(text)
         return _finalize_sbom(path, rel, "cyclonedx-xml", None, packages, {
-            "name": "", "spec_version": "", "namespace": "", "created": "",
-        })
+            "name": "", "spec_version": "", "namespace": "", "created": doc["timestamp"],
+        }, doc)
     return None
 
 
@@ -922,6 +1167,17 @@ def inspect(root: str, sbom_paths: Sequence[str] = (), attestation_paths: Sequen
 VERIFIED_STATES = ("provider-verified", "tool-verified")
 
 
+def best_sbom_quality(sboms: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """The most complete SBOM's quality (ties: fewest missing elements)."""
+    if not sboms:
+        return {"minimum_elements": "none", "missing": ["an SBOM"], "cisa_2025_draft_missing": [], "path": ""}
+    ranked = sorted(sboms, key=lambda s: (-QUALITY_RANK[s.get("quality", {}).get("minimum_elements", "not-met")],
+                                          len(s.get("quality", {}).get("missing", [])), s.get("path", "")))
+    q = ranked[0].get("quality") or {"minimum_elements": "not-met", "missing": [], "cisa_2025_draft_missing": []}
+    return {"minimum_elements": q["minimum_elements"], "missing": list(q.get("missing", [])),
+            "cisa_2025_draft_missing": list(q.get("cisa_2025_draft_missing", [])), "path": ranked[0].get("path", "")}
+
+
 def summarize(report: Dict[str, Any]) -> Dict[str, Any]:
     """(Re)compute summary counts and the requirement gate. Called again by
     jh_verify after tool results have been attached."""
@@ -933,6 +1189,10 @@ def summarize(report: Dict[str, Any]) -> Dict[str, Any]:
     reasons: List[str] = []
     if req.get("sbom") and not sboms:
         reasons.append("no SBOM found")
+    best = best_sbom_quality(sboms)
+    if req.get("sbom_minimum") and best["minimum_elements"] != "met":
+        reasons.append("no SBOM meets the NTIA minimum elements (best: %s%s)" % (
+            best["minimum_elements"], "; missing " + ", ".join(best["missing"][:3]) if best["missing"] else ""))
     if req.get("attestation") and not attestations:
         reasons.append("no attestation found")
     if req.get("verified_attestation") and not tool_verified and not any(
@@ -957,6 +1217,7 @@ def summarize(report: Dict[str, Any]) -> Dict[str, Any]:
         "jfrog_bundles": len(report["jfrog"]),
         "packages": sum(s.get("package_count", 0) for s in sboms),
         "unique_components": len(unique_components),
+        "sbom_minimum_elements": best["minimum_elements"],
         "verified_attestations": sum(1 for a in attestations if a.get("verification") in VERIFIED_STATES),
         "unverified_attestations": count("unverified"),
         "unsigned_attestations": count("unsigned"),
@@ -1000,13 +1261,26 @@ def markdown(report: Dict[str, Any], heading: str = "## Supply chain evidence") 
         out.append("")
         out.append("### SBOMs")
         out.append("")
-        out.append("| File | Format | Spec | Packages | Licenses |")
-        out.append("|---|---|---|---:|---|")
+        out.append("| File | Format | Spec | Packages | Licenses | Minimum elements |")
+        out.append("|---|---|---|---:|---|---|")
         for sbom in report["sboms"]:
             licenses = ", ".join("%s ×%d" % (k, v) for k, v in list(sbom.get("licenses", {}).items())[:4]) or "—"
-            out.append("| `%s` | %s | %s | %d | %s |"
+            out.append("| `%s` | %s | %s | %d | %s | %s |"
                        % (sbom.get("path"), sbom.get("format"), sbom.get("spec_version") or "—",
-                          sbom.get("package_count", 0), licenses))
+                          sbom.get("package_count", 0), licenses,
+                          (sbom.get("quality") or {}).get("minimum_elements", "—")))
+        for sbom in report["sboms"]:
+            q = sbom.get("quality") or {}
+            draft = ("; the CISA 2025 draft also lists %s" % "; ".join(q["cisa_2025_draft_missing"])
+                     if q.get("cisa_2025_draft_missing") else "")
+            if q.get("missing"):
+                out.append("")
+                out.append("- `%s` is missing %s%s" % (sbom.get("path"), "; ".join(q["missing"]), draft))
+            elif draft:
+                out.append("")
+                out.append("- `%s` covers the NTIA minimum elements%s" % (sbom.get("path"), draft))
+        out.append("")
+        out.append("_Minimum elements: %s._" % QUALITY_BASIS)
         for sbom in report["sboms"]:
             if sbom.get("source") == "attestation-predicate":
                 out.append("")

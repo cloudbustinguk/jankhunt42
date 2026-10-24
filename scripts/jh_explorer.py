@@ -353,6 +353,18 @@ const tb3=add(t3,el('tbody'));(P.data.sources||[]).forEach(d=>{const tr=add(tb3,
 if((G.agent.servers||[]).length){s=sec('AI agent tooling ('+G.agent.servers.length+' MCP server(s))');add(s,el('p',{class:'muted'},'what an agent session in this repository is wired to; each server decides at runtime what its tools can do'));
   const t4=add(s,el('table',{class:'grid'}));const h4=add(add(t4,el('thead')),el('tr'));['server','transport','pinned','credentials','reaches'].forEach(x=>add(h4,el('th',null,x)));
   const tb4=add(t4,el('tbody'));G.agent.servers.forEach(v=>{const tr=add(tb4,el('tr'));[v.name,v.transport,v.pinned===null||v.pinned===undefined?'n/a':(v.pinned?'yes':'no'),(v.credentials||[]).join(', ')||'none',(v.reaches||[]).join(', ')||'-'].forEach(x=>add(tr,el('td',null,x)));});}
+const AI=P.ai||{};if(AI.observed){
+  s=sec('AI use');add(s,el('p',{class:'muted'},AI.note||''));const ul2=add(s,el('ul'));
+  (AI.model_services||[]).forEach(v=>add(ul2,el('li',null,'AI service: '+v.label+' ('+v.evidence+'; reached by '+((v.reached_by||[]).join(', ')||'nothing')+')')));
+  if(AI.agent_tool_servers)add(ul2,el('li',null,'AI agent tool servers: '+AI.agent_tool_servers));
+  if((AI.instruction_files||[]).length)add(ul2,el('li',null,'agent instruction files: '+AI.instruction_files.join(', ')));
+  add(ul2,el('li',null,'human oversight of agents: '+(AI.human_oversight||'unknown')));
+  (AI.sensitive_data_with_ai||[]).forEach(x=>add(ul2,el('li',null,'reachable together: '+x.data+' ('+x.sensitivity+') and '+x.ai_service)));}
+const AL=P.alignment||{};if(AI.observed&&Object.keys(AL.triggered||{}).length){s=sec('framework orientation (NIST AI RMF, AIGP)');add(s,el('p',{class:'muted'},AL.note));
+  const t5=add(s,el('table',{class:'grid'}));const h5=add(add(t5,el('thead')),el('tr'));['rule','NIST AI RMF','AIGP domain'].forEach(x=>add(h5,el('th',null,x)));
+  const tb5=add(t5,el('tbody'));Object.keys(AL.triggered).forEach(r=>{const tr=add(tb5,el('tr'));add(tr,el('td',{class:'mono'},r));
+    const td=add(tr,el('td'));AL.triggered[r].nist_ai_rmf.forEach(id=>{const b=badge(id);b.title=(AL.subcategories||{})[id]||'';td.appendChild(b);});
+    add(tr,el('td',null,AL.triggered[r].aigp.join('; ')));});}
 if(P.remediation.length){s=sec('top remediation steps');const ol=add(s,el('ol'));P.remediation.forEach(r=>add(ol,el('li',null,r)));}
 s=sec('unknowns');ul=add(s,el('ul'));P.unknowns.forEach(u=>add(ul,el('li',null,u.id+': '+u.detail)));
 s=sec('limitations');ul=add(s,el('ul'));P.limitations.forEach(u=>add(ul,el('li',null,u)));

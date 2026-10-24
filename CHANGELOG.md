@@ -4,6 +4,75 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+Evidence you can rely on, and AI governance you can explain. SBOMs are now
+checked against the minimum elements. The passport inventories the AI
+services and agent tooling a repository uses, asks for a decision when
+sensitive data sits beside an AI service, and maps every rule to the NIST AI
+RMF and AIGP outcomes it informs. Existing JSON and SARIF fields are
+unchanged.
+
+### Added
+
+- **SBOM minimum elements.** Every parsed SBOM carries a `quality` block that
+  counts the NTIA 2021 minimum elements: supplier, name, version, unique
+  identifier (purl or CPE), dependency relationships, author, and timestamp.
+  The result is `met`, `partial` (with a `missing` list and counts), or
+  `not-met`. The CISA 2025 draft additions (hash, licence, tool name,
+  generation context) are listed separately and never required. Also new:
+  - the summary field `sbom_minimum_elements`;
+  - a Markdown column and a line per SBOM naming what is missing;
+  - `supply-chain --require-sbom-minimum`;
+  - policy `require.sbom_minimum`, which feeds `P-EVD-001`;
+  - passport `provenance.sbom_minimum_elements` and `sbom_missing`.
+- SBOM package records gain `hashes` (algorithm names) and `cpe`.
+- **AI-use inventory.** The passport's new `ai` section lists:
+  - the external AI model services the software can reach, each with its
+    evidence tier and who reaches it;
+  - agent tool servers and instruction files;
+  - a human-oversight posture taken from the `JH702`-`JH704` leads;
+  - confidential or restricted data reachable alongside an AI service.
+  `--redact` pseudonymizes it.
+- **`P-AI-001`**: sensitive data and an external AI service are reachable
+  together. It asks someone to decide what reaches the provider and how the
+  provider handles it (retention, training use, region). The standard
+  profile reviews, the citizen profile blocks. It is co-reachability, not a
+  claimed data flow. It gets its own brief line and remediation step.
+- **Framework orientation.** A new `alignment` section maps every policy rule
+  and evidence area to NIST AI RMF 1.0 subcategories (quoted from NIST AI
+  100-1) and IAPP AIGP Body of Knowledge v2.1 domains (paraphrased). It is
+  orientation only, not a conformity assessment. The Markdown and HTML views
+  add "AI use" and "Framework orientation" sections, and the terminal adds an
+  "ai use" block, all shown only when AI use is observed.
+- `references/ai-governance.md`, and mutants M17 (`P-AI-001` never fires) and
+  M18 (every SBOM meets the minimum), for 18 in total.
+
+### Fixed
+
+- SPDX 3.0.1 JSON-LD documents now read the 3.0.1 property names
+  (`software_packageVersion`, `software_packageUrl`, `suppliedBy`,
+  `verifiedUsing`, `externalIdentifier`), licences recorded through
+  relationships, and `CreationInfo`. Versions, purls, and suppliers in such
+  documents were missed before.
+- SPDX tag-value: the purl comes from `ExternalRef … purl`, no longer from
+  `PackageDownloadLocation`, and every `Creator` line is read.
+- CycloneDX: the supplier no longer falls back to `group`, which is a
+  namespace. The XML parser reads suppliers, licences, hashes, and CPEs, and
+  no longer counts tool components as packages.
+- CHANGELOG: restored the 2.0.0 heading, which was lost in 2.1.0.
+
+### Compatibility
+
+- Fields are only added. The effective policy gained `require.sbom_minimum`
+  and a `P-AI-001` action, so the policy hash changed. Re-issue acceptance
+  records bound to an earlier hash.
+- Under the standard profile, `P-AI-001` adds a `review` reason when
+  sensitive data is reachable alongside an AI service. The demo fixture now
+  reviews on it.
+- A CycloneDX component whose only "supplier" was its `group` now has no
+  supplier.
+
 ## [2.3.0] — 2026-10-24
 
 Governing citizen developers and the blast radius their software inherits.
@@ -221,7 +290,7 @@ exit code, or schema field changed; new fields are additive.
   placeholders; `"..." % value`, concatenation, and f-strings are still
   flagged. This only removes findings (verified against 1.1.0).
 
- — 2026-10-23
+## [2.0.0] — 2026-10-23
 
 jankhunt42 now answers three questions instead of one: **what's broken?**
 (unchanged scanner, review, supply chain, Jank Score 2.0, deep hunt),

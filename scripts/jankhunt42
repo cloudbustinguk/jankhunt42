@@ -373,6 +373,7 @@ def cmd_supply_chain(args: argparse.Namespace) -> int:
         root = os.path.dirname(root)
     requirements = {
         "sbom": bool(args.require_sbom),
+        "sbom_minimum": bool(getattr(args, "require_sbom_minimum", False)),
         "attestation": bool(args.require_attestation),
         "verified_attestation": bool(args.require_verified_attestation),
     }
@@ -1018,6 +1019,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--jfrog-evidence", action="append", metavar="PATH",
                     help="explicit JFrog evidence path (repeatable)")
     sp.add_argument("--require-sbom", action="store_true")
+    sp.add_argument("--require-sbom-minimum", action="store_true",
+                    help="fail unless an SBOM covers the NTIA minimum elements (supplier, name, version, "
+                         "identifier, dependencies, author, timestamp)")
     sp.add_argument("--require-attestation", action="store_true")
     sp.add_argument("--require-verified-attestation", action="store_true",
                     help="fail unless an attestation is provider-verified or tool-verified")

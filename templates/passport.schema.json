@@ -252,7 +252,7 @@
     },
     "governance": {
       "type": "object",
-      "description": "Governance profile and the evidence behind P-SEC-001/P-AGT-001 (added in 2.3.0). The citizen profile is a governance choice made by an operator or declared by the repository, never an inference about authorship.",
+      "description": "Governance profile and the evidence behind P-SEC-001/P-AGT-001 (added in 2.3.0; P-AI-001 evidence is in ai). The citizen profile is a governance choice made by an operator or declared by the repository, never an inference about authorship.",
       "properties": {
         "profile": {
           "enum": [
@@ -315,6 +315,134 @@
         },
         "note": {
           "type": "string"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "SBOM, attestation and JFrog evidence. sbom_minimum_elements (added in 2.4.0) is the best SBOM's coverage of the NTIA 2021 minimum elements; none when no SBOM was found.",
+      "properties": {
+        "sbom_minimum_elements": {
+          "enum": [
+            "met",
+            "partial",
+            "not-met",
+            "none"
+          ]
+        },
+        "sbom_missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "description": "AI-use inventory (added in 2.4.0): a static record of the AI model services the software can reach, the agent tooling it carries, and sensitive data reachable alongside an AI service. Not proof of what runs or of what data moves.",
+      "properties": {
+        "state": {
+          "enum": [
+            "assessed",
+            "not assessed"
+          ]
+        },
+        "observed": {
+          "type": "boolean",
+          "description": "any model service, agent tool server, agent instruction file, or agent lead"
+        },
+        "model_services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "engine": {
+                "type": "string"
+              },
+              "evidence": {
+                "enum": [
+                  "verified",
+                  "supported",
+                  "inferred",
+                  "unknown"
+                ]
+              },
+              "reached_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "agent_tool_servers": {
+          "type": "integer"
+        },
+        "instruction_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "human_oversight": {
+          "type": "string"
+        },
+        "sensitive_data_with_ai": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "principal": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              },
+              "sensitivity": {
+                "enum": [
+                  "confidential",
+                  "restricted"
+                ]
+              },
+              "ai_service": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "description": "Orientation crosswalk (added in 2.4.0) from passport rules and evidence areas to NIST AI RMF 1.0 subcategories and IAPP AIGP domains. Orientation only: not a conformity assessment, a certification, or legal advice.",
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "frameworks": {
+          "type": "object"
+        },
+        "rules": {
+          "type": "object"
+        },
+        "evidence": {
+          "type": "object"
+        },
+        "triggered": {
+          "type": "object",
+          "description": "the rules behind this decision, with their references"
+        },
+        "subcategories": {
+          "type": "object",
+          "description": "quoted NIST AI RMF subcategory statements cited by the triggered rules"
         }
       }
     }
