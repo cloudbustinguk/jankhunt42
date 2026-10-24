@@ -53,12 +53,19 @@ $JH map . --html > map.html             # offline graph + evidence inspector
 $JH map . --base origin/main --json     # graph delta from committed trees only
 $JH map . --redact --json               # shareable: pseudonyms, no hosts/snippets
 $JH map . --inventory ../inventory.json # operator inventory outside the repo
+$JH map . --what-if scenario.json       # hypothetical mutations, delta only
+$JH map . --drift stored-map.json       # stored map vs current tree
+$JH map . --mermaid > map.mmd           # documentation view
+$JH map . --csv map-csv                 # nodes.csv + edges.csv
 
 # Can we responsibly ship it? (references/passport.md)
 $JH passport .                          # decision + rule reasons + evidence areas
 $JH passport . --json > passport.json   # jankhunt.passport.v1
 $JH passport . --html > passport.html
 $JH passport . --policy ../policy.json --fail-on block
+$JH passport . --compare old-passport.json
+$JH passport --compare old.json --against new.json
+$JH passport . --acceptance ../acceptance.json
 
 # Is the tool trustworthy? (oracle tests, fuzzing, mutants, dogfood, privacy)
 $JH selftest                            # unit suite only

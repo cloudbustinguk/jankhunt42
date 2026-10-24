@@ -142,7 +142,7 @@ svg{width:100%;height:100%;display:block}
 .edge.added path{stroke:var(--green);stroke-width:2.6}
 .hint,.muted{color:var(--muted)}.inspector{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;max-height:78vh;overflow:auto}
 .inspector h2,.doc h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:6px 0 8px}
-.inspector dl{display:grid;grid-template-columns:110px 1fr;gap:3px 8px;margin:0}.inspector dt{color:var(--muted)}.inspector dd{margin:0;word-break:break-word}
+.inspector dl,.card dl{display:grid;grid-template-columns:110px 1fr;gap:3px 8px;margin:0}.inspector dt,.card dt{color:var(--muted)}.inspector dd,.card dd{margin:0;word-break:break-word}
 .ev{border-top:1px solid var(--line);padding:6px 0}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 7px;font-size:11.5px;margin-right:4px}
 .st-provider-verified,.st-verified{color:var(--green)}.st-observed,.st-supported{color:var(--cyan)}.st-declared{color:var(--violet)}
 .st-inferred{color:var(--yellow)}.st-unknown,.st-not-observed,.st-refuted{color:var(--grey)}
@@ -249,7 +249,7 @@ function selectNode(id){clearSel();const n=byId[id];if(nodeEls[id])nodeEls[id].c
 function selectEdge(id){clearSel();const e=edgeById[id];if(edgeEls[id])edgeEls[id].classList.add('sel');resetInsp('edge');
   const tb=e.trust_boundary||{};
   insp.appendChild(dl([['from',byId[e.source].display_label],['to',byId[e.target].display_label],['kind',e.kind],['capability',e.capability],
-    ['verification',badge(e.verification,'st-'+e.verification)],['evidence tier',TIERNAME[Math.max(0,TIER[e.verification])]],['confidence',e.confidence],['source trust',e.source_trust],
+    ['verification',badge(e.verification,'st-'+e.verification)],['attenuation',e.attenuation===undefined?'':String(e.attenuation)],['evidence tier',TIERNAME[Math.max(0,TIER[e.verification])]],['confidence',e.confidence],['source trust',e.source_trust],
     ['identity',e.identity_ref?byId[e.identity_ref]&&byId[e.identity_ref].display_label:''],['boundary',[tb.domain,tb.environment].filter(Boolean).join('; ')],['id',e.id]]));
   add(insp,el('h2',null,'assumptions'));const ul=add(insp,el('ul'));(e.assumptions||[]).forEach(a=>add(ul,el('li',null,a)));
   insp.appendChild(evidenceList(e.evidence_refs||[]));}
@@ -277,11 +277,17 @@ const tb=add(tbl,el('tbody'));edges.forEach(e=>{const tr=add(tb,el('tr',{tabinde
 
 const cv=document.getElementById('view-coverage');
 function section(host,title){const s=add(host,el('div',{class:'card'}));add(s,el('h2',null,title));return s;}
-let sc=section(cv,'coverage');sc.appendChild(dl([['status',cov.status],['considered',cov.files_considered],['inspected',cov.files_inspected],['unsupported',cov.unsupported_files],
+let sc,ul;
+if(DATA.whatif){const W=DATA.whatif;sc=section(cv,'what-if (hypothetical): '+W.scenario);add(sc,el('p',{class:'muted'},W.note));
+  ul=add(sc,el('ul'));W.mutations.forEach(m=>add(ul,el('li',null,'#'+m.index+' '+m.op+': '+m.matched+' match(es)')));
+  sc.appendChild(dl([['exposure',W.delta.exposure.base+' → '+W.delta.exposure.head],['edges',' +'+W.delta.edges.added.length+' / -'+W.delta.edges.removed.length],
+   ['newly reachable',W.delta.newly_reachable.length]]));
+  (W.compromised||[]).forEach(cp=>add(sc,el('p',null,'compromised identity '+cp.label+': exposure '+cp.exposure)));}
+sc=section(cv,'coverage');sc.appendChild(dl([['status',cov.status],['considered',cov.files_considered],['inspected',cov.files_inspected],['unsupported',cov.unsupported_files],
   ['tests excluded',cov.test_files_excluded],['skipped',JSON.stringify(cov.skipped)],['adapters',Object.keys(cov.by_adapter).map(k=>k+' '+cov.by_adapter[k]).join(', ')],
   ['partial because',(cov.partial_reasons||[]).join('; ')]]));
 if((cov.parse_failures||[]).length){sc=section(cv,'parse failures');const ul=add(sc,el('ul'));cov.parse_failures.forEach(p=>add(ul,el('li',null,p.path+': '+p.reason)));}
-sc=section(cv,'unknowns (unknown is not safe, and not dangerous)');let ul=add(sc,el('ul'));DATA.unknowns.forEach(u=>add(ul,el('li',null,u.id+': '+u.detail)));
+sc=section(cv,'unknowns (unknown is not safe, and not dangerous)');ul=add(sc,el('ul'));DATA.unknowns.forEach(u=>add(ul,el('li',null,u.id+': '+u.detail)));
 if(DATA.warnings.length){sc=section(cv,'warnings');ul=add(sc,el('ul'));DATA.warnings.forEach(w=>add(ul,el('li',null,w)));}
 sc=section(cv,'highest-impact paths');ul=add(sc,el('ul'));
 Object.keys(ass.blast_radius).forEach(p=>(ass.blast_radius[p].drivers||[]).slice(0,6).forEach(d=>{const li=add(ul,el('li'));add(li,el('b',{class:'lvl-'+d.level},d.level+' '));
@@ -344,3 +350,66 @@ s=sec('limitations');ul=add(s,el('ul'));P.limitations.forEach(u=>add(ul,el('li',
 if(P.warnings.length){s=sec('warnings');ul=add(s,el('ul'));P.warnings.forEach(u=>add(ul,el('li',null,u)));}
 s=sec('evidence receipts ('+P.evidence.length+')');ul=add(s,el('ul'));P.evidence.forEach(e=>{const li=add(ul,el('li'));li.appendChild(badge(e.state,'st-'+e.state));add(li,el('code',null,e.path+(e.line?':'+e.line:'')));li.appendChild(document.createTextNode(' '+e.area+': '+e.detail));});
 """
+
+
+# ---------------------------------------------------------------------------
+# Mermaid: a lightweight documentation view; JSON stays the evidence store.
+# ---------------------------------------------------------------------------
+
+_MERMAID_KIND_STYLE = {
+    "application": "fill:#1f2937,stroke:#38e1ff,color:#e6e9f2",
+    "workload": "fill:#1f2937,stroke:#38e1ff,color:#e6e9f2",
+    "identity": "fill:#1f2937,stroke:#a78bfa,color:#e6e9f2",
+    "database": "fill:#1f2937,stroke:#ffd166,color:#e6e9f2",
+    "storage": "fill:#1f2937,stroke:#ffd166,color:#e6e9f2",
+    "queue": "fill:#1f2937,stroke:#ffd166,color:#e6e9f2",
+    "api": "fill:#1f2937,stroke:#62d98b,color:#e6e9f2",
+    "external": "fill:#1f2937,stroke:#ff6b6b,color:#e6e9f2",
+    "unknown": "fill:#1f2937,stroke:#6b7280,color:#e6e9f2,stroke-dasharray:4 3",
+}
+_TIER = {"provider-verified": 3, "observed": 2, "declared": 2, "inferred": 1, "unknown": 0, "refuted": -1}
+
+
+def mermaid_text(text: str, limit: int = 60) -> str:
+    """Escape a label for a quoted Mermaid string. Entity codes keep quotes,
+    brackets, pipes, and angle brackets from closing the label or opening
+    markup; control characters and newlines are removed."""
+    from jh_core import safe_text
+    t = " ".join(safe_text(text).split())
+    if len(t) > limit:
+        t = t[: limit - 1] + "…"
+    out = []
+    for ch in t:
+        if ch in '"#<>|[]{}()`;':
+            out.append("#%d;" % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def render_mermaid(report: Dict[str, Any], max_nodes: int = 200) -> str:
+    nodes = sorted(report["graph"]["nodes"], key=lambda n: n["id"])
+    shown = nodes[:max_nodes]
+    alias = {n["id"]: "n%d" % i for i, n in enumerate(shown, 1)}
+    lines = ["%% jankhunt42 map (jankhunt.map.v1, scan " + str(report.get("scan_id", ""))[:12] + ")",
+             "%% legend: solid = observed/declared/verified evidence; dashed = inferred/unknown; "
+             "a path is a possibility, not proof of access",
+             "flowchart LR"]
+    for n in shown:
+        label = "%s: %s" % (n["kind"], n["display_label"])
+        lines.append('  %s["%s"]' % (alias[n["id"]], mermaid_text(label)))
+    for e in sorted(report["graph"]["edges"], key=lambda x: x["id"]):
+        if e["source"] not in alias or e["target"] not in alias or e["verification"] == "refuted":
+            continue
+        arrow = "-->" if _TIER.get(e["verification"], 0) >= 2 else "-.->"
+        lines.append('  %s %s|"%s"| %s' % (alias[e["source"]], arrow,
+                                           mermaid_text("%s/%s %s" % (e["kind"], e["capability"], e["verification"]), 40),
+                                           alias[e["target"]]))
+    for kind, style in _MERMAID_KIND_STYLE.items():
+        members = [alias[n["id"]] for n in shown if n["kind"] == kind]
+        if members:
+            lines.append("  classDef %s %s" % (kind, style))
+            lines.append("  class %s %s" % (",".join(members), kind))
+    if len(nodes) > max_nodes:
+        lines.append("%% truncated: " + str(len(nodes) - max_nodes) + " node(s) omitted; use --json or --html for the full graph")
+    return "\n".join(lines)

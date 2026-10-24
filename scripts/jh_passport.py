@@ -314,6 +314,10 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     for r in rep["assessment"]["decision"]["rules"] + rep["assessment"]["decision"]["reasons"]:
         r["evidence_refs"] = ["ref-%d" % i for i, _ in enumerate(r["evidence_refs"], 1)]
     rep["subject"]["name"] = "application"
+    acc = rep["lifecycle"]["acceptance"]
+    if acc.get("accepted_by"):
+        acc["accepted_by"] = "acceptor"
+        acc["record"] = "acceptance record"
     rep["scope"]["redaction"] = "share"
     rep["unknowns"] = [{"id": u["id"], "count": u.get("count"), "detail": u["detail"]} for u in rep["unknowns"]]
     return rep
@@ -341,6 +345,10 @@ def markdown(p: Dict[str, Any]) -> str:
             lines.append("- **%s** `%s`%s: %s" % (r["outcome"], r["rule"], " (hard floor)" if r["hard_floor"] else "", r["message"]))
     else:
         lines.append("- No rule triggered. This is an assessment, not an approval.")
+    acc = p["lifecycle"]["acceptance"]
+    if acc["state"] != "not-supplied":
+        lines.insert(7, "- Acceptance record: %s%s (%s)" % (acc["state"], (" by " + acc["accepted_by"]) if acc.get("accepted_by") else "",
+                                                          "; ".join(acc.get("reasons") or []) or acc["note"]))
     lines += ["", "## Evidence", "", "| area | state |", "|---|---|"]
     for area, state in cov["evidence_areas"].items():
         lines.append("| %s | %s |" % (area.replace("_", " "), state))
@@ -356,4 +364,202 @@ def markdown(p: Dict[str, Any]) -> str:
         lines += ["", "## Warnings", ""] + ["- %s" % w for w in p["warnings"]]
     lines += ["", "_Export: `jankhunt42 passport . --json` or `--html > passport.html`; "
                   "`--redact` for a shareable copy._"]
+    return "\n".join(safe_text(l) for l in lines)
+
+
+# ---------------------------------------------------------------------------
+# Acceptance (operator-declared, never inferred) and passport comparison
+# ---------------------------------------------------------------------------
+
+DELTA_SCHEMA = "jankhunt.passport-delta.v1"
+_AREA_RANK = {"observed": 3, "assessed": 3, "declared": 2, "inferred": 1,
+              "not-observed": 0, "not assessed": 0, "unknown": 0}
+
+
+def _parse_time(value: Any):
+    from datetime import datetime, timezone
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _now():
+    from datetime import datetime, timezone
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch and epoch.isdigit():
+        return datetime.fromtimestamp(int(epoch), timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def apply_acceptance(p: Dict[str, Any], record: Dict[str, Any], trusted: bool, label: str) -> Dict[str, Any]:
+    """Record an operator's acceptance of exactly this assessment.
+
+    Acceptance is valid only when the record lives outside the repository and
+    is bound to the current revision, policy hash, decision, and (when given)
+    artifact digest and environment, and has not expired. It is an unsigned,
+    operator-declared statement: `declared-by-operator`, never `verified`.
+    Any mismatch invalidates it with named reasons; a block or
+    insufficient-evidence decision can never be accepted.
+    """
+    decision = p["assessment"]["decision"]["result"]
+    reasons: List[str] = []
+    if not trusted:
+        reasons.append("acceptance record is inside the scanned repository (repository-controlled)")
+    accepted_at = _parse_time(record.get("accepted_at"))
+    expires = _parse_time(record.get("expires"))
+    if not str(record.get("accepted_by", "")).strip():
+        reasons.append("accepted_by missing")
+    if accepted_at is None:
+        reasons.append("accepted_at missing or not ISO-8601")
+    if record.get("expires") is not None and expires is None:
+        reasons.append("expires is not ISO-8601")
+    rejected = bool(reasons)
+    if decision in ("block", "insufficient-evidence"):
+        reasons.append("a %s decision cannot be accepted" % decision)
+        rejected = True
+    invalid: List[str] = []
+    if not rejected:
+        if record.get("decision_accepted") != decision:
+            invalid.append("decision-changed (%s accepted, now %s)" % (record.get("decision_accepted"), decision))
+        if not p.get("source_revision") or record.get("subject_revision") != p.get("source_revision"):
+            invalid.append("revision-changed")
+        if record.get("policy_hash") != p["assessment"]["decision"]["policy"]["hash"]:
+            invalid.append("policy-changed")
+        digest = record.get("artifact_digest")
+        if digest and digest not in {d["digest"] for d in p["subject"].get("artifact_digests", [])}:
+            invalid.append("digest-changed")
+        env = record.get("environment")
+        if env and env != p["subject"].get("environment"):
+            invalid.append("environment-changed")
+        if p["subject"].get("working_tree_dirty"):
+            invalid.append("working-tree-dirty")
+        if expires is not None and expires <= _now():
+            invalid.append("expired")
+    if rejected:
+        acc = {"state": "rejected", "reasons": reasons}
+    elif invalid:
+        acc = {"state": "invalidated", "reasons": invalid}
+    else:
+        acc = {"state": "declared-by-operator", "reasons": []}
+        p["lifecycle"]["state"] = "accepted"
+    acc.update({
+        "record": safe_text(label),
+        "accepted_by": G.sanitize_text(str(record.get("accepted_by", "")), 80),
+        "accepted_at": record.get("accepted_at") if accepted_at else None,
+        "expires": record.get("expires") if expires else None,
+        "bound_to": {"revision": record.get("subject_revision"), "policy_hash": record.get("policy_hash"),
+                     "decision": record.get("decision_accepted"), "artifact_digest": record.get("artifact_digest"),
+                     "environment": record.get("environment")},
+        "note": "an unsigned operator statement recorded by jankhunt42; it is not verified and confers no authority",
+    })
+    p["lifecycle"]["acceptance"] = acc
+    return p
+
+
+def _integrity(doc: Dict[str, Any]) -> str:
+    body = {k: v for k, v in doc.items() if k not in ("scan_id", "generated_at")}
+    return "consistent" if G.sha(G.canonical_json(body), 32) == doc.get("scan_id") else "mismatch"
+
+
+def compare(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """Field-level comparison of two passports. Pure: reads only the two
+    documents. `integrity` is a self-consistency check of each document's
+    scan_id (was it edited after generation?), not a signature check."""
+    for doc, which in ((old, "old"), (new, "new")):
+        if doc.get("schema_version") != PASSPORT_SCHEMA:
+            raise ValueError("%s document is not %s" % (which, PASSPORT_SCHEMA))
+
+    def owners(d: Dict[str, Any]) -> set:
+        return set(d["ownership"].get("owners", [])) | set(d["ownership"].get("declared_owners", []))
+
+    def triggered(d: Dict[str, Any]) -> set:
+        return {r["rule"] for r in d["assessment"]["decision"]["reasons"]}
+
+    def digests(d: Dict[str, Any]) -> set:
+        return {x["digest"] for x in d["subject"].get("artifact_digests", [])}
+
+    def sources(d: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        return {s["node"]: s for s in d["data"].get("sources", [])}
+
+    od, nd = old["assessment"]["decision"]["result"], new["assessment"]["decision"]["result"]
+    oe, ne = old["assessment"]["exposure"]["class"], new["assessment"]["exposure"]["class"]
+    areas = {}
+    regressions: List[str] = []
+    for area in AREAS:
+        a = old["coverage"]["evidence_areas"].get(area, "not-observed")
+        b = new["coverage"]["evidence_areas"].get(area, "not-observed")
+        if a != b:
+            areas[area] = {"old": a, "new": b}
+            if _AREA_RANK.get(b, 0) < _AREA_RANK.get(a, 0):
+                regressions.append("evidence area %s: %s -> %s" % (area, a, b))
+    if jh_policy.OUTCOME_RANK[nd] > jh_policy.OUTCOME_RANK[od]:
+        regressions.append("decision %s -> %s" % (od, nd))
+    if G.EXPOSURE_RANK.get(ne, 0) > G.EXPOSURE_RANK.get(oe, 0) or (ne == "Unknown" and oe != "Unknown"):
+        regressions.append("exposure %s -> %s" % (oe, ne))
+    lost_owners = sorted(owners(old) - owners(new))
+    if lost_owners:
+        regressions.append("owner(s) no longer present: %s" % ", ".join(lost_owners))
+    os_, ns_ = sources(old), sources(new)
+    reclassified = []
+    for nid in sorted(set(os_) & set(ns_)):
+        changes = {k: {"old": os_[nid][k], "new": ns_[nid][k]}
+                   for k in ("sensitivity", "criticality", "environment", "trust_domain") if os_[nid][k] != ns_[nid][k]}
+        if changes:
+            reclassified.append({"node": nid, "label": ns_[nid]["label"], "changes": changes})
+    oj, nj = old["assessment"]["jank"], new["assessment"]["jank"]
+    report = {
+        "schema_version": DELTA_SCHEMA,
+        "tool": TOOL,
+        "tool_version": VERSION,
+        "old": {"scan_id": old.get("scan_id"), "revision": old.get("source_revision"), "generated_at": old.get("generated_at"),
+                "integrity": _integrity(old)},
+        "new": {"scan_id": new.get("scan_id"), "revision": new.get("source_revision"), "generated_at": new.get("generated_at"),
+                "integrity": _integrity(new)},
+        "decision": {"old": od, "new": nd, "rules_added": sorted(triggered(new) - triggered(old)),
+                     "rules_removed": sorted(triggered(old) - triggered(new))},
+        "exposure": {"old": oe, "new": ne},
+        "jank": {"old": {"score": oj.get("score"), "grade": oj.get("grade")},
+                 "new": {"score": nj.get("score"), "grade": nj.get("grade")}},
+        "evidence_areas": areas,
+        "owners": {"added": sorted(owners(new) - owners(old)), "removed": lost_owners},
+        "artifact_digests": {"added": sorted(digests(new) - digests(old)), "removed": sorted(digests(old) - digests(new))},
+        "data_sources": {"added": sorted(set(ns_) - set(os_)), "removed": sorted(set(os_) - set(ns_)),
+                         "reclassified": reclassified},
+        "policy_changed": old["assessment"]["decision"]["policy"]["hash"] != new["assessment"]["decision"]["policy"]["hash"],
+        "graph_changed": old.get("graph_ref") != new.get("graph_ref"),
+        "lifecycle": {"old": old["lifecycle"]["state"], "new": new["lifecycle"]["state"]},
+        "regressions": regressions,
+        "regressed": bool(regressions),
+        "note": "a comparison of two local documents; integrity is a self-consistency check, not a signature",
+    }
+    return report
+
+
+def compare_markdown(d: Dict[str, Any]) -> str:
+    lines = ["# Passport comparison", "",
+             "- Decision: **%s -> %s** (rules added: %s; removed: %s)" % (
+                 d["decision"]["old"], d["decision"]["new"], ", ".join(d["decision"]["rules_added"]) or "none",
+                 ", ".join(d["decision"]["rules_removed"]) or "none"),
+             "- Exposure: %s -> %s; Jank Score: %s (%s) -> %s (%s)" % (
+                 d["exposure"]["old"], d["exposure"]["new"], d["jank"]["old"]["score"], d["jank"]["old"]["grade"],
+                 d["jank"]["new"]["score"], d["jank"]["new"]["grade"]),
+             "- Revisions: %s -> %s; policy changed: %s; graph changed: %s" % (
+                 (d["old"]["revision"] or "unknown")[:12], (d["new"]["revision"] or "unknown")[:12],
+                 "yes" if d["policy_changed"] else "no", "yes" if d["graph_changed"] else "no"),
+             "- Integrity (self-consistency, not a signature): old %s, new %s" % (d["old"]["integrity"], d["new"]["integrity"]),
+             "- Lifecycle: %s -> %s" % (d["lifecycle"]["old"], d["lifecycle"]["new"]), ""]
+    lines += ["## Regressions", ""] + (["- %s" % r for r in d["regressions"]] or ["- none"])
+    if d["evidence_areas"]:
+        lines += ["", "## Evidence areas", ""] + ["- %s: %s -> %s" % (k, v["old"], v["new"]) for k, v in d["evidence_areas"].items()]
+    lines += ["", "## Changes", "",
+              "- Owners: +%s / -%s" % (", ".join(d["owners"]["added"]) or "none", ", ".join(d["owners"]["removed"]) or "none"),
+              "- Artifact digests: +%d / -%d" % (len(d["artifact_digests"]["added"]), len(d["artifact_digests"]["removed"])),
+              "- Data sources: +%d / -%d / reclassified %d" % (len(d["data_sources"]["added"]), len(d["data_sources"]["removed"]),
+                                                              len(d["data_sources"]["reclassified"]))]
+    for r in d["data_sources"]["reclassified"][:20]:
+        lines.append("  - %s: %s" % (r["label"], "; ".join("%s %s -> %s" % (k, v["old"], v["new"]) for k, v in r["changes"].items())))
     return "\n".join(safe_text(l) for l in lines)

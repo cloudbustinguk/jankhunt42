@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for CVE data.
 
-**Version:** 2.0.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -92,7 +92,7 @@ unknowns  (unknown is not safe, and not dangerous)
   ? data-classification: 6 asset(s) have no declared data sensitivity
   ? environment: 7 asset(s) have unknown environment (production vs non-production)
   ? code-to-workload-binding: which workload runs the repository code is not inferred; declare
-      it via an inventory grant if needed
+      it with passport.bindings if needed
   ? runtime-reachability: static analysis only: network reachability, firewalls, and live data
       movement were not tested
 
@@ -111,7 +111,7 @@ unknowns  (unknown is not safe, and not dangerous)
 
 ╭─ can we responsibly ship it? ──────────────────────────────────────────────────────────────────╮
 │ RELEASE ASSESSMENT    REVIEW  advisory                                                         │
-│ technical jank score  78/100  grade E  policy fail                                             │
+│ technical jank score  67/100  grade E  policy fail                                             │
 │ exposure              High  separate from the Jank Score                                       │
 │ evidence coverage     4/9 areas observed, declared, or inferred                                │
 │ lifecycle             assessed  ·  acceptance [not-supplied]                                   │
@@ -171,6 +171,10 @@ jankhunt42 map . --html > map.html            # blast radius explorer
 jankhunt42 map . --base HEAD~1 --json         # graph delta from committed git objects only
 jankhunt42 map . --redact --json              # shareable: pseudonymous IDs, no hosts or snippets
 jankhunt42 map . --inventory ../inventory.json # operator inventory: classifications and verified grants
+jankhunt42 map . --what-if ../scenario.json    # hypothetical: revoke, block egress, compromise an identity
+jankhunt42 map . --drift ../stored-map.json    # stored map vs the current repository
+jankhunt42 map . --mermaid > map.mmd           # Mermaid flowchart for docs
+jankhunt42 map . --csv map-csv                 # nodes.csv + edges.csv (formula-injection safe)
 ```
 
 **Discovery** is offline and static. It reads Python, JavaScript/TypeScript and .NET code; `.env`, config and appsettings files; Kubernetes workloads and RBAC; docker-compose; GitHub Actions permissions and cloud logins; Terraform data stores and privileged role grants; and dependency manifests (as weak evidence). Secret references are recorded by name and never dereferenced. Dynamic endpoints become explicit unresolved targets rather than invented hosts.
@@ -186,6 +190,8 @@ jankhunt42 map . --inventory ../inventory.json # operator inventory: classificat
 - filters by kind and minimum evidence, a search box, an unknowns overlay, and a per-principal confidentiality/integrity/availability highlight with witness paths;
 - a coverage and unknowns tab, an edges table (shown first for graphs over 300 nodes), and a graph-delta tab for `--base`.
 
+**What-if** (`--what-if scenario.json`) applies hypothetical mutations to a copy of the graph and reports the resulting delta: revoke, remove, add, set capability, block egress, compromise an identity. **Drift** (`--drift`) compares a stored map with the current tree. **Bindings** in `.jankhunt42.json` declare which workload runs the repository code. Trusted operator inventories may weight edges, giving a heuristic **path strength** that orders paths but never changes a class. OpenAPI documents enrich API nodes without inventing calls.
+
 **`--base REF`** builds both sides from committed git objects only. Dirty or untracked files cannot contaminate the diff. It reports new and removed edges, permission escalations, newly reachable sensitive assets, trust-boundary changes, and coverage regression.
 
 Semantics, adapters, inventory format, and limits: [`references/connectivity.md`](references/connectivity.md).
@@ -198,11 +204,15 @@ jankhunt42 passport . --json                   # jankhunt.passport.v1 (templates
 jankhunt42 passport . --html > passport.html   # printable, offline
 jankhunt42 passport . --policy ../policy.json  # operator policy (outside the repo)
 jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
+jankhunt42 passport . --compare ../old-passport.json      # regressions since a stored passport
+jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance record, bound to revision + policy
 ```
 
 The decision is the most severe of seven named rules. These cover coverage (a hard floor), owner, sensitive external export, production authority, mandatory supply-chain evidence, the Jank Score policy, and maximum exposure. It is never a weighted average, and `insufficient-evidence` can never become `pass`.
 
-Policy precedence is defaults < operator `--policy` (outside the repository) < hard floors. Repository config (`passport.policy`, or a `--policy` file inside the repo) can only tighten. Lifecycle is `draft` or `assessed`; acceptance is a separate, externally authorized act that this tool does not create.
+Policy precedence is defaults < operator `--policy` (outside the repository) < hard floors. Repository config (`passport.policy`, or a `--policy` file inside the repo) can only tighten.
+
+Lifecycle is `draft`, `assessed`, or `accepted`. `accepted` requires an operator acceptance record from outside the repository, bound to the exact revision, policy hash, decision, and (optionally) artifact digest and environment. Any change invalidates it with named reasons, and a `block` or `insufficient-evidence` decision can never be accepted. `--compare` reports regressions between passports, with a self-consistency integrity check (not a signature).
 
 Rules, precedence, declarations, and schema: [`references/passport.md`](references/passport.md).
 
@@ -382,7 +392,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- seven mutants that the tests must kill, each with an unmutated control;
+- nine mutants that the tests must kill, each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9/3.12/3.13 container images, which are never pulled.
@@ -413,6 +423,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 ## Migrating from 1.x
 
 - Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
+- 2.1.0 adds options only (`map --what-if/--drift/--mermaid/--csv`, `passport --acceptance/--compare/--against`), plus `passport.bindings`. It also narrows `JH104`, which no longer flags parameterized `%s`/`%(name)s` placeholders; this removes findings and never adds them.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.
@@ -432,7 +443,7 @@ To add a rule, add it to `RULES` in `jh_rules.py` (or a `check=` in `jh_checks.p
 ## Limitations
 
 - **Heuristics:** findings and edges come from static text, not data flow or runtime observation. They can miss things and can fire on examples.
-- **Map:** no Helm, Kustomize, HCL or variable evaluation. No live network, firewall or IAM evaluation. Which workload runs the repository code is not inferred. Monorepos map as one application. `.sql` migrations and tests are not mapped.
+- **Map:** no Helm, Kustomize, HCL or variable evaluation. No live network, firewall or IAM evaluation. Which workload runs the repository code is not inferred; declare it with `passport.bindings`. Monorepos map as one application. `.sql` migrations and tests are not mapped. Mermaid output is not checked with a Mermaid renderer.
 - **Effective privileges:** these are never proven from repository evidence. Verified authority needs an operator inventory, and jankhunt42 does not verify that inventory's own provenance.
 - **Exposure and decisions:** these are explainable heuristics, not calibrated probabilities or compliance results. Adapter accuracy is measured only on this repository's synthetic fixtures and its own ground truth.
 - **Supply chain:** parsing verifies no cryptography. Use `gh attestation verify`, `cosign` or `jf evd verify` in trusted CI.

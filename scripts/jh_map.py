@@ -208,6 +208,7 @@ class Ctx:
         self.k8s_roles: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
         self.k8s_bindings: List[Tuple[Dict[str, Any], str, int]] = []
         self.manifest_deps: List[Tuple[Tuple[str, str], str, int, str]] = []
+        self.openapi: List[Tuple[str, List[Dict[str, Any]], List[str]]] = []
         self.parse_failures: List[Dict[str, str]] = []
         self.by_adapter: Dict[str, int] = {}
         self.inspected: List[str] = []
@@ -1050,6 +1051,89 @@ def _resolve_manifests(ctx: Ctx) -> None:
                    assumptions=["dependency declared in a manifest; usage not observed in code"])
 
 
+_HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
+
+
+def adapt_openapi(ctx: Ctx, item: Item, docs: List[Any]) -> None:
+    """Record servers and operations from an OpenAPI/Swagger document.
+    Resolved after all code is read: a spec never creates an edge."""
+    doc = docs[0] if docs and isinstance(docs[0], dict) else {}
+    servers: List[Dict[str, Any]] = []
+    for srv in doc.get("servers") or []:
+        if isinstance(srv, dict) and isinstance(srv.get("url"), str):
+            ep = G.parse_endpoint(srv["url"])
+            if ep and ep.get("resolved") and ep.get("host"):
+                servers.append(ep)
+    if doc.get("swagger") and isinstance(doc.get("host"), str):
+        scheme = (doc.get("schemes") or ["https"])[0] if isinstance(doc.get("schemes"), list) else "https"
+        ep = G.parse_endpoint("%s://%s" % (scheme, doc["host"]))
+        if ep and ep.get("resolved"):
+            servers.append(ep)
+    ops: List[str] = []
+    paths = doc.get("paths") if isinstance(doc.get("paths"), dict) else {}
+    for path, spec in sorted(paths.items()):
+        if isinstance(spec, dict):
+            for method in _HTTP_METHODS:
+                if method in spec:
+                    ops.append("%s %s" % (method.upper(), safe_text(str(path))[:80]))
+    ctx.openapi.append((item.rel, servers, ops[:100]))
+
+
+def _resolve_openapi(ctx: Ctx) -> None:
+    g = ctx.g
+    called_hosts: Dict[str, List[str]] = {}
+    for e in g.edges.values():
+        if e["source"] == ctx.app:
+            host = g.nodes[e["target"]]["attributes"].get("host")
+            if host:
+                called_hosts.setdefault(host, []).append(e["target"])
+    for rel, servers, ops in ctx.openapi:
+        hosts = sorted({ep["host"] for ep in servers})
+        upstream = sorted({nid for h in hosts for nid in called_hosts.get(h, [])})
+        assumption = "an API description lists operations; it does not prove which ones the application invokes"
+        if upstream:
+            ev = g.add_evidence(rel, 1, "openapi:upstream", "OpenAPI servers: %s" % ", ".join(hosts), "declared",
+                                assumptions=[assumption])
+            for nid in upstream:
+                node = g.nodes[nid]
+                node["attributes"]["openapi_operations"] = sorted(set(node["attributes"].get("openapi_operations", [])) | set(ops))[:100]
+                node["attributes"]["openapi_spec"] = sorted(set(node["attributes"].get("openapi_spec", [])) | {rel})
+                if ev and ev not in node["evidence_refs"]:
+                    node["evidence_refs"].append(ev)
+        else:
+            ev = g.add_evidence(rel, 1, "openapi:exposes", "OpenAPI document (%d operations)" % len(ops), "declared",
+                                assumptions=["treated as the API this repository exposes, because no code calls its servers"])
+            app = g.nodes[ctx.app]
+            app["attributes"]["exposes"] = sorted(set(app["attributes"].get("exposes", [])) | set(ops))[:100]
+            app["attributes"]["exposes_spec"] = sorted(set(app["attributes"].get("exposes_spec", [])) | {rel})
+            if ev and ev not in app["evidence_refs"]:
+                app["evidence_refs"].append(ev)
+
+
+def apply_bindings(g: G.Graph, app_id: str, bindings: Sequence[Any], warnings: List[str]) -> int:
+    """Declared code-to-workload bindings: the repository's code runs as the
+    named workload, so it inherits that workload's identities, and the
+    workload's blast radius includes everything the code can reach."""
+    bound = 0
+    for spec in bindings or []:
+        pattern = spec.get("workload") if isinstance(spec, dict) else None
+        hits = [n for n in g.nodes.values() if n["kind"] == "workload" and pattern and _matches(n, pattern)]
+        if not hits:
+            warnings.append("binding matched no workload: %s" % safe_text(str(pattern))[:60])
+            continue
+        ev = g.add_evidence("passport.bindings", 0, "declaration:binding", "binding %s" % pattern, "declared",
+                            assumptions=["repository declaration: the code runs as this workload"])
+        for w in sorted(hits, key=lambda n: n["id"]):
+            bound += 1
+            g.add_edge(w["id"], app_id, "authenticates-as", "unknown", "declared", "high", evidence=ev,
+                       assumptions=["declared binding: the workload executes the repository code"])
+            for e in list(g.edges.values()):
+                if e["source"] == w["id"] and e["kind"] == "authenticates-as" and g.nodes[e["target"]]["kind"] == "identity":
+                    g.add_edge(app_id, e["target"], "authenticates-as", "unknown", "declared", "high", evidence=ev,
+                               assumptions=["declared binding: the code runs with the workload's identity"])
+    return bound
+
+
 def _resolve_env(ctx: Ctx) -> None:
     """Join code-side environment reads to configuration definitions."""
     g = ctx.g
@@ -1153,6 +1237,14 @@ def apply_inventory(g: G.Graph, inv: Dict[str, Any], trusted: bool, warnings: Li
                 ds = grant.get("data_sensitivity")
                 if eid and ds in G.SENSITIVITIES:
                     g.edges[eid]["data_sensitivity"] = ds
+                att = grant.get("attenuation")
+                if eid and att is not None:
+                    if not trusted:
+                        warnings.append("attenuation ignored: only a trusted operator inventory may weight edges")
+                    elif isinstance(att, (int, float)) and not isinstance(att, bool) and 0.0 <= float(att) <= 1.0:
+                        g.edges[eid]["attenuation"] = float(att)
+                    else:
+                        warnings.append("inventory grant: attenuation must be a number in [0, 1]")
     if trusted:
         for ref in inv.get("refute") or []:
             if not isinstance(ref, dict):
@@ -1197,7 +1289,16 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
             return "yaml-error:" + str(exc)[:80], None
         if kind == "yaml" and any(isinstance(d, dict) and "kind" in d and "apiVersion" in d for d in docs):
             kind = "k8s"
+        if kind == "yaml" and docs and isinstance(docs[0], dict) and ("openapi" in docs[0] or "swagger" in docs[0]):
+            kind = "openapi"
         return kind, docs
+    if low.endswith(".json") and re.search(r'"(openapi|swagger)"\s*:', text[:4096]):
+        try:
+            doc = json.loads(text)
+        except ValueError as exc:
+            return "yaml-error:invalid OpenAPI JSON: %s" % str(exc)[:60], None
+        if isinstance(doc, dict) and ("openapi" in doc or "swagger" in doc):
+            return "openapi", [doc]
     if base.startswith(".env") or base.endswith((".env", ".properties", ".ini", ".cfg", ".conf", ".toml")) \
             or (low.endswith(".json") and ("config" in low or "settings" in low)):
         return "config", None
@@ -1209,7 +1310,7 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
 
 
 ADAPTERS = ("python", "javascript", "dotnet", "config", "appsettings", "kubernetes", "compose",
-            "github-actions", "terraform", "manifest")
+            "github-actions", "terraform", "manifest", "openapi")
 
 
 def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.Graph, Ctx, Dict[str, Any]]:
@@ -1248,6 +1349,8 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
                 adapt_terraform(ctx, item)
             elif kind == "manifest":
                 adapt_manifest(ctx, item)
+            elif kind == "openapi":
+                adapt_openapi(ctx, item, docs or [])
         except (RecursionError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
             # A malformed file degrades coverage; it never aborts the map.
             ctx.parse_failures.append({"path": item.rel, "reason": "%s: %s" % (type(exc).__name__, safe_text(str(exc))[:60])})
@@ -1258,6 +1361,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
     _attach_ops(ctx)
     _resolve_k8s_rbac(ctx)
     _resolve_manifests(ctx)
+    _resolve_openapi(ctx)
     stats = {"by_adapter": dict(sorted(counts.items())), "unsupported_files": unsupported,
              "test_files_excluded": tests}
     return g, ctx, stats
@@ -1292,7 +1396,7 @@ def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
     workloads = [n for n in nodes if n["kind"] == "workload" and n["attributes"].get("platform") != "github-actions"]
     if has_code and workloads:
         out.append({"id": "code-to-workload-binding", "count": len(workloads),
-                    "detail": "which workload runs the repository code is not inferred; declare it via an inventory grant if needed"})
+                    "detail": "which workload runs the repository code is not inferred; declare it with passport.bindings if needed"})
     out.append({"id": "runtime-reachability", "count": None,
                 "detail": "static analysis only: network reachability, firewalls, and live data movement were not tested"})
     return out
@@ -1329,6 +1433,7 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
     warnings = list(extra_warnings) + ctx.warnings
     if declarations:
         apply_assets(g, declarations.get("assets") or [], "repository-declaration", warnings, allow_lower=False)
+    bound = apply_bindings(g, ctx.app, (declarations or {}).get("bindings") or [], warnings) if declarations else 0
     if inventory:
         apply_inventory(g, inventory, inventory_trusted, warnings, inventory_label or "inventory")
     g.finalize()
@@ -1370,7 +1475,7 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
                   "max_depth": max_depth},
         "coverage": coverage,
         "warnings": sorted(set(warnings)),
-        "unknowns": _unknowns(g, ctx),
+        "unknowns": [u for u in _unknowns(g, ctx) if not (bound and u["id"] == "code-to-workload-binding")],
         "evidence": g.evidence_list(),
         "graph": graph,
         "assessment": assessment,
@@ -1495,7 +1600,9 @@ def top_paths(report: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
     out = []
     for p, br in sorted(report["assessment"]["blast_radius"].items()):
         for d in br.get("drivers", []):
-            out.append({"principal": p, **d})
+            info = br["impacts"].get(d["impact"], {}).get(d["node"], {})
+            extra = {"strength": info["strength"]} if "strength" in info else {}
+            out.append({"principal": p, **d, **extra})
     out.sort(key=lambda d: (-G.EXPOSURE_RANK[d["level"]], -G.TIER_BY_NAME[d["tier"]], d["principal"], d["node"]))
     seen = set()
     uniq = []
@@ -1547,7 +1654,9 @@ def markdown(report: Dict[str, Any]) -> str:
     if not tp:
         lines.append("0 observed.")
     for d in tp:
-        lines.append("- **%s** %s (%s, %s): %s" % (d["level"], d["impact"], d["tier"], d["rule"], d["why"]))
+        lines.append("- **%s** %s (%s, %s%s): %s" % (d["level"], d["impact"], d["tier"], d["rule"],
+                                                    ", heuristic strength %.3f" % d["strength"] if "strength" in d else "",
+                                                    d["why"]))
         lines.append("  - `%s`" % path_text(report, d["principal"], d["path"]).replace("`", "'"))
     lines += ["", "## Unknowns", ""]
     for u in report["unknowns"]:
@@ -1558,13 +1667,18 @@ def markdown(report: Dict[str, Any]) -> str:
         lines += ["", "**Truncated:** %s. Results are partial, not clean." % "; ".join(report["truncation"]["reasons"])]
     if report.get("delta"):
         lines += ["", delta_markdown(report["delta"], report)]
+    if report.get("whatif"):
+        lines += ["", whatif_markdown(report["whatif"], report)]
     lines += ["", "_Static evidence only: inferred connectivity is not verified access. "
                   "Export: `jankhunt42 map . --json` or `--html > map.html`._"]
     return "\n".join(safe_text(l) if "\n" not in l else l for l in lines)
 
 
 def delta_markdown(delta: Dict[str, Any], report: Dict[str, Any]) -> str:
-    out = ["## Graph delta (%s -> %s)" % (delta["base"], delta["head"]), ""]
+    title = "Snapshot drift" if delta.get("kind") == "snapshot-drift" else "Graph delta"
+    out = ["## %s (%s -> %s)" % (title, delta["base"], delta["head"]), ""]
+    if delta.get("kind") == "snapshot-drift":
+        out += ["_%s_" % delta["note"], ""]
     out.append("- Nodes: +%d / -%d; edges: +%d / -%d" % (len(delta["nodes"]["added"]), len(delta["nodes"]["removed"]),
                                                       len(delta["edges"]["added"]), len(delta["edges"]["removed"])))
     out.append("- Exposure: %s -> %s" % (delta["exposure"]["base"], delta["exposure"]["head"]))
@@ -1581,3 +1695,184 @@ def delta_markdown(delta: Dict[str, Any], report: Dict[str, Any]) -> str:
         out.append("- Coverage regressed: %d -> %d files inspected" % (delta["coverage"]["base_files_inspected"],
                                                                       delta["coverage"]["head_files_inspected"]))
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# CSV export (generic diagram-tool import; JSON stays canonical)
+# ---------------------------------------------------------------------------
+
+def _csv_cell(value: Any) -> str:
+    """Neutralize spreadsheet formula injection: a cell that starts with
+    = + - @ (or tab/CR) is prefixed with an apostrophe."""
+    text = safe_text("" if value is None else str(value))
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        text = "'" + text
+    return text
+
+
+def render_csv(report: Dict[str, Any]) -> Tuple[str, str]:
+    import csv
+    import io
+    ev = {x["id"]: x for x in report.get("evidence", [])}
+    tier = {"provider-verified": "verified", "observed": "supported", "declared": "supported",
+            "inferred": "inferred", "unknown": "unknown", "refuted": "refuted"}
+    nbuf, ebuf = io.StringIO(), io.StringIO()
+    nw = csv.writer(nbuf, lineterminator="\n")
+    nw.writerow(["id", "kind", "label", "trust_domain", "environment", "sensitivity", "criticality",
+                 "classification_source", "evidence_count"])
+    for n in sorted(report["graph"]["nodes"], key=lambda x: x["id"]):
+        nw.writerow([_csv_cell(v) for v in (n["id"], n["kind"], n["display_label"], n["trust_domain"], n["environment"],
+                                            n["sensitivity"], n["criticality"], n.get("classification_source", ""),
+                                            len(n["evidence_refs"]))])
+    ew = csv.writer(ebuf, lineterminator="\n")
+    ew.writerow(["id", "source", "target", "kind", "capability", "verification", "evidence_tier", "confidence",
+                 "trust_boundary", "evidence"])
+    for e in sorted(report["graph"]["edges"], key=lambda x: x["id"]):
+        tb = e.get("trust_boundary") or {}
+        refs = ";".join("%s:%s" % (ev[r]["path"], ev[r]["line"]) for r in e["evidence_refs"] if r in ev)
+        ew.writerow([_csv_cell(v) for v in (e["id"], e["source"], e["target"], e["kind"], e["capability"],
+                                            e["verification"], tier.get(e["verification"], "unknown"), e["confidence"],
+                                            " ".join(x for x in (tb.get("domain"), tb.get("environment")) if x), refs)])
+    return nbuf.getvalue(), ebuf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# What-if scenarios and snapshot drift (pure functions over map reports)
+# ---------------------------------------------------------------------------
+
+WHATIF_SCHEMA = "jankhunt.whatif.v1"
+WHATIF_OPS = ("remove-node", "remove-edge", "add-edge", "set-capability", "revoke", "block-egress",
+              "compromise-identity")
+
+
+def run_whatif(report: Dict[str, Any], scenario: Dict[str, Any], max_depth: int) -> Dict[str, Any]:
+    """Apply hypothetical mutations to a copy of the graph and report what
+    changes. Nothing on disk, in git, or on any network is touched; added
+    edges are labeled hypothetical and declared, never observed or verified."""
+    import copy
+    if not isinstance(scenario, dict) or not isinstance(scenario.get("mutations"), list):
+        raise ValueError("what-if scenario needs a 'mutations' list")
+    nodes = {n["id"]: copy.deepcopy(n) for n in report["graph"]["nodes"]}
+    edges = {e["id"]: copy.deepcopy(e) for e in report["graph"]["edges"]}
+
+    def find(pattern: Any) -> List[str]:
+        return sorted(n["id"] for n in nodes.values() if pattern is not None and _matches(n, str(pattern)))
+
+    def edge_hits(m: Dict[str, Any]) -> List[str]:
+        src, tgt = set(find(m.get("source"))) if m.get("source") else None, set(find(m.get("target"))) if m.get("target") else None
+        out = []
+        for e in edges.values():
+            if src is not None and e["source"] not in src:
+                continue
+            if tgt is not None and e["target"] not in tgt:
+                continue
+            if m.get("kind") and e["kind"] != m["kind"]:
+                continue
+            if m.get("capability") and e["capability"] != m["capability"]:
+                continue
+            out.append(e["id"])
+        return sorted(out)
+
+    applied: List[Dict[str, Any]] = []
+    compromised: List[Dict[str, Any]] = []
+    for i, m in enumerate(scenario["mutations"]):
+        if not isinstance(m, dict) or m.get("op") not in WHATIF_OPS:
+            raise ValueError("mutation %d: op must be one of %s" % (i, ", ".join(WHATIF_OPS)))
+        op = m["op"]
+        matched = 0
+        if op == "remove-node":
+            for nid in find(m.get("match")):
+                matched += 1
+                nodes.pop(nid, None)
+                for eid in [e for e, ed in edges.items() if nid in (ed["source"], ed["target"])]:
+                    edges.pop(eid)
+        elif op == "remove-edge":
+            for eid in edge_hits(m):
+                matched += 1
+                edges.pop(eid)
+        elif op == "revoke":
+            for eid in edge_hits(m):
+                if edges[eid]["capability"] in ("write", "delete", "admin"):
+                    matched += 1
+                    edges.pop(eid)
+        elif op == "set-capability":
+            to = m.get("to")
+            if to not in G.CAPABILITIES:
+                raise ValueError("mutation %d: 'to' must be a capability" % i)
+            for eid in edge_hits(m):
+                matched += 1
+                e = edges[eid]
+                e["capability"] = to
+                if e["kind"] in CAP_EDGE.values():
+                    e["kind"] = CAP_EDGE.get(to, "connects")
+                e["assumptions"] = sorted(set(e["assumptions"]) | {"what-if: capability changed to %s" % to})
+        elif op == "block-egress":
+            src = set(find(m.get("principal"))) if m.get("principal") else None
+            for eid in sorted(edges):
+                e = edges[eid]
+                if nodes.get(e["target"], {}).get("trust_domain") == "external" and (src is None or e["source"] in src):
+                    matched += 1
+                    edges.pop(eid)
+        elif op == "add-edge":
+            kind, cap = m.get("kind", "connects"), m.get("capability", "unknown")
+            if kind not in G.EDGE_KINDS or cap not in G.CAPABILITIES:
+                raise ValueError("mutation %d: invalid kind or capability" % i)
+            for s_id in find(m.get("source")):
+                for t_id in find(m.get("target")):
+                    eid = "e:whatif:" + G.sha(G.canonical_json([s_id, t_id, kind, cap]))
+                    matched += 1
+                    edges[eid] = {"id": eid, "source": s_id, "target": t_id, "kind": kind, "capability": cap,
+                                  "identity_ref": None, "verification": "declared", "confidence": "low",
+                                  "source_trust": "what-if", "evidence_refs": [],
+                                  "assumptions": ["hypothetical edge added by a what-if scenario"]}
+        elif op == "compromise-identity":
+            for nid in [x for x in find(m.get("identity")) if nodes[x]["kind"] == "identity"]:
+                matched += 1
+                compromised.append({"identity": nid, "label": nodes[nid]["display_label"]})
+        applied.append({"index": i, "op": op, "matched": matched})
+    G.annotate_boundaries(nodes, edges.values())
+    graph = {"nodes": [nodes[k] for k in sorted(nodes)], "edges": [edges[k] for k in sorted(edges)]}
+    files = report["coverage"]["files_inspected"]
+    scenario_report = dict(report, graph=graph, assessment=G.assess(graph, files, max_depth))
+    scenario_report["scope"] = dict(report["scope"], snapshot="what-if")
+    edges_by_id = {e["id"]: e for e in graph["edges"]}
+    for c in compromised:
+        br = G.blast_radius(nodes, graph["edges"], c["identity"], max_depth)
+        cls, drivers = G.classify_principal(nodes, br, edges_by_id)
+        c.update({"exposure": cls, "drivers": drivers[:10],
+                  "reach": {imp: sorted(br["impacts"][imp]) for imp in G.IMPACTS},
+                  "note": "expands only grants the identity itself holds in the graph"})
+    return {
+        "schema_version": WHATIF_SCHEMA,
+        "scenario": safe_text(str(scenario.get("name", "scenario")))[:80],
+        "mutations": applied,
+        "unmatched": [a for a in applied if a["matched"] == 0],
+        "delta": G.diff(report, scenario_report),
+        "compromised": compromised,
+        "note": "hypothetical: computed on a copy of the graph; nothing was changed or executed",
+    }
+
+
+def whatif_markdown(w: Dict[str, Any], report: Dict[str, Any]) -> str:
+    out = ["## What-if: %s" % w["scenario"], "", "_%s_" % w["note"], ""]
+    for a in w["mutations"]:
+        out.append("- mutation %d `%s`: %d match(es)" % (a["index"], a["op"], a["matched"]))
+    d = w["delta"]
+    out.append("- Exposure: %s -> %s" % (d["exposure"]["base"], d["exposure"]["head"]))
+    lost = len([1 for _ in d["edges"]["removed"]])
+    out.append("- Edges: +%d / -%d; newly reachable: %d" % (len(d["edges"]["added"]), lost, len(d["newly_reachable"])))
+    for c in w["compromised"]:
+        out.append("- Compromised identity %s: exposure %s; integrity reach %d node(s)" % (
+            c["label"], c["exposure"], len(c["reach"]["integrity"])))
+    return "\n".join(safe_text(x) for x in out)
+
+
+def drift(stored: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    if stored.get("schema_version") != G.MAP_SCHEMA:
+        raise ValueError("--drift needs a stored %s report" % G.MAP_SCHEMA)
+    d = G.diff(stored, current)
+    d["kind"] = "snapshot-drift"
+    d["base"] = "stored:%s" % str(stored.get("scan_id", ""))[:12]
+    d["note"] = ("comparison of a stored map with the current repository; static repository change, "
+                 "not observed runtime drift")
+    return d

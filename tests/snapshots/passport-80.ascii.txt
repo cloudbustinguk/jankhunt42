@@ -5,7 +5,7 @@
 
 +- can we responsibly ship it? ----------------------------------------------+
 | RELEASE ASSESSMENT    REVIEW  advisory                                     |
-| technical jank score  78/100  grade E  policy fail                         |
+| technical jank score  67/100  grade E  policy fail                         |
 | exposure              High  separate from the Jank Score                   |
 | evidence coverage     4/9 areas observed, declared, or inferred            |
 | lifecycle             assessed  -  acceptance [not-supplied]               |

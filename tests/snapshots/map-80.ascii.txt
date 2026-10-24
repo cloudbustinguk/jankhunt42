@@ -53,7 +53,7 @@ unknowns  (unknown is not safe, and not dangerous)
   ? environment: 7 asset(s) have unknown environment (production vs
       non-production)
   ? code-to-workload-binding: which workload runs the repository code is not
-      inferred; declare it via an inventory grant if needed
+      inferred; declare it with passport.bindings if needed
   ? runtime-reachability: static analysis only: network reachability,
       firewalls, and live data movement were not tested
 

@@ -452,16 +452,8 @@ class Graph:
     # -- output ------------------------------------------------------------
     def finalize(self) -> None:
         """Annotate trust-boundary crossings and sort every list."""
+        annotate_boundaries(self.nodes, self.edges.values())
         for edge in self.edges.values():
-            s = self.nodes[edge["source"]]
-            t = self.nodes[edge["target"]]
-            crossing = None
-            if s["trust_domain"] != t["trust_domain"] and "unknown" not in (s["trust_domain"], t["trust_domain"]):
-                crossing = "%s->%s" % (s["trust_domain"], t["trust_domain"])
-            env = None
-            if s["environment"] != t["environment"] and "unknown" not in (s["environment"], t["environment"]):
-                env = "%s->%s" % (s["environment"], t["environment"])
-            edge["trust_boundary"] = {"domain": crossing, "environment": env}
             edge["evidence_refs"].sort()
             edge["assumptions"].sort()
         for node in self.nodes.values():
@@ -475,6 +467,21 @@ class Graph:
 
     def evidence_list(self) -> List[Dict[str, Any]]:
         return [self.evidence[k] for k in sorted(self.evidence)]
+
+
+def annotate_boundaries(nodes: Dict[str, Dict[str, Any]], edges: Iterable[Dict[str, Any]]) -> None:
+    """Mark each edge whose endpoints sit in different known trust domains
+    or environments. Unknown on either side is never called a crossing."""
+    for edge in edges:
+        s = nodes[edge["source"]]
+        t = nodes[edge["target"]]
+        crossing = None
+        if s["trust_domain"] != t["trust_domain"] and "unknown" not in (s["trust_domain"], t["trust_domain"]):
+            crossing = "%s->%s" % (s["trust_domain"], t["trust_domain"])
+        env = None
+        if s["environment"] != t["environment"] and "unknown" not in (s["environment"], t["environment"]):
+            env = "%s->%s" % (s["environment"], t["environment"])
+        edge["trust_boundary"] = {"domain": crossing, "environment": env}
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +569,56 @@ def reach(edges: Sequence[Dict[str, Any]], source: str, impact: str,
     return result, truncated
 
 
+def strongest(edges: Sequence[Dict[str, Any]], source: str, impact: str,
+              max_depth: int = DEFAULT_DEPTH) -> Dict[str, Dict[str, Any]]:
+    """Heuristic path strength: the maximum product of edge attenuations
+    a in [0, 1] over admissible paths of at most max_depth hops.
+
+    Exact bounded dynamic programming (one relaxation round per hop) rather
+    than Dijkstra, so the depth bound matches reach(). An edge without an
+    attenuation counts as 1.0; a = 0 removes the edge. Because every a <= 1,
+    a cycle never increases a product, and ties prefer fewer hops and then
+    the lexicographically smallest edge-ID sequence, so the witness is a
+    simple path and deterministic. This orders presentation only: it is not
+    a probability and never feeds the exposure class or any policy rule.
+    """
+    adj: Dict[str, List[Tuple[str, str, float]]] = {}
+    for e in edges:
+        if edge_tier(e, impact) is None:
+            continue
+        a = e.get("attenuation", 1.0)
+        try:
+            a = float(a)
+        except (TypeError, ValueError):
+            a = 1.0
+        if not a > 0.0:
+            continue
+        adj.setdefault(e["source"], []).append((e["target"], e["id"], min(1.0, a)))
+    best: Dict[str, Tuple[float, List[str]]] = {source: (1.0, [])}
+
+    def better(cand: Tuple[float, List[str]], cur: Optional[Tuple[float, List[str]]]) -> bool:
+        if cur is None:
+            return True
+        if abs(cand[0] - cur[0]) > 1e-12:
+            return cand[0] > cur[0]
+        return (len(cand[1]), cand[1]) < (len(cur[1]), cur[1])
+
+    for _ in range(max_depth):
+        nxt = dict(best)
+        for u in sorted(best):
+            su, pu = best[u]
+            for v, eid, a in adj.get(u, ()):
+                if v == source or eid in pu:
+                    continue
+                cand = (su * a, pu + [eid])
+                if better(cand, nxt.get(v)):
+                    nxt[v] = cand
+        if nxt == best:
+            break
+        best = nxt
+    return {v: {"strength": round(sv, 6), "path": pv} for v, (sv, pv) in sorted(best.items()) if v != source}
+
+
 def dependents(edges: Sequence[Dict[str, Any]], targets: Set[str], exclude: str) -> Dict[str, Dict[str, Any]]:
     """Principals or services that directly use any node in `targets`
     (one reverse hop). They lose availability if those targets are disrupted."""
@@ -584,6 +641,13 @@ def blast_radius(graph_nodes: Dict[str, Dict[str, Any]], edges: Sequence[Dict[st
         r, trunc = reach(edges, principal, impact, max_depth)
         truncated = truncated or trunc
         impacts[impact] = {nid: info for nid, info in sorted(r.items())}
+    if any("attenuation" in e for e in edges):
+        for impact in IMPACTS:
+            strong = strongest(edges, principal, impact, max_depth)
+            for nid, info in impacts[impact].items():
+                if nid in strong:
+                    info["strength"] = strong[nid]["strength"]
+                    info["strength_path"] = strong[nid]["path"]
     disrupted = {nid for nid in impacts["availability"]}
     deps = dependents(edges, disrupted, principal) if disrupted else {}
     crossings: Set[str] = set()

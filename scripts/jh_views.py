@@ -146,7 +146,8 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     if not tp:
         out.append("  0 observed")
     for d in tp:
-        out.append("  %s %s %s %s" % (t.level(d["level"]), c.bold(d["impact"]), t.label(d["tier"]), c.grey(d["rule"])))
+        out.append("  %s %s %s %s%s" % (t.level(d["level"]), c.bold(d["impact"]), t.label(d["tier"]), c.grey(d["rule"]),
+                                       c.grey("  strength %.3f (heuristic)" % d["strength"]) if "strength" in d else ""))
         for ln in _wrap(clean(d["why"]), t.width - 6, "    "):
             out.append("    " + c.grey(ln.strip()) if not ln.startswith("    ") else c.grey(ln))
         ptxt = clean(jh_map.path_text(report, d["principal"], d["path"])).replace("->", t.arrow())
@@ -163,6 +164,9 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     if report.get("delta"):
         out += [""] + t.box([clean(l) for l in jh_map.delta_markdown(report["delta"], report).split("\n") if l.strip()],
                             "yellow", "graph delta")
+    if report.get("whatif"):
+        out += [""] + t.box([clean(l) for l in jh_map.whatif_markdown(report["whatif"], report).split("\n") if l.strip()],
+                            "magenta", "what-if (hypothetical)")
     out += ["", c.grey("  explore: jankhunt42 map . --html > map.html   ·   data: --json   ·   shareable: --redact")]
     text = "\n".join(out)
     return asciify(text) if ascii_only else text

@@ -5,9 +5,9 @@ jankhunt42 already produces into one versioned document and applies a small,
 explainable policy. It is a **local assessment**:
 
 - not a certificate, not a compliance attestation, and never an approval;
-- lifecycle is `draft` (assessment incomplete) or `assessed`; `accepted`
-  would require separately supplied, trusted acceptance evidence, which this
-  tool does not create or infer (`acceptance.state` is `not-supplied`);
+- lifecycle is `draft` (assessment incomplete), `assessed`, or `accepted`.
+  `accepted` requires a separately supplied operator acceptance record (see
+  below), which this tool never creates or infers;
 - attestation verification states are what the **exporter** recorded;
   jankhunt42 does not verify signatures or signer identity;
 - evidence that was not found is `not-observed` (unknown), never "absent".
@@ -22,6 +22,9 @@ jankhunt42 passport . --redact --json          # shareable: no hosts, owners, or
 jankhunt42 passport . --policy ../policy.json  # operator policy (outside the repository)
 jankhunt42 passport . --fail-on block          # enforce: exit 1 on block
 jankhunt42 passport . --inventory ../inventory.json
+jankhunt42 passport . --acceptance ../acceptance.json        # operator acceptance record
+jankhunt42 passport . --compare old-passport.json            # what changed since a stored passport
+jankhunt42 passport --compare old.json --against new.json    # two stored passports, no scan
 ```
 
 Advisory by default (exit `0` whatever the decision). `--fail-on review`,
@@ -109,6 +112,7 @@ passport, together with each source.
       {"match": "reports", "sensitivity": "confidential"}
     ],
     "operations": {"runbook": true},
+    "bindings": [{"workload": "Deployment payments-prod/payments-api"}],
     "policy": {"require": {"owner": true}}
   }
 }
@@ -120,10 +124,46 @@ operator inventory or relax policy. Code-origin statements (human,
 AI-assisted, citizen-developed) are not read and cannot change any
 assessment: identical evidence produces an identical passport.
 
+## Acceptance records (`--acceptance`)
+
+Acceptance is a separate act by a person. jankhunt42 records it but never creates or infers it:
+
+```json
+{
+  "accepted_by": "release-manager",
+  "accepted_at": "2026-10-23T10:00:00Z",
+  "expires": "2026-11-23T00:00:00Z",
+  "subject_revision": "<git commit the passport reports>",
+  "policy_hash": "<assessment.decision.policy.hash>",
+  "decision_accepted": "review",
+  "artifact_digest": "sha256:…",
+  "environment": "production"
+}
+```
+
+The record is honoured only if it lives **outside** the scanned repository. A record inside the repository is `rejected`.
+
+- **Accepted:** when the revision, policy hash and decision match, the optional digest and environment match, the working tree is clean, and the record has not expired, `lifecycle.state` becomes `accepted` with `acceptance.state: declared-by-operator`. That is an unsigned operator statement, not a verification.
+- **Invalidated:** any mismatch gives `invalidated`, with named reasons: `revision-changed`, `policy-changed`, `decision-changed`, `digest-changed`, `environment-changed`, `working-tree-dirty`, `expired`.
+- **Rejected:** a `block` or `insufficient-evidence` decision can never be accepted.
+
+The decision itself never changes because of acceptance. `--redact` hides the acceptor.
+
+## Comparing passports (`--compare`)
+
+`--compare OLD.json` compares a stored passport with the current one, or with `--against NEW.json` for two stored documents and no scan. The `jankhunt.passport-delta.v1` output covers:
+- the decision and its triggered rules (added and removed);
+- exposure and Jank Score;
+- evidence-area changes, owners, artifact digests, data sources (added, removed, reclassified);
+- policy and graph changes, and the lifecycle;
+- a `regressions` list (worse decision, higher exposure, a downgraded evidence area, a lost owner) and a `regressed` flag.
+
+`integrity` reports whether each document's `scan_id` still matches its content. It catches edits made after generation; it is not a signature. Comparing documents of the wrong schema is a usage error (exit 2).
+
 ## Assurance levels and what is deferred
 
 The passport covers repository-static evidence (L1) and parsed build/release
 evidence (L2, exporter-reported). Independently collected operational
-evidence (L3) enters only through an operator inventory. Not implemented in
-this version: acceptance records, `passport verify`/`compare`, signature
-verification, control inheritance, and drift monitoring.
+evidence (L3) enters only through an operator inventory. Not implemented:
+signature verification of passports or acceptance records, platform-control
+inheritance, and continuous monitoring.

@@ -676,13 +676,21 @@ def _map_inputs(args: argparse.Namespace) -> Tuple[str, List[str], object]:
 
 
 def cmd_map(args: argparse.Namespace) -> int:
-    if not _one_format(args, ("json", "html", "md")):
+    if not _one_format(args, ("json", "html", "md", "mermaid", "csv")):
+        return 2
+    if args.base and args.drift:
+        print("jankhunt42: map: --base and --drift are mutually exclusive", file=sys.stderr)
         return 2
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
     try:
         root, excludes, cfg = _map_inputs(args)
         common = (root, [root], excludes, args.max_files, args.max_file_bytes, cfg.passport, args.inventory, depth)
-        if args.base:
+        if args.drift:
+            stored = jh_map.load_json_file(args.drift)
+            report = jh_map.run_map(*common)
+            report["delta"] = jh_map.drift(stored, report)
+            report = jh_map.finalize_report(report)
+        elif args.base:
             base = jh_map.run_map(*common, rev=args.base)
             report = jh_map.run_map(*common, rev="HEAD")
             report["delta"] = jh_graph.diff(base, report)
@@ -692,6 +700,9 @@ def cmd_map(args: argparse.Namespace) -> int:
             report = jh_map.finalize_report(report)
         else:
             report = jh_map.run_map(*common)
+        if args.what_if:
+            report["whatif"] = jh_map.run_whatif(report, jh_map.load_json_file(args.what_if), depth)
+            report = jh_map.finalize_report(report)
     except jh_map.GitError as exc:
         print("jankhunt42: map --base: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -700,6 +711,21 @@ def cmd_map(args: argparse.Namespace) -> int:
         return 2
     if args.redact:
         report = jh_map.finalize_report(jh_graph.pseudonymize(report))
+    if args.mermaid:
+        print(jh_explorer.render_mermaid(report))
+        return 0
+    if args.csv:
+        try:
+            os.makedirs(args.csv, exist_ok=True)
+            nodes_csv, edges_csv = jh_map.render_csv(report)
+            for name, body in (("nodes.csv", nodes_csv), ("edges.csv", edges_csv)):
+                with open(os.path.join(args.csv, name), "w", encoding="utf-8", newline="") as fh:
+                    fh.write(body)
+        except OSError as exc:
+            print("jankhunt42: map --csv: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        print("wrote %s and %s" % (os.path.join(args.csv, "nodes.csv"), os.path.join(args.csv, "edges.csv")))
+        return 0
     _emit(args, report, jh_map.markdown, jh_views.map_tty, jh_explorer.render_map)
     return 0
 
@@ -709,9 +735,30 @@ def jh_core_safe(text: str) -> str:
     return jh_graph.sanitize_text(safe_text(text), 300)
 
 
+def _load_doc(path: str, what: str) -> Dict[str, object]:
+    try:
+        return jh_map.load_json_file(path)
+    except (OSError, ValueError) as exc:
+        raise ValueError("cannot read %s %s: %s" % (what, path, exc))
+
+
 def cmd_passport(args: argparse.Namespace) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
+    if args.against and not args.compare:
+        print("jankhunt42: passport: --against needs --compare", file=sys.stderr)
+        return 2
+    if args.compare and args.html:
+        print("jankhunt42: passport --compare supports --json or Markdown", file=sys.stderr)
+        return 2
+    if args.compare and args.against:
+        try:
+            delta = jh_passport.compare(_load_doc(args.compare, "passport"), _load_doc(args.against, "passport"))
+        except ValueError as exc:
+            print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
+        return 0
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
     try:
         root, excludes, cfg = _map_inputs(args)
@@ -755,8 +802,25 @@ def cmd_passport(args: argparse.Namespace) -> int:
         config_path=os.path.basename(cfg.source) if cfg.source else None,
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra)
+    if args.acceptance:
+        try:
+            record = _load_doc(args.acceptance, "acceptance record")
+        except ValueError as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        trusted = not jh_map.inside(args.acceptance, root)
+        passport = jh_map.finalize_report(jh_passport.apply_acceptance(
+            passport, record, trusted, os.path.basename(args.acceptance)))
     if args.redact:
         passport = jh_map.finalize_report(jh_passport.redact(passport))
+    if args.compare:
+        try:
+            delta = jh_passport.compare(_load_doc(args.compare, "passport"), passport)
+        except ValueError as exc:
+            print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
+        return 0
     _emit(args, passport, jh_passport.markdown, jh_views.passport_tty, jh_explorer.render_passport)
     return 1 if jh_policy.fails(passport["assessment"]["decision"]["result"], args.fail_on) else 0
 
@@ -966,6 +1030,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_map_inputs(sp)
     sp.add_argument("--base", metavar="REF",
                     help="graph delta REF -> HEAD from committed git objects only (dirty files are ignored)")
+    sp.add_argument("--drift", metavar="MAP.json",
+                    help="compare a stored map report with the current repository (static change, not runtime drift)")
+    sp.add_argument("--what-if", metavar="SCENARIO.json",
+                    help="apply hypothetical mutations to a copy of the graph and report the change")
+    sp.add_argument("--mermaid", action="store_true", help="Mermaid flowchart (documentation view; JSON is canonical)")
+    sp.add_argument("--csv", metavar="DIR", help="write nodes.csv and edges.csv to DIR (formula-injection safe)")
     sp.set_defaults(func=cmd_map)
 
     sp = sub.add_parser("passport", help="can we responsibly ship it? evidence, ownership, explainable decision",
@@ -977,6 +1047,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
     sp.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),
                     help="enforce: exit 1 when the decision is at or above this outcome")
+    sp.add_argument("--acceptance", metavar="PATH",
+                    help="operator acceptance record (outside the repo) bound to revision, policy hash, and decision")
+    sp.add_argument("--compare", metavar="OLD.json",
+                    help="compare a previous passport with the current one (or with --against)")
+    sp.add_argument("--against", metavar="NEW.json", help="with --compare: compare two stored passports, no scan")
     sp.set_defaults(func=cmd_passport)
 
     sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")

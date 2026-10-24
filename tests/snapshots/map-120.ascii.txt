@@ -42,8 +42,8 @@ unknowns  (unknown is not safe, and not dangerous)
   ? unknown-capability: 7 connection(s) have unknown capability; treated as possibly read, write, or destructive
   ? data-classification: 6 asset(s) have no declared data sensitivity
   ? environment: 7 asset(s) have unknown environment (production vs non-production)
-  ? code-to-workload-binding: which workload runs the repository code is not inferred; declare it via an inventory
-      grant if needed
+  ? code-to-workload-binding: which workload runs the repository code is not inferred; declare it with
+      passport.bindings if needed
   ? runtime-reachability: static analysis only: network reachability, firewalls, and live data movement were not
       tested
 

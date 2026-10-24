@@ -52,6 +52,10 @@ MUTANTS = [
     ("M7-coverage-floor", "partial coverage no longer forces insufficient-evidence", "jh_policy.py",
      'add("P-COV-001", "insufficient-evidence" if cov_reasons else "pass",',
      'add("P-COV-001", "pass",', "test_passport.py"),
+    ("M8-accept-revision-mismatch", "an acceptance record survives a revision change", "jh_passport.py",
+     'invalid.append("revision-changed")', 'pass', "test_extensions.py"),
+    ("M9-csv-formula-injection", "CSV cells starting with = are no longer neutralized", "jh_map.py",
+     'if text[:1] in ("=", "+", "-", "@", "\\t", "\\r"):', 'if False:', "test_extensions.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/cloudbustinguk/jankhunt42/templates/passport.schema.json",
   "title": "jankhunt42 software passport (jankhunt.passport.v1)",
-  "description": "Output of `jankhunt42 passport --json`: a local assessment, never an approval or certificate. lifecycle.state is draft or assessed; acceptance requires separately supplied trusted evidence and is reported as not-supplied.",
+  "description": "Output of `jankhunt42 passport --json`: a local assessment, never an approval or certificate. lifecycle.state is draft, assessed, or accepted; accepted only with an operator acceptance record (outside the repository) bound to the same revision, policy hash, decision and, when given, artifact digest and environment. Acceptance is declared-by-operator, never verified.",
   "type": "object",
   "required": [
     "schema_version",
@@ -215,7 +215,8 @@
           "type": "string",
           "enum": [
             "draft",
-            "assessed"
+            "assessed",
+            "accepted"
           ]
         },
         "acceptance": {
@@ -227,7 +228,10 @@
             "state": {
               "type": "string",
               "enum": [
-                "not-supplied"
+                "not-supplied",
+                "declared-by-operator",
+                "invalidated",
+                "rejected"
               ]
             }
           }

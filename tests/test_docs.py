@@ -88,6 +88,19 @@ class DocumentedCommands(unittest.TestCase):
             json.dump({"evidence": []}, fh)
         with open(os.path.join(cls.tmp, "inventory.json"), "w") as fh:
             json.dump({"schema_version": "jankhunt.inventory.v1", "assets": [{"match": "ledger-db", "environment": "production"}]}, fh)
+        with open(os.path.join(cls.tmp, "scenario.json"), "w") as fh:
+            json.dump({"name": "docs", "mutations": [{"op": "block-egress"}]}, fh)
+        env2 = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        for name, cmd in (("stored-map.json", "map"), ("old-passport.json", "passport")):
+            out = subprocess.run([sys.executable, _util.CLI, cmd, cls.repo, "--json"], capture_output=True, text=True,
+                                 env=env2, timeout=300).stdout
+            for where in (cls.tmp, cls.repo):
+                with open(os.path.join(where, name), "w") as fh:
+                    fh.write(out)
+        with open(os.path.join(cls.tmp, "acceptance.json"), "w") as fh:
+            json.dump({"accepted_by": "docs", "accepted_at": "2026-10-01T00:00:00Z", "decision_accepted": "review"}, fh)
+        with open(os.path.join(cls.repo, "scenario.json"), "w") as fh:
+            json.dump({"name": "docs", "mutations": [{"op": "revoke", "source": "repo", "target": "ledger"}]}, fh)
         with open(os.path.join(cls.tmp, "policy.json"), "w") as fh:
             json.dump({"schema_version": "jankhunt.policy.v1", "require": {"owner": True}}, fh)
 

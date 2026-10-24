@@ -4,7 +4,48 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [2.0.0] — 2026-10-23
+## [2.1.0] — 2026-10-23
+
+The pieces deferred from 2.0.0, all opt-in and additive. No existing option,
+exit code, or schema field changed; new fields are additive.
+
+### Added
+
+- `map --what-if SCENARIO.json`: hypothetical mutations (`revoke`,
+  `remove-node`, `remove-edge`, `add-edge`, `set-capability`,
+  `block-egress`, `compromise-identity`) on a copy of the graph, reported as
+  a full graph delta plus compromised-identity blast radii. Nothing is
+  changed or executed; added edges are `declared` and labeled hypothetical.
+- `map --drift MAP.json`: stored map vs the current repository
+  (`snapshot-drift`; static change, explicitly not runtime drift).
+- `map --mermaid` and `map --csv DIR`: Mermaid flowchart (entity-escaped
+  labels, dashed inferred edges, explicit truncation) and nodes/edges CSV
+  (formula-injection safe). JSON remains canonical.
+- OpenAPI/Swagger adapter: enriches API nodes the code already calls, or
+  records what the application exposes. It never creates an edge.
+- `passport.bindings`: declare which workload runs the repository code; the
+  code inherits that workload's identities and the unknown disappears.
+- Path strength: trusted operator inventories may weight grants
+  (`attenuation` 0-1); reachable assets gain `strength` and a witness path
+  from exact bounded max-product search, checked against a brute-force
+  oracle. Presentation only; never affects exposure or policy.
+- `passport --acceptance PATH`: operator acceptance records (outside the
+  repository only), bound to revision, policy hash, decision, and optional
+  digest/environment; `accepted` (declared-by-operator), `invalidated` with
+  named reasons, or `rejected`. Block and insufficient-evidence decisions
+  can never be accepted.
+- `passport --compare OLD.json [--against NEW.json]`:
+  `jankhunt.passport-delta.v1` with regressions and a scan_id
+  self-consistency (not signature) check.
+- Two more selftest mutants (acceptance binding, CSV formula injection).
+
+### Fixed
+
+- `JH104` (Dynamic SQL) no longer fires on parameterized `%s`/`%(name)s`
+  placeholders; `"..." % value`, concatenation, and f-strings are still
+  flagged. This only removes findings (verified against 1.1.0).
+
+ — 2026-10-23
 
 jankhunt42 now answers three questions instead of one: **what's broken?**
 (unchanged scanner, review, supply chain, Jank Score 2.0, deep hunt),

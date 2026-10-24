@@ -83,7 +83,9 @@ RULES: List[Rule] = [
       confidence="medium", target="nocomment", langs=PY + JS + JVM + CLIKE + ("ruby", "php", "go", "csharp"),
       ignore=r'^\s*r["\']|re\.compile\(|\bRegex\(',
       patterns=(
-          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\+|#\{|\$\{|\.format\s*\(|%\s*[sd(])",
+          # `%` as the Python formatting *operator* after a closing quote, not a
+          # `%s` placeholder inside a parameterized query (2.1.0 FP fix).
+          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\+|#\{|\$\{|\.format\s*\(|[\"']\s*%\s*[\w(\[{])",
           r"(?i)\bf['\"][^'\"]*\b(?:select|insert|update|delete)\b",
           r"(?i)(?:execute|query|exec|raw)\s*\(\s*(?:f['\"]|\$\{|[^)\n]*\+)",
       )),

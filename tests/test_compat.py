@@ -69,10 +69,29 @@ class CrossVersion(unittest.TestCase):
                 cls.old = os.path.join(cls.tmp, "scripts", "jankhunt42")
         cls.root = os.path.join(cls.tmp, "demo-app")
         shutil.copytree(os.path.join(_util.FIXTURES, "demo-app"), cls.root)
+        # Documented 2.1.0 rule change (JH104 no longer flags parameterized
+        # %s placeholders): the file that exercises it is compared separately
+        # in test_documented_jh104_change, so everything else stays strict.
+        shutil.move(os.path.join(cls.root, "app", "ledger.py"), os.path.join(cls.tmp, "ledger.py"))
 
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_documented_jh104_change(self):
+        probe = os.path.join(self.tmp, "jh104")
+        os.makedirs(probe, exist_ok=True)
+        shutil.copy(os.path.join(self.tmp, "ledger.py"), os.path.join(probe, "ledger.py"))
+        with open(os.path.join(probe, "bad.py"), "w") as fh:
+            fh.write('def f(c, n):\n    return c.execute("SELECT * FROM t WHERE n = \'%s\'" % n)\n')
+        old = json.loads(self.run_old("scan", probe, "--json", "--rule", "JH104").stdout)
+        new = json.loads(run_cli("scan", probe, "--json", "--rule", "JH104").stdout)
+        old_hits = sorted((f["path"], f["line"]) for f in old["findings"])
+        new_hits = sorted((f["path"], f["line"]) for f in new["findings"])
+        self.assertIn(("ledger.py", 11), old_hits)      # 1.1.0 false positive on a placeholder
+        self.assertNotIn(("ledger.py", 11), new_hits)   # fixed
+        self.assertIn(("bad.py", 2), new_hits)          # real % formatting still flagged
+        self.assertEqual(set(new_hits) - set(old_hits), set())  # the change only removes findings
 
     def run_old(self, *args):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")

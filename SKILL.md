@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -130,6 +130,7 @@ jankhunt42 map . --json                       # jankhunt.map.v1
 jankhunt42 map . --html > map.html            # offline explorer with evidence inspector
 jankhunt42 map . --base HEAD~1                # what became newly reachable, escalated, or crossed a boundary
 jankhunt42 map . --redact --json              # shareable copy: no hostnames or snippets
+jankhunt42 map . --what-if scenario.json      # "what if we revoke this grant / block egress / lose this identity?"
 ```
 
 How to use it:
@@ -139,6 +140,7 @@ How to use it:
 - Report the **unknowns** with the result: unknown capability, unresolved targets, missing data classification, unknown environment. Unknown is not safe and not dangerous; it is work.
 - Never upgrade a connection string to a grant, an import to a data flow, or a `secretKeyRef` to a disclosed secret.
 - For a diff, `--base` compares committed trees only; mention escalations and newly reachable sensitive assets first.
+- What-if results are hypothetical. Present them as "under this assumption", never as the current state.
 
 Details, edge semantics, adapters, inventory format, and limitations: `references/connectivity.md`.
 
@@ -149,6 +151,7 @@ jankhunt42 passport .                         # decision, reasons, evidence area
 jankhunt42 passport . --json                  # jankhunt.passport.v1
 jankhunt42 passport . --html > passport.html
 jankhunt42 passport . --fail-on block         # enforcement is opt-in
+jankhunt42 passport . --compare old-passport.json   # regressions since the last assessment
 ```
 
 How to use it:
@@ -157,7 +160,7 @@ How to use it:
 - `insufficient-evidence` is a real outcome: coverage was partial, mandatory evidence is missing, or nothing could be assessed. It never becomes a pass.
 - `not-observed` means unknown, not absent. Suggest the cheapest evidence to collect.
 - Repository config can only tighten policy. An operator `--policy` outside the repository may relax defaults but not the hard floors. Do not edit repository config to make a passport pass.
-- Lifecycle stops at `assessed`. Do not describe a passport as approved, certified, or accepted.
+- `accepted` appears only when an operator supplied an acceptance record from outside the repository that still matches the revision, policy, and decision. Even then it is `declared-by-operator`, not verified. Never describe a passport as approved or certified, and never write an acceptance record on the user's behalf.
 
 Rules, precedence, declarations, and schema: `references/passport.md`.
 

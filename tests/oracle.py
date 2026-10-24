@@ -87,3 +87,27 @@ def path_is_valid(edges_by_id, source, target, path, impact, tier, max_depth):
         cur = e["target"]
         seen.add(cur)
     return cur == target and weakest == tier
+
+
+def strongest(edges, source, impact, max_depth):
+    """Exhaustive maximum product of attenuations (missing = 1.0, 0 excluded)
+    over simple admissible paths of at most max_depth edges."""
+    best = {}
+
+    def dfs(node, visited, depth, prod):
+        if depth == max_depth:
+            return
+        for e in edges:
+            if e["source"] != node or e["target"] in visited or step_tier(e, impact) is None:
+                continue
+            a = float(e.get("attenuation", 1.0))
+            if a <= 0:
+                continue
+            p = prod * min(1.0, a)
+            tgt = e["target"]
+            if tgt not in best or p > best[tgt] + 1e-12:
+                best[tgt] = p
+            dfs(tgt, visited | {tgt}, depth + 1, p)
+
+    dfs(source, {source}, 0, 1.0)
+    return best
