@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cloudbustinguk/jankhunt42/templates/verify.schema.json",
+  "title": "jankhunt42 verification plan (jankhunt.verify.v1)",
+  "description": "Input to `supply-chain --verify` and `passport --verify`. The plan names the subjects to verify and the signer identity to trust, so it must live outside the scanned repository. Relative paths resolve against the plan file. Unknown keys are rejected. jankhunt42 runs the named native verifiers (gh, cosign, jf) and records their results; it performs no cryptographic verification itself. Network access happens only with --online.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"const": "jankhunt.verify.v1"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "OWNER/NAME; gh --repo, cosign --certificate-github-workflow-repository, and the fetch source"},
+        "owner": {"type": "string", "description": "gh --owner when repo is not given"},
+        "repo_id": {"type": ["integer", "string"], "pattern": "^[0-9]+$", "description": "numeric repository ID compared with the signing certificate (survives renames)"},
+        "signer_workflow": {"type": "string", "description": "gh --signer-workflow"},
+        "signer_repo": {"type": "string", "description": "gh --signer-repo (reusable workflows)"},
+        "certificate_identity": {"type": "string", "description": "exact certificate identity (gh --cert-identity, cosign --certificate-identity)"},
+        "certificate_identity_regexp": {"type": "string", "description": "RE2 certificate identity (gh --cert-identity-regex, cosign --certificate-identity-regexp)"},
+        "oidc_issuer": {"type": "string", "description": "default https://token.actions.githubusercontent.com"},
+        "source_ref": {"type": "string", "description": "gh --source-ref"},
+        "deny_self_hosted_runners": {"type": "boolean"}
+      }
+    },
+    "trusted_root": {"type": "string", "description": "Sigstore trusted root (e.g. from `gh attestation trusted-root`); with a bundle it enables offline verification"},
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "description": "artifact file; its SHA-256 is the subject digest"},
+          "oci": {"type": "string", "pattern": "^oci://", "description": "container image (gh only)"},
+          "bundle": {"type": "string", "description": "local Sigstore bundle or JSONL from `gh attestation download`"},
+          "predicate_type": {"type": "string", "default": "https://slsa.dev/provenance/v1"},
+          "verifier": {"enum": ["gh", "cosign"], "default": "gh"}
+        }
+      }
+    },
+    "fetch": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only with --online.",
+      "properties": {
+        "github_attestations": {"type": "boolean", "description": "fetch bundles for each subject digest from the GitHub attestations API"},
+        "actions_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {"name": {"type": "string"}, "run_id": {"type": ["integer", "string"], "pattern": "^[0-9]+$"}}
+          }
+        }
+      }
+    },
+    "jfrog": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["subject_repo_path"],
+        "properties": {
+          "subject_repo_path": {"type": "string"},
+          "public_keys": {"type": "array", "items": {"type": "string"}},
+          "use_artifactory_keys": {"type": "boolean"},
+          "server_id": {"type": "string"},
+          "project": {"type": "string"}
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gh": {"type": "string"},
+        "cosign": {"type": "string"},
+        "jf": {"type": "string"},
+        "cosign_args": {"type": "array", "items": {"type": "string"}, "description": "extra flags, e.g. --new-bundle-format for cosign 2.x"}
+      }
+    },
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600, "default": 120}
+  }
+}

@@ -56,6 +56,13 @@ MUTANTS = [
      'invalid.append("revision-changed")', 'pass', "test_extensions.py"),
     ("M9-csv-formula-injection", "CSV cells starting with = are no longer neutralized", "jh_map.py",
      'if text[:1] in ("=", "+", "-", "@", "\\t", "\\r"):', 'if False:', "test_extensions.py"),
+    ("M10-not-run-counts-as-verified", "a verifier that did not run satisfies the verified-attestation gate",
+     "jh_supply.py", 'tool_verified = any(r.get("outcome") == "tool-verified" for r in results)',
+     'tool_verified = bool(results)', "test_verify.py"),
+    ("M11-token-on-redirect", "the GitHub token is sent to redirect targets", "jh_verify.py",
+     'if parts.hostname == API_HOST:', 'if parts.hostname:', "test_verify.py"),
+    ("M12-in-repo-verify-plan", "a verification plan inside the repository is trusted", "jh_verify.py",
+     'if _inside(path, root):\n        raise PlanError', 'if False:\n        raise PlanError', "test_verify.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

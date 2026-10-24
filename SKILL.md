@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -120,7 +120,7 @@ jankhunt42 review . --staged --md
 jankhunt42 review . --base HEAD~1 --brief     # handoff to the semantic reviewer
 ```
 
-`review` is the deterministic evidence layer (scope, new vs contextual lines, receipts, coverage, baselines, supply-chain context). The semantic reviewer owns intent, reachability, and impact; neither replaces the other. A receipt is `supported` or `unverified`, never `confirmed` without a repro or runtime evidence. Zero findings with skipped files is not a clean bill of health. Protocol: `references/review.md`. Supply-chain evidence is parsed offline; `provider-verified` means the exporter recorded a verification. Never claim jankhunt42 performed cryptography (`references/supply-chain.md`).
+`review` is the deterministic evidence layer (scope, new vs contextual lines, receipts, coverage, baselines, supply-chain context). The semantic reviewer owns intent, reachability, and impact; neither replaces the other. A receipt is `supported` or `unverified`, never `confirmed` without a repro or runtime evidence. Zero findings with skipped files is not a clean bill of health. Protocol: `references/review.md`. Supply-chain evidence is parsed offline; `provider-verified` means the exporter recorded a verification. Never claim jankhunt42 performed cryptography: with `supply-chain --verify PLAN` (plan outside the repo; `--online` to fetch from GitHub) the named verifier did, and only `tool-verified` counts as signer-verified (`references/supply-chain.md`).
 
 ## What can it hurt? Connectivity and blast radius
 

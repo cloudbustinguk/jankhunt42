@@ -214,7 +214,10 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     if policy["require"]["attestation"] and not sup.get("attestations"):
         missing.append("attestation")
     if policy["require"]["verified_attestation"] and not sup.get("verified_attestations"):
-        missing.append("exporter-verified attestation")
+        missing.append("verified attestation (exporter- or tool-verified)")
+    if sup.get("verification_problems"):
+        # --verify was requested and did not complete cleanly: never a pass.
+        missing.append("completed attestation verification (%d problem(s))" % len(sup["verification_problems"]))
     if missing:
         add("P-EVD-001", _outcome_for(acts["P-EVD-001"]), "required evidence missing: %s" % ", ".join(missing))
     else:

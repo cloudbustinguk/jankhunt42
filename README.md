@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for CVE data.
 
-**Version:** 2.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -272,12 +272,14 @@ jankhunt42 review . --base HEAD~1 --baseline baseline.json --fail-on major
 ```sh
 jankhunt42 supply-chain . --json                    # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog AppTrust
 jankhunt42 supply-chain . --require-sbom
+jankhunt42 supply-chain . --verify ../verify-plan.json        # run gh/cosign/jf; offline with a bundle + trusted root
+jankhunt42 supply-chain . --verify ../verify-plan.json --online   # also fetch from GitHub (attestations, Actions artifacts)
 jankhunt42 triage app.log --top 25                  # fingerprint and rank log clusters
 jankhunt42 doctor --system                          # repo and host health
 jankhunt42 report . --logs app.log --out report.md  # scan + doctor + logs
 ```
 
-Supply-chain parsing is offline. `provider-verified` means the exporter recorded a verification, and jankhunt42 never claims to have checked a signature. See [`references/supply-chain.md`](references/supply-chain.md).
+Supply-chain parsing is offline. `provider-verified` means the exporter recorded a verification. jankhunt42 never checks a signature itself: `--verify PLAN` runs the native verifiers (`gh attestation verify`, `cosign verify-blob-attestation`, `jf evd verify`) against a plan kept outside the repository that names the signer to trust, and records `tool-verified`, `signature-only`, `failed` or `not-run`. Without `--online` nothing is fetched and a verifier runs only if it can verify offline; with `--online`, bundles can be fetched from the GitHub attestations API and SBOMs from Actions artifacts (which need a token and are unsigned). See [`references/supply-chain.md`](references/supply-chain.md).
 
 ### Deep hunt (opt-in)
 
@@ -424,6 +426,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 
 - Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
 - 2.1.0 adds options only (`map --what-if/--drift/--mermaid/--csv`, `passport --acceptance/--compare/--against`), plus `passport.bindings`. It also narrows `JH104`, which no longer flags parameterized `%s`/`%(name)s` placeholders; this removes findings and never adds them.
+- 2.2.0 adds options only (`supply-chain --verify/--online/--fetch-dir`, `passport --verify/--online`) and additive fields (`key_source`, `origin`, `verification`). JFrog records whose key came from the Sigstore bundle now carry a warning; their state is unchanged.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

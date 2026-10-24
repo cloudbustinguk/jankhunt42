@@ -36,6 +36,8 @@ $JH review . --base origin/main --json --save-baseline .jankhunt42/baseline.json
 $JH supply-chain . --json
 $JH supply-chain . --require-sbom --require-attestation
 $JH supply-chain . --jfrog-evidence apptrust-evidence.json
+$JH supply-chain . --verify ../verify-plan.json            # gh/cosign/jf, offline
+$JH supply-chain . --verify ../verify-plan.json --online   # may fetch from GitHub
 $JH score .                             # dimension scorecard
 $JH score . --json                      # score breakdown for CI
 $JH triage app.log --top 25             # fingerprint and rank log clusters
@@ -81,7 +83,9 @@ without a repro or runtime evidence. `--fail-on` gates new supported findings
 only; baseline persisting findings are excluded unless you change the baseline.
 `supply-chain` is offline/read-only. `provider-verified` means the exporter
 recorded a successful verification, not that jankhunt42 verified a signature.
-Use `gh`, `cosign`, or `jf` for independent verification.
+`--verify PLAN` runs `gh`, `cosign`, or `jf` for independent verification and
+reports `tool-verified` only when the verifier checked the signer identity;
+`--online` is the only switch that lets it fetch from GitHub.
 
 `.jankhunt42.toml`/`.jankhunt42.json` (discovered upward from the scan root, like
 `.git`) can disable a rule, override its severity, scope either to a path

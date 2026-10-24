@@ -8,8 +8,9 @@ explainable policy. It is a **local assessment**:
 - lifecycle is `draft` (assessment incomplete), `assessed`, or `accepted`.
   `accepted` requires a separately supplied operator acceptance record (see
   below), which this tool never creates or infers;
-- attestation verification states are what the **exporter** recorded;
-  jankhunt42 does not verify signatures or signer identity;
+- attestation verification states are what the **exporter** recorded, or
+  what a native verifier reported under `--verify`; jankhunt42 itself never
+  verifies signatures or signer identity;
 - evidence that was not found is `not-observed` (unknown), never "absent".
 
 ## Commands
@@ -25,6 +26,7 @@ jankhunt42 passport . --inventory ../inventory.json
 jankhunt42 passport . --acceptance ../acceptance.json        # operator acceptance record
 jankhunt42 passport . --compare old-passport.json            # what changed since a stored passport
 jankhunt42 passport --compare old.json --against new.json    # two stored passports, no scan
+jankhunt42 passport . --verify ../verify-plan.json           # run gh/cosign/jf on the provenance first
 ```
 
 Advisory by default (exit `0` whatever the decision). `--fail-on review`,
@@ -65,7 +67,7 @@ and a strong area never offsets a weak one.
 | `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`) | review (insufficient-evidence when required) |
 | `P-DAT-001` | `exports` of sensitive data to an external destination | review; **block** (hard floor) when provider-verified |
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block **only** for provider-verified authority |
-| `P-EVD-001` | `require.sbom`, `require.attestation`, or `require.verified_attestation` unmet | insufficient-evidence |
+| `P-EVD-001` | `require.sbom`, `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
 
@@ -163,7 +165,10 @@ The decision itself never changes because of acceptance. `--redact` hides the ac
 ## Assurance levels and what is deferred
 
 The passport covers repository-static evidence (L1) and parsed build/release
-evidence (L2, exporter-reported). Independently collected operational
+evidence (L2, exporter-reported, or `tool-verified` when `--verify` ran a
+native verifier; see `references/supply-chain.md`). Verification results sit
+under `provenance.verification` without timestamps (they ran at
+`generated_at`), and `--redact` keeps only their outcomes. Independently collected operational
 evidence (L3) enters only through an operator inventory. Not implemented:
 signature verification of passports or acceptance records, platform-control
 inheritance, and continuous monitoring.

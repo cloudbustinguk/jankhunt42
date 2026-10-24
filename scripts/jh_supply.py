@@ -11,6 +11,8 @@ This module never contacts a registry, transparency log, or JFrog instance. It
 parses and correlates evidence that is already on disk. Cryptographic
 verification is reported only when the exporter (for example JFrog) recorded a
 successful verification result; otherwise the file is marked unverified.
+Opt-in fetching and native-verifier runs live in jh_verify, which feeds its
+files and results back through `inspect(extra_files=...)` and `summarize`.
 """
 from __future__ import annotations
 
@@ -31,6 +33,8 @@ _SBOM_HINTS = ("sbom", "spdx", "cyclonedx", ".cdx", "bom.json", "bom.xml")
 _ATTEST_HINTS = ("attestation", "attest", "provenance", "intoto", "in-toto",
                  "sigstore", "dsse", "bundle")
 _JFROG_HINTS = ("apptrust", "jfrog", "release-bundle", "release_bundle", "evd")
+BUNDLE_KEY_WARNING = ("exporter verified the signature with the key embedded in the Sigstore bundle; "
+                      "the signer identity is not established by this result")
 
 
 def _rel(root: str, path: str) -> str:
@@ -481,7 +485,7 @@ def _statement_summary(statement: Dict[str, Any], path: str, rel: str,
                        source: str, verification: str, verification_detail: str,
                        created_by: str = "", created_at: str = "",
                        media_type: str = "", download_path: str = "",
-                       signature_material: bool = False) -> Dict[str, Any]:
+                       signature_material: bool = False, key_source: str = "") -> Dict[str, Any]:
     predicate = statement.get("predicate") if isinstance(statement.get("predicate"), dict) else {}
     predicate_type = _scalar(statement.get("predicateType"))
     kind = "unknown"
@@ -552,7 +556,9 @@ def _statement_summary(statement: Dict[str, Any], path: str, rel: str,
         warnings.append("SLSA provenance has no git revision in resolvedDependencies")
     if verification in ("unverified", "unsigned") and signature_material:
         warnings.append("signature material present but not cryptographically verified")
-    return {
+    if verification == "provider-verified" and _bundle_key(key_source):
+        warnings.append(BUNDLE_KEY_WARNING)
+    out = {
         "path": rel,
         "source": source,
         "format": "sigstore-bundle" if signature_material else "in-toto-statement",
@@ -576,6 +582,17 @@ def _statement_summary(statement: Dict[str, Any], path: str, rel: str,
         "warnings": warnings,
         "embedded_sbom": kind in ("spdx-sbom", "cyclonedx-sbom"),
     }
+    if key_source:
+        out["key_source"] = key_source
+    return out
+
+
+def _bundle_key(key_source: str) -> bool:
+    return key_source.strip().lower().startswith("sigstore bundle")
+
+
+def _key_source(result: Any) -> str:
+    return _scalar(result.get("keySource")) if isinstance(result, dict) else ""
 
 
 def _verify_hint(source: str, rel: str) -> str:
@@ -671,15 +688,18 @@ def _parse_jfrog_bundle(path: str, rel: str, data: Dict[str, Any]) -> Tuple[
                 "verify_hint": _verify_hint("jfrog", rel),
                 "media_type": _scalar(item.get("mediaType")),
                 "download_path": _scalar(item.get("downloadPath")),
-                "warnings": [err or "no in-toto statement found"],
+                "warnings": [err or "no in-toto statement found"]
+                + ([BUNDLE_KEY_WARNING] if status == "provider-verified" and _bundle_key(_key_source(vr)) else []),
                 "embedded_sbom": False,
             })
+            if _key_source(vr):
+                attestations[-1]["key_source"] = _key_source(vr)
             continue
         sig = bool(envelope and envelope.get("signatures")) or bool(item.get("sigstoreBundle"))
         summary = _statement_summary(
             statement, path, rel, "jfrog", status or ("unverified" if sig else "unsigned"),
             detail, _scalar(item.get("createdBy")), _scalar(item.get("createdAt")),
-            _scalar(item.get("mediaType")), _scalar(item.get("downloadPath")), sig,
+            _scalar(item.get("mediaType")), _scalar(item.get("downloadPath")), sig, _key_source(vr),
         )
         if subject:
             summary["subjects"] = summary["subjects"] or _subject_list(subject)
@@ -773,6 +793,7 @@ def parse_evidence_file(path: str, rel: str, text: str, forced: str = "") -> Dic
                 _scalar(doc.get("mediaType")) if isinstance(doc, dict) else "",
                 _scalar(doc.get("downloadPath")) if isinstance(doc, dict) else "",
                 sig or bool(isinstance(doc, dict) and doc.get("verificationMaterial")),
+                _key_source(vr),
             )
             result["attestations"].append(summary)
             predicate = statement.get("predicate") if isinstance(statement.get("predicate"), dict) else {}
@@ -787,7 +808,11 @@ def parse_evidence_file(path: str, rel: str, text: str, forced: str = "") -> Dic
 
 def inspect(root: str, sbom_paths: Sequence[str] = (), attestation_paths: Sequence[str] = (),
             jfrog_paths: Sequence[str] = (), requirements: Optional[Dict[str, bool]] = None,
-            discover: bool = True) -> Dict[str, Any]:
+            discover: bool = True,
+            extra_files: Sequence[Tuple[str, str, str, str]] = ()) -> Dict[str, Any]:
+    """`extra_files` are (path, display name, forced kind, origin) tuples for
+    evidence obtained outside the repository (see jh_verify); each parsed
+    record keeps its origin."""
     root = os.path.abspath(root)
     explicit_jobs: List[Tuple[str, str]] = []
     for paths, forced in ((sbom_paths, "sbom"), (attestation_paths, "attestation"),
@@ -805,20 +830,32 @@ def inspect(root: str, sbom_paths: Sequence[str] = (), attestation_paths: Sequen
     jfrog: List[Dict[str, Any]] = []
     warnings: List[str] = []
     seen_files: Set[str] = set()
+    labels: Dict[str, Tuple[str, str]] = {}
+    for path, rel, forced, origin in extra_files:
+        path = os.path.abspath(path)
+        labels[path] = (rel, origin)
+        jobs.append((path, forced))
     for path, forced in jobs:
         if path in seen_files:
             continue
+        rel, origin = labels.get(path, (_rel(root, path), ""))
         if not os.path.isfile(path):
-            warnings.append("%s: evidence file not found" % _rel(root, path))
+            warnings.append("%s: evidence file not found" % rel)
             continue
         seen_files.add(path)
         text = _read_text(path)
         if text is None:
-            warnings.append("%s: skipped (binary or larger than %d bytes)"
-                            % (_rel(root, path), MAX_EVIDENCE_BYTES))
+            warnings.append("%s: skipped (binary or larger than %d bytes)" % (rel, MAX_EVIDENCE_BYTES))
             continue
-        rel = _rel(root, path)
         parsed = parse_evidence_file(path, rel, text, forced=forced)
+        if origin:
+            for record in parsed["sboms"] + parsed["attestations"] + parsed["jfrog"]:
+                record["origin"] = origin
+            if origin == "github-actions-artifact":
+                for record in parsed["sboms"]:
+                    record.setdefault("warnings", []).append(
+                        "fetched from a GitHub Actions artifact: unsigned; integrity rests on the "
+                        "digest GitHub recorded for the artifact")
         sboms.extend(parsed["sboms"])
         attestations.extend(parsed["attestations"])
         jfrog.extend(parsed["jfrog"])
@@ -863,52 +900,77 @@ def inspect(root: str, sbom_paths: Sequence[str] = (), attestation_paths: Sequen
     for item in attestations:
         item.pop("_subject_digest", None)
 
-    req = dict(requirements or {})
-    reasons: List[str] = []
-    if req.get("sbom") and not sboms:
-        reasons.append("no SBOM found")
-    if req.get("attestation") and not attestations:
-        reasons.append("no attestation found")
-    if req.get("verified_attestation") and not any(
-            a.get("verification") == "provider-verified" for a in attestations):
-        reasons.append("no provider-verified attestation found")
-    packages = sum(s.get("package_count", 0) for s in sboms)
-    unique_components = set()
-    for s in sboms:
-        for p in s.get("packages", []):
-            unique_components.add((p.get("name"), p.get("version")))
-    verified = sum(1 for a in attestations if a.get("verification") == "provider-verified")
-    unverified = sum(1 for a in attestations if a.get("verification") == "unverified")
-    unsigned = sum(1 for a in attestations if a.get("verification") == "unsigned")
-    failed = sum(1 for a in attestations if a.get("verification") == "failed")
     if not sboms:
         warnings.append("no SBOM found (SPDX or CycloneDX)")
     if not attestations:
         warnings.append("no in-toto/Sigstore/GitHub attestation found")
     if jfrog and not attestations:
         warnings.append("JFrog evidence bundle found but no parseable in-toto statement")
-    warnings = list(dict.fromkeys(warnings))
     report = {
         "root": root,
-        "summary": {
-            "sboms": len(sboms),
-            "attestations": len(attestations),
-            "jfrog_bundles": len(jfrog),
-            "packages": packages,
-            "unique_components": len(unique_components),
-            "verified_attestations": verified,
-            "unverified_attestations": unverified,
-            "unsigned_attestations": unsigned,
-            "failed_attestations": failed,
-            "warnings": len(warnings),
-        },
+        "summary": {},
         "sboms": sboms,
         "attestations": attestations,
         "jfrog": jfrog,
-        "requirements": req,
-        "gate": {"result": "fail" if reasons else "pass", "reasons": reasons},
-        "warnings": warnings,
+        "requirements": dict(requirements or {}),
+        "gate": {},
+        "warnings": list(dict.fromkeys(warnings)),
     }
+    return summarize(report)
+
+
+VERIFIED_STATES = ("provider-verified", "tool-verified")
+
+
+def summarize(report: Dict[str, Any]) -> Dict[str, Any]:
+    """(Re)compute summary counts and the requirement gate. Called again by
+    jh_verify after tool results have been attached."""
+    sboms, attestations = report["sboms"], report["attestations"]
+    req = report.get("requirements") or {}
+    verification = report.get("verification") or {}
+    results = verification.get("results", [])
+    tool_verified = any(r.get("outcome") == "tool-verified" for r in results)
+    reasons: List[str] = []
+    if req.get("sbom") and not sboms:
+        reasons.append("no SBOM found")
+    if req.get("attestation") and not attestations:
+        reasons.append("no attestation found")
+    if req.get("verified_attestation") and not tool_verified and not any(
+            a.get("verification") in VERIFIED_STATES for a in attestations):
+        reasons.append("no provider-verified or tool-verified attestation found")
+    for r in results:
+        if r.get("outcome") == "failed":
+            reasons.append("verification failed: %s (%s): %s" % (r["subject"], r["verifier"], r["reason"]))
+        elif r.get("outcome") in ("not-run", "error", "signature-only"):
+            reasons.append("verification not completed: %s (%s): %s" % (r["subject"], r["verifier"], r["reason"]))
+    unique_components = set()
+    for s in sboms:
+        for p in s.get("packages", []):
+            unique_components.add((p.get("name"), p.get("version")))
+
+    def count(state: str) -> int:
+        return sum(1 for a in attestations if a.get("verification") == state)
+
+    report["summary"] = {
+        "sboms": len(sboms),
+        "attestations": len(attestations),
+        "jfrog_bundles": len(report["jfrog"]),
+        "packages": sum(s.get("package_count", 0) for s in sboms),
+        "unique_components": len(unique_components),
+        "verified_attestations": sum(1 for a in attestations if a.get("verification") in VERIFIED_STATES),
+        "unverified_attestations": count("unverified"),
+        "unsigned_attestations": count("unsigned"),
+        "failed_attestations": count("failed"),
+        "warnings": len(report["warnings"]),
+    }
+    if verification:
+        report["summary"].update({
+            "tool_verified_attestations": count("tool-verified"),
+            "signature_only_attestations": count("signature-only"),
+            "verifications": len(results),
+            "verifications_passed": sum(1 for r in results if r.get("outcome") == "tool-verified"),
+        })
+    report["gate"] = {"result": "fail" if reasons else "pass", "reasons": reasons}
     return report
 
 
@@ -921,6 +983,8 @@ def summary_line(report: Dict[str, Any]) -> str:
         "packages %d" % s.get("packages", 0),
         "verified %d" % s.get("verified_attestations", 0),
     ]
+    if "verifications" in s:
+        bits.append("checks %d/%d passed" % (s.get("verifications_passed", 0), s.get("verifications", 0)))
     return " · ".join(bits)
 
 
@@ -959,9 +1023,14 @@ def markdown(report: Dict[str, Any], heading: str = "## Supply chain evidence") 
                 for sub in att.get("subjects", [])[:2]
             ) or "—"
             provenance = att.get("builder") or att.get("source_repo") or "—"
+            state = att.get("verification", "unknown")
+            if att.get("verified_by"):
+                state += " (%s)" % att["verified_by"]
+            elif state == "provider-verified" and _bundle_key(att.get("key_source", "")):
+                state += " (bundle key)"
             out.append("| `%s` | %s | %s | %s | %s |"
                        % (att.get("path"), att.get("predicate_kind", "unknown"), subject,
-                          provenance, att.get("verification", "unknown")))
+                          provenance, state))
         for att in report["attestations"]:
             details = []
             if att.get("source_revision"):
@@ -987,10 +1056,36 @@ def markdown(report: Dict[str, Any], heading: str = "## Supply chain evidence") 
                           bundle.get("version") or bundle.get("release_bundle_version") or "—",
                           bundle.get("evidence_count", 0), bundle.get("verified", 0),
                           bundle.get("failed", 0)))
+    ver = report.get("verification")
+    if ver:
+        out.append("")
+        out.append("### Verification (%s, plan `%s`)" % (ver.get("mode"), ver.get("plan")))
+        out.append("")
+        out.append("| Subject | Verifier | Outcome | Reason |")
+        out.append("|---|---|---|---|")
+        for r in ver.get("results", []):
+            tool = ("%s %s" % (r.get("verifier"), r.get("tool_version") or "")).strip()
+            out.append("| `%s` | %s | **%s** | %s |"
+                       % (r.get("subject"), tool, r.get("outcome"), str(r.get("reason", "")).replace("|", "/")))
+        for f in ver.get("fetched", []):
+            what = f.get("name") or f.get("subject") or ""
+            got = f.get("error") or ("%d bundle(s)" % f["count"] if "count" in f
+                                     else "%d file(s)" % len(f.get("files", [])))
+            out.append("")
+            out.append("- fetched %s `%s`: %s" % (f.get("kind"), what, got))
+        if ver.get("network_requests"):
+            out.append("- network requests made by jankhunt42: %d" % ver["network_requests"])
     out.append("")
-    out.append("> jankhunt42 parses evidence but does not perform cryptographic verification itself. "
-               "`provider-verified` means the exporter recorded a successful verification result; "
-               "otherwise run the listed verification command with `gh`, `cosign`, or `jf`.")
+    if ver:
+        out.append("> jankhunt42 performs no cryptographic verification itself. `tool-verified` means the named "
+                   "verifier (`gh`, `cosign`, or `jf`) checked the signature and signer identity; "
+                   "`signature-only` means the signature was checked but not who signed it; "
+                   "`provider-verified` means an exporter recorded a successful result.")
+    else:
+        out.append("> jankhunt42 parses evidence but does not perform cryptographic verification itself. "
+                   "`provider-verified` means the exporter recorded a successful verification result; "
+                   "otherwise run the listed verification command with `gh`, `cosign`, or `jf`, "
+                   "or use `supply-chain --verify PLAN`.")
     if report.get("warnings"):
         out.append("")
         out.append("**Evidence gaps:**")

@@ -19,6 +19,7 @@ SKIP = [
     ("--cve", "contacts OSV.dev; the suite is offline"),
     ("--pr", "needs the GitHub CLI and a checked-out pull request"),
     ("selftest", "selftest runs this suite; executing it here would recurse"),
+    ("--online", "lets --verify fetch from GitHub; the suite is offline"),
 ]
 GIT_ENV = {"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
            "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
@@ -101,6 +102,10 @@ class DocumentedCommands(unittest.TestCase):
             json.dump({"accepted_by": "docs", "accepted_at": "2026-10-01T00:00:00Z", "decision_accepted": "review"}, fh)
         with open(os.path.join(cls.repo, "scenario.json"), "w") as fh:
             json.dump({"name": "docs", "mutations": [{"op": "revoke", "source": "repo", "target": "ledger"}]}, fh)
+        with open(os.path.join(cls.tmp, "verify-plan.json"), "w") as fh:
+            json.dump({"schema_version": "jankhunt.verify.v1", "identity": {"repo": "example-org/demo-app"},
+                       "subjects": [{"path": "repo/dist/demo-app.tar.gz"}],
+                       "tools": {"gh": "./no-such-gh"}}, fh)
         with open(os.path.join(cls.tmp, "policy.json"), "w") as fh:
             json.dump({"schema_version": "jankhunt.policy.v1", "require": {"owner": True}}, fh)
 

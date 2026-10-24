@@ -126,6 +126,15 @@ def operations(items: Sequence[jh_map.Item], declared: Dict[str, Any], evidence:
     return out
 
 
+def _digest_verification(a: Dict[str, Any]) -> str:
+    state = a.get("verification", "unknown")
+    if state == "tool-verified":
+        return "verified by %s (signature and signer identity)" % (a.get("verified_by") or "a native verifier")
+    if state == "signature-only":
+        return "signature checked by %s; signer identity not checked" % (a.get("verified_by") or "a verifier")
+    return "exporter-reported (%s); not verified by %s" % (state, TOOL)
+
+
 def provenance(supply: Optional[Dict[str, Any]], evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
     if supply is None:
         return {"state": "not assessed", "sboms": 0, "attestations": [], "artifact_digests": []}
@@ -134,23 +143,43 @@ def provenance(supply: Optional[Dict[str, Any]], evidence: List[Dict[str, Any]])
     digests = []
     for a in supply.get("attestations", [])[:50]:
         rel = a.get("rel") or a.get("path") or "attestation"
+        kind = a.get("predicate_kind") or a.get("kind") or "unknown"
         ref = _ev(evidence, "provenance", "declared", os.path.basename(str(rel)) if os.path.isabs(str(rel)) else str(rel),
-                  0, "attestation %s" % a.get("kind", "unknown"))
-        atts.append({"kind": a.get("kind", "unknown"), "exporter_verification": a.get("verification", "unknown"),
-                     "evidence_ref": ref})
+                  0, "attestation %s" % kind)
+        entry = {"kind": kind, "exporter_verification": a.get("exporter_verification", a.get("verification", "unknown")),
+                 "evidence_ref": ref}
+        if a.get("verified_by"):
+            entry["verification"] = a.get("verification")
+            entry["verified_by"] = safe_text(a["verified_by"])
+        if a.get("origin"):
+            entry["origin"] = a["origin"]
+        atts.append(entry)
         for sub in a.get("subjects", [])[:5]:
             for algo, val in sorted((sub.get("digest") or {}).items()):
                 digests.append({"digest": "%s:%s" % (algo, str(val)[:128]), "source": "attestation subject",
-                                "verification": "exporter-reported (%s); not verified by %s" % (a.get("verification", "unknown"), TOOL)})
+                                "verification": _digest_verification(a)})
     for sb in supply.get("sboms", [])[:50]:
         rel = sb.get("rel") or sb.get("path") or "sbom"
         _ev(evidence, "provenance", "observed", os.path.basename(str(rel)) if os.path.isabs(str(rel)) else str(rel),
             0, "SBOM %s with %s packages" % (sb.get("format", "?"), sb.get("package_count", 0)))
     state = "observed" if (s.get("sboms") or s.get("attestations")) else "not-observed"
-    return {"state": state, "sboms": s.get("sboms", 0), "packages": s.get("packages", 0),
-            "attestations": atts, "verified_attestations_reported": s.get("verified_attestations", 0),
-            "artifact_digests": sorted(digests, key=lambda d: d["digest"])[:20],
-            "note": "%s parses provenance files; it does not verify signatures or signer identity" % TOOL}
+    out = {"state": state, "sboms": s.get("sboms", 0), "packages": s.get("packages", 0),
+           "attestations": atts, "verified_attestations_reported": s.get("verified_attestations", 0),
+           "artifact_digests": sorted(digests, key=lambda d: d["digest"])[:20],
+           "note": "%s parses provenance files; it does not verify signatures or signer identity" % TOOL}
+    ver = supply.get("verification")
+    if ver:
+        # No timestamps here: verification ran when the passport was generated
+        # (generated_at), and scan_id must depend only on content.
+        out["verification"] = {
+            "plan": ver.get("plan"), "mode": ver.get("mode"),
+            "results": [{k: r.get(k) for k in ("subject", "verifier", "tool_version", "outcome", "reason")}
+                        for r in ver.get("results", [])[:50]],
+            "problems": [r for r in (supply.get("gate") or {}).get("reasons", []) if r.startswith("verification ")],
+        }
+        out["note"] = ("%s performs no cryptographic verification itself; `tool-verified` results come from "
+                       "the native verifiers named in the plan" % TOOL)
+    return out
 
 
 def data_inventory(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -230,7 +259,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "jank_policy": jank.get("policy", "pass"),
         "blocker_leads": findings_counts.get("blocker", 0),
         "supply": {"sbom": prov.get("sboms", 0), "attestations": len(prov.get("attestations", [])),
-                   "verified_attestations": prov.get("verified_attestations_reported", 0)},
+                   "verified_attestations": prov.get("verified_attestations_reported", 0),
+                   "verification_problems": (prov.get("verification") or {}).get("problems", [])},
     }
     decision = jh_policy.evaluate(eff, facts, map_report["graph"] if map_report else None)
     sources = [{"kind": "default"}]
@@ -318,6 +348,14 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     if acc.get("accepted_by"):
         acc["accepted_by"] = "acceptor"
         acc["record"] = "acceptance record"
+    ver = rep.get("provenance", {}).get("verification")
+    if ver:
+        # Subjects can be registry URIs or repository paths, and verifier
+        # messages can quote hosts: keep only the outcome.
+        for i, r in enumerate(ver.get("results", []), 1):
+            r["subject"] = "subject-%d" % i
+            r["reason"] = r["outcome"]
+        ver["problems"] = ["verification problem %d" % i for i, _ in enumerate(ver.get("problems", []), 1)]
     rep["scope"]["redaction"] = "share"
     rep["unknowns"] = [{"id": u["id"], "count": u.get("count"), "detail": u["detail"]} for u in rep["unknowns"]]
     return rep
@@ -356,6 +394,8 @@ def markdown(p: Dict[str, Any]) -> str:
     lines += ["", "- Owners: %s" % (", ".join(own["owners"] + own["declared_owners"]) or "unknown")]
     prov = p["provenance"]
     lines.append("- Provenance: %s SBOM(s), %d attestation(s); %s" % (prov.get("sboms", 0), len(prov.get("attestations", [])), prov.get("note", "")))
+    for r in (prov.get("verification") or {}).get("results", []):
+        lines.append("  - verification `%s` (%s): **%s**: %s" % (r.get("subject"), r.get("verifier"), r.get("outcome"), r.get("reason")))
     lines.append("- Data sources: %d (%s)" % (len(p["data"].get("sources", [])), p["data"]["state"]))
     if p["remediation"]:
         lines += ["", "## Top remediation steps", ""] + ["%d. %s" % (i, s) for i, s in enumerate(p["remediation"], 1)]

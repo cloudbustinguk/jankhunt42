@@ -360,14 +360,14 @@ def cmd_supply_chain(args: argparse.Namespace) -> int:
         "attestation": bool(args.require_attestation),
         "verified_attestation": bool(args.require_verified_attestation),
     }
-    report = jh_supply.inspect(
-        root,
-        sbom_paths=args.sbom or (),
-        attestation_paths=args.attestation or (),
-        jfrog_paths=args.jfrog_evidence or (),
-        requirements=requirements,
-        discover=not args.no_discover,
-    )
+    kwargs = dict(sbom_paths=args.sbom or (), attestation_paths=args.attestation or (),
+                  jfrog_paths=args.jfrog_evidence or (), requirements=requirements,
+                  discover=not args.no_discover)
+    try:
+        report = _supply_with_verification(root, args, kwargs)
+    except ValueError as exc:
+        print("jankhunt42: supply-chain: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
     payload = {
         "tool": TOOL,
         "version": VERSION,
@@ -386,6 +386,19 @@ def cmd_supply_chain(args: argparse.Namespace) -> int:
         print("")
         print(jh_supply.markdown(report, heading="## Evidence"))
     return 1 if report["gate"]["result"] == "fail" else 0
+
+
+def _supply_with_verification(root: str, args: argparse.Namespace, kwargs: Dict[str, object]) -> Dict[str, object]:
+    """Plain offline inspection, or --verify PLAN: native verifiers, plus
+    fetching only with --online. Raises ValueError for usage problems."""
+    plan_path = getattr(args, "verify", None)
+    if not plan_path:
+        if getattr(args, "online", False) or getattr(args, "fetch_dir", None):
+            raise ValueError("--online and --fetch-dir need --verify PLAN")
+        return jh_supply.inspect(root, **kwargs)
+    import jh_verify
+    plan = jh_verify.load_plan(plan_path, root)  # PlanError is a ValueError
+    return jh_verify.verify_supply(root, plan, bool(args.online), getattr(args, "fetch_dir", None), **kwargs)
 
 
 def cmd_score(args: argparse.Namespace) -> int:
@@ -751,6 +764,10 @@ def cmd_passport(args: argparse.Namespace) -> int:
     if args.compare and args.html:
         print("jankhunt42: passport --compare supports --json or Markdown", file=sys.stderr)
         return 2
+    if (args.online and not args.verify) or (args.verify and args.against):
+        print("jankhunt42: passport: --online needs --verify, and --verify cannot be used with --against",
+              file=sys.stderr)
+        return 2
     if args.compare and args.against:
         try:
             delta = jh_passport.compare(_load_doc(args.compare, "passport"), _load_doc(args.against, "passport"))
@@ -776,7 +793,11 @@ def cmd_passport(args: argparse.Namespace) -> int:
     for f in result.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     jank = jh_score.compute(result.findings, result.loc).to_dict()
-    supply = jh_supply.inspect(root, discover=True)
+    try:
+        supply = _supply_with_verification(root, args, {"discover": True})
+    except ValueError as exc:
+        print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
     operator, op_label, repo_extra, repo_paths, warnings = None, "", [], [], []
     if cfg.source and isinstance(cfg.passport.get("policy"), dict):
         repo_paths.append(os.path.basename(cfg.source))
@@ -937,6 +958,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="fail unless the exporter recorded a successful verification")
     sp.set_defaults(func=cmd_review)
 
+    def add_verify_inputs(sp):
+        sp.add_argument("--verify", metavar="PLAN.json",
+                        help="verification plan (outside the repo): run gh/cosign/jf on the evidence")
+        sp.add_argument("--online", action="store_true",
+                        help="with --verify: allow fetching from GitHub and online verification")
+
     sp = sub.add_parser("supply-chain", help="inspect SPDX/CycloneDX SBOMs, GitHub/Sigstore attestations, and JFrog evidence")
     sp.add_argument("paths", nargs="*", help="repository root (default: .)")
     sp.add_argument("--json", action="store_true")
@@ -950,7 +977,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="explicit JFrog evidence path (repeatable)")
     sp.add_argument("--require-sbom", action="store_true")
     sp.add_argument("--require-attestation", action="store_true")
-    sp.add_argument("--require-verified-attestation", action="store_true")
+    sp.add_argument("--require-verified-attestation", action="store_true",
+                    help="fail unless an attestation is provider-verified or tool-verified")
+    add_verify_inputs(sp)
+    sp.add_argument("--fetch-dir", metavar="DIR",
+                    help="with --verify: keep fetched evidence in DIR (default: a temporary directory)")
     sp.set_defaults(func=cmd_supply_chain)
 
     sp = sub.add_parser("hunt", help="plan an opt-in adversarial deep hunt (agent prompts + consensus contract)")
@@ -1052,6 +1083,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--compare", metavar="OLD.json",
                     help="compare a previous passport with the current one (or with --against)")
     sp.add_argument("--against", metavar="NEW.json", help="with --compare: compare two stored passports, no scan")
+    add_verify_inputs(sp)
     sp.set_defaults(func=cmd_passport)
 
     sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")

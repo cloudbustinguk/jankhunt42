@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.2.0] — 2026-10-24
+
+Opt-in attestation verification by native tools. Offline stays the default;
+no existing option, exit code, or schema field changed, and new fields are
+additive.
+
+### Added
+
+- `supply-chain --verify PLAN.json` and `passport --verify PLAN.json`: run
+  `gh attestation verify`, `cosign verify-blob-attestation`, or
+  `jf evd verify` from a verification plan (`jankhunt.verify.v1`,
+  `templates/verify.schema.json`). The plan names the subjects and the
+  signer identity to trust, so it must live outside the scanned repository;
+  unknown keys are errors. Results are `tool-verified`, `signature-only`,
+  `failed`, `not-run`, or `error`, with the verifier, version, command, and
+  reason. jankhunt42 still performs no cryptography itself.
+- Offline unless `--online`: without it no connection is opened and a
+  verifier runs only with a bundle plus a Sigstore trusted root. With it,
+  bundles are fetched by artifact digest from the GitHub attestations API and
+  SBOMs from GitHub Actions artifacts (digest-checked, size-bounded, marked
+  unsigned). `GH_TOKEN`/`GITHUB_TOKEN` is sent only to api.github.com and
+  never to a redirect target. `--fetch-dir DIR` keeps fetched files.
+- A requested verification that does not end `tool-verified` fails the
+  supply-chain gate and triggers `P-EVD-001` in a passport.
+  `--require-verified-attestation` accepts `provider-verified` or
+  `tool-verified`, never `signature-only`.
+- JFrog `keySource` is recorded as `key_source`. A Sigstore bundle key
+  (the key embedded in the bundle) proves consistency, not the signer: it
+  carries a warning, is `signature-only` in verification mode, and is
+  re-checked with cosign when the plan names a certificate identity.
+- Three more selftest mutants (not-run counted as verified, token sent on
+  redirect, in-repository plan trusted).
+
+### Fixed
+
+- Passport provenance listed every attestation's kind as `unknown`; it now
+  reports the predicate kind (for example `slsa-provenance-v1`).
+
 ## [2.1.0] — 2026-10-23
 
 The pieces deferred from 2.0.0, all opt-in and additive. No existing option,

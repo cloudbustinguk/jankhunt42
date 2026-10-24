@@ -6,6 +6,8 @@
      "why": "scripts/jh_cve.py GETs OSV vulnerability details (only with --cve; opt-in network)"},
     {"source": "jankhunt42", "kind": "calls", "capability": "write", "target": "https api.osv.dev",
      "why": "scripts/jh_cve.py POSTs the dependency batch to OSV querybatch (only with --cve)"},
+    {"source": "jankhunt42", "kind": "calls", "capability": "read", "target": "github api.github.com",
+     "why": "scripts/jh_verify.py GETs attestation bundles and Actions artifacts (only with --verify --online; GET only)"},
     {"source": "CI workflow selftest.yml", "kind": "authenticates-as", "capability": "unknown", "target": "GITHUB_TOKEN (selftest.yml)",
      "why": "every workflow run receives a token"},
     {"source": "GITHUB_TOKEN (selftest.yml)", "kind": "reads", "capability": "read", "target": "GitHub repository (this repo)",
