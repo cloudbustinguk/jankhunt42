@@ -989,4 +989,8 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
     rep["scope"]["redaction"] = "share"
     rep["scope"]["root"] = "."
     rep["scope"]["name"] = "application"
+    if rep.get("warnings"):
+        # Warnings can quote declaration patterns, object names, and paths.
+        rep["warnings"] = ["%d warning(s) withheld from the shareable copy; see the full local map"
+                           % len(rep["warnings"])]
     return rep

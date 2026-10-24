@@ -48,15 +48,19 @@ def _lead(f: Any) -> Dict[str, Any]:
     return {"rule": f.rule, "path": safe_text(f.path), "line": f.line, "severity": f.severity, "title": f.title}
 
 
+def _lead_key(d: Dict[str, Any]) -> Tuple[str, int, str]:
+    return (d["path"], d["line"], d["rule"])
+
+
 def governance_leads(findings: Sequence[Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """(public-exposure leads, agent-guardrail leads) at major severity or above."""
+    """(public-exposure leads, agent-guardrail leads) at major severity or
+    above, deduplicated and sorted; callers truncate for display."""
     serious = [f for f in findings if SEV_RANK.get(f.severity, 99) <= SEV_RANK["major"]]
-    exposure = [_lead(f) for f in serious if f.rule in EXPOSURE_RULES
-                or (f.rule in SECRET_RULES and f.severity in ("blocker", "critical"))]
-    agent = [_lead(f) for f in serious if f.category == "agent"
-             or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path)))]
-    key = lambda d: (d["path"], d["line"], d["rule"])
-    return sorted(exposure, key=key)[:50], sorted(agent, key=key)[:50]
+    exposure = {_lead_key(d): d for d in (_lead(f) for f in serious if f.rule in EXPOSURE_RULES
+                or (f.rule in SECRET_RULES and f.severity in ("blocker", "critical")))}
+    agent = {_lead_key(d): d for d in (_lead(f) for f in serious if f.category == "agent"
+             or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path))))}
+    return [exposure[k] for k in sorted(exposure)], [agent[k] for k in sorted(agent)]
 
 
 def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -352,7 +356,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           operator_policy_label: str, repo_policy_paths: Sequence[str], fail_on: Optional[str],
           warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = (),
           findings: Sequence[Any] = (), governance_findings: Optional[Sequence[Any]] = None,
-          profile: Optional[str] = None) -> Dict[str, Any]:
+          governance_tuned: Optional[Sequence[Any]] = None, profile: Optional[str] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -368,14 +372,16 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     for extra in repo_policies[1:]:
         eff = jh_policy.merge(eff, extra, warns)  # still tighten-only for the repository input
     declared_custodians = _declared_custodians(passport_cfg, warns)
-    exposure_leads, agent_leads = governance_leads(findings)
+    exposure_leads, agent_leads = governance_leads(governance_tuned if governance_tuned is not None else findings)
     suppressed = 0
     if governance_findings is not None:
         raw_exposure, raw_agent = governance_leads(governance_findings)
-        seen = {(d["rule"], d["path"], d["line"]) for d in exposure_leads + agent_leads}
-        suppressed = len({(d["rule"], d["path"], d["line"]) for d in raw_exposure + raw_agent} - seen)
+        seen = {_lead_key(d) for d in exposure_leads + agent_leads}
+        suppressed = len({_lead_key(d) for d in raw_exposure + raw_agent} - seen)
         if eff["profile"] == "citizen":
-            exposure_leads, agent_leads = raw_exposure, raw_agent
+            # Union: the repository can add or raise leads, never remove them.
+            exposure_leads = sorted({_lead_key(d): d for d in exposure_leads + raw_exposure}.values(), key=_lead_key)
+            agent_leads = sorted({_lead_key(d): d for d in agent_leads + raw_agent}.values(), key=_lead_key)
         if suppressed:
             warns.append("%d public-exposure or agent lead(s) are suppressed or re-rated by repository scan config or "
                          "inline pragmas%s" % (suppressed, "; the citizen profile does not honour them"
@@ -456,8 +462,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             "custodians": eff.get("custodians") or declared_custodians,
             "custodian_source": ("operator-policy" if eff.get("custodians") else
                                  "repository" if declared_custodians else "none"),
-            "public_exposure_leads": exposure_leads,
-            "agent_leads": agent_leads,
+            "public_exposure_leads": exposure_leads[:50],
+            "agent_leads": agent_leads[:50],
             "repository_suppressed_leads": suppressed,
             "agent": agent_tooling(map_report),
             "brief": [],
@@ -532,6 +538,10 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         gov["brief"] = plain_brief(rep)
     rep["scope"]["redaction"] = "share"
     rep["unknowns"] = [{"id": u["id"], "count": u.get("count"), "detail": u["detail"]} for u in rep["unknowns"]]
+    if rep["warnings"]:
+        # Warnings quote patterns, object names, and paths from the repository.
+        rep["warnings"] = ["%d warning(s) withheld from the shareable copy; see the full local passport"
+                           % len(rep["warnings"])]
     return rep
 
 

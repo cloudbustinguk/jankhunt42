@@ -822,7 +822,9 @@ _SECRET_WORDS = (r"(?:SECRET(?:_?KEY)?|PRIVATE_?KEY|SERVICE_?ROLE(?:_?KEY)?|SERV
                  r"GITHUB_?TOKEN|SLACK_?(?:BOT_?)?TOKEN)")
 # Names that are public by design: anon/publishable keys, site keys, DSNs.
 _PUBLIC_BY_DESIGN = re.compile(r"(?:ANON|PUBLISHABLE|PUBLIC_KEY|SITE_?KEY|CLIENT_?ID|DSN|MEASUREMENT_?ID|MAPBOX|MAPS)")
-_PUBLIC_SECRET_NAME = re.compile(r"\b(" + _PUBLIC_PREFIX + r"(?:[A-Z0-9]+_)*?" + _SECRET_WORDS + r")\b")
+_SECRET_QUALIFIER = (r"(?:_(?:TOKEN|VALUE))?(?:_(?:LIVE|PROD|PRODUCTION|PRD|DEV|DEVELOPMENT|TEST|TESTING|STAGING|STAGE|"
+                     r"STG|QA|UAT|LOCAL|PREVIEW|SANDBOX|V\d+|\d+))*")
+_PUBLIC_SECRET_NAME = re.compile(r"\b(" + _PUBLIC_PREFIX + r"(?:[A-Z0-9]+_)*?" + _SECRET_WORDS + _SECRET_QUALIFIER + r")\b")
 _PUBLIC_NAME_RE = re.compile(r"^\s*(?:export\s+)?(" + _PUBLIC_PREFIX + r"[A-Z0-9_]+)\s*=\s*['\"]?([^'\"\s#]*)")
 _SECRET_VALUE_RE = re.compile(r"^(?:sk-|sk_live_|rk_live_|sk_test_|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|glpat-|"
                               r"npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30})")
@@ -1075,15 +1077,17 @@ _CREDENTIAL_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/cre
 # Credential *files*: reading one and sending it somewhere is exfiltration;
 # merely mentioning an API key next to a curl example is not.
 _CREDENTIAL_FILE_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/credentials|\.npmrc\b|\.pypirc\b|"
-                                 r"\.netrc\b|\.git-credentials\b|(?:^|[\s/'\"`])\.env\b|\.docker/config\.json|\.kube/config)")
+                                 r"\.netrc\b|\.git-credentials\b|(?:^|[\s/'\"`@=(<])\.env\b|\.docker/config\.json|\.kube/config)")
 _PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
                             r"|\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|\s*(?:iex|invoke-expression)\b")
 _NET_SEND_RE = re.compile(r"(?i)\b(?:curl|wget|ncat|invoke-webrequest|invoke-restmethod)\b|\bnc\s+-|\bfetch\s*\(")
 # Syntax that actually ships data: an upload flag, a pipe into a network
 # tool, or a file read inlined into the command.
-_SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*@|--data(?:-binary|-raw|-urlencode)?[\s=]+['\"]?@|\s-F\s|--form\b|"
-                           r"--upload-file\b|\s-T\s|--post-file\b|\|\s*(?:curl|wget|nc|ncat)\b|\$\(\s*cat\b|`\s*cat\b|"
-                           r"-InFile\b)")
+_SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*['\"]?@|--data(?:-[a-z]+)?[\s=]+['\"]?@|\s-F\s*\S*@|\s-F\s|--form\b|"
+                           r"--upload-file\b|\s-T\s|--post-file\b|\|\s*(?:curl|wget|nc|ncat)\b|"
+                           r"\$\(\s*(?:<|cat\b)|`\s*cat\b|\s<\s*(?:~|\$HOME|\$\{HOME\}|/|\.)\S*|-InFile\b|"
+                           r"-Body\s*\(?\s*(?:Get-Content|gc|cat)\b|readFileSync\s*\(|\.read_(?:text|bytes)\s*\(|"
+                           r"open\([^)]*\)\.read\s*\()")
 
 
 @check("agent_instruction")

@@ -73,7 +73,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | Rule | Standard profile | Citizen profile |
 |---|---|---|
 | `P-OWN-001` owner | review at High exposure | **required**; block without one |
-| `P-CUS-001` engineering custodian | not required | **required**: block without one; a custodian declared only in the repository gives review |
+| `P-CUS-001` engineering custodian | not required | **required**: block until the operator policy names one (a repository declaration alone does not count) |
 | `P-DAT-002` authority over production/critical/restricted data | review for static leads | **block** until an operator inventory verifies the grants |
 | `P-DAT-001` sensitive external export | review | **block** |
 | `P-DAT-003` data classification | not required | every reachable data store needs a declared sensitivity (insufficient-evidence) |
@@ -85,19 +85,23 @@ operator policy, and a repository can opt in with `passport.profile:
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
 usual meaning. The profile is applied after the operator's ordinary
-`actions`, so a baseline organization policy cannot silently weaken it
-(a warning names any action the profile raised). To relax a citizen rule
-deliberately, the operator policy lists it under `profile_exceptions`, for
-example `{"profile_exceptions": {"P-OPS-001": "review"}}` when CI lives
-outside the repository; each exception is warned and recorded in the
-policy hash. A repository cannot grant exceptions, and a repository that
-also declares the profile re-tightens them.
+settings (`actions`, `require`, `max_exposure`, `static_leads`), so a
+baseline organization policy cannot silently weaken it; a warning names
+every operator setting the profile overrode. To relax the profile
+deliberately, the operator policy lists the relaxation under
+`profile_exceptions`: a rule action (`"P-OPS-001": "review"` when CI lives
+outside the repository), a requirement (`"require.tests": false`), or a
+ceiling (`"max_exposure": "High"`, `"static_leads": "review"`). Each
+exception is warned and recorded in the policy hash. A repository cannot
+grant exceptions, and a repository that also declares the profile
+re-tightens them.
 
 Under the citizen profile, the leads behind `P-SEC-001` and `P-AGT-001`
-come from a scan of the shipped rules that ignores repository scan config
+include a scan of the shipped rules that ignores repository scan config
 (rule toggles, severity overrides, ignore globs) and inline `jankhunt42:
-ignore` pragmas: the repository cannot opt out of its own governance. The
-passport reports how many leads repository tuning would have hidden
+ignore` pragmas, joined with the repository-tuned scan: the repository can
+add or raise leads but never remove them. The passport reports exactly how
+many leads repository tuning would have hidden
 (`governance.repository_suppressed_leads`), under either profile.
 
 ### The custodian
@@ -109,7 +113,7 @@ software: they review it, own its incidents, and sign its acceptance.
   `operator-policy`) is what lets `P-CUS-001` pass.
 - `passport.custodians` in `.jankhunt42.json` is recorded as a declaration
   (`repository`), but the software's author could name anyone, including
-  themselves, so on its own it gives `review`, never `pass`.
+  themselves, so it does not satisfy `P-CUS-001`.
 
 Under the citizen profile an acceptance record must be signed by a
 custodian named in the operator policy (`accepted_by` matches one of

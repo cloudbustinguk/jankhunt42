@@ -102,10 +102,11 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
             warnings.append("%s policy: ignored static_leads %r" % (label, str(lead)[:20]))
     exc = raw.get("profile_exceptions")
     if exc is not None:
-        if isinstance(exc, dict) and all(k in DEFAULT_POLICY["actions"] and v in ACTIONS for k, v in exc.items()):
+        if isinstance(exc, dict) and exc and all(_valid_exception(k, v) for k, v in exc.items()):
             out["profile_exceptions"] = dict(sorted(exc.items()))
         else:
-            warnings.append("%s policy: ignored profile_exceptions (expected rule ids mapped to actions)" % label)
+            warnings.append("%s policy: ignored profile_exceptions (expected rule ids mapped to actions, "
+                            "require.<key>: false, max_exposure, or static_leads)" % label)
     cust = raw.get("custodians")
     if cust is not None:
         if isinstance(cust, list) and all(isinstance(c, str) and c.strip() for c in cust):
@@ -173,6 +174,27 @@ def _apply_profile(eff: Dict[str, Any], profile: str, warnings: Optional[List[st
                                 % (rule, before[rule], eff["actions"][rule]))
 
 
+def _valid_exception(key: str, value: Any) -> bool:
+    if key in DEFAULT_POLICY["actions"]:
+        return value in ACTIONS
+    if key.startswith("require."):
+        return key[8:] in DEFAULT_POLICY["require"] and value is False
+    if key == "max_exposure":
+        return value in ("Low", "Moderate", "High", "Critical")
+    if key == "static_leads":
+        return value in ("review", "block")
+    return False
+
+
+def _apply_exception(eff: Dict[str, Any], key: str, value: Any) -> None:
+    if key in DEFAULT_POLICY["actions"]:
+        eff["actions"][key] = value
+    elif key.startswith("require."):
+        eff["require"][key[8:]] = value
+    else:
+        eff[key] = value
+
+
 def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any]],
           warnings: List[str], profile: Optional[str] = None) -> Dict[str, Any]:
     """Effective policy: defaults, operator overrides, then the citizen
@@ -195,12 +217,22 @@ def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any
     if op.get("custodians"):
         eff["custodians"] = op["custodians"]
     if "citizen" in (profile, op.get("profile")):
-        _apply_profile(eff, "citizen", warnings,
-                       [k for k in op["actions"] if k not in op.get("profile_exceptions", {})])
-        for rule, action in op.get("profile_exceptions", {}).items():
-            eff["actions"][rule] = action
-            eff["profile_exceptions"][rule] = action
-            warnings.append("operator exception under the citizen profile: %s is %s" % (rule, action))
+        exceptions = op.get("profile_exceptions", {})
+        before = {"require": dict(eff["require"]), "max_exposure": eff["max_exposure"],
+                  "static_leads": eff["static_leads"]}
+        _apply_profile(eff, "citizen", warnings, [k for k in op["actions"] if k not in exceptions])
+        for key in sorted(op["require"]):
+            if eff["require"][key] != before["require"][key] and "require." + key not in exceptions:
+                warnings.append("citizen profile overrides the operator's require.%s; use profile_exceptions "
+                                "to relax it deliberately" % key)
+        for key in ("max_exposure", "static_leads"):
+            if key in op and eff[key] != before[key] and key not in exceptions:
+                warnings.append("citizen profile overrides the operator's %s (%s -> %s); use profile_exceptions "
+                                "to relax it deliberately" % (key, before[key], eff[key]))
+        for key, value in exceptions.items():
+            _apply_exception(eff, key, value)
+            eff["profile_exceptions"][key] = value
+            warnings.append("operator exception under the citizen profile: %s is %s" % (key, value))
     elif op.get("profile_exceptions"):
         warnings.append("operator policy: profile_exceptions apply only under the citizen profile; ignored")
     if repository:
@@ -280,11 +312,10 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         add("P-CUS-001", "pass", "custodian(s) named by the operator policy: %s" % ", ".join(named))
     elif declared:
         # The repository's author could name anyone, including themselves:
-        # a declaration is recorded, but only an operator-named custodian
-        # lets this pass.
-        add("P-CUS-001", "pass" if acts["P-CUS-001"] == "off" else "review",
-            "custodian(s) declared only in the repository: %s; an operator policy must name the custodian before "
-            "this can pass" % ", ".join(declared))
+        # the declaration is recorded, but it does not satisfy the rule.
+        outcome = OUTCOMES[max(OUTCOME_RANK["insufficient-evidence"], OUTCOME_RANK[_outcome_for(acts["P-CUS-001"])])]
+        add("P-CUS-001", outcome, "custodian(s) declared only in the repository: %s; a custodian must be named in "
+                                  "the operator policy" % ", ".join(declared))
     else:
         outcome = OUTCOMES[max(OUTCOME_RANK["insufficient-evidence"], OUTCOME_RANK[_outcome_for(acts["P-CUS-001"])])]
         add("P-CUS-001", outcome, "no engineering custodian is named (custodians in the operator policy, or "

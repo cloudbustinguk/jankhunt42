@@ -69,7 +69,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 |---|---|---|
 | `P-COV-001` (hard floor) | no files scanned; no supported files mapped; map coverage `partial`; analysis truncated | insufficient-evidence |
 | `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`) | review (insufficient-evidence when required) |
-| `P-CUS-001` | `require.custodian` and no custodian named in the operator policy (a `passport.custodians` declaration alone gives review) | pass unless required; then block |
+| `P-CUS-001` | `require.custodian` and no custodian named in the operator policy (a `passport.custodians` declaration is recorded but does not count) | pass unless required; then block |
 | `P-DAT-001` | `exports` of sensitive data to an external destination | review; **block** (hard floor) when provider-verified |
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
@@ -108,7 +108,8 @@ destination raises exposure but is not a transfer and does not trigger
 `profile` is `standard` or `citizen`; `custodians` (operator policy only)
 names the engineers who answer for the software; `static_leads` is `review`
 or `block`; `profile_exceptions` (operator policy only, citizen profile
-only) relaxes named citizen rules on purpose, with a warning each.
+only) relaxes the profile on purpose, one warned entry at a time: rule
+actions, `require.<key>: false`, `max_exposure`, or `static_leads`.
 
 Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
 
@@ -125,10 +126,11 @@ Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
 
 `--profile citizen` on the command line, or `"profile": "citizen"` in the
 operator policy, applies the profile after the operator's ordinary
-overrides, tighten-only, so a baseline policy cannot weaken it. Only
-`profile_exceptions` relax a citizen rule, and repository tightening comes
-last. Under the citizen profile, governance leads come from a scan that
-ignores repository scan config and inline pragmas.
+overrides, tighten-only, so a baseline policy cannot weaken it (each
+override is warned). Only `profile_exceptions` relax the profile, and
+repository tightening comes last. Under the citizen profile, governance
+leads also come from a scan that ignores repository scan config and inline
+pragmas, so the repository can add leads but not remove them.
 
 The effective policy and its SHA-256 (`policy.hash`) are embedded in every
 passport, together with each source.

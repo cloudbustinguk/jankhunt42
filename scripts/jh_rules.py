@@ -552,12 +552,12 @@ RULES: List[Rule] = [
           r"--dangerously[-]bypass[-]approvals[-]and[-]sandbox\b",
           # The tool must be the command word (not a package name such as
           # gemini-sdk), and the flag must belong to the same command.
-          r"(?:^|[\s;&|(\"'`/])codex(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yolo\b",
-          r"(?:^|[\s;&|(\"'`/])gemini(?:-cli)?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--yolo\b|-y\b|--approval[-]mode[= ]+['\"]?yolo\b)",
+          r"(?:^|[\s;&|(\"'`/${])codex(?:\.exe|\.cmd)?\}?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yolo\b",
+          r"(?:^|[\s;&|(\"'`/${])gemini(?:-cli)?(?:\.exe|\.cmd)?\}?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--yolo\b|-y\b|--approval[-]mode[= ]+['\"]?yolo\b)",
           r"--trust[-]all[-]tools\b",
-          r"(?:^|[\s;&|(\"'`/])copilot(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--allow[-]all[-]tools\b",
-          r"(?:^|[\s;&|(\"'`/])aider(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yes[-]always\b",
-          r"(?:^|[\s;&|(\"'`/])cursor[-]agent(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--force|-f)\b",
+          r"(?:^|[\s;&|(\"'`/${])copilot(?:\.exe|\.cmd)?\}?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--allow[-]all[-]tools\b",
+          r"(?:^|[\s;&|(\"'`/${])aider(?:\.exe|\.cmd)?\}?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yes[-]always\b",
+          r"(?:^|[\s;&|(\"'`/${])cursor[-]agent(?:\.exe|\.cmd)?\}?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--force|-f)\b",
       )),
     R("JH703", "Agent approvals disabled in workspace config", "critical", "agent",
       "A committed workspace setting lets an AI agent act without asking, for everyone who opens the repository; prompt injection then needs no click.",

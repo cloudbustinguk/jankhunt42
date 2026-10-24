@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
@@ -107,21 +107,9 @@ def _probe_root(paths: Sequence[str]) -> str:
     return str(_Path.cwd().resolve())
 
 
-def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
-    t0 = time.time()
-    cfg = jh_config.load_config_for_root(
-        _probe_root(args.paths),
-        explicit_path=getattr(args, "config", None),
-        disabled=getattr(args, "no_config", False),
-    )
-    jh_config.emit_warnings(cfg)
-    excludes = list(args.exclude or ()) + cfg.ignore_globs
-    root, files = discover_files(
-        args.paths,
-        excludes=excludes,
-        max_files=args.max_files,
-        max_bytes=args.max_file_bytes,
-    )
+def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
+                  spinner: Optional[Spinner] = None) -> Tuple[Any, List[Any], int]:
+    root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes)
     if spinner:
         spinner.update("reading %d files…" % len(files))
     sources = []
@@ -134,6 +122,25 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None) -> Tup
             sources.append(sf)
         if spinner and idx % 17 == 0:
             spinner.update("reading %d/%d  %s" % (idx, len(files), os.path.basename(str(path))))
+    return root, sources, skipped
+
+
+def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
+             preloaded: Optional[Tuple[Any, List[Any], int]] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
+    """Scan with repository config applied. `preloaded` is (root, sources,
+    skipped) already discovered with the config's ignore globs applied."""
+    t0 = time.time()
+    cfg = jh_config.load_config_for_root(
+        _probe_root(args.paths),
+        explicit_path=getattr(args, "config", None),
+        disabled=getattr(args, "no_config", False),
+    )
+    jh_config.emit_warnings(cfg)
+    if preloaded is not None:
+        root, sources, skipped = preloaded
+    else:
+        root, sources, skipped = _load_sources(args.paths, list(args.exclude or ()) + cfg.ignore_globs,
+                                               args.max_files, args.max_file_bytes, spinner)
     if spinner:
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
     opts = ScanOptions(
@@ -789,13 +796,24 @@ def cmd_passport(args: argparse.Namespace) -> int:
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
         min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
         since=None, config=args.config, no_config=args.no_config, calibrate=False)
-    _, result, _meta = run_scan(scan_args)
-    # Governance leads (P-SEC-001, P-AGT-001) as the citizen profile sees
-    # them: the shipped rules, without repository scan config, inline
-    # pragmas, or calibration, so the repository cannot opt out.
-    gov_args = argparse.Namespace(**dict(vars(scan_args), config=None, no_config=True, min_severity="major",
-                                         rule=sorted(jh_passport.GOVERNANCE_RULES), honor_suppressions=False))
-    _, gov_result, _ = run_scan(gov_args)
+    # Files are read once (twice only when repository config adds ignore
+    # globs): the main scan sees the repository's tuning; the governance
+    # scans run in memory on the governance rules only.
+    scan_cfg = jh_config.load_config_for_root(root, explicit_path=args.config, disabled=args.no_config)
+    operator_excludes = list(args.exclude or ())
+    raw_pre = _load_sources([root], operator_excludes, args.max_files, args.max_file_bytes)
+    main_pre = (_load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
+                if scan_cfg.ignore_globs else raw_pre)
+    _, result, _meta = run_scan(scan_args, preloaded=main_pre)
+    # Governance leads (P-SEC-001, P-AGT-001). Raw: the shipped rules with no
+    # repository ignore globs, config, or inline pragmas, which is what the
+    # citizen profile uses so the repository cannot opt out. Tuned: the same
+    # rules as the repository configures them, to count what tuning hides.
+    gov_rules = set(jh_passport.GOVERNANCE_RULES)
+    raw = scan_sources(raw_pre[1], ScanOptions(min_severity="major", rule_ids=gov_rules, max_per_file_rule=1000,
+                                               max_per_rule=100000, honor_suppressions=False)).findings
+    tuned = jh_config.apply_to_findings(scan_cfg, scan_sources(main_pre[1], ScanOptions(
+        min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000, max_per_rule=100000)).findings)
     counts: Dict[str, int] = {}
     for f in result.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -830,7 +848,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
         config_path=os.path.basename(cfg.source) if cfg.source else None,
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
-        findings=result.findings, governance_findings=gov_result.findings, profile=args.profile)
+        findings=result.findings, governance_findings=raw, governance_tuned=tuned, profile=args.profile)
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")

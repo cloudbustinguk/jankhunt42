@@ -29,16 +29,20 @@ fields are unchanged.
   unpinned), and `P-OPS-001` (tests and CI observed). Under the standard
   profile `P-SEC-001` and `P-AGT-001` give `review`, and the others apply only
   when a policy requires them.
-- Custodians: `custodians` in an operator policy let `P-CUS-001` pass;
-  `passport.custodians` in the repository is recorded as a declaration and
-  on its own gives `review`. Under the citizen profile an acceptance record
-  must be signed by a custodian named in the operator policy.
-- The citizen profile is applied after the operator's ordinary actions, so
-  a baseline policy cannot weaken it; `profile_exceptions` in the operator
-  policy relax named citizen rules on purpose, each with a warning.
-  Governance leads come from a scan that ignores repository scan config and
-  inline pragmas, and `governance.repository_suppressed_leads` reports what
-  repository tuning would have hidden.
+- Custodians: only `custodians` in an operator policy satisfy `P-CUS-001`;
+  `passport.custodians` in the repository is recorded as a declaration but
+  does not count. Under the citizen profile an acceptance record must be
+  signed by a custodian named in the operator policy.
+- The citizen profile is applied after the operator's ordinary settings, so
+  a baseline policy cannot weaken it (each override is warned);
+  `profile_exceptions` in the operator policy relax rule actions,
+  requirements, `max_exposure`, or `static_leads` on purpose, each with a
+  warning. Governance leads also come from a scan that ignores repository
+  scan config and inline pragmas (the repository can add leads, never
+  remove them), and `governance.repository_suppressed_leads` reports
+  exactly what repository tuning would hide.
+- Shareable (`--redact`) maps and passports withhold warnings, which can
+  quote declaration patterns, object names, and paths.
 - A `governance` section in passports: profile, custodians, the leads behind
   `P-SEC-001`/`P-AGT-001`, the AI agent tooling found in the map, and a
   plain-language brief, which citizen passports lead with in the terminal,

@@ -1485,7 +1485,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
             try:
                 adapt_mcp(ctx, item)
                 counts["mcp"] = counts.get("mcp", 0) + 1
-            except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+            except (RecursionError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
                 ctx.warnings.append("MCP server definitions in %s could not be read (%s)"
                                     % (safe_text(item.rel), type(exc).__name__))
     _resolve_env(ctx)
