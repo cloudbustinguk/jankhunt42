@@ -4,6 +4,20 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Terminal views use the HTML views' colours: the scan report palette for
+  `scan`, the explorer palette for `map` and `passport`. Exact in truecolor
+  terminals (`COLORTERM=truecolor`), nearest xterm-256 otherwise, and the
+  explorer's light palette when `COLORFGBG` reports a light background. The
+  wordmark and banner border use the cyan-to-magenta brand gradient (it used
+  to step through unrelated 256-colour hues), blast-radius path edges are
+  magenta, grades are coloured badges, severities and hot-spot bars match the
+  scan report, and `declared` evidence is violet. Text is unchanged.
+- README shows screenshots of the three HTML views.
+
 ## [2.2.0] — 2026-10-24
 
 Opt-in attestation verification by native tools. Offline stays the default;

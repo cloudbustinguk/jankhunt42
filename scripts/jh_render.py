@@ -25,14 +25,90 @@ def color_enabled(no_color: bool = False) -> bool:
     return sys.stdout.isatty()
 
 
+# Terminal palettes mirror the HTML views: "scan" is the scan report's
+# palette (jh_html), "explorer" the map/passport explorer's (jh_explorer),
+# and "light" the explorer's light theme for light-background terminals.
+PALETTES: Dict[str, Dict[str, str]] = {
+    "scan": {"red": "#ff4d6d", "green": "#35d39a", "yellow": "#ffd166", "orange": "#ff9f43",
+             "blue": "#5fafff", "cyan": "#4fd1ff", "magenta": "#ff4fd8", "violet": "#7c5cff",
+             "grey": "#98a2b8"},
+    "explorer": {"red": "#ff6b6b", "green": "#62d98b", "yellow": "#ffd166", "orange": "#ff9f43",
+                 "blue": "#5fafff", "cyan": "#38e1ff", "magenta": "#ff4fd8", "violet": "#a78bfa",
+                 "grey": "#8a93a8"},
+    "light": {"red": "#c0392b", "green": "#1d8a4b", "yellow": "#946200", "orange": "#b35900",
+              "blue": "#1f5fbf", "cyan": "#0077a8", "magenta": "#b0128f", "violet": "#6941c6",
+              "grey": "#5a6275"},
+}
+SEV_COLOR = {"blocker": "#c77dff", "critical": "#ff4d6d", "error": "#ff4d6d", "major": "#ff9f43",
+             "warning": "#ff9f43", "minor": "#ffd166", "info": "#8b95ab", "debug": "#6b7280",
+             "trace": "#4b5563"}
+GRADE_COLOR = {"A": "#35d39a", "B": "#4fd1ff", "C": "#ffd166", "D": "#ff9f43", "E": "#ff4d6d"}
+CHIP_TEXT = "#07090e"
+
+
+def truecolor() -> bool:
+    return os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
+
+
+def light_background() -> bool:
+    """COLORFGBG ("fg;bg", set by many terminals) with a light background
+    colour (7 or 15) selects the light palette."""
+    bg = os.environ.get("COLORFGBG", "").split(";")[-1]
+    return bg in ("7", "15")
+
+
+def _hex(value: str) -> Tuple[int, int, int]:
+    value = value.lstrip("#")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
+def _xterm256(rgb: Tuple[int, int, int]) -> int:
+    """Nearest xterm-256 colour (6x6x6 cube or grey ramp) for an RGB triple."""
+    levels = (0, 95, 135, 175, 215, 255)
+
+    def nearest(v: int) -> int:
+        return min(range(6), key=lambda i: abs(levels[i] - v))
+
+    r, g, b = (nearest(v) for v in rgb)
+    cube = (levels[r], levels[g], levels[b])
+    grey_i = max(0, min(23, int(round((sum(rgb) / 3 - 8) / 10))))
+    grey = 8 + grey_i * 10
+
+    def dist(c: Tuple[int, int, int]) -> int:
+        return sum((x - y) ** 2 for x, y in zip(c, rgb))
+
+    # Low-saturation colours (the muted text greys) go to the neutral ramp;
+    # the nearest cube entry would tint them teal.
+    if max(rgb) - min(rgb) < 40 or dist((grey, grey, grey)) < dist(cube):
+        return 232 + grey_i
+    return 16 + 36 * r + 6 * g + b
+
+
 @dataclass
 class Colors:
     on: bool = True
+    palette: str = "scan"
+
+    def __post_init__(self) -> None:
+        self.true = truecolor()
+        self.pal = PALETTES["light" if light_background() else self.palette]
 
     def _c(self, text: str, code: str) -> str:
         if not self.on:
             return text
         return "\x1b[%sm%s\x1b[0m" % (code, text)
+
+    def _sgr(self, rgb: Tuple[int, int, int], layer: int = 38) -> str:
+        if self.true:
+            return "%d;2;%d;%d;%d" % (layer, rgb[0], rgb[1], rgb[2])
+        return "%d;5;%d" % (layer, _xterm256(rgb))
+
+    def rgb(self, text: str, color: str) -> str:
+        return self._c(text, self._sgr(_hex(color)))
+
+    def badge(self, text: str, color: str) -> str:
+        """Dark text on a coloured background, like the HTML pills."""
+        return self._c(text, self._sgr(_hex(color), 48) + ";" + self._sgr(_hex(CHIP_TEXT)) + ";1")
 
     def bold(self, text: str) -> str:
         return self._c(text, "1")
@@ -44,52 +120,49 @@ class Colors:
         return self._c(text, "3")
 
     def red(self, text: str) -> str:
-        return self._c(text, "38;5;203")
+        return self.rgb(text, self.pal["red"])
 
     def green(self, text: str) -> str:
-        return self._c(text, "38;5;114")
+        return self.rgb(text, self.pal["green"])
 
     def yellow(self, text: str) -> str:
-        return self._c(text, "38;5;221")
+        return self.rgb(text, self.pal["yellow"])
+
+    def orange(self, text: str) -> str:
+        return self.rgb(text, self.pal["orange"])
 
     def blue(self, text: str) -> str:
-        return self._c(text, "38;5;75")
+        return self.rgb(text, self.pal["blue"])
 
     def cyan(self, text: str) -> str:
-        return self._c(text, "38;5;51")
+        return self.rgb(text, self.pal["cyan"])
 
     def magenta(self, text: str) -> str:
-        return self._c(text, "38;5;201")
+        return self.rgb(text, self.pal["magenta"])
+
+    def violet(self, text: str) -> str:
+        return self.rgb(text, self.pal["violet"])
 
     def grey(self, text: str) -> str:
-        return self._c(text, "38;5;245")
+        return self.rgb(text, self.pal["grey"])
+
+    def tone(self, name: str, text: str) -> str:
+        return self.rgb(text, self.pal.get(name, self.pal["grey"]))
 
     def chip(self, severity: str) -> str:
-        styles = {
-            "blocker": "48;5;93;97",
-            "critical": "48;5;196;97",
-            "error": "48;5;160;97",
-            "major": "48;5;208;30",
-            "warning": "48;5;214;30",
-            "minor": "48;5;220;30",
-            "info": "48;5;240;252",
-            "debug": "48;5;238;252",
-            "trace": "48;5;236;252",
-        }
-        code = styles.get(severity, "48;5;240;252")
         label = " %s " % SEV_LABEL.get(severity, severity.upper())
-        return self._c(label, code + ";1") if self.on else "[%s]" % severity.upper()
+        if not self.on:
+            return "[%s]" % severity.upper()
+        return self.badge(label, SEV_COLOR.get(severity, SEV_COLOR["info"]))
+
+    def grade(self, grade: str, pad: bool = True) -> str:
+        """A grade letter in its HTML badge colour."""
+        color = GRADE_COLOR.get(grade, SEV_COLOR["info"])
+        return self.badge(" %s " % grade, color) if pad else self.bold(self.rgb(grade, color))
 
     def sev(self, severity: str, text: str, strong: bool = False) -> str:
-        """Color text by severity, optionally in bold."""
-        painter = {
-            "blocker": self.magenta,
-            "critical": self.red,
-            "major": self.yellow,
-            "minor": self.cyan,
-            "info": self.grey,
-        }.get(severity, self.grey)
-        painted = painter(text)
+        """Color text by severity (the scan report's severity colours), optionally in bold."""
+        painted = self.rgb(text, SEV_COLOR.get(severity, SEV_COLOR["info"]))
         return self.bold(painted) if strong else painted
 
     def confidence(self, confidence: str, text: str) -> str:
@@ -97,9 +170,12 @@ class Colors:
             confidence, self.grey)
         return self.bold(painter(text))
 
-    def gradient(self, text: str, start: int = 51, end: int = 201) -> str:
+    def gradient(self, text: str, start: str = "cyan", end: str = "magenta") -> str:
+        """Blend each visible character from one palette colour to another in
+        RGB (the HTML brand gradient), not by stepping 256-colour indexes."""
         if not self.on:
             return text
+        a, b = _hex(self.pal.get(start, start)), _hex(self.pal.get(end, end))
         out = []
         n = max(1, len(text) - 1)
         for i, ch in enumerate(text):
@@ -107,10 +183,23 @@ class Colors:
                 out.append(ch)
                 continue
             mix = i / n
-            code = int(start + (end - start) * mix)
-            out.append("\x1b[38;5;%dm%s" % (code, ch))
+            rgb = tuple(int(round(x + (y - x) * mix)) for x, y in zip(a, b))
+            out.append("\x1b[%sm%s" % (self._sgr(rgb), ch))  # type: ignore[arg-type]
         out.append("\x1b[0m")
         return "".join(out)
+
+
+def score_tone(score: int) -> str:
+    """Palette name for a 0-100 Jank Score, banded like the HTML score ring."""
+    if score <= 5:
+        return "green"
+    if score <= 15:
+        return "cyan"
+    if score <= 35:
+        return "yellow"
+    if score <= 60:
+        return "orange"
+    return "red"
 
 
 def _visible(text: str) -> int:
@@ -129,16 +218,13 @@ def _truncate(text: str, width: int) -> str:
 
 
 def _bar(value: int, worst: int, width: int, color: Colors, tone: Optional[str] = None) -> str:
+    """A filled bar: one palette tone, or by default the HTML rank-bar
+    gradient (cyan to violet)."""
     if worst <= 0:
         return ""
     filled = max(1, min(width, int(round(width * value / worst)))) if value else 0
     ch = "█"
-    if tone == "red":
-        colored = color.red(ch * filled)
-    elif tone == "green":
-        colored = color.green(ch * filled)
-    else:
-        colored = color.cyan(ch * filled)
+    colored = color.tone(tone, ch * filled) if tone else color.gradient(ch * filled, "cyan", "violet")
     return colored + color.dim("░" * (width - filled))
 
 
@@ -171,15 +257,23 @@ def _width(default: int = 78) -> int:
     return max(52, min(96, cols - 4))
 
 
-def _boxed(lines: Sequence[str], color: Colors, width: int, accent: str = "cyan") -> List[str]:
-    out = []
-    top = "╭" + "─" * (width - 2) + "╮"
-    bot = "╰" + "─" * (width - 2) + "╯"
+def frame(color: Colors, accent: str, top: str, side: str, bottom: str):
+    """Painters for a box's top edge, left side, right side and bottom edge.
+    accent "gradient" runs the brand gradient across the edges, cyan on the
+    left side and magenta on the right, like the HTML header."""
+    if accent == "gradient":
+        return (color.gradient(top), color.cyan(side), color.magenta(side), color.gradient(bottom))
     painter = getattr(color, accent, color.cyan)
-    out.append(painter(top))
+    return painter(top), painter(side), painter(side), painter(bottom)
+
+
+def _boxed(lines: Sequence[str], color: Colors, width: int, accent: str = "cyan") -> List[str]:
+    top, left, right, bot = frame(color, accent, "╭" + "─" * (width - 2) + "╮", "│",
+                                  "╰" + "─" * (width - 2) + "╯")
+    out = [top]
     for line in lines:
-        out.append(painter("│") + " " + _pad(_truncate(line, width - 4), width - 4) + " " + painter("│"))
-    out.append(painter(bot))
+        out.append(left + " " + _pad(_truncate(line, width - 4), width - 4) + " " + right)
+    out.append(bot)
     return out
 
 
@@ -187,7 +281,7 @@ def banner(subtitle: str, meta: str, color: Colors, width: int) -> List[str]:
     word = "J A N K H U N T 4 2"
     title = "  " + color.gradient(word) + "   " + color.dim("// " + subtitle)
     lines = [title, color.grey(meta)]
-    return _boxed(lines, color, width, "magenta")
+    return _boxed(lines, color, width, "gradient")
 
 
 def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
@@ -397,7 +491,7 @@ def _tty_offenders(findings: Sequence[Finding], width: int, color: "Colors") -> 
             path_col = min(42, width - 24)
             out.append("    %s %s %s" % (
                 _pad(color.bold(_truncate(path, path_col)), path_col),
-                _bar(weight, worst, max(8, width - 56), color, "red"),
+                _bar(weight, worst, max(8, width - 56), color),
                 color.grey("%d finding%s" % (count, "" if count == 1 else "s")),
             ))
         out.append("")

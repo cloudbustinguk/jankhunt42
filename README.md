@@ -33,7 +33,7 @@ jankhunt42 passport .              # can we responsibly ship it?
 jankhunt42 map . --html > map.html # the blast radius explorer, offline
 ```
 
-An interactive terminal gets the rich views. Pipes get clean Markdown. `--json` gives versioned machine output, and `--html` gives one self-contained file.
+An interactive terminal gets the rich views, in the same colours as the HTML views (exact with `COLORTERM=truecolor`, the nearest 256-colour match otherwise, and the light palette when `COLORFGBG` reports a light background). Pipes get clean Markdown, and `NO_COLOR` or `TERM=dumb` turn colour off. `--json` gives versioned machine output, and `--html` gives one self-contained file.
 
 ## Example: the synthetic demo repository
 

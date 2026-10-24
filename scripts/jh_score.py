@@ -305,23 +305,26 @@ def scorecard_markdown(report: ScoreReport, heading: str = "## Jank score") -> s
 def scorecard_tty(report: ScoreReport, color: Any, width: int) -> List[str]:
     """Return colored scorecard lines. `color` is a jh_render.Colors-like object."""
     out: List[str] = []
+    # Tones and grade colours follow the HTML scan report (score ring bands,
+    # grade badges); jh_render.score_tone is the shared banding.
+    from jh_render import score_tone
     gauge_width = max(16, width - 36)
     filled = int(round(gauge_width * report.score / 100.0))
-    tone = "green" if report.score <= 15 else "yellow" if report.score <= 35 else "red"
-    gauge = getattr(color, tone)("█" * filled) + color.dim("░" * (gauge_width - filled))
-    out.append("  %s  %s  %s  %s  %s" % (
+    tone = score_tone(report.score)
+    gauge = color.tone(tone, "█" * filled) + color.dim("░" * (gauge_width - filled))
+    out.append("  %s  %s  %s  %s %s  %s" % (
         color.bold("JANK"), gauge, color.bold("%3d/100" % report.score),
-        getattr(color, tone)("%s · %s" % (report.grade, report.label)),
-        color.grey("policy " + report.policy),
+        color.grade(report.grade), color.bold(color.tone(tone, report.label)),
+        (color.green if report.policy == "pass" else color.red)("policy " + report.policy),
     ))
     bar_width = max(8, width - 48)
     for key in DIMENSIONS:
         d = report.dimensions[key]
         dfill = int(round(bar_width * d.score / 100.0))
-        dtone = "green" if d.score <= 15 else "yellow" if d.score <= 35 else "red"
-        dbar = getattr(color, dtone)("█" * dfill) + color.dim("░" * (bar_width - dfill))
+        dtone = score_tone(d.score)
+        dbar = color.tone(dtone, "█" * dfill) + color.dim("░" * (bar_width - dfill))
         out.append("  %-16s %s  %3d  %s  %s" % (
-            d.label, dbar, d.score, color.bold(d.grade),
+            d.label, dbar, d.score, color.grade(d.grade),
             color.grey("%d finding%s" % (d.findings, "" if d.findings == 1 else "s")),
         ))
     if report.new_code:

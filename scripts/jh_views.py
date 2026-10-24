@@ -13,7 +13,7 @@ import sys
 from typing import List, Optional, Sequence
 
 from jh_core import safe_text
-from jh_render import Colors, _pad, _truncate, _visible
+from jh_render import Colors, _pad, _truncate, _visible, frame, score_tone
 
 
 def want_ascii() -> bool:
@@ -34,34 +34,35 @@ def view_width(columns: Optional[int] = None) -> int:
 
 class Theme:
     def __init__(self, color: bool, ascii_only: bool, width: int):
-        self.c = Colors(color)
+        self.c = Colors(color, "explorer")  # the HTML explorer's palette
         self.ascii = ascii_only
         self.width = width
 
     def box(self, lines: Sequence[str], accent: str = "cyan", title: str = "") -> List[str]:
         w = self.width
         h, v, tl, tr, bl, br = ("-", "|", "+", "+", "+", "+") if self.ascii else ("─", "│", "╭", "╮", "╰", "╯")
-        paint = getattr(self.c, accent, self.c.cyan)
         if title:
             t = " %s " % title
             top = tl + h + t + h * max(0, w - 3 - len(t)) + tr
         else:
             top = tl + h * (w - 2) + tr
-        out = [paint(top)]
+        top_p, left, right, bottom = frame(self.c, accent, top, v, bl + h * (w - 2) + br)
+        out = [top_p]
         for line in lines:
-            out.append(paint(v) + " " + _pad(_truncate(line, w - 4), w - 4) + " " + paint(v))
-        out.append(paint(bl + h * (w - 2) + br))
+            out.append(left + " " + _pad(_truncate(line, w - 4), w - 4) + " " + right)
+        out.append(bottom)
         return out
 
     def banner(self, subtitle: str, meta: str) -> List[str]:
         word = "JANKHUNT42" if self.ascii else "J A N K H U N T 4 2"
         title = "  " + self.c.gradient(word) + "   " + self.c.dim("// " + subtitle)
-        return self.box([title, self.c.grey(safe_text(meta))], "magenta")
+        return self.box([title, self.c.grey(safe_text(meta))], "gradient")
 
     def label(self, state: str) -> str:
         """Evidence states are always spelled out; color is a second channel only."""
-        paint = {"verified": self.c.green, "provider-verified": self.c.green, "supported": self.c.cyan,
-                 "observed": self.c.cyan, "declared": self.c.blue, "inferred": self.c.yellow,
+        paint = {"verified": self.c.green, "provider-verified": self.c.green, "tool-verified": self.c.green,
+                 "supported": self.c.cyan, "observed": self.c.cyan, "declared": self.c.violet,
+                 "inferred": self.c.yellow, "signature-only": self.c.yellow, "failed": self.c.red,
                  "unknown": self.c.grey, "not assessed": self.c.grey, "not-observed": self.c.grey}.get(state, self.c.grey)
         return paint("[%s]" % state)
 
@@ -79,6 +80,30 @@ class Theme:
 
     def arrow(self) -> str:
         return "->" if self.ascii else "→"
+
+
+def paint_edges(lines: Sequence[str], paint, arrow: str) -> List[str]:
+    """Colour each `-[kind/capability, evidence]->` segment of a wrapped path
+    (the HTML explorer draws the blast radius in magenta). Runs after
+    wrapping, so widths are measured on plain text; a segment may span lines."""
+    out: List[str] = []
+    inside = False
+    for ln in lines:
+        chunks, cur, i = [], "", 0
+        while i < len(ln):
+            if not inside and ln.startswith("-[", i):
+                chunks.append((False, cur))
+                cur, inside, i = "-[", True, i + 2
+                continue
+            if inside and ln.startswith("]" + arrow, i):
+                chunks.append((True, cur + "]" + arrow))
+                cur, inside, i = "", False, i + 1 + len(arrow)
+                continue
+            cur += ln[i]
+            i += 1
+        chunks.append((inside, cur))
+        out.append("".join(paint(text) if painted and text.strip() else text for painted, text in chunks))
+    return out
 
 
 def clean(text: object) -> str:
@@ -125,7 +150,7 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     tiers = ass["evidence_tiers"]
     card = [
         t.kv("EXPOSURE", t.level(ass["exposure"]["class"]) + c.grey("  qualitative; a path is a possibility, not proof")),
-        t.kv("evidence coverage", "%s  %s" % (cov["status"], c.grey("(%d/%d files, %d adapters)" % (
+        t.kv("evidence coverage", "%s  %s" % (c.bold(cov["status"]), c.grey("(%d/%d files, %d adapters)" % (
             cov["files_inspected"], cov["files_considered"], len(cov["by_adapter"]))))),
         t.kv("edge evidence", "  ".join("%d %s" % (tiers[k], t.label(k)) for k in ("verified", "supported", "inferred", "unknown"))),
         t.kv("reach", "%d known %s  ·  %d potential  ·  %d unknown-capability" % (
@@ -151,8 +176,9 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
         for ln in _wrap(clean(d["why"]), t.width - 6, "    "):
             out.append("    " + c.grey(ln.strip()) if not ln.startswith("    ") else c.grey(ln))
         ptxt = clean(jh_map.path_text(report, d["principal"], d["path"])).replace("->", t.arrow())
-        for ln in _wrap(ptxt, t.width - 6, "      "):
-            out.append("    " + ln if not ln.startswith("      ") else ln)
+        edge = c.magenta if d["tier"] in ("verified", "supported") else (lambda x: c.dim(c.magenta(x)))
+        wrapped = [("    " + ln if not ln.startswith("      ") else ln) for ln in _wrap(ptxt, t.width - 6, "      ")]
+        out += paint_edges(wrapped, edge, t.arrow())
     out += ["", c.bold("unknowns") + c.grey("  (unknown is not safe, and not dangerous)")]
     for u in report["unknowns"]:
         for i, ln in enumerate(_wrap("%s: %s" % (u["id"], clean(u["detail"])), t.width - 6, "    ")):
@@ -181,7 +207,10 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
     out = t.banner("software passport", "%s  ·  revision %s" % (p["subject"]["name"], (p["subject"]["revision"] or "unknown")[:12]))
     card = [
         t.kv("RELEASE ASSESSMENT", t.level(d["result"]) + "  " + c.grey(d["mode"])),
-        t.kv("technical jank score", "%s/100  grade %s  policy %s" % (a["jank"].get("score"), a["jank"].get("grade"), a["jank"].get("policy"))),
+        t.kv("technical jank score", "%s  grade %s  policy %s" % (
+            c.bold(c.tone(score_tone(int(a["jank"].get("score") or 0)), "%s/100" % a["jank"].get("score"))),
+            c.grade(str(a["jank"].get("grade")), pad=False),
+            (c.green if a["jank"].get("policy") == "pass" else c.red)(str(a["jank"].get("policy"))))),
         t.kv("exposure", t.level(a["exposure"]["class"]) + c.grey("  separate from the Jank Score")),
         t.kv("evidence coverage", "%d/%d areas observed, declared, or inferred" % (cov["evidence_areas_present"], cov["evidence_areas_total"])),
         t.kv("lifecycle", "%s  ·  acceptance %s" % (p["lifecycle"]["state"], t.label("not-supplied" if p["lifecycle"]["acceptance"]["state"] == "not-supplied" else "declared"))),

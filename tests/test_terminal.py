@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 
 import _util
 from _util import run_cli
@@ -111,6 +112,51 @@ class CliModes(unittest.TestCase):
         for cmd in ("map", "passport", "selftest", "scan", "review", "supply-chain", "hunt"):
             self.assertIn(cmd, r.stdout)
             self.assertEqual(run_cli(cmd, "--help").returncode, 0)
+
+
+class Palette(unittest.TestCase):
+    """Terminal colours mirror the HTML views (exact in truecolor, nearest
+    xterm-256 otherwise, the light theme for light terminals)."""
+
+    def colors(self, env, palette="explorer"):
+        import jh_render
+        clean = {k: v for k, v in os.environ.items() if k not in ("COLORTERM", "COLORFGBG")}
+        clean.update(env)
+        with unittest.mock.patch.dict(os.environ, clean, clear=True):
+            return jh_render.Colors(True, palette)
+
+    def test_gradient_blends_cyan_to_magenta_in_rgb(self):
+        c = self.colors({"COLORTERM": "truecolor"})
+        codes = re.findall(r"\x1b\[38;2;(\d+);(\d+);(\d+)m", c.gradient("JANKHUNT42"))
+        self.assertEqual(codes[0], ("56", "225", "255"))    # explorer cyan #38e1ff
+        self.assertEqual(codes[-1], ("255", "79", "216"))   # explorer magenta #ff4fd8
+        reds = [int(r) for r, _, _ in codes]
+        self.assertEqual(reds, sorted(reds))                # monotone blend, not hue jumps
+
+    def test_256_fallback_keeps_greys_neutral(self):
+        import jh_render
+        c = self.colors({})
+        self.assertIn("38;5;", c.grey("x"))
+        n = jh_render._xterm256(jh_render._hex(jh_render.PALETTES["scan"]["grey"]))
+        self.assertGreaterEqual(n, 232)                     # grey ramp, not a teal cube entry
+
+    def test_light_terminal_uses_light_palette(self):
+        c = self.colors({"COLORFGBG": "0;15", "COLORTERM": "truecolor"})
+        self.assertIn("38;2;0;119;168", c.cyan("x"))       # light cyan #0077a8
+
+    def test_states_and_badges(self):
+        with unittest.mock.patch.dict(os.environ, {"COLORTERM": "truecolor"}):
+            t = jh_views.Theme(True, False, 100)
+            self.assertIn("38;2;167;139;250", t.label("declared"))   # violet, as in the explorer
+            self.assertIn("48;2;53;211;154", t.c.grade("A"))         # HTML grade-A badge
+        self.assertEqual(jh_views.Theme(False, False, 100).c.grade("E"), " E ")
+
+    def test_edge_segments_painted_across_wrapped_lines(self):
+        lines = ["    app -[writes/write,", "      observed]→ db -[reads/read, declared]→ x"]
+        out = jh_views.paint_edges(lines, lambda s: "<%s>" % s, "→")
+        self.assertEqual(out[0], "    app <-[writes/write,>")
+        self.assertEqual(out[1], "<      observed]→> db <-[reads/read, declared]→> x")
+        self.assertEqual([ANSI.sub("", x) for x in jh_views.paint_edges(lines, lambda s: s, "→")], lines)
 
 
 class LargeGraphs(unittest.TestCase):
