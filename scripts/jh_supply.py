@@ -182,11 +182,26 @@ def _known(value: Any) -> bool:
     return bool(text) and text.upper() not in ("NOASSERTION", "NONE")
 
 
-# SPDX 2 relationship types that describe how components depend on each other.
+# Relationship types that say how components depend on each other (a link to
+# a manifest file is not one). SPDX 3 scopes build/test dependencies through
+# LifecycleScopedRelationship rather than separate types.
 _SPDX2_DEPENDENCY_TYPES = {"DEPENDS_ON", "DEPENDENCY_OF", "CONTAINS", "CONTAINED_BY", "DYNAMIC_LINK", "STATIC_LINK",
                            "BUILD_DEPENDENCY_OF", "DEV_DEPENDENCY_OF", "OPTIONAL_DEPENDENCY_OF",
                            "PROVIDED_DEPENDENCY_OF", "RUNTIME_DEPENDENCY_OF", "TEST_DEPENDENCY_OF",
-                           "DEPENDENCY_MANIFEST_OF", "PREREQUISITE_FOR", "HAS_PREREQUISITE"}
+                           "PREREQUISITE_FOR", "HAS_PREREQUISITE"}
+_SPDX3_DEPENDENCY_TYPES = {"dependsOn", "contains", "hasDynamicLink", "hasStaticLink", "hasProvidedDependency",
+                           "hasOptionalDependency", "hasOptionalComponent", "hasPrerequisite"}
+
+
+def _split_creators(creators: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """SPDX 2 creators as (authors, tools): Person:/Organization: vs Tool:."""
+    return ([c for c in creators if c.startswith(("Person:", "Organization:"))],
+            [c for c in creators if c.startswith("Tool:")])
+
+
+def _prefer_known(*values: str) -> str:
+    """The first value that states something, else the first non-empty one."""
+    return next((v for v in values if _known(v)), next((v for v in values if v), ""))
 
 
 def _spdx2_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -207,7 +222,7 @@ def _spdx2_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
             "name": _scalar(p.get("name")),
             "version": _scalar(p.get("versionInfo")),
             "supplier": _scalar(p.get("supplier")),
-            "license": _license(p.get("licenseConcluded") or p.get("licenseDeclared")),
+            "license": _prefer_known(_license(p.get("licenseConcluded")), _license(p.get("licenseDeclared"))),
             "purl": purl,
             "cpe": cpe,
             "hashes": sorted({_scalar(c.get("algorithm")) for c in _as_list(p.get("checksums"))
@@ -219,12 +234,12 @@ def _spdx2_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def _spdx2_doc(data: Dict[str, Any]) -> Dict[str, Any]:
     ci = data.get("creationInfo") if isinstance(data.get("creationInfo"), dict) else {}
-    creators = [str(c) for c in _as_list(ci.get("creators"))]
+    authors, tools = _split_creators([str(c) for c in _as_list(ci.get("creators"))])
     rels = [r for r in _as_list(data.get("relationships")) if isinstance(r, dict)]
     return {
         "timestamp": _scalar(ci.get("created")),
-        "authors": [c for c in creators if c.startswith(("Person:", "Organization:"))],
-        "tools": [c for c in creators if c.startswith("Tool:")],
+        "authors": authors,
+        "tools": tools,
         "dependencies": sum(1 for r in rels if str(r.get("relationshipType", "")).upper() in _SPDX2_DEPENDENCY_TYPES),
         "primary": bool(_as_list(data.get("documentDescribes"))) or any(
             str(r.get("relationshipType", "")).upper() == "DESCRIBES" for r in rels),
@@ -244,9 +259,8 @@ def _spdx3_id(node: Dict[str, Any]) -> str:
     return _scalar(node.get("spdxId") or node.get("@id"))
 
 
-def _spdx3_names(graph: List[Dict[str, Any]], refs: Any) -> List[str]:
+def _spdx3_names(by_id: Dict[str, Dict[str, Any]], refs: Any) -> List[str]:
     """Agent or tool references resolved to their names where the graph has them."""
-    by_id = {_spdx3_id(n): n for n in graph}
     out = []
     for ref in _as_list(refs):
         node = by_id.get(ref) if isinstance(ref, str) else (ref if isinstance(ref, dict) else None)
@@ -264,7 +278,9 @@ def _spdx3_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
             target = by_id.get(_scalar(next(iter(_as_list(rel.get("to"))), "")), {})
             expr = _scalar(target.get("simplelicensing_licenseExpression") or target.get("licenseExpression")
                            or target.get("name"))
-            if expr and (rel["relationshipType"] == "hasConcludedLicense" or _scalar(rel.get("from")) not in licenses):
+            # a stated concluded licence wins over a declared one, NOASSERTION never does
+            if _known(expr) and (rel["relationshipType"] == "hasConcludedLicense"
+                                 or _scalar(rel.get("from")) not in licenses):
                 licenses[_scalar(rel.get("from"))] = expr
     packages: List[Dict[str, str]] = []
     for node in graph:
@@ -276,13 +292,13 @@ def _spdx3_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
             (_scalar(i.get("identifier")) for i in ids if str(i.get("externalIdentifierType")) == "packageUrl"), "")
         cpe = next((_scalar(i.get("identifier")) for i in ids
                     if str(i.get("externalIdentifierType")) in ("cpe22", "cpe23")), "")
-        supplier = _spdx3_names(graph, node.get("suppliedBy") or node.get("supplier") or node.get("originatedBy"))
+        supplier = _spdx3_names(by_id, node.get("suppliedBy") or node.get("supplier") or node.get("originatedBy"))
         packages.append({
             "name": _scalar(node.get("name")),
             "version": _scalar(node.get("software_packageVersion") or node.get("packageVersion") or node.get("version")),
             "supplier": ", ".join(supplier),
-            "license": licenses.get(_spdx3_id(node), "") or _license(node.get("licenseConcluded")
-                                                                        or node.get("licenseDeclared")),
+            "license": licenses.get(_spdx3_id(node), "") or _prefer_known(
+                _license(node.get("licenseConcluded")), _license(node.get("licenseDeclared"))),
             "purl": purl,
             "cpe": cpe,
             "hashes": sorted({_scalar(h.get("algorithm")) for h in _as_list(node.get("verifiedUsing"))
@@ -294,6 +310,7 @@ def _spdx3_packages(data: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def _spdx3_doc(data: Dict[str, Any]) -> Dict[str, Any]:
     graph = _spdx3_graph(data)
+    by_id = {_spdx3_id(n): n for n in graph}
     infos = [n for n in graph if _spdx3_type(n) == "CreationInfo"]
     infos += [n.get("creationInfo") for n in graph if isinstance(n.get("creationInfo"), dict)]
     info = infos[0] if infos else {}
@@ -302,11 +319,9 @@ def _spdx3_doc(data: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "timestamp": _scalar(info.get("created")),
         "spec_version": _scalar(info.get("specVersion")),
-        "authors": _spdx3_names(graph, info.get("createdBy")),
-        "tools": _spdx3_names(graph, info.get("createdUsing")),
-        "dependencies": sum(1 for r in rels if str(r.get("relationshipType", "")) in (
-            "dependsOn", "contains", "hasDynamicLink", "hasStaticLink", "hasProvidedDependency",
-            "hasOptionalDependency", "hasDevelopmentDependency", "hasTestDependency", "hasPrerequisite")),
+        "authors": _spdx3_names(by_id, info.get("createdBy")),
+        "tools": _spdx3_names(by_id, info.get("createdUsing")),
+        "dependencies": sum(1 for r in rels if str(r.get("relationshipType", "")) in _SPDX3_DEPENDENCY_TYPES),
         "primary": bool(roots) or any(r.get("relationshipType") == "describes" for r in rels),
         "context": sorted({_scalar(t) for n in graph if _spdx3_type(n) == "software_Sbom"
                            for t in _as_list(n.get("software_sbomType"))}),
@@ -468,13 +483,27 @@ def _cyclonedx_xml(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     deps = _xml_find(root, "dependencies")
     if deps is not None:
         doc["dependencies"] = sum(1 for d in deps.iter() if _xml_tag(d) == "dependency" and len(list(d)))
-    # Like the JSON walker: the primary component first, then every listed
-    # (and nested) component; tool components under metadata are not packages.
-    components = _xml_find(root, "components")
+    # Like the JSON walker: the primary component, then the listed components,
+    # each followed by its own nested <components>. Pedigree ancestors,
+    # descendants and variants are history, and tool components under
+    # metadata are not packages, so neither is walked.
+    def walk(component: Any) -> List[Any]:
+        out_nodes = [component]
+        nested = _xml_find(component, "components")
+        for child in (nested if nested is not None else []):
+            if _xml_tag(child) == "component":
+                out_nodes += walk(child)
+        return out_nodes
+
+    nodes: List[Any] = []
     primary = _xml_find(md, "component") if md is not None else None
-    nodes = ([primary] if primary is not None else []) + list(components.iter() if components is not None else [])
+    if primary is not None:
+        nodes += walk(primary)
+    for child in (_xml_find(root, "components") if _xml_find(root, "components") is not None else []):
+        if _xml_tag(child) == "component":
+            nodes += walk(child)
     for node in nodes:
-        if _xml_tag(node) != "component" or not text_of(node, "name"):
+        if not text_of(node, "name"):
             continue
         licenses = _xml_find(node, "licenses")
         licence = ""
@@ -618,8 +647,7 @@ def parse_sbom(path: str, rel: str, text: str) -> Optional[Dict[str, Any]]:
             "namespace": meta.get("DocumentNamespace"),
             "created": meta.get("Created"),
         }, {"timestamp": meta.get("Created", ""),
-            "authors": [c for c in meta["creators"] if c.startswith(("Person:", "Organization:"))],
-            "tools": [c for c in meta["creators"] if c.startswith("Tool:")],
+            "authors": _split_creators(meta["creators"])[0], "tools": _split_creators(meta["creators"])[1],
             "dependencies": meta["dependencies"], "primary": meta["describes"], "context": []})
     if "<bom" in low and "cyclonedx" in low:
         packages, doc = _cyclonedx_xml(text)

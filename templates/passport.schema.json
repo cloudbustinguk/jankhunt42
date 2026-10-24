@@ -390,16 +390,17 @@
           }
         },
         "human_oversight": {
-          "type": "string"
+          "enum": [
+            "approval bypass observed",
+            "no approval bypass observed",
+            "no agent tooling observed"
+          ]
         },
         "sensitive_data_with_ai": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "principal": {
-                "type": "string"
-              },
               "data": {
                 "type": "string"
               },
@@ -411,12 +412,23 @@
               },
               "ai_service": {
                 "type": "string"
+              },
+              "reached_by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "principals that reach both"
               }
             }
-          }
+          },
+          "description": "one entry per data store and AI service, at most 20; sensitive_data_with_ai_total counts all of them"
         },
         "note": {
           "type": "string"
+        },
+        "sensitive_data_with_ai_total": {
+          "type": "integer"
         }
       }
     },

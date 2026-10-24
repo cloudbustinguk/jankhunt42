@@ -405,6 +405,8 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
             "what data reaches the provider and how it is handled (retention, training use, region) before "
             "release: %s" % (len({p["data"] for p in pairs}), shown),
             [p["data_id"] for p in pairs] + [p["ai_service_id"] for p in pairs])
+    elif graph is None:
+        add("P-AI-001", "pass", "not assessed: without a connectivity map, reach to AI services is unknown")
     else:
         add("P-AI-001", "pass", "no confidential or restricted data store is reachable alongside an external AI service")
     # P-OPS-001

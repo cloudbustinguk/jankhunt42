@@ -101,12 +101,16 @@ def ai_inventory(map_report: Optional[Dict[str, Any]], items: Sequence[jh_map.It
     approvals are weakened, and sensitive data reachable alongside an AI
     service. A static inventory (NIST AI RMF GOVERN 1.6), not proof of use."""
     files = sorted(i.rel for i in items if is_agent_context(i.rel))[:20]
-    oversight = ("approval bypass observed" if any(l["rule"] in ("JH702", "JH703", "JH704") for l in agent_leads)
-                 else "no approval bypass observed")
-    base = {"instruction_files": files, "agent_tool_servers": len(agent.get("servers", [])),
-            "human_oversight": oversight,
+    servers = len(agent.get("servers", []))
+    if any(l["rule"] in ("JH702", "JH703", "JH704") for l in agent_leads):
+        oversight = "approval bypass observed"
+    elif files or servers or agent_leads:
+        oversight = "no approval bypass observed"
+    else:
+        oversight = "no agent tooling observed"
+    base = {"instruction_files": files, "agent_tool_servers": servers, "human_oversight": oversight,
             "note": "a static inventory of what the repository shows; not proof of what runs or of what data moves"}
-    in_use = bool(files or base["agent_tool_servers"] or agent_leads)
+    in_use = bool(files or servers or agent_leads)
     if map_report is None:
         return dict(base, state="not assessed", observed=in_use, model_services=[], sensitive_data_with_ai=[])
     nodes = {n["id"]: n for n in map_report["graph"]["nodes"]}
@@ -120,18 +124,22 @@ def ai_inventory(map_report: Optional[Dict[str, Any]], items: Sequence[jh_map.It
                          "evidence": _TIER[max(tiers)] if tiers else "unknown",
                          "reached_by": sorted({label[p] for p, br in radii.items()
                                                if any(nid in impact for impact in br["impacts"].values())})})
-    pairs = []
+    # One entry per (store, AI service), with every principal that reaches
+    # both. The full list feeds P-AI-001; the passport section shows a cap.
+    pairs: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for p, br in sorted(radii.items()):
         conf = br["impacts"].get("confidentiality", {})
         ai = [n for n in conf if nodes.get(n, {}).get("attributes", {}).get("engine") in AI_ENGINES]
         sensitive = [n for n in conf if nodes.get(n, {}).get("sensitivity") in ("confidential", "restricted")
                      and nodes[n]["kind"] in ("database", "storage", "queue", "api")]
-        for a in sorted(ai):
-            for d in sorted(sensitive):
-                pairs.append({"principal": label[p], "data": label[d], "data_id": d,
-                              "sensitivity": nodes[d]["sensitivity"], "ai_service": label[a], "ai_service_id": a})
+        for a in ai:
+            for d in sensitive:
+                pair = pairs.setdefault((d, a), {"data": label[d], "data_id": d, "sensitivity": nodes[d]["sensitivity"],
+                                                 "ai_service": label[a], "ai_service_id": a, "reached_by": []})
+                pair["reached_by"].append(label[p])
+    ordered = [dict(v, reached_by=sorted(set(v["reached_by"]))) for _, v in sorted(pairs.items())]
     return dict(base, state="assessed", observed=in_use or bool(services), model_services=services[:20],
-                sensitive_data_with_ai=pairs[:20])
+                sensitive_data_with_ai=ordered)
 
 
 _PLAIN = {
@@ -542,9 +550,10 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
                      "it requires a named engineering custodian and blocks on unverified authority"
                      if eff["profile"] == "citizen" else "standard profile"),
         },
-        "ai": {k: v for k, v in ai.items() if k != "sensitive_data_with_ai"} | {
-            "sensitive_data_with_ai": [{k: v for k, v in p.items() if not k.endswith("_id")}
-                                       for p in ai["sensitive_data_with_ai"]]},
+        "ai": dict({k: v for k, v in ai.items() if k != "sensitive_data_with_ai"},
+                   sensitive_data_with_ai=[{k: v for k, v in p.items() if not k.endswith("_id")}
+                                           for p in ai["sensitive_data_with_ai"][:20]],
+                   sensitive_data_with_ai_total=len(ai["sensitive_data_with_ai"])),
         "alignment": jh_frameworks.alignment(r["rule"] for r in decision["reasons"]),
         "provenance": prov,
         "data": data,
@@ -605,9 +614,11 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         for i, sv in enumerate(ai.get("model_services", []), 1):
             sv["label"] = "ai-service-%d" % i
             sv["reached_by"] = ["principal-%d" % j for j, _ in enumerate(sv["reached_by"], 1)]
-        ai["sensitive_data_with_ai"] = [{"principal": "principal", "data": "data-store-%d" % i,
-                                         "sensitivity": p["sensitivity"], "ai_service": "ai-service"}
+        ai["sensitive_data_with_ai"] = [{"data": "data-store-%d" % i, "sensitivity": p["sensitivity"],
+                                         "ai_service": "ai-service",
+                                         "reached_by": ["principal-%d" % j for j, _ in enumerate(p["reached_by"], 1)]}
                                         for i, p in enumerate(ai.get("sensitive_data_with_ai", []), 1)]
+        ai["instruction_files"] = ["instruction-file-%d" % i for i, _ in enumerate(ai.get("instruction_files", []), 1)]
     gov = rep.get("governance")
     if gov:
         gov["custodians"] = ["custodian-%d" % i for i, _ in enumerate(gov["custodians"], 1)]
@@ -680,7 +691,8 @@ def markdown(p: Dict[str, Any]) -> str:
             lines.append("- Agent instruction files: %s" % ", ".join("`%s`" % f for f in ai["instruction_files"][:8]))
         lines.append("- Human oversight of agents: %s" % ai.get("human_oversight", "unknown"))
         for pair in ai.get("sensitive_data_with_ai", [])[:5]:
-            lines.append("- Reachable together: %s (%s) and %s" % (pair["data"], pair["sensitivity"], pair["ai_service"]))
+            lines.append("- Reachable together: %s (%s) and %s, from %s" % (
+                pair["data"], pair["sensitivity"], pair["ai_service"], ", ".join(pair["reached_by"])))
         lines.append("- _%s_" % ai.get("note", ""))
     al = p.get("alignment") or {}
     if ai.get("observed") and al.get("triggered"):

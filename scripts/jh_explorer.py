@@ -359,7 +359,7 @@ const AI=P.ai||{};if(AI.observed){
   if(AI.agent_tool_servers)add(ul2,el('li',null,'AI agent tool servers: '+AI.agent_tool_servers));
   if((AI.instruction_files||[]).length)add(ul2,el('li',null,'agent instruction files: '+AI.instruction_files.join(', ')));
   add(ul2,el('li',null,'human oversight of agents: '+(AI.human_oversight||'unknown')));
-  (AI.sensitive_data_with_ai||[]).forEach(x=>add(ul2,el('li',null,'reachable together: '+x.data+' ('+x.sensitivity+') and '+x.ai_service)));}
+  (AI.sensitive_data_with_ai||[]).forEach(x=>add(ul2,el('li',null,'reachable together: '+x.data+' ('+x.sensitivity+') and '+x.ai_service+', from '+(x.reached_by||[]).join(', '))));}
 const AL=P.alignment||{};if(AI.observed&&Object.keys(AL.triggered||{}).length){s=sec('framework orientation (NIST AI RMF, AIGP)');add(s,el('p',{class:'muted'},AL.note));
   const t5=add(s,el('table',{class:'grid'}));const h5=add(add(t5,el('thead')),el('tr'));['rule','NIST AI RMF','AIGP domain'].forEach(x=>add(h5,el('th',null,x)));
   const tb5=add(t5,el('tbody'));Object.keys(AL.triggered).forEach(r=>{const tr=add(tb5,el('tr'));add(tr,el('td',{class:'mono'},r));

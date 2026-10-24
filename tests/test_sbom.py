@@ -181,6 +181,27 @@ class Formats(unittest.TestCase):
         self.assertEqual((pkg["purl"], pkg["hashes"]), ("pkg:pypi/app@1.0.0", ["SHA256"]))   # not the download URL
         self.assertEqual(sbom["quality"]["minimum_elements"], "met")
 
+    def test_spdx2_noassertion_does_not_hide_a_declared_licence(self):
+        doc = json.loads(json.dumps(SPDX2_FULL))
+        doc["packages"][0]["licenseConcluded"] = "NOASSERTION"
+        doc["packages"][0]["licenseDeclared"] = "BSD-3-Clause"
+        sbom = parse("app.spdx.json", json.dumps(doc))
+        self.assertEqual(sbom["packages"][0]["license"], "BSD-3-Clause")
+        self.assertEqual(sbom["quality"]["components"]["with_license"], 2)
+
+    def test_cyclonedx_xml_walks_like_json(self):
+        xml = CDX_XML.replace(
+            "<purl>pkg:maven/org.example/lib@2.0.0</purl>",
+            "<purl>pkg:maven/org.example/lib@2.0.0</purl>"
+            "<pedigree><ancestors><component type=\"library\"><name>upstream-lib</name><version>1.9.0</version>"
+            "</component></ancestors></pedigree>").replace(
+            "<name>app</name><version>1.0.0</version><purl>pkg:maven/org.example/app@1.0.0</purl>",
+            "<name>app</name><version>1.0.0</version><purl>pkg:maven/org.example/app@1.0.0</purl>"
+            "<components><component type=\"library\"><name>app-core</name><version>1.0.0</version></component>"
+            "</components>")
+        names = [p["name"] for p in parse("bom.xml", xml)["packages"]]
+        self.assertEqual(names, ["app", "app-core", "lib"])        # nested primary yes, pedigree history no
+
     def test_no_components_is_not_met(self):
         q = parse("empty.cdx.json", json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6"}))["quality"]
         self.assertEqual(q["minimum_elements"], "not-met")

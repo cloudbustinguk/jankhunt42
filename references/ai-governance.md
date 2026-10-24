@@ -15,8 +15,8 @@ organisation meets a framework.
 |---|---|---|
 | `ai.model_services` | external AI model services the software can reach (OpenAI, Anthropic, Google AI, Groq, Mistral, and others the map recognizes), each with its evidence tier and the principals that reach it | NIST AI RMF GOVERN 1.6 (inventory), MAP 4.1 and 4.2 (third-party components) |
 | `ai.agent_tool_servers`, `ai.instruction_files` | the coding-agent tooling the repository carries | MAP 4.1, MAP 4.2, MANAGE 3.1 |
-| `ai.human_oversight` | "approval bypass observed" when `JH702`-`JH704` leads exist | GOVERN 3.2, MAP 3.5 |
-| `ai.sensitive_data_with_ai` | confidential or restricted data stores reachable alongside an AI service | MEASURE 2.10 (privacy), GOVERN 6.1 (third-party risk) |
+| `ai.human_oversight` | "approval bypass observed" when `JH702`-`JH704` leads exist, "no approval bypass observed" when agent tooling exists without them, "no agent tooling observed" otherwise | GOVERN 3.2, MAP 3.5 |
+| `ai.sensitive_data_with_ai` | one entry per confidential or restricted data store and AI service reachable together, with the principals that reach both (the first 20; `sensitive_data_with_ai_total` counts all, and `P-AI-001` sees all) | MEASURE 2.10 (privacy), GOVERN 6.1 (third-party risk) |
 | `alignment` | for every policy rule and evidence area: NIST AI RMF subcategories and AIGP domains; for the rules behind this decision, the quoted subcategory text | |
 
 `ai.observed` is true when any model service, agent tool server, agent
@@ -42,7 +42,10 @@ processes data are governance questions someone has to answer and record.
 | citizen | block, until an operator records the decision as a profile exception |
 
 The message names the stores and the service after a colon, so `--redact`
-removes them. The remediation step asks for the provider's terms to be
+removes them; the redacted `ai` section also replaces service, store,
+principal, and instruction-file names with ordinal placeholders. Without a
+connectivity map the rule reports "not assessed" (and the coverage floor
+`P-COV-001` already makes the decision `insufficient-evidence`). The remediation step asks for the provider's terms to be
 checked (retention, training use, region), the decision recorded, or the
 restricted data kept away from AI calls.
 
