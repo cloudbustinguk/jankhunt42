@@ -36,6 +36,27 @@ class Scanner(unittest.TestCase):
         "app/labels.rs": ("let token = \"Bearer Token Env Var\";\n"
                           ".detail(\"env var sk-" + "proj-SYNTHETIC_CREDENTIAL is not set\");\n"),
         "app/real.py": "api_key = \"%s\"\nGITHUB = \"%s\"\n" % (RANDOM, GH_TOKEN),
+        # assembled so this file's own scan sees no assignment
+        "app/still_secret.py": ("tok" + "en = \"prod-api-" + "9f8a7c6b5d4e3f2a\"\n"
+                                "sec" + "ret = \"client_secret_" + "8f3kd92mfa0q\"\n"
+                                "pass" + "word = \"correct horse " + "battery staple\"\n"),
+        "app/evals.php": "<?php\neval(\"$code;\");\n",
+        "app/evals.rb": "eval(\"#{params[:x]}\")\n",
+        "app/evals.py": "x = eval(\"1\"); y = eval(user)\n",
+        "keys/.env": "SESSION_KEY=hunter2hunter2hunter2\n",
+        "cache/.env": "REDIS_URL=redis://:s3cretpass@cache.internal:6379\n",
+        "meta/.env": "AUTHOR=Example Person\nOAUTH_REDIRECT_URL=https://example.invalid/cb\n",
+        "src/apiClient.ts": "export function call(x) {\n  console.log(\"x\")\n  if (x) debugger;\n}\n",
+        "test/widget_test.dart": "void main() {\n  test('adds', () {\n    add(1, 2);\n  });\n}\n",
+        "tests/named.test.js": "const name = \"runs\"\nit(name, () => {\n  run()\n})\n",
+        "tests/loop_test.rs": ("#[test]\nfn plain() -> Result<(), String> {\n    for i in 0..3 {\n        run(i);\n    }\n"
+                               "}\n"),
+        "tests/fixtures_conftest.py": ("import pytest\n\n\n" + "@pytest.fixture(\n    scope=\"module\"\n)\n"
+                                       "def test_data():\n    return 1\n"),
+        "ops/long_call.py": ("resp = requests.get(\n    u,\n    headers={},\n    timeout=3,\n    params={},\n"
+                             "    cookies={},\n    verify=False)\n"
+                             "self.session.verify = False\n"),
+        "tools/extract_multi.py": "import tarfile\nt = tarfile.open(p)\nt.extractall(\n    dest,\n    filter=\"data\",\n)\n",
         "core/src/session_tests.rs": "let secret = \"%s\";\n" % RANDOM,
         "tests/test_client.py": "api_key = \"%s\"\nGITHUB = \"%s\"\n" % (RANDOM, GH_TOKEN),
         # JH401: registry settings, localhost URLs, placeholders and certificates are not credentials
@@ -121,6 +142,29 @@ class Scanner(unittest.TestCase):
     def lines(self, rule, path):
         return sorted(f["line"] for f in self.hits(rule, path))
 
+    def test_real_secrets_with_words_are_still_secrets(self):
+        self.assertEqual([(f["line"], f["severity"]) for f in self.hits("JH101", "app/still_secret.py")],
+                         [(1, "critical"), (2, "critical"), (3, "critical")])
+
+    def test_exec_per_call(self):
+        for path in ("app/evals.php", "app/evals.rb", "app/evals.py"):
+            self.assertEqual(len(self.hits("JH102", path)), 1, path)
+
+    def test_env_key_names(self):
+        self.assertEqual(len(self.hits("JH401", "keys/.env")), 1)
+        self.assertEqual(len(self.hits("JH401", "cache/.env")), 1)
+        self.assertEqual(self.hits("JH401", "meta/.env"), [])
+
+    def test_review_round_two(self):
+        self.assertEqual(self.lines("JH204", "src/apiClient.ts"), [2, 3])
+        self.assertEqual(self.lines("JH502", "test/widget_test.dart"), [2])
+        self.assertEqual(self.lines("JH502", "tests/named.test.js"), [2])
+        self.assertEqual([f["message"] for f in self.hits("JH502", "tests/loop_test.rs")],
+                         ["Test 'plain' contains no assertion."])
+        self.assertEqual(self.hits("JH502", "tests/fixtures_conftest.py"), [])
+        self.assertEqual(self.lines("JH105", "ops/long_call.py"), [7, 8])
+        self.assertEqual(self.hits("JH119", "tools/extract_multi.py"), [])
+
     def test_secrets(self):
         self.assertEqual(self.hits("JH101", "app/settings.py"), [])
         self.assertEqual(self.hits("JH101", "app/labels.rs"), [])
@@ -182,6 +226,10 @@ class YamlReader(unittest.TestCase):
         self.assertEqual(docs[0]["jobs"]["done"]["needs"], ["build", "test"])
         self.assertEqual(docs[0]["jobs"]["done"]["steps"][0]["run"], "if [ -f x ]; then\necho [\nfi")
 
+    def test_apostrophes_inside_plain_scalars(self):
+        self.assertEqual(jh_yaml.load_all("labels: [don't-merge, wip]\na: {b: it's}\nc: it's fine # note\n"),
+                         [{"labels": ["don't-merge", "wip"], "a": {"b": "it's"}, "c": "it's fine"}])
+
     def test_a_scalar_document(self):
         self.assertEqual(jh_yaml.load_all("Initial Commit\n"), ["Initial Commit"])
 
@@ -202,6 +250,9 @@ class MapCoverage(unittest.TestCase):
         "chart/Chart.yaml": "apiVersion: v2\nname: app\nversion: 0.1.0\n",
         "chart/templates/deployment.yaml": ("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n"
                                             "  name: {{ .Release.Name }}\n{{- if .Values.enabled }}\nspec: {}\n{{- end }}\n"),
+        "argo/templates/workflow.yaml": ("apiVersion: argoproj.io/v1alpha1\nkind: WorkflowTemplate\nmetadata:\n"
+                                         "  name: build\nspec:\n  arguments:\n    parameters:\n"
+                                         "    - name: msg\n      value: \"{{inputs.parameters.msg}}\"\n"),
         "web/lib/providers.ts": "import { customProvider, gateway } from \"ai\";\nexport const m = gateway.languageModel(id);\n",
         "web/lib/grok.ts": "import { xai } from \"@ai-sdk/xai\";\n",
         "svc/Program.cs": "var builder = WebApplication.CreateBuilder(args);\nbuilder.AddAzureOpenAIClient(\"openai\");\n",

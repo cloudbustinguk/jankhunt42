@@ -42,7 +42,8 @@ full coverage. No rule was removed, and JSON and SARIF fields are unchanged.
   `+`. Arithmetic inside SQL text, `?` placeholders, GraphQL builders and URL
   query names are not dynamic SQL.
 - `JH105` reports `verify=False` only on HTTP clients (requests, httpx,
-  sessions, clients), not on a function's own `verify` flag.
+  sessions, clients), not on a function's own `verify` flag. It finds the
+  enclosing call across lines, and also reports `session.verify = False`.
 - `JH112` is limited to Python's `random` and JavaScript's `Math.random`.
 - `JH119` accepts tarfile's `data` and `tar` extraction filters. `JH120` no
   longer reports `zipfile`, which strips absolute paths and `..` itself.

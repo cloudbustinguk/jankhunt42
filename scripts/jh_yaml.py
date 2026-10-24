@@ -32,15 +32,21 @@ _COMMENT_RE = re.compile(r"(^|\s)#.*$")
 _BLOCK_INDICATOR_RE = re.compile(r"(?:^|:\s+|^-\s+)[|>][-+0-9]*$")
 
 
+def _opens_quote(text: str, i: int) -> bool:
+    """A quote starts a quoted scalar only where a scalar starts; the
+    apostrophe in `don't` is part of a plain scalar."""
+    return i == 0 or text[i - 1] in " \t[{,:"
+
+
 def _flow_depth(text: str) -> int:
     """Open flow brackets ([ and {) outside quotes."""
     depth, quote = 0, ""
-    for ch in text:
+    for i, ch in enumerate(text):
         if quote:
             if ch == quote:
                 quote = ""
             continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"') and _opens_quote(text, i):
             quote = ch
         elif ch in "[{":
             depth += 1
@@ -69,7 +75,7 @@ def _strip_comment(line: str) -> str:
             if ch == quote:
                 quote = ""
             continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"') and _opens_quote(line, i):
             quote = ch
         elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
             break
@@ -111,13 +117,13 @@ def _scalar(text: str) -> Any:
 
 def _split_flow(text: str) -> List[str]:
     parts, depth, quote, cur = [], 0, "", []
-    for ch in text:
+    for i, ch in enumerate(text):
         if quote:
             cur.append(ch)
             if ch == quote:
                 quote = ""
             continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"') and _opens_quote(text, i):
             quote = ch
         elif ch in "[{":
             depth += 1

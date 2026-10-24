@@ -495,7 +495,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 if cand in table:
                     fam = table[cand]
                     break
-            if lang != "python" and not fam and mod.startswith("@aws-sdk/") and mod not in table:
+            if lang != "python" and not fam and mod.startswith("@aws-sdk/"):
                 fam = ("external", "aws", "")
             if fam:
                 families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
@@ -1425,6 +1425,11 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+# Go-template actions as Helm writes them ({{ .Values.x }}, {{- include ... }},
+# {{ if }}/{{ range }}/{{ end }}); not Argo's {{inputs.x}} or Actions' ${{ }}.
+_HELM_SYNTAX_RE = re.compile(r"(?<!\$)\{\{-?\s*(?:\.|include\b|if\b|else\b|range\b|end\b|define\b|template\b|with\b|toYaml\b|tpl\b)")
+
+
 def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     low = rel.lower()
     base = os.path.basename(low)
@@ -1442,7 +1447,7 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     if low.endswith(".tf"):
         return "terraform", None
     if low.endswith((".yml", ".yaml")):
-        if "{{" in text and re.search(r"(^|/)(templates|charts)/", low):
+        if re.search(r"(^|/)(templates|charts)/", low) and _HELM_SYNTAX_RE.search(text):
             return "template", None              # Helm/Go templates are YAML only once rendered
         if "/.github/workflows/" in "/" + low:
             kind = "actions"
@@ -1453,6 +1458,8 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
         try:
             docs = jh_yaml.load_all(text)
         except jh_yaml.YamlError as exc:
+            if "{{" in text.replace("${{", "") and re.search(r"(^|/)(templates|charts)/", low):
+                return "template", None
             return "yaml-error:" + str(exc)[:80], None
         if kind == "yaml" and any(isinstance(d, dict) and "kind" in d and "apiVersion" in d for d in docs):
             kind = "k8s"

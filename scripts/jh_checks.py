@@ -445,9 +445,19 @@ _FAKE_VALUES = re.compile(
 )
 # Key names that hold credentials, and values that are credentials whatever
 # their key: a URL with a password, or a long high-variety token.
-_SECRET_KEY_NAME = re.compile(r"(?i)(secret|passw|pwd|token|api[_-]?key|private|credential|auth|dsn|"
-                              r"conn(?:ection)?[_-]?str|access[_-]?key|signing|salt|sas)")
-_URL_PASSWORD = re.compile(r"://[^/\s:@]+:([^@/\s]+)@")
+_SECRET_KEY_WORDS = {"secret", "secrets", "password", "passwd", "pwd", "pass", "token", "tokens", "credential",
+                     "credentials", "dsn", "salt", "sas", "apikey", "auth", "signing", "private"}
+_URL_PASSWORD = re.compile(r"://[^/\s:@]*:([^@/\s]+)@")
+
+
+def _secret_key_name(key: str) -> bool:
+    """SESSION_KEY, STRIPE_SECRET, DB_PASSWORD, AUTH_TOKEN; not AUTHOR or OAUTH_REDIRECT_URL."""
+    parts = [p for p in re.split(r"[_.\-]|(?<=[a-z])(?=[A-Z])", key) if p]
+    low = [p.lower() for p in parts]
+    if any(p in _SECRET_KEY_WORDS for p in low) or (low and low[-1] in ("key", "keys")):
+        return True
+    joined = "_".join(low)
+    return bool(re.search(r"(api|access|private|secret|signing|encryption|master)_?key|conn(ection)?_?str", joined))
 
 
 def _looks_secret_value(value: str, key: str = "") -> bool:
@@ -457,7 +467,7 @@ def _looks_secret_value(value: str, key: str = "") -> bool:
     m = _URL_PASSWORD.search(v)
     if m:
         return not _FAKE_VALUES.match(m.group(1))
-    if key and _SECRET_KEY_NAME.search(key):
+    if key and _secret_key_name(key):
         return True
     # no telling key: only a long token with letters and digits counts
     return len(v) >= 24 and bool(re.search(r"[A-Za-z]", v)) and bool(re.search(r"\d", v)) and " " not in v \
@@ -1473,12 +1483,15 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
         for start, end, name, _async in funcs:
             if not name.startswith("test"):
                 continue
-            decorators = []
-            k = start - 1
-            while k >= 0 and sf.code[k].strip().startswith("@"):
-                decorators.append(sf.code[k].strip())
-                k -= 1
-            if any(re.match(r"@(?:pytest\.)?fixture\b", d) for d in decorators):
+            # the decorator block above the def, including decorators whose
+            # arguments span several lines
+            above = []
+            for k in range(start - 1, max(-1, start - 13), -1):
+                s = sf.code[k].strip()
+                if not s or re.match(r"(?:async\s+)?def\s|class\s", s):
+                    break
+                above.append(s)
+            if any(re.match(r"@(?:pytest\.)?fixture\b", s) for s in above):
                 continue
             body = "\n".join(sf.code[start:end + 1])
             if _PY_ASSERT_RE.search(body) or (calls and calls.search(body)):
@@ -1494,7 +1507,7 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
 
     if sf.lang == "rust":
         return _rust_assertion_free(sf, rule)
-    if sf.lang not in ("js", "ts", "vue", "svelte"):
+    if sf.lang in _NOT_CODE:
         return out
     lines = sf.code
     for i, line in enumerate(lines):
@@ -1515,7 +1528,11 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
-_JS_TEST_CALL_RE = re.compile(r"(?<![\w.$:#])(?:it|test)(?:\.(?:only|concurrent|skip|fails|each\s*\([^)]*\)))?\s*\(\s*[\"'`]")
+_NOT_CODE = {"markdown", "text", "yaml", "json", "toml", "ini", "html", "xml", "css", "hcl", "docker", "sql"}
+# test("title", ...) / it(name, ...) / test.only(`...`); a string or a name
+# followed by a comma, so not regex.test(x), #[tokio::test(...)], or prose
+_JS_TEST_CALL_RE = re.compile(r"(?<![\w.$:#])(?:it|test)(?:\.(?:only|concurrent|skip|fails|each\s*\([^)]*\)))?\s*\("
+                              r"\s*(?:[\"'`]|[A-Za-z_$][\w$.]*\s*,)")
 # expect/assert/should, helpers named for them (verifyInput, assertVisible),
 # chai/should chains, ava's t.is/t.true, snapshots
 _JS_ASSERT_RE = re.compile(r"\b(?:expect|assert|should)\b|\b(?:expect|assert|verify|check|should)[A-Z_]\w*\s*\(|"
@@ -1541,9 +1558,9 @@ def _rust_assertion_free(sf: SourceFile, rule: Rule) -> List[Finding]:
         end, opened = _brace_blocks(sf, j, max_lines=400)
         body = "\n".join(lines[j:end + 1])
         inner = [l.strip() for l in lines[j + 1:end] if l.strip()]
-        if re.search(r"->\s*(?:[\w:]+::)?Result\b", lines[j]) and inner and not inner[-1].endswith(";") \
-                and inner[-1] not in ("Ok(())", "Ok(())}"):
-            continue                    # the returned Result is the assertion
+        if re.search(r"->\s*(?:[\w:]+::)?Result\b", lines[j]) and inner and inner[-1].endswith((")", ".await")) \
+                and not inner[-1].startswith("Ok("):
+            continue                    # the returned Result of a call is the assertion
         if opened and not _RUST_ASSERT_RE.search(body):
             name = re.search(r"\bfn\s+(\w+)", lines[j]).group(1)
             out.append(make_finding(rule, sf, j + 1, end_line=end + 1,
@@ -1614,8 +1631,16 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
             # tarfile's "data"/"tar" extraction filters (Python 3.12+, backported)
             # refuse absolute paths and members outside the destination; the
             # filter is a string, so read the line with its strings intact
-            text = sf.nocomment[i] if i < len(sf.nocomment) else line
-            hit = ".extractall(" in line and not re.search(r"(?i)zip", line) and not re.search(
+            call = []
+            if ".extractall(" in line:
+                depth = 0
+                for k in range(i, min(i + 12, len(sf.code))):
+                    call.append(sf.nocomment[k] if k < len(sf.nocomment) else sf.code[k])
+                    depth += sf.code[k].count("(") - sf.code[k].count(")")
+                    if depth <= 0:
+                        break
+            text = "\n".join(call)
+            hit = bool(call) and not re.search(r"(?i)zip", line) and not re.search(
                 r"\bfilter\s*=\s*(?:[\"'](?:data|tar)[\"']|tarfile\.(?:data|tar)_filter)", text)
         else:
             # zipfile strips absolute paths and ".." components itself, so only
@@ -1629,9 +1654,57 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
-_HTTP_CLIENT_RE = re.compile(r"\b(?:requests|httpx|aiohttp|urllib3|session|sess|client|http)\s*\.\s*\w+\s*\(|"
-                             r"\b(?:Session|Client|AsyncClient|PoolManager|ClientSession)\s*\(")
+_HTTP_CALLEE_RE = re.compile(r"(?:^|[.\s=(])(?:(?:requests|httpx|aiohttp|urllib3)\.\w+|"
+                             r"\w*(?:session|sess|client|http)\w*\.\w+|"
+                             r"(?:Session|Client|AsyncClient|PoolManager|ClientSession)|"
+                             r"\w+\.(?:get|post|put|patch|delete|head|options|request|send|stream))$", re.IGNORECASE)
 _TLS_PATTERNS: Dict[str, List[re.Pattern]] = {}
+
+
+def _enclosing_callee(lines: Sequence[str], i: int, col: int) -> Optional[str]:
+    """The callee of the call whose arguments contain lines[i][col], by
+    matching parentheses backwards (up to 40 lines); None outside any call."""
+    depth = 0
+    for k in range(i, max(-1, i - 40), -1):
+        text = lines[k][:col] if k == i else lines[k]
+        for pos in range(len(text) - 1, -1, -1):
+            ch = text[pos]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                if depth == 0:
+                    m = re.search(r"[\w.]+$", text[:pos].rstrip())
+                    return m.group(0) if m else ""
+                depth -= 1
+    return None
+
+
+_EXEC_LITERAL_RE = re.compile(r"(?:eval|exec)\s*\(\s*[rbu]?([\"'])([^\"'\n]*)\1\s*[,)]")
+_EXEC_PATTERNS: Dict[str, List[re.Pattern]] = {}
+
+
+@check("dynamic_exec")
+def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH102, per call: eval/exec of one constant string with no
+    interpolation is not data turned into code; any other call on the line is."""
+    pats = _EXEC_PATTERNS.setdefault(rule.id, [re.compile(p) for p in rule.patterns])
+    out: List[Finding] = []
+    for i, line in enumerate(sf.code):
+        raw = sf.nocomment[i] if i < len(sf.nocomment) else line
+        for pat in pats:
+            hit = None
+            for m in pat.finditer(line):
+                lit = _EXEC_LITERAL_RE.match(raw, m.start())
+                if lit and not re.search(r"[$%{}`]|#\{", lit.group(2)):
+                    continue
+                hit = m
+                break
+            if hit:
+                out.append(make_finding(rule, sf, i + 1, column=hit.start() + 1))
+                break
+        if len(out) >= 5:
+            break
+    return out
 
 
 @check("tls_verify_disabled")
@@ -1646,8 +1719,12 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
             if not m:
                 continue
             if "verify" in pat.pattern:
-                window = "\n".join(sf.code[max(0, i - 5):i + 1])
-                if not _HTTP_CLIENT_RE.search(window):
+                callee = _enclosing_callee(sf.code, i, m.start())
+                if callee is None:
+                    # `session.verify = False` is the TLS switch of a client object
+                    if not re.search(r"(?i)\b\w*(?:session|sess|client|http)\w*\.verify\s*=\s*False", line):
+                        break
+                elif not _HTTP_CALLEE_RE.search(callee):
                     break
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
             break
@@ -1657,12 +1734,13 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 
 _SCRIPT_PATH_RE = re.compile(r"(^|/)(scripts?|bin|cli|tools?|examples?|samples?|demos?|migrations?)/|"
-                             r"(^|/)[^/]*(?:migrate|cli|script)[^/]*\.[cm]?[jt]sx?$", re.IGNORECASE)
+                             r"(^|/)(?:[^/]*[-_.])?(?:migrate|migration|cli|script)(?:[-_.][^/]*)?\.[cm]?[jt]sx?$",
+                             re.IGNORECASE)
 _DEBUG_HOOKS = {
     "python": (r"\bpdb\.set_trace\s*\(", r"\bbreakpoint\s*\(\s*\)"),
     "ruby": (r"\bbinding\.pry\b",),
     "php": (r"\bdd\s*\(", r"\bvar_dump\s*\("),
-    "js": (r"^\s*debugger\s*;?\s*$", r"\bconsole\.log\s*\("),
+    "js": (r"(?<![\w.$])debugger\s*(?:;|$)", r"\bconsole\.log\s*\("),
 }
 
 

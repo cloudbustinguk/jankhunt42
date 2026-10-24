@@ -84,8 +84,8 @@ MUTANTS = [
      'def secret_placeholder(match_text: str) -> bool:\n    """True when',
      'def secret_placeholder(match_text: str) -> bool:\n    return True\n    """True when', "test_precision.py"),
     ("M20-tls-context-ignored", "verify=False on an HTTP client is no longer reported", "jh_checks.py",
-     "                if not _HTTP_CLIENT_RE.search(window):\n                    break",
-     "                if True:\n                    break", "test_precision.py"),
+     "                elif not _HTTP_CALLEE_RE.search(callee):\n                    break",
+     "                elif True:\n                    break", "test_precision.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

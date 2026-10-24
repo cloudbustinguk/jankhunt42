@@ -71,9 +71,8 @@ RULES: List[Rule] = [
       "eval/exec-style APIs turn data into code and are a classic remote-code-execution sink.",
       "Replace with a parser, dispatch table, or serialization format; never evaluate untrusted input.",
       confidence="medium", langs=JS + PY + ("php", "ruby", "lua"),
-      patterns=(r"\beval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]"),
-      # a single constant string literal is not data turned into code
-      ignore=r"\b(?:eval|exec)\s*\(\s*[rbu]?([\"'])[^\"'{}$%]*\1\s*[,)]"),
+      check="dynamic_exec",
+      patterns=(r"\beval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
     R("JH103", "Shell command construction", "major", "security",
       "A shell is invoked with a string, so metacharacters in any interpolated value become commands.",
       "Use an argument array with shell disabled, then validate/allowlist values.",
@@ -640,9 +639,11 @@ _IGNORES: Dict[str, re.Pattern] = {}
 _SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])([^\"'\n]+)\1")
 _SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+$|^<[^>]+>$")
 _SECRET_PREFIX_RE = re.compile(r"^(?:sk-(?:proj-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
-_SECRET_TEXT_RE = re.compile(r"^[A-Za-z]+(?: [A-Za-z]+)+$")          # a label like "Bearer Token Env Var"
+# a UI label like "Bearer Token Env Var" (Title Case); lowercase word runs may be passphrases
+_SECRET_TEXT_RE = re.compile(r"^[A-Z][a-z]*(?: [A-Z][a-z]*)+$")
 _SECRET_RUN_RE = re.compile(r"abcdefgh|01234567|12345678|(.)\1{7,}", re.IGNORECASE)
-_SECRET_WORDS_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+$", re.IGNORECASE)
+# letters only: a segment with digits ("prod-api-9f8a7c6b") is token material
+_SECRET_WORDS_RE = re.compile(r"^[a-z]+(?:[-_.][a-z]+)+$", re.IGNORECASE)
 _SECRET_DESCRIPTIVE_RE = re.compile(
     r"(?:^|[-_.])(?:test|testing|mock|fake|dummy|fixture|stub|static|sample|example|placeholder|local|dev|"
     r"synthetic|managed|token|secret|key|password|passwd|pass|credential|creds?|api|apikey|auth|issuer|client)(?=[-_.]|$)",
@@ -654,8 +655,10 @@ def secret_placeholder(match_text: str) -> bool:
     descriptive fixture value rather than credential material."""
     quoted = _SECRET_QUOTED_RE.search(match_text)
     value = quoted.group(2) if quoted else match_text
-    if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value) or _SECRET_TEXT_RE.match(value):
+    if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
         return True
+    if _SECRET_TEXT_RE.match(value):
+        return bool(_SECRET_DESCRIPTIVE_RE.search(value.replace(" ", "-")))
     # descriptive words, also after a provider prefix ("sk-proj-SYNTHETIC_CREDENTIAL")
     tail = _SECRET_PREFIX_RE.sub("", value)
     return any(bool(_SECRET_WORDS_RE.match(v) and _SECRET_DESCRIPTIVE_RE.search(v)) for v in (value, tail))
