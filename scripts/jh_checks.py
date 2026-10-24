@@ -811,15 +811,18 @@ def dependabot_cooldown(sf: SourceFile, rule: Rule) -> List[Finding]:
 # --------------------------------------------------------------------------- what visitors and the internet get
 
 _PUBLIC_PREFIX = r"(?:NEXT_PUBLIC_|VITE_|REACT_APP_|EXPO_PUBLIC_|NUXT_PUBLIC_|GATSBY_|VUE_APP_|PUBLIC_)"
-_SECRET_WORDS = (r"(?:SECRET|PRIVATE_?KEY|SERVICE_?ROLE|SERVICE_?KEY|PASSWORD|PASSWD|ADMIN_?(?:KEY|TOKEN|SECRET)|"
-                 r"MASTER_?KEY|JWT_?SECRET|DATABASE_?URL|DB_?(?:URL|PASSWORD)|POSTGRES(?:QL)?_?URL|MONGO(?:DB)?_?URI|"
-                 r"CONNECTION_?STRING|(?:OPENAI|ANTHROPIC|CLAUDE|GROQ|MISTRAL|COHERE|GEMINI|REPLICATE|HUGGING_?FACE|HF|"
-                 r"TOGETHER|PERPLEXITY|DEEPSEEK|OPENROUTER|ELEVENLABS|XAI|FIREWORKS)_?(?:API_?)?(?:KEY|TOKEN|SECRET)|"
-                 r"STRIPE_?(?:SECRET|SK|RESTRICTED)|SENDGRID_?API_?KEY|RESEND_?API_?KEY|TWILIO_?AUTH_?TOKEN|"
-                 r"AWS_?SECRET|GITHUB_?TOKEN|SLACK_?(?:BOT_?)?TOKEN)")
+# A name is secret when it *ends* in one of these (PASSWORD_MIN_LENGTH and
+# SHOW_PASSWORD_TOGGLE are settings, not secrets).
+_SECRET_WORDS = (r"(?:SECRET(?:_?KEY)?|PRIVATE_?KEY|SERVICE_?ROLE(?:_?KEY)?|SERVICE_?KEY|PASSWORD|PASSWD|"
+                 r"ADMIN_?(?:KEY|TOKEN|SECRET)|MASTER_?KEY|JWT_?SECRET|DATABASE_?URL|DB_?(?:URL|PASSWORD)|"
+                 r"POSTGRES(?:QL)?_?URL|MONGO(?:DB)?_?URI|CONNECTION_?STRING|(?:OPENAI|ANTHROPIC|CLAUDE|GROQ|MISTRAL|"
+                 r"COHERE|GEMINI|REPLICATE|HUGGING_?FACE|HF|TOGETHER|PERPLEXITY|DEEPSEEK|OPENROUTER|ELEVENLABS|XAI|"
+                 r"FIREWORKS)_?(?:API_?)?(?:KEY|TOKEN|SECRET)|STRIPE_?(?:SECRET(?:_?KEY)?|SK|RESTRICTED(?:_?KEY)?)|"
+                 r"SENDGRID_?API_?KEY|RESEND_?API_?KEY|TWILIO_?AUTH_?TOKEN|AWS_?SECRET(?:_?ACCESS_?KEY)?|"
+                 r"GITHUB_?TOKEN|SLACK_?(?:BOT_?)?TOKEN)")
 # Names that are public by design: anon/publishable keys, site keys, DSNs.
 _PUBLIC_BY_DESIGN = re.compile(r"(?:ANON|PUBLISHABLE|PUBLIC_KEY|SITE_?KEY|CLIENT_?ID|DSN|MEASUREMENT_?ID|MAPBOX|MAPS)")
-_PUBLIC_SECRET_NAME = re.compile(r"\b(" + _PUBLIC_PREFIX + r"[A-Z0-9_]*" + _SECRET_WORDS + r"[A-Z0-9_]*)\b")
+_PUBLIC_SECRET_NAME = re.compile(r"\b(" + _PUBLIC_PREFIX + r"(?:[A-Z0-9]+_)*?" + _SECRET_WORDS + r")\b")
 _PUBLIC_NAME_RE = re.compile(r"^\s*(?:export\s+)?(" + _PUBLIC_PREFIX + r"[A-Z0-9_]+)\s*=\s*['\"]?([^'\"\s#]*)")
 _SECRET_VALUE_RE = re.compile(r"^(?:sk-|sk_live_|rk_live_|sk_test_|gh[pousr]_|github_pat_|xox[baprs]-|AKIA|glpat-|"
                               r"npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30})")
@@ -1076,6 +1079,11 @@ _CREDENTIAL_FILE_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aw
 _PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
                             r"|\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|\s*(?:iex|invoke-expression)\b")
 _NET_SEND_RE = re.compile(r"(?i)\b(?:curl|wget|ncat|invoke-webrequest|invoke-restmethod)\b|\bnc\s+-|\bfetch\s*\(")
+# Syntax that actually ships data: an upload flag, a pipe into a network
+# tool, or a file read inlined into the command.
+_SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*@|--data(?:-binary|-raw|-urlencode)?[\s=]+['\"]?@|\s-F\s|--form\b|"
+                           r"--upload-file\b|\s-T\s|--post-file\b|\|\s*(?:curl|wget|nc|ncat)\b|\$\(\s*cat\b|`\s*cat\b|"
+                           r"-InFile\b)")
 
 
 @check("agent_instruction")
@@ -1107,7 +1115,7 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
         if _PIPE_SHELL_RE.search(line):
             add(i + 1, "major", "The file tells the agent to pipe a remote script into a shell, which runs "
                                 "unverified code.")
-        if _CREDENTIAL_FILE_RE.search(line) and _NET_SEND_RE.search(line):
+        if _CREDENTIAL_FILE_RE.search(line) and _NET_SEND_RE.search(line) and _SEND_DATA_RE.search(line):
             add(i + 1, "critical", "The file tells the agent to read a credential file and send it over the network.")
     out = []
     for line_no in sorted(found)[:10]:
@@ -1221,6 +1229,20 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
     if data is None:
         return []
     out: List[Finding] = []
+    if posix.endswith("devcontainer.json"):
+        # initializeCommand runs on the host, outside the container, whenever
+        # the repository is (re)opened in a container; in-container hooks are
+        # ordinary setup and are not flagged.
+        command = data.get("initializeCommand")
+        if isinstance(command, dict):
+            command = "; ".join(str(v) for v in command.values())
+        elif isinstance(command, list):
+            command = " ".join(str(v) for v in command)
+        if isinstance(command, str) and command.strip():
+            out.append(make_finding(rule, sf, _line_matching(sf, r'"initializeCommand"'), message=(
+                "Dev container initializeCommand runs on the host machine, outside the container, whenever "
+                "someone reopens this repository in a container."), evidence=redact_secrets(trim(command, 160))))
+        return out
     if posix.endswith(".vscode/tasks.json"):
         start = 0
         for task in data.get("tasks") if isinstance(data.get("tasks"), list) else []:

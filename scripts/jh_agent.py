@@ -261,7 +261,7 @@ def mcp_servers(rel: str, text: str) -> List[McpServer]:
         return _codex_servers(text)[:MAX_SERVERS]
     data = loads_jsonc(text)
     if not isinstance(data, dict):
-        raise ValueError("expected a JSON object")
+        return []                                       # valid JSON, but not an MCP client config
     base = os.path.basename(posix)
     container = data.get("mcpServers")
     if container is None and base == "mcp.json":
@@ -289,10 +289,11 @@ _DOCKER_VALUE_FLAGS = {"-e", "--env", "-v", "--volume", "--name", "-p", "--publi
                        "-h", "--hostname", "--memory", "-m", "--cpus", "--device", "--security-opt", "--tmpfs"}
 
 
-def _first_package(args: List[str], value_flags: Tuple[str, ...] = ()) -> Tuple[str, List[str]]:
+def _first_package(args: List[str], value_flags: Tuple[str, ...] = (),
+                   package_flags: Tuple[str, ...] = ("--package", "-p", "--from")) -> Tuple[str, List[str]]:
     rest = list(args)
     for i, a in enumerate(rest):
-        for flag in ("--package", "-p", "--from"):
+        for flag in package_flags:
             if a == flag and i + 1 < len(rest):
                 return rest[i + 1], rest
             if a.startswith(flag + "="):
@@ -351,7 +352,8 @@ def launch_source(command: str, args: List[str]) -> Optional[Dict[str, Any]]:
         return {"launcher": exe, "package": name, "version": version,
                 "pinned": bool(m) and bool(_EXACT_VERSION.match(version))}
     if exe in ("docker", "podman") and rest[:1] == ["run"]:
-        image, _ = _first_package(rest[1:], tuple(_DOCKER_VALUE_FLAGS))
+        # -p is --publish for docker, not a package flag.
+        image, _ = _first_package(rest[1:], tuple(_DOCKER_VALUE_FLAGS), package_flags=())
         if not image:
             return None
         digest = "@sha256:" in image

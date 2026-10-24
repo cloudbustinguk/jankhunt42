@@ -29,14 +29,22 @@ fields are unchanged.
   unpinned), and `P-OPS-001` (tests and CI observed). Under the standard
   profile `P-SEC-001` and `P-AGT-001` give `review`, and the others apply only
   when a policy requires them.
-- Custodians: `custodians` in an operator policy or `passport.custodians` in
-  the repository (a declaration). Under the citizen profile an acceptance
-  record must be signed by a named custodian.
+- Custodians: `custodians` in an operator policy let `P-CUS-001` pass;
+  `passport.custodians` in the repository is recorded as a declaration and
+  on its own gives `review`. Under the citizen profile an acceptance record
+  must be signed by a custodian named in the operator policy.
+- The citizen profile is applied after the operator's ordinary actions, so
+  a baseline policy cannot weaken it; `profile_exceptions` in the operator
+  policy relax named citizen rules on purpose, each with a warning.
+  Governance leads come from a scan that ignores repository scan config and
+  inline pragmas, and `governance.repository_suppressed_leads` reports what
+  repository tuning would have hidden.
 - A `governance` section in passports: profile, custodians, the leads behind
   `P-SEC-001`/`P-AGT-001`, the AI agent tooling found in the map, and a
   plain-language brief, which citizen passports lead with in the terminal,
   Markdown, and HTML views. `--redact` hides server names, credentials,
-  endpoints, and custodians.
+  endpoints, and custodians, and the hostnames, paths, and names that rule
+  messages quote.
 - The map's `mcp` adapter: MCP server definitions for Claude Code, Cursor,
   VS Code, Gemini CLI, Codex, opencode, and Claude Desktop become an AI agent
   principal with edges to each server, the endpoints it is pointed at, and
@@ -52,7 +60,8 @@ fields are unchanged.
     "do not tell the user", pipe-to-shell, credential exfiltration); agent
     CLIs run with approval-bypass flags; approval bypasses committed in VS
     Code, Claude Code, Codex, or Zed settings; folder-open tasks, project
-    hooks, credential helpers, and API base-URL or proxy overrides; MCP
+    hooks, dev container `initializeCommand`, credential helpers, and API
+    base-URL or proxy overrides; MCP
     servers launched from unpinned packages or images, holding literal
     credentials, or reached over plaintext HTTP; issue, PR, or comment text
     fed to AI agent steps in GitHub workflows.

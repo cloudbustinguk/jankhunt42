@@ -142,6 +142,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None) -> Tup
         rule_ids=set(args.rule) if args.rule else None,
         max_per_file_rule=args.max_per_file_rule,
         max_per_rule=args.max_per_rule,
+        honor_suppressions=getattr(args, "honor_suppressions", True),
     )
     result = scan_sources(sources, opts)
     if cfg.source:
@@ -789,6 +790,12 @@ def cmd_passport(args: argparse.Namespace) -> int:
         min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
         since=None, config=args.config, no_config=args.no_config, calibrate=False)
     _, result, _meta = run_scan(scan_args)
+    # Governance leads (P-SEC-001, P-AGT-001) as the citizen profile sees
+    # them: the shipped rules, without repository scan config, inline
+    # pragmas, or calibration, so the repository cannot opt out.
+    gov_args = argparse.Namespace(**dict(vars(scan_args), config=None, no_config=True, min_severity="major",
+                                         rule=sorted(jh_passport.GOVERNANCE_RULES), honor_suppressions=False))
+    _, gov_result, _ = run_scan(gov_args)
     counts: Dict[str, int] = {}
     for f in result.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -823,7 +830,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
         config_path=os.path.basename(cfg.source) if cfg.source else None,
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
-        findings=result.findings, profile=args.profile)
+        findings=result.findings, governance_findings=gov_result.findings, profile=args.profile)
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")

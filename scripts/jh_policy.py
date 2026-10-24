@@ -100,6 +100,12 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
             out["static_leads"] = lead
         else:
             warnings.append("%s policy: ignored static_leads %r" % (label, str(lead)[:20]))
+    exc = raw.get("profile_exceptions")
+    if exc is not None:
+        if isinstance(exc, dict) and all(k in DEFAULT_POLICY["actions"] and v in ACTIONS for k, v in exc.items()):
+            out["profile_exceptions"] = dict(sorted(exc.items()))
+        else:
+            warnings.append("%s policy: ignored profile_exceptions (expected rule ids mapped to actions)" % label)
     cust = raw.get("custodians")
     if cust is not None:
         if isinstance(cust, list) and all(isinstance(c, str) and c.strip() for c in cust):
@@ -154,24 +160,32 @@ def _tighten(eff: Dict[str, Any], rp: Dict[str, Any], warnings: List[str], who: 
         warnings.append("%s policy cannot relax static_leads; ignored" % who)
 
 
-def _apply_profile(eff: Dict[str, Any], profile: str) -> None:
+def _apply_profile(eff: Dict[str, Any], profile: str, warnings: Optional[List[str]] = None,
+                   operator_set: Sequence[str] = ()) -> None:
     if profile == "citizen" and eff["profile"] != "citizen":
+        before = dict(eff["actions"])
         _tighten(eff, CITIZEN_PRESET, [], "profile")
         eff["profile"] = "citizen"
+        for rule in sorted(operator_set):
+            if warnings is not None and eff["actions"][rule] != before[rule]:
+                warnings.append("citizen profile overrides the operator action for %s (%s -> %s); use "
+                                "profile_exceptions to relax a citizen rule deliberately"
+                                % (rule, before[rule], eff["actions"][rule]))
 
 
 def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any]],
           warnings: List[str], profile: Optional[str] = None) -> Dict[str, Any]:
-    """Effective policy: defaults, then the operator's profile and overrides,
-    then repository tightening. `profile` is the operator's command-line
-    choice. Repository input can raise actions, add requirements, lower
+    """Effective policy: defaults, operator overrides, then the citizen
+    profile (tighten-only, so an ordinary operator policy cannot weaken it),
+    then the operator's explicit `profile_exceptions` (each one warned), then
+    repository tightening. `profile` is the operator's command-line choice.
+    Repository input can raise actions, add requirements, lower
     max_exposure, and opt into the citizen profile; it can never relax
     anything."""
     eff = copy.deepcopy(DEFAULT_POLICY)
     eff["custodians"] = []
+    eff["profile_exceptions"] = {}
     op = _validate(operator, "operator", warnings) if operator else {"require": {}, "actions": {}}
-    _apply_profile(eff, profile or "standard")
-    _apply_profile(eff, op.get("profile", "standard"))
     eff["require"].update(op["require"])
     eff["actions"].update(op["actions"])
     if "max_exposure" in op:
@@ -180,6 +194,15 @@ def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any
         eff["static_leads"] = op["static_leads"]
     if op.get("custodians"):
         eff["custodians"] = op["custodians"]
+    if "citizen" in (profile, op.get("profile")):
+        _apply_profile(eff, "citizen", warnings,
+                       [k for k in op["actions"] if k not in op.get("profile_exceptions", {})])
+        for rule, action in op.get("profile_exceptions", {}).items():
+            eff["actions"][rule] = action
+            eff["profile_exceptions"][rule] = action
+            warnings.append("operator exception under the citizen profile: %s is %s" % (rule, action))
+    elif op.get("profile_exceptions"):
+        warnings.append("operator policy: profile_exceptions apply only under the citizen profile; ignored")
     if repository:
         rp = _validate(repository, "repository", warnings)
         if rp.get("profile") == "standard" and eff["profile"] == "citizen":
@@ -188,6 +211,8 @@ def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any
         _tighten(eff, rp, warnings)
         if rp.get("custodians"):
             warnings.append("custodians in a repository policy are declarations; use passport.custodians")
+        if rp.get("profile_exceptions"):
+            warnings.append("repository policy cannot grant profile_exceptions; ignored")
     return eff
 
 
@@ -247,18 +272,24 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     else:
         add("P-OWN-001", "pass", "owner %s" % owner)
     # P-CUS-001
-    custodians = list(policy.get("custodians") or []) or list(facts.get("declared_custodians") or [])
+    named = list(policy.get("custodians") or [])
+    declared = list(facts.get("declared_custodians") or [])
     if not policy["require"]["custodian"]:
         add("P-CUS-001", "pass", "custodian not required by this policy")
-    elif not custodians:
-        outcome = OUTCOMES[max(OUTCOME_RANK["insufficient-evidence"], OUTCOME_RANK[_outcome_for(acts["P-CUS-001"])])]
-        add("P-CUS-001", outcome, "no engineering custodian is named (passport.custodians or the operator policy); "
-                                  "someone with engineering responsibility must answer for this software")
-    elif policy.get("custodians"):
-        add("P-CUS-001", "pass", "custodian(s) named by the operator policy: %s" % ", ".join(custodians))
+    elif named:
+        add("P-CUS-001", "pass", "custodian(s) named by the operator policy: %s" % ", ".join(named))
+    elif declared:
+        # The repository's author could name anyone, including themselves:
+        # a declaration is recorded, but only an operator-named custodian
+        # lets this pass.
+        add("P-CUS-001", "pass" if acts["P-CUS-001"] == "off" else "review",
+            "custodian(s) declared only in the repository: %s; an operator policy must name the custodian before "
+            "this can pass" % ", ".join(declared))
     else:
-        add("P-CUS-001", "pass", "custodian(s) declared in the repository: %s (a declaration; the custodian accepts "
-                                 "accountability by signing the acceptance record)" % ", ".join(custodians))
+        outcome = OUTCOMES[max(OUTCOME_RANK["insufficient-evidence"], OUTCOME_RANK[_outcome_for(acts["P-CUS-001"])])]
+        add("P-CUS-001", outcome, "no engineering custodian is named (custodians in the operator policy, or "
+                                  "passport.custodians as a declaration); someone with engineering responsibility "
+                                  "must answer for this software")
 
     nodes = {n["id"]: n for n in (graph or {}).get("nodes", [])}
     edges = [e for e in (graph or {}).get("edges", []) if e.get("verification") != "refuted"]

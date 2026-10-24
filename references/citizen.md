@@ -20,7 +20,7 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 | Data store left open to the internet | Lovable-generated apps without row-level security (CVE-2025-48757, reported May 2025); the Tea app's open Firebase storage (July 2025) | `JH134`: open Firebase/Firestore rules, disabled row-level security, `USING (true)` write policies, writes granted to `anon`, public buckets |
 | Secret shipped to every visitor | a payments secret key in client-side JavaScript of an AI-built app (reported February 2026) | `JH132`: secrets under `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_` and similar prefixes, including Supabase `service_role` keys; `JH133`: `dangerouslyAllowBrowser` LLM clients |
 | Agent runs without asking | the s1ngularity npm malware (August 2025) ran installed AI CLIs with their permission-bypass flags | `JH702`: agent CLIs started with approvals disabled in scripts, CI, and package scripts |
-| Repository config that disables approvals or runs code on open | VS Code agent auto-approve written by prompt injection (CVE-2025-53773); project settings that rerouted Claude Code's API traffic before the trust prompt (CVE-2026-21852); a trusted Cursor MCP config swapped after approval (MCPoison, CVE-2025-54136) | `JH703`: auto-approve and bypass settings; `JH704`: tasks that run on folder open, project hooks, credential helpers, base-URL and proxy overrides |
+| Repository config that disables approvals or runs code on open | VS Code agent auto-approve written by prompt injection (CVE-2025-53773); project settings that rerouted Claude Code's API traffic before the trust prompt (CVE-2026-21852); a trusted Cursor MCP config swapped after approval (MCPoison, CVE-2025-54136) | `JH703`: auto-approve and bypass settings; `JH704`: tasks that run on folder open, dev container `initializeCommand` (runs on the host), project hooks, credential helpers, base-URL and proxy overrides |
 | Agent tools that change under you | MCP servers started with `npx -y package` with no version | `JH705`: unpinned `npx`/`uvx`/`docker` launchers; `JH706`: credentials written into MCP config; `JH707`: plaintext remote MCP |
 | Instructions the reader cannot see | hidden instructions in agent skills and rules files (2026 skill-ecosystem studies) | `JH701`: hidden HTML comments with commands or credential references, instruction overrides, "do not tell the user", pipe-to-shell, credential exfiltration; `JH131`: Unicode tag characters (decoded for the reviewer), bidi controls, invisible characters |
 | Untrusted text steering a CI agent | PromptPwnd (December 2025): issue and PR text fed to AI steps that hold write tokens | `JH708`: AI agent steps that receive issue, PR, or comment fields under outsider-triggered events |
@@ -46,6 +46,11 @@ principal (`platform: ai-agent`) with:
   the server is given. Only the names are recorded; values are never read
   into the graph.
 
+Each remote server is its own node, so two servers on one host stay
+distinct and the application's own endpoints are never relabelled. A JSON
+config or manifest that also defines `mcpServers` keeps its own adapter and
+gets an extra MCP pass.
+
 Every capability is `unknown` and every edge is `declared`: what a server's
 tools can read, write, or run is decided by the server at runtime, and the
 map says so in the `agent-tool-capability` unknown. Because unknown
@@ -68,7 +73,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | Rule | Standard profile | Citizen profile |
 |---|---|---|
 | `P-OWN-001` owner | review at High exposure | **required**; block without one |
-| `P-CUS-001` engineering custodian | not required | **required**; block without one |
+| `P-CUS-001` engineering custodian | not required | **required**: block without one; a custodian declared only in the repository gives review |
 | `P-DAT-002` authority over production/critical/restricted data | review for static leads | **block** until an operator inventory verifies the grants |
 | `P-DAT-001` sensitive external export | review | **block** |
 | `P-DAT-003` data classification | not required | every reachable data store needs a declared sensitivity (insufficient-evidence) |
@@ -79,24 +84,37 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-EXP-001` exposure ceiling | none | above **Moderate** blocks |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
-usual meaning. An operator can relax a single citizen rule explicitly (for
-example `"actions": {"P-OPS-001": "review"}` when CI lives outside the
-repository); a repository that also declares the profile re-tightens it.
+usual meaning. The profile is applied after the operator's ordinary
+`actions`, so a baseline organization policy cannot silently weaken it
+(a warning names any action the profile raised). To relax a citizen rule
+deliberately, the operator policy lists it under `profile_exceptions`, for
+example `{"profile_exceptions": {"P-OPS-001": "review"}}` when CI lives
+outside the repository; each exception is warned and recorded in the
+policy hash. A repository cannot grant exceptions, and a repository that
+also declares the profile re-tightens them.
+
+Under the citizen profile, the leads behind `P-SEC-001` and `P-AGT-001`
+come from a scan of the shipped rules that ignores repository scan config
+(rule toggles, severity overrides, ignore globs) and inline `jankhunt42:
+ignore` pragmas: the repository cannot opt out of its own governance. The
+passport reports how many leads repository tuning would have hidden
+(`governance.repository_suppressed_leads`), under either profile.
 
 ### The custodian
 
 A custodian is the engineer, or engineering team, who answers for the
 software: they review it, own its incidents, and sign its acceptance.
-Name one in either place:
 
 - `custodians` in the operator policy (outside the repository; reported as
-  `operator-policy`), or
-- `passport.custodians` in `.jankhunt42.json` (reported as `repository`;
-  it is a declaration, so the custodian confirms by signing).
+  `operator-policy`) is what lets `P-CUS-001` pass.
+- `passport.custodians` in `.jankhunt42.json` is recorded as a declaration
+  (`repository`), but the software's author could name anyone, including
+  themselves, so on its own it gives `review`, never `pass`.
 
-Under the citizen profile an acceptance record must be signed by a named
-custodian (`accepted_by` matches one of them), otherwise it is `rejected`.
-A `block` or `insufficient-evidence` decision can never be accepted.
+Under the citizen profile an acceptance record must be signed by a
+custodian named in the operator policy (`accepted_by` matches one of
+them), otherwise it is `rejected`. A `block` or `insufficient-evidence`
+decision can never be accepted.
 
 ### In plain terms
 
@@ -116,7 +134,8 @@ Custodian: not named.
 drove `P-SEC-001` and `P-AGT-001`, and the agent tooling (servers,
 transports, pinning, credential names, what each server reaches).
 `--redact` replaces server names, credentials, endpoints, and custodians
-with ordinals.
+with ordinals, and strips the hostnames, paths, and names that rule
+messages quote.
 
 ## Doctrine for agents working with citizen developers
 

@@ -53,6 +53,7 @@ class McpParsing(unittest.TestCase):
         vs = jh_agent.mcp_servers(".vscode/mcp.json", json.dumps({"servers": {"gh": {"type": "http", "url": "https://x.example"}}}))
         self.assertEqual(vs[0].transport, "http")
         self.assertEqual(jh_agent.mcp_servers("other.json", '{"servers": {}}'), [])
+        self.assertEqual(jh_agent.mcp_servers("mcp.json", "[1, 2]"), [])        # valid JSON, not a client config
         with self.assertRaises(ValueError):
             jh_agent.mcp_servers(".mcp.json", "{not json")
 
@@ -67,6 +68,8 @@ class McpParsing(unittest.TestCase):
         self.assertTrue(L("uvx", ["mcp-server-time==2025.9.25"])["pinned"])
         self.assertFalse(L("uv", ["tool", "run", "mcp-server-git"])["pinned"])
         self.assertFalse(L("docker", ["run", "-i", "--rm", "-e", "TOKEN", "ghcr.io/x/y"])["pinned"])
+        port = L("docker", ["run", "-i", "--rm", "-p", "8080:80", "ghcr.io/x/mcp"])      # -p is --publish here
+        self.assertEqual((port["package"], port["pinned"]), ("ghcr.io/x/mcp", False))
         self.assertFalse(L("docker", ["run", "ghcr.io/x/y:latest"])["pinned"])
         self.assertTrue(L("docker", ["run", "ghcr.io/x/y@sha256:" + "a" * 64])["pinned"])
         self.assertIsNone(L("node", ["build/index.js"]))
@@ -96,8 +99,8 @@ class AgentBlastRadius(unittest.TestCase):
 
     def test_agent_principal_and_servers(self):
         agent = self.edges("AI agent (cursor")
-        self.assertEqual([e[0] for e in agent], ["MCP server github (local)", "MCP server postgres (local)",
-                                                 "https mcp.docs.example.com (MCP docs)"])
+        self.assertEqual([e[0] for e in agent], ["MCP server docs (remote, mcp.docs.example.com)",
+                                                 "MCP server github (local)", "MCP server postgres (local)"])
         self.assertTrue(all(e[1:] == ("calls", "unknown", "declared") for e in agent))
         self.assertFalse(any("off" in lbl for lbl in self.label.values()))
 
@@ -116,6 +119,26 @@ class AgentBlastRadius(unittest.TestCase):
         ids = {u["id"] for u in self.rep["unknowns"]}
         self.assertIn("agent-tool-capability", ids)
         self.assertNotIn("code-to-workload-binding", ids)
+
+    def test_remote_servers_get_their_own_nodes(self):
+        mcp = json.dumps({"mcpServers": {"a": {"url": "https://api.github.com/mcp/a"},
+                                         "b": {"url": "https://api.github.com/mcp/b"}}})
+        rep = build({".mcp.json": mcp, "app/gh.py": 'import requests\nrequests.get("https://api.github.com/repos")\n'})
+        labels = sorted(n["display_label"] for n in rep["graph"]["nodes"])
+        self.assertIn("MCP server a (remote, api.github.com)", labels)
+        self.assertIn("MCP server b (remote, api.github.com)", labels)
+        app_targets = [n for n in rep["graph"]["nodes"] if "api.github.com" in n["display_label"]
+                       and not n["display_label"].startswith("MCP server")]
+        self.assertTrue(app_targets and not any(n["attributes"].get("mcp_server") for n in app_targets))
+
+    def test_config_files_that_also_define_servers_keep_their_adapter(self):
+        appsettings = json.dumps({"ConnectionStrings": {"Ledger": "Server=ledger-sql.prod.internal;Database=ledger;"},
+                                  "mcpServers": {"fs": {"command": "npx", "args": ["-y", "fs-mcp@1.0.0"]}}})
+        rep = build({"appsettings.json": appsettings, "src/app.cs": 'var c = Configuration["ConnectionStrings:Ledger"];\n'})
+        labels = {n["display_label"] for n in rep["graph"]["nodes"]}
+        self.assertIn("MCP server fs (local)", labels)
+        self.assertTrue(any("ledger-sql.prod.internal" in l for l in labels), labels)
+        self.assertEqual(rep["coverage"]["parse_failures"], [])
 
     def test_malformed_config_is_a_coverage_gap(self):
         rep = build({".mcp.json": "{broken", "app/main.py": "import json\n"})
@@ -147,12 +170,27 @@ class Profile(unittest.TestCase):
         self.assertEqual((eff["profile"], eff["static_leads"]), ("citizen", "block"))
         self.assertTrue(any("cannot leave the citizen profile" in w for w in warns))
 
-    def test_operator_may_relax_and_repository_retightens(self):
-        op = {"profile": "citizen", "actions": {"P-OPS-001": "review"}, "custodians": ["@platform"]}
-        eff = jh_policy.merge(op, None, [])
+    def test_ordinary_operator_actions_cannot_weaken_the_profile(self):
+        warns = []
+        eff = jh_policy.merge({"actions": {"P-DAT-002": "review"}}, None, warns, "citizen")
+        self.assertEqual(eff["actions"]["P-DAT-002"], "block")
+        self.assertTrue(any("profile_exceptions" in w for w in warns))
+
+    def test_operator_exceptions_relax_and_repository_retightens(self):
+        warns = []
+        op = {"profile": "citizen", "profile_exceptions": {"P-OPS-001": "review"}, "custodians": ["@platform"]}
+        eff = jh_policy.merge(op, None, warns)
         self.assertEqual((eff["actions"]["P-OPS-001"], eff["custodians"]), ("review", ["@platform"]))
+        self.assertEqual(eff["profile_exceptions"], {"P-OPS-001": "review"})
+        self.assertTrue(any("operator exception" in w for w in warns))
+        again = jh_policy.merge(eff, {"max_exposure": "Low"}, [])            # re-merge keeps the exception
+        self.assertEqual(again["actions"]["P-OPS-001"], "review")
         eff = jh_policy.merge(op, {"profile": "citizen", "actions": {"P-OPS-001": "block"}}, [])
         self.assertEqual(eff["actions"]["P-OPS-001"], "block")
+        warns = []
+        eff = jh_policy.merge(None, {"profile": "citizen", "profile_exceptions": {"P-OPS-001": "off"}}, warns)
+        self.assertEqual(eff["actions"]["P-OPS-001"], "block")
+        self.assertIn("repository policy cannot grant profile_exceptions; ignored", warns)
 
     def test_standard_profile_is_unchanged_without_new_evidence(self):
         eff = jh_policy.merge(None, None, [])
@@ -165,7 +203,7 @@ class Profile(unittest.TestCase):
 
 class CitizenRules(unittest.TestCase):
     def setUp(self):
-        self.eff = jh_policy.merge(None, None, [], "citizen")
+        self.eff = jh_policy.merge({"custodians": ["@eng-lead"]}, None, [], "citizen")
         self.facts = {"files_scanned": 3, "map_files_inspected": 2, "exposure": "Moderate", "owner_state": "observed",
                       "declared_custodians": ["@eng-lead"], "operations": {"tests": "observed", "ci": "observed"},
                       "jank_policy": "pass"}
@@ -184,8 +222,10 @@ class CitizenRules(unittest.TestCase):
         self.assertEqual(self.outcomes(eff=std)[1], {"P-DAT-002": "review"})
 
     def test_custodian(self):
+        bare = jh_policy.merge(None, None, [], "citizen")                       # no operator custodians
         facts = dict(self.facts, declared_custodians=[])
-        self.assertEqual(self.outcomes(facts)[1].get("P-CUS-001"), "block")
+        self.assertEqual(self.outcomes(facts, eff=bare)[1].get("P-CUS-001"), "block")
+        self.assertEqual(self.outcomes(eff=bare)[1].get("P-CUS-001"), "review")  # declared only in the repository
         op = jh_policy.merge({"custodians": ["@platform"]}, None, [], "citizen")
         out = jh_policy.evaluate(op, facts, self.graph)
         cus = [r for r in out["rules"] if r["rule"] == "P-CUS-001"][0]
@@ -256,15 +296,19 @@ class CitizenPassport(unittest.TestCase):
         html = run_cli("passport", self.app, "--profile", "citizen", "--html").stdout
         self.assertIn('"profile": "citizen"', html)
 
-    def test_redaction_hides_agent_tooling_and_custodians(self):
+    def test_redaction_hides_agent_tooling_custodians_and_rule_details(self):
         red = jh_passport.redact(self.p)
         blob = json.dumps(red["governance"])
         for secret_ish in ("postgres", "GITHUB_PERSONAL_ACCESS_TOKEN", "crm-db", "mcp.json"):
             self.assertNotIn(secret_ish, blob)
+        decision = json.dumps(red["assessment"]["decision"])
+        self.assertNotIn("crm-db", decision)                  # P-DAT-003 quoted the host
+        self.assertNotIn(".cursor/mcp.json", decision)        # P-AGT-001 quoted the path
+        self.assertIn("(details redacted)", decision)
 
     def test_acceptance_must_come_from_a_named_custodian(self):
         p = json.loads(json.dumps(self.p))
-        p["governance"].update(custodians=["@eng-lead"], custodian_source="repository")
+        p["governance"].update(custodians=["@eng-lead"], custodian_source="operator-policy")
         p["assessment"]["decision"]["result"] = "pass"
         p["source_revision"] = "abc123"
         record = {"accepted_at": "2026-10-01T00:00:00Z", "decision_accepted": "pass", "subject_revision": "abc123",
@@ -273,7 +317,11 @@ class CitizenPassport(unittest.TestCase):
         self.assertEqual(ok["lifecycle"]["acceptance"]["state"], "declared-by-operator")
         bad = jh_passport.apply_acceptance(json.loads(json.dumps(p)), dict(record, accepted_by="@builder"), True, "a.json")
         self.assertEqual(bad["lifecycle"]["acceptance"]["state"], "rejected")
-        self.assertIn("accepted_by is not a named custodian (citizen profile)", bad["lifecycle"]["acceptance"]["reasons"])
+        reason = "accepted_by is not a custodian named by the operator policy (citizen profile)"
+        self.assertIn(reason, bad["lifecycle"]["acceptance"]["reasons"])
+        p["governance"]["custodian_source"] = "repository"     # the author could have named themselves
+        mine = jh_passport.apply_acceptance(json.loads(json.dumps(p)), dict(record, accepted_by="@eng-lead"), True, "a.json")
+        self.assertEqual(mine["lifecycle"]["acceptance"]["state"], "rejected")
 
     def test_repository_can_declare_the_profile_and_custodian(self):
         cfg = os.path.join(self.app, ".jankhunt42.json")
@@ -285,7 +333,28 @@ class CitizenPassport(unittest.TestCase):
             os.remove(cfg)
         self.assertEqual(p["governance"]["profile"], "citizen")
         self.assertEqual((p["governance"]["custodians"], p["governance"]["custodian_source"]), (["@eng-lead"], "repository"))
-        self.assertNotIn("P-CUS-001", {r["rule"] for r in p["assessment"]["decision"]["reasons"]})
+        cus = {r["rule"]: r["outcome"] for r in p["assessment"]["decision"]["reasons"]}.get("P-CUS-001")
+        self.assertEqual(cus, "review")                       # a repository declaration never passes alone
+
+    def test_repository_cannot_suppress_governance_leads(self):
+        cfg = os.path.join(self.app, ".jankhunt42.json")
+        vs = os.path.join(self.app, ".vscode", "settings.json")
+        os.makedirs(os.path.dirname(vs), exist_ok=True)
+        with open(vs, "w") as fh:
+            fh.write('{\n  "chat.tools.autoApprove": true\n}\n')
+        with open(cfg, "w") as fh:
+            json.dump({"rules": {"JH703": {"enabled": False}, "JH705": {"enabled": False}}}, fh)
+        try:
+            cit = json.loads(run_cli("passport", self.app, "--profile", "citizen", "--json").stdout)
+            std = json.loads(run_cli("passport", self.app, "--json").stdout)
+        finally:
+            os.remove(cfg)
+            shutil.rmtree(os.path.dirname(vs))
+        self.assertEqual(sorted({l["rule"] for l in cit["governance"]["agent_leads"]}), ["JH703", "JH705"])
+        self.assertEqual({r["rule"]: r["outcome"] for r in cit["assessment"]["decision"]["reasons"]}["P-AGT-001"], "block")
+        self.assertEqual(std["governance"]["agent_leads"], [])        # the standard profile honours repository tuning
+        self.assertGreaterEqual(std["governance"]["repository_suppressed_leads"], 2)
+        self.assertTrue(any("does not honour" in w for w in cit["warnings"]))
 
 
 if __name__ == "__main__":

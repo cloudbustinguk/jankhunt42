@@ -140,7 +140,7 @@ DEFAULT_SKIP_DIRS = {
 # Agent and editor workspace directories are walked too: what a coding agent
 # or editor does when it opens the repository is part of the attack surface.
 AGENT_DIRS = {".vscode", ".claude", ".cursor", ".gemini", ".codex", ".amazonq", ".windsurf",
-              ".agents", ".opencode", ".roo", ".kiro", ".clinerules", ".continue", ".zed"}
+              ".agents", ".opencode", ".roo", ".kiro", ".clinerules", ".continue", ".zed", ".devcontainer"}
 ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".azure"} | AGENT_DIRS
 
 # Instruction files that coding agents load into their context.
@@ -245,7 +245,8 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("terraform")
     if is_agent_context(rel):
         kinds.add("agent_context")
-    if any(_ends_with_path(posix, f) for f in AGENT_CONFIG_FILES):
+    if any(_ends_with_path(posix, f) for f in AGENT_CONFIG_FILES) or base == ".devcontainer.json" \
+            or (base == "devcontainer.json" and "/.devcontainer/" in "/" + posix.lower()):
         kinds.add("agent_config")
     if is_mcp_config(rel, text):
         kinds.add("mcp_config")

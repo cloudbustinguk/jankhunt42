@@ -40,6 +40,8 @@ AREAS = ("ownership", "provenance", "data_inventory", "ci", "tests", "observabil
 # Scanner leads that put credentials or data in front of the public.
 EXPOSURE_RULES = {"JH132", "JH133", "JH134"}
 SECRET_RULES = {"JH101", "JH401", "JH415"}
+AGENT_RULES = {"JH70%d" % i for i in range(1, 9)}
+GOVERNANCE_RULES = EXPOSURE_RULES | SECRET_RULES | AGENT_RULES | {"JH131"}
 
 
 def _lead(f: Any) -> Dict[str, Any]:
@@ -349,7 +351,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           passport_cfg: Dict[str, Any], config_path: Optional[str], operator_policy: Optional[Dict[str, Any]],
           operator_policy_label: str, repo_policy_paths: Sequence[str], fail_on: Optional[str],
           warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = (),
-          findings: Sequence[Any] = (), profile: Optional[str] = None) -> Dict[str, Any]:
+          findings: Sequence[Any] = (), governance_findings: Optional[Sequence[Any]] = None,
+          profile: Optional[str] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -366,6 +369,17 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         eff = jh_policy.merge(eff, extra, warns)  # still tighten-only for the repository input
     declared_custodians = _declared_custodians(passport_cfg, warns)
     exposure_leads, agent_leads = governance_leads(findings)
+    suppressed = 0
+    if governance_findings is not None:
+        raw_exposure, raw_agent = governance_leads(governance_findings)
+        seen = {(d["rule"], d["path"], d["line"]) for d in exposure_leads + agent_leads}
+        suppressed = len({(d["rule"], d["path"], d["line"]) for d in raw_exposure + raw_agent} - seen)
+        if eff["profile"] == "citizen":
+            exposure_leads, agent_leads = raw_exposure, raw_agent
+        if suppressed:
+            warns.append("%d public-exposure or agent lead(s) are suppressed or re-rated by repository scan config or "
+                         "inline pragmas%s" % (suppressed, "; the citizen profile does not honour them"
+                                               if eff["profile"] == "citizen" else ""))
     exposure = map_report["assessment"]["exposure"]["class"] if map_report else "Unknown"
     if map_report:
         warns.extend(map_report.get("warnings", []))
@@ -444,6 +458,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
                                  "repository" if declared_custodians else "none"),
             "public_exposure_leads": exposure_leads,
             "agent_leads": agent_leads,
+            "repository_suppressed_leads": suppressed,
             "agent": agent_tooling(map_report),
             "brief": [],
             "note": ("the citizen profile governs software built by people who are not software engineers: "
@@ -470,6 +485,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     return jh_map.finalize_report(report)
 
 
+_DETAILED_RULES = ("P-COV-001", "P-CUS-001", "P-DAT-003", "P-SEC-001", "P-AGT-001")
+
+
 def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     """Shareable passport: no hostnames, labels, owners, or snippets."""
     import json
@@ -483,6 +501,11 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         ev["detail"] = ev["area"]
     for r in rep["assessment"]["decision"]["rules"] + rep["assessment"]["decision"]["reasons"]:
         r["evidence_refs"] = ["ref-%d" % i for i, _ in enumerate(r["evidence_refs"], 1)]
+        if r["rule"] in _DETAILED_RULES and ":" in r["message"]:
+            # These messages quote hostnames, file paths, or people.
+            r["message"] = r["message"].split(":", 1)[0] + " (details redacted)"
+    rep["remediation"] = ["Restore assessment coverage and re-run; partial results are never a pass."
+                          if step.startswith("Restore assessment coverage (") else step for step in rep["remediation"]]
     rep["subject"]["name"] = "application"
     acc = rep["lifecycle"]["acceptance"]
     if acc.get("accepted_by"):
@@ -613,10 +636,11 @@ def apply_acceptance(p: Dict[str, Any], record: Dict[str, Any], trusted: bool, l
     if record.get("expires") is not None and expires is None:
         reasons.append("expires is not ISO-8601")
     gov = p.get("governance") or {}
-    if gov.get("profile") == "citizen" and gov.get("custodian_source") != "none":
+    if gov.get("profile") == "citizen":
         acceptor = str(record.get("accepted_by", "")).strip().lower()
-        if acceptor and acceptor not in {c.lower() for c in gov.get("custodians", [])}:
-            reasons.append("accepted_by is not a named custodian (citizen profile)")
+        named = {c.lower() for c in gov.get("custodians", [])} if gov.get("custodian_source") == "operator-policy" else set()
+        if acceptor not in named:
+            reasons.append("accepted_by is not a custodian named by the operator policy (citizen profile)")
     rejected = bool(reasons)
     if decision in ("block", "insufficient-evidence"):
         reasons.append("a %s decision cannot be accepted" % decision)

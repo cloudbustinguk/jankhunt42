@@ -550,12 +550,14 @@ RULES: List[Rule] = [
           r"--dangerously[-]skip[-]permissions\b",
           r"--permission[-]mode[= ]+['\"]?bypassPermissions\b",
           r"--dangerously[-]bypass[-]approvals[-]and[-]sandbox\b",
-          r"\bcodex\b[^\n]*\s--yolo\b",
-          r"\bgemini\b[^\n]*(?:\s--yolo\b|\s-y\b|--approval[-]mode[= ]+['\"]?yolo\b)",
+          # The tool must be the command word (not a package name such as
+          # gemini-sdk), and the flag must belong to the same command.
+          r"(?:^|[\s;&|(\"'`/])codex(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yolo\b",
+          r"(?:^|[\s;&|(\"'`/])gemini(?:-cli)?(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--yolo\b|-y\b|--approval[-]mode[= ]+['\"]?yolo\b)",
           r"--trust[-]all[-]tools\b",
-          r"\bcopilot\b[^\n]*--allow[-]all[-]tools\b",
-          r"\baider\b[^\n]*--yes[-]always\b",
-          r"\bcursor[-]agent\b[^\n]*\s(?:--force|-f)\b",
+          r"(?:^|[\s;&|(\"'`/])copilot(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--allow[-]all[-]tools\b",
+          r"(?:^|[\s;&|(\"'`/])aider(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?--yes[-]always\b",
+          r"(?:^|[\s;&|(\"'`/])cursor[-]agent(?:@[\w.\-]+)?\s(?:[^\n;&|]*\s)?(?:--force|-f)\b",
       )),
     R("JH703", "Agent approvals disabled in workspace config", "critical", "agent",
       "A committed workspace setting lets an AI agent act without asking, for everyone who opens the repository; prompt injection then needs no click.",
@@ -602,6 +604,9 @@ class ScanOptions:
     max_per_file_rule: int = 5
     max_per_rule: int = 200
     include_cve: bool = False
+    # False for governance scans: repository pragmas cannot hide what the
+    # citizen profile must see.
+    honor_suppressions: bool = True
 
 
 @dataclass
@@ -685,7 +690,8 @@ class _FindingAcceptor:
         self.fired_by_rule[finding.rule] = self.fired_by_rule.get(finding.rule, 0) + 1
         if self.suppressed(finding):
             self.suppressed_by_rule[finding.rule] = self.suppressed_by_rule.get(finding.rule, 0) + 1
-            return False
+            if opts.honor_suppressions:
+                return False
         if not sev_at_least(finding.severity, opts.min_severity):
             return False
         if opts.categories and finding.category not in opts.categories:

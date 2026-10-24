@@ -71,8 +71,9 @@ MUTANTS = [
      "test_agents.py"),
     ("M15-mcp-unpinned-as-pinned", "an MCP server fetched by npx without a version counts as pinned", "jh_agent.py",
      '"pinned": bool(_EXACT_VERSION.match(version))}', '"pinned": True}', "test_citizen.py"),
-    ("M16-any-acceptor", "a citizen-profile acceptance by someone who is not a named custodian is accepted",
-     "jh_passport.py", 'reasons.append("accepted_by is not a named custodian (citizen profile)")', 'pass',
+    ("M16-any-acceptor", "a citizen-profile acceptance by someone the operator did not name as custodian is accepted",
+     "jh_passport.py", 'reasons.append("accepted_by is not a custodian named by the operator policy (citizen profile)")',
+     'pass',
      "test_citizen.py"),
 ]
 

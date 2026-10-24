@@ -69,7 +69,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 |---|---|---|
 | `P-COV-001` (hard floor) | no files scanned; no supported files mapped; map coverage `partial`; analysis truncated | insufficient-evidence |
 | `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`) | review (insufficient-evidence when required) |
-| `P-CUS-001` | `require.custodian` and no custodian named in the operator policy or `passport.custodians` | pass unless required; then block |
+| `P-CUS-001` | `require.custodian` and no custodian named in the operator policy (a `passport.custodians` declaration alone gives review) | pass unless required; then block |
 | `P-DAT-001` | `exports` of sensitive data to an external destination | review; **block** (hard floor) when provider-verified |
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
@@ -107,7 +107,8 @@ destination raises exposure but is not a transfer and does not trigger
 `require` also takes `custodian`, `tests`, `ci`, and `classification`.
 `profile` is `standard` or `citizen`; `custodians` (operator policy only)
 names the engineers who answer for the software; `static_leads` is `review`
-or `block`.
+or `block`; `profile_exceptions` (operator policy only, citizen profile
+only) relaxes named citizen rules on purpose, with a warning each.
 
 Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
 
@@ -122,9 +123,12 @@ Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
    profile (`passport.profile: "citizen"`); any attempt to relax, or to
    leave the citizen profile, is ignored with a warning.
 
-`--profile citizen` on the command line is the operator's choice and is
-applied first; explicit operator actions can then relax single rules, and
-repository tightening comes last. A profile never loosens anything.
+`--profile citizen` on the command line, or `"profile": "citizen"` in the
+operator policy, applies the profile after the operator's ordinary
+overrides, tighten-only, so a baseline policy cannot weaken it. Only
+`profile_exceptions` relax a citizen rule, and repository tightening comes
+last. Under the citizen profile, governance leads come from a scan that
+ignores repository scan config and inline pragmas.
 
 The effective policy and its SHA-256 (`policy.hash`) are embedded in every
 passport, together with each source.
@@ -178,9 +182,9 @@ The record is honoured only if it lives **outside** the scanned repository. A re
 
 - **Accepted:** when the revision, policy hash and decision match, the optional digest and environment match, the working tree is clean, and the record has not expired, `lifecycle.state` becomes `accepted` with `acceptance.state: declared-by-operator`. That is an unsigned operator statement, not a verification.
 - **Invalidated:** any mismatch gives `invalidated`, with named reasons: `revision-changed`, `policy-changed`, `decision-changed`, `digest-changed`, `environment-changed`, `working-tree-dirty`, `expired`.
-- **Rejected:** a `block` or `insufficient-evidence` decision can never be accepted. Under the citizen profile, a record whose `accepted_by` is not a named custodian is rejected too.
+- **Rejected:** a `block` or `insufficient-evidence` decision can never be accepted. Under the citizen profile, a record whose `accepted_by` is not a custodian named in the operator policy is rejected too.
 
-The decision itself never changes because of acceptance. `--redact` hides the acceptor.
+The decision itself never changes because of acceptance. `--redact` hides the acceptor, and replaces the details that rule messages quote (hostnames, file paths, custodian names) with `(details redacted)`.
 
 ## Comparing passports (`--compare`)
 

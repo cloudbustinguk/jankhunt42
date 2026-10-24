@@ -1343,9 +1343,12 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
             ep = G.parse_endpoint(s.url)
             if not ep:
                 continue
-            sid = ctx.endpoint_node(ep, evidence=sev, label_suffix=" (MCP %s)" % s.name[:40])
-            if sid:
-                g.nodes[sid]["attributes"]["mcp_server"] = s.name
+            host = ep.get("host", "")
+            sid = g.add_node("external" if G.trust_domain_for_host(host) == "external" else "api",
+                             ["mcp-remote", item.rel, s.name], "MCP server %s (remote%s)" % (s.name, ", " + host if host else ""),
+                             trust_domain=G.trust_domain_for_host(host) if host else "unknown",
+                             attributes={"platform": "mcp", "transport": s.transport, "mcp_server": s.name,
+                                         **({"host": host} if host else {})}, evidence=sev)
             g.add_edge(agent, sid, "calls", "unknown", "declared", "high", evidence=sev, assumptions=[
                 "a remote MCP server; the tools it exposes and what they reach are decided by its operator"])
         else:
@@ -1381,7 +1384,7 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
         return "test", None
     if low.endswith((".md", ".rst", ".txt")) and not base.startswith("requirements"):
         return "doc", None
-    if is_mcp_config(rel, text):
+    if is_mcp_config(rel):
         return "mcp", None
     if base.startswith("requirements") and base.endswith(".txt") or base in ("pyproject.toml", "pipfile", "package.json") \
             or base.endswith(".csproj"):
@@ -1420,6 +1423,8 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     lang = {"js": "javascript", "ts": "typescript"}.get(lang, lang)
     if lang in ("python", "javascript", "typescript", "csharp"):
         return "code:" + lang, None
+    if is_mcp_config(rel, text):
+        return "mcp", None
     return "unsupported", None
 
 
@@ -1473,6 +1478,16 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
             continue
         counts[adapter] = counts.get(adapter, 0) + 1
         ctx.inspected.append(item.rel)
+        if kind != "mcp" and is_mcp_config(item.rel, item.text):
+            # A config or manifest that also defines MCP servers: its own
+            # adapter already covered it, so an MCP parse problem here is not
+            # a coverage gap.
+            try:
+                adapt_mcp(ctx, item)
+                counts["mcp"] = counts.get("mcp", 0) + 1
+            except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+                ctx.warnings.append("MCP server definitions in %s could not be read (%s)"
+                                    % (safe_text(item.rel), type(exc).__name__))
     _resolve_env(ctx)
     _attach_ops(ctx)
     _resolve_k8s_rbac(ctx)
@@ -1509,7 +1524,6 @@ def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
         out.append({"id": "environment", "count": len(env),
                     "detail": "%d asset(s) have unknown environment (production vs non-production)" % len(env)})
     servers = [n for n in nodes if n["attributes"].get("platform") == "mcp"]
-    servers += [n for n in nodes if n["attributes"].get("mcp_server") and n["kind"] != "workload"]
     if servers:
         out.append({"id": "agent-tool-capability", "count": len(servers),
                     "detail": "%d MCP server(s): what their tools can read, write, or run is decided by each server "

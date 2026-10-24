@@ -285,6 +285,10 @@
             "type": "object"
           }
         },
+        "repository_suppressed_leads": {
+          "type": "integer",
+          "description": "public-exposure or agent leads that repository scan config or inline pragmas would hide; the citizen profile does not honour them"
+        },
         "agent": {
           "type": "object",
           "properties": {
