@@ -116,26 +116,31 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
             base = indent_of(line)
             same = m.group(2)
             if same:
-                out.append(make_finding(rule, sf, i + 1, message="The except block contains only '%s'." % same))
+                if "#" not in sf.raw[i]:          # a comment says why it is ignored
+                    out.append(make_finding(rule, sf, i + 1, message="The except block contains only '%s'." % same))
                 continue
             j = i + 1
             while j < len(sf.code) and not sf.code[j].strip():
                 j += 1
-            if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]):
+            if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]) \
+                    and not any("#" in sf.raw[k] for k in range(i, j + 1)):
                 out.append(make_finding(rule, sf, i + 1, end_line=j + 1,
                                         message="The except block contains only '%s'." % sf.code[j].strip()))
     else:
         for i, line in enumerate(sf.code):
             if not re.search(r"\bcatch\b", line):
                 continue
+            # a block holding only a comment is deliberate (as ESLint's no-empty treats it)
             if re.search(r"\bcatch\b[^{]*\{\s*\}\s*;?\s*$", line):
-                out.append(make_finding(rule, sf, i + 1))
+                if not re.search(r"/\*|//", sf.raw[i].split("catch", 1)[-1]):
+                    out.append(make_finding(rule, sf, i + 1))
                 continue
             if re.search(r"\bcatch\b[^{]*\{\s*$", line):
                 j = i + 1
                 while j < len(sf.code) and not sf.code[j].strip():
                     j += 1
-                if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]):
+                if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]) \
+                        and not any(re.search(r"/\*|//|^\s*\*", sf.raw[k]) for k in range(i + 1, j)):
                     out.append(make_finding(rule, sf, i + 1, end_line=j + 1))
     return out
 
@@ -446,7 +451,8 @@ _FAKE_VALUES = re.compile(
 # Key names that hold credentials, and values that are credentials whatever
 # their key: a URL with a password, or a long high-variety token.
 _SECRET_KEY_WORDS = {"secret", "secrets", "password", "passwd", "pwd", "pass", "token", "tokens", "credential",
-                     "credentials", "dsn", "salt", "sas", "apikey", "auth", "signing", "private"}
+                     "credentials", "dsn", "salt", "sas", "apikey", "auth", "signing", "private", "privatekey",
+                     "dockerconfigjson", "dockercfg"}
 _URL_PASSWORD = re.compile(r"://[^/\s:@]*:([^@/\s]+)@")
 
 
@@ -606,7 +612,10 @@ def k8s_secret_literal(sf: SourceFile, rule: Rule) -> List[Finding]:
             km = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*:\s*(.*)$", line)
             if km:
                 val = km.group(2).strip().strip("'\"")
-                if val and not val.startswith(("|", ">", "{{", "$")) and val not in ("null", "~"):
+                # connection details (type, host, port, database, username) are not secrets
+                if val and not val.startswith(("|", ">", "{{", "$")) and val not in ("null", "~") \
+                        and not _FAKE_VALUES.match(val) \
+                        and (_secret_key_name(km.group(1)) or _looks_secret_value(val, km.group(1))):
                     out.append(make_finding(rule, sf, j + 1,
                                             evidence="%s: ***REDACTED***" % km.group(1),
                                             message="Secret value for key '%s' is committed in plaintext." % km.group(1)))
@@ -1683,6 +1692,41 @@ _EXEC_LITERAL_RE = re.compile(r"(?:eval|exec)\s*\(\s*[rbu]?([\"'])([^\"'\n]*)\1\
 _EXEC_PATTERNS: Dict[str, List[re.Pattern]] = {}
 
 
+_DESERIALIZERS = {
+    "python": (r"\bpickle\.loads?\s*\(", r"\bmarshal\.loads?\s*\(", r"\bdill\.loads?\s*\(",
+               r"\byaml\.load\s*\(", r"\byaml\.unsafe_load\s*\("),
+    "php": (r"\bunserialize\s*\(",),
+    "js": (r"\bunserialize\s*\(",),                 # node-serialize; js-yaml 4's load is the safe loader
+    "jvm": (r"\bnew\s+ObjectInputStream\b", r"\bXMLDecoder\b", r"\.readObject\s*\(\s*\)"),
+    "csharp": (r"\bnew\s+BinaryFormatter\b", r"\bNetDataContractSerializer\b"),
+    "ruby": (r"\bMarshal\.load\s*\(",),
+}
+
+
+@check("unsafe_deserialization")
+def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH106 with each language's own native deserializers."""
+    lang = {"js": "js", "ts": "js", "java": "jvm", "kotlin": "jvm", "scala": "jvm", "groovy": "jvm"}.get(sf.lang, sf.lang)
+    pats = _DESERIALIZERS.get(lang)
+    if not pats:
+        return []
+    out: List[Finding] = []
+    for i, line in enumerate(sf.code):
+        raw = sf.nocomment[i] if i < len(sf.nocomment) else line
+        for p in pats:
+            m = re.search(p, line)           # the call itself, never text inside a string
+            if not m:
+                continue
+            # yaml.load(..., Loader=yaml.SafeLoader) is the safe form
+            if "yaml" in p and re.search(r"\bLoader\s*=\s*(?:yaml\.)?(?:Safe|CSafe|Base)Loader", raw[m.start():]):
+                continue
+            out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
+            break
+        if len(out) >= 5:
+            break
+    return out
+
+
 @check("dynamic_exec")
 def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
     """JH102, per call: eval/exec of one constant string with no
@@ -1693,6 +1737,8 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
         raw = sf.nocomment[i] if i < len(sf.nocomment) else line
         for pat in pats:
             hit = None
+            if "exec" in pat.pattern and sf.lang != "python":
+                continue                    # JS/PHP/Ruby exec() runs a command, not code (JH103's job)
             for m in pat.finditer(line):
                 lit = _EXEC_LITERAL_RE.match(raw, m.start())
                 if lit and not re.search(r"[$%{}`]|#\{", lit.group(2)):
@@ -1700,7 +1746,9 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
                 hit = m
                 break
             if hit:
-                out.append(make_finding(rule, sf, i + 1, column=hit.start() + 1))
+                test = "test" in sf.kinds or is_test_path(sf.rel)
+                out.append(make_finding(rule, sf, i + 1, column=hit.start() + 1,
+                                        severity="minor" if test else None, confidence="low" if test else None))
                 break
         if len(out) >= 5:
             break
@@ -1733,7 +1781,7 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
-_SCRIPT_PATH_RE = re.compile(r"(^|/)(scripts?|bin|cli|tools?|examples?|samples?|demos?|migrations?)/|"
+_SCRIPT_PATH_RE = re.compile(r"(^|/)(scripts?|bin|cli|tools?|examples?|samples?|demos?|migrations?|extra|tasks|hack)/|"
                              r"(^|/)(?:[^/]*[-_.])?(?:migrate|migration|cli|script)(?:[-_.][^/]*)?\.[cm]?[jt]sx?$",
                              re.IGNORECASE)
 _DEBUG_HOOKS = {
@@ -1760,6 +1808,12 @@ def debug_leftover(sf: SourceFile, rule: Rule) -> List[Finding]:
             if "console" in p and cli:
                 continue
             m = re.search(p, line)
+            if m and "console" in p:
+                # one literal message ("listening on 5000") is logging; dumping values is debugging
+                arg = (sf.nocomment[i] if i < len(sf.nocomment) else line)[m.end():].lstrip()
+                lit = re.match(r"""(['"`])(?:\\.|(?!\1).)*\1\s*\)""", arg)
+                if lit:
+                    m = None
             if m:
                 out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
                 break

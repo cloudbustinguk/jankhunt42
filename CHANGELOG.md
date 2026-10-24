@@ -4,6 +4,50 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.4.2] — 2026-10-24
+
+A second, wider field trial and an SBOM trial. Eleven more public repositories
+were added, taking the trial to nineteen: Java, Go, Terraform, Docker
+Compose samples, a Next.js/Stripe/Supabase starter, an Azure OpenAI chat
+sample, a large multi-provider AI chat app, and self-hosted tools. Critical
+findings across them fell from 77 to 18. Real SBOMs were also run through
+`supply-chain`: release SBOMs from syft, goreleaser, trivy and cosign, plus
+GitHub dependency-graph exports. JSON and SARIF fields are unchanged.
+
+### Added
+
+- `supply-chain` reads syft's native JSON. It records no creation time, so
+  it never meets the minimum elements on its own.
+- `supply-chain` reads GitHub's dependency-graph SBOM export; the
+  `{"sbom": ...}` wrapper is removed.
+- The map recognises Azure OpenAI from Python and JavaScript `AzureOpenAI`
+  clients. The `openai` package serves both providers.
+
+### Fixed
+
+- `JH101`:
+  - A PEM header counts only when key material follows it, so `...` and
+    `NOTAREALKEY` placeholders don't.
+  - Private keys in test data are major instead of critical.
+  - These are no longer reported: a provider prefix followed by words, CamelCase
+    text or a short counter (`sk-lf-RandomString…`, `sk-…-secret-0001`); a
+    lowercase name under a non-password key (`token: 'identifier'`); and
+    matches that run across string boundaries into code.
+- `JH102` no longer reports `client.eval(...)` (a method, such as Redis
+  `EVAL`), or `exec(...)` outside Python (there it runs a command). Dynamic
+  code in tests is minor.
+- `JH106` checks each language's own deserializers. JavaScript `yaml.load`
+  is js-yaml 4's safe loader. Python `yaml.load` with a safe `Loader` is
+  accepted. C# `BinaryFormatter` and Ruby `Marshal.load` are added.
+- `JH201` treats a catch or except block that holds only a comment
+  explaining why as deliberate, as ESLint's `no-empty` does.
+- `JH204` treats a single literal message (`console.log("listening on
+  5000")`) as logging; dumping values still counts. Tooling directories
+  (`extra/`, `tasks/`, `hack/`) count as scripts.
+- `JH415` reports only credential keys or secret-looking values in a Secret,
+  not connection details such as type, host, port, database and username.
+- The YAML reader handles plain scalars continued over several lines.
+
 ## [2.4.1] — 2026-10-24
 
 Precision from a field trial. The scanner and the map were run on eight

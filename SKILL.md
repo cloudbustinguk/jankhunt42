@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.4.1"
+  version: "2.4.2"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?

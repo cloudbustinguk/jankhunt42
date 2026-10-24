@@ -381,6 +381,11 @@ CS_PATTERNS = [
     (re.compile(r"\bnew\s+AzureOpenAIClient\b|\bAddAzureOpenAIClient\s*\("), ("external", "azure-openai", "")),
     (re.compile(r"\bnew\s+AnthropicClient\b"), ("external", "anthropic", "api.anthropic.com")),
 ]
+# Client classes that name the provider when the import does not (the
+# `openai` package serves both OpenAI and Azure OpenAI).
+CODE_PATTERNS = [
+    (re.compile(r"\b(?:Async)?AzureOpenAI\s*\("), ("external", "azure-openai", "")),
+]
 PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items()
                    if k not in ("smtplib", "sqlite3") and not k.startswith("google.")},
                 **{k.lower(): v for k, v in JS_IMPORTS.items()},
@@ -499,6 +504,10 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 fam = ("external", "aws", "")
             if fam:
                 families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
+        if lang in ("python", "javascript", "typescript"):
+            for rx, fam in CODE_PATTERNS:
+                if rx.search(line):
+                    families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
         if lang == "csharp":
             for rx, fam in CS_PATTERNS:
                 if rx.search(line):

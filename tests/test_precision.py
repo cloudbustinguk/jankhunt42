@@ -46,7 +46,7 @@ class Scanner(unittest.TestCase):
         "keys/.env": "SESSION_KEY=hunter2hunter2hunter2\n",
         "cache/.env": "REDIS_URL=redis://:s3cretpass@cache.internal:6379\n",
         "meta/.env": "AUTHOR=Example Person\nOAUTH_REDIRECT_URL=https://example.invalid/cb\n",
-        "src/apiClient.ts": "export function call(x) {\n  console.log(\"x\")\n  if (x) debugger;\n}\n",
+        "src/apiClient.ts": "export function call(x) {\n  console.log(x)\n  if (x) debugger;\n}\n",
         "test/widget_test.dart": "void main() {\n  test('adds', () {\n    add(1, 2);\n  });\n}\n",
         "tests/named.test.js": "const name = \"runs\"\nit(name, () => {\n  run()\n})\n",
         "tests/loop_test.rs": ("#[test]\nfn plain() -> Result<(), String> {\n    for i in 0..3 {\n        run(i);\n    }\n"
@@ -56,6 +56,27 @@ class Scanner(unittest.TestCase):
         "ops/long_call.py": ("resp = requests.get(\n    u,\n    headers={},\n    timeout=3,\n    params={},\n"
                              "    cookies={},\n    verify=False)\n"
                              "self.session.verify = False\n"),
+        # round three: a wider field trial
+        "conf/.env.example": "# JWT_PRIVATE_KEY=\"-----BEGIN " + "PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\"\n",
+        "tests/tls/server.key": PEM_KEY,
+        "app/context.js": "const ctx = 'safe context sk-" + "dynamic-file-context'\n",
+        "app/theme.ts": "const rules = [{ tok" + "en: 'identifier', foreground: 'a' }]\nsetSecret(url.split('sec" + "ret=')[1])\n",
+        "app/compose.yml.example": "#  LANGFUSE_SECRET_KEY: sk-" + "lf-RandomStringFromLangfuseWebInterface\n",
+        "app/endpoints.js": "const e = { api" + "Key: 'sk-" + "endpoint-secret-0001' }\n",
+        "app/more.js": "const r = { tok" + "en: 'attribute.name' }\nconst k = { key: 'sk-" + "serper-plaintext-0123' }\n",
+        "app/weak.js": "const pass" + "word = 'sunshineday'\n",
+        "app/cache.js": "await redis.eval(script, 1, key)\nconst { stdout } = await exec(command)\n",
+        "tests/boot.spec.js": "new Function(bootScript)()\n",
+        "app/load.js": "const doc = yaml.load(text)\n",
+        "app/load.py": "import yaml\na = yaml.load(text)\nb = yaml.load(text, Loader=yaml.SafeLoader)\n",
+        "app/Read.java": "class R { Object r(InputStream s) throws Exception { return new ObjectInputStream(s).readObject(); } }\n",
+        "app/handlers.ts": ("try {\n  a()\n} catch {\n  /* non-fatal */\n}\n"
+                            "try { b() } catch {}\n"),
+        "app/handlers.py": "try:\n    a()\nexcept ValueError:\n    pass  # optional dependency\n",
+        "src/server.js": ("console.log('listening on 5000')\nconsole.log(`received ${event.type}`)\n"
+                          "console.log(config)\n"),
+        "deploy/secret.yaml": ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\nstringData:\n  type: \"postgresql\"\n"
+                               "  host: \"db\"\n  port: \"5432\"\n  username: \"app\"\n  password: \"pass\"\n"),
         "tools/extract_multi.py": "import tarfile\nt = tarfile.open(p)\nt.extractall(\n    dest,\n    filter=\"data\",\n)\n",
         "core/src/session_tests.rs": "let secret = \"%s\";\n" % RANDOM,
         "tests/test_client.py": "api_key = \"%s\"\nGITHUB = \"%s\"\n" % (RANDOM, GH_TOKEN),
@@ -165,6 +186,23 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH105", "ops/long_call.py"), [7, 8])
         self.assertEqual(self.hits("JH119", "tools/extract_multi.py"), [])
 
+    def test_field_trial_round_three(self):
+        self.assertEqual(self.hits("JH101", "conf/.env.example"), [])
+        self.assertEqual([f["severity"] for f in self.hits("JH101", "tests/tls/server.key")], ["major"])
+        self.assertEqual(self.hits("JH101", "app/context.js"), [])
+        for path in ("app/theme.ts", "app/compose.yml.example", "app/endpoints.js", "app/more.js"):
+            self.assertEqual(self.hits("JH101", path), [], path)
+        self.assertEqual(len(self.hits("JH101", "app/weak.js")), 1)       # a one-word password is still reported
+        self.assertEqual(self.hits("JH102", "app/cache.js"), [])
+        self.assertEqual([f["severity"] for f in self.hits("JH102", "tests/boot.spec.js")], ["minor"])
+        self.assertEqual(self.hits("JH106", "app/load.js"), [])
+        self.assertEqual(self.lines("JH106", "app/load.py"), [2])
+        self.assertEqual(self.lines("JH106", "app/Read.java"), [1])
+        self.assertEqual(self.lines("JH201", "app/handlers.ts"), [6])
+        self.assertEqual(self.hits("JH201", "app/handlers.py"), [])
+        self.assertEqual(self.lines("JH204", "src/server.js"), [3])
+        self.assertEqual(self.lines("JH415", "deploy/secret.yaml"), [10])
+
     def test_secrets(self):
         self.assertEqual(self.hits("JH101", "app/settings.py"), [])
         self.assertEqual(self.hits("JH101", "app/labels.rs"), [])
@@ -230,6 +268,12 @@ class YamlReader(unittest.TestCase):
         self.assertEqual(jh_yaml.load_all("labels: [don't-merge, wip]\na: {b: it's}\nc: it's fine # note\n"),
                          [{"labels": ["don't-merge", "wip"], "a": {"b": "it's"}, "c": "it's fine"}])
 
+    def test_plain_scalar_over_several_lines(self):
+        docs = jh_yaml.load_all("steps:\n- name: b\n  run:   \n    docker build . --file X\n    --tag y\n"
+                                "- run: echo a\n    continued\n")
+        self.assertEqual(docs[0]["steps"], [{"name": "b", "run": "docker build . --file X --tag y"},
+                                            {"run": "echo a continued"}])
+
     def test_a_scalar_document(self):
         self.assertEqual(jh_yaml.load_all("Initial Commit\n"), ["Initial Commit"])
 
@@ -257,6 +301,7 @@ class MapCoverage(unittest.TestCase):
         "web/lib/grok.ts": "import { xai } from \"@ai-sdk/xai\";\n",
         "svc/Program.cs": "var builder = WebApplication.CreateBuilder(args);\nbuilder.AddAzureOpenAIClient(\"openai\");\n",
         "agent/chain.py": "from langchain_openai import ChatOpenAI\nllm = ChatOpenAI()\n",
+        "chat/backend.py": "from openai import AsyncAzureOpenAI\nclient = AsyncAzureOpenAI(api_version=v)\n",
     }
 
     @classmethod

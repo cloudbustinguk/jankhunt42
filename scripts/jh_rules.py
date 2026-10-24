@@ -72,7 +72,7 @@ RULES: List[Rule] = [
       "Replace with a parser, dispatch table, or serialization format; never evaluate untrusted input.",
       confidence="medium", langs=JS + PY + ("php", "ruby", "lua"),
       check="dynamic_exec",
-      patterns=(r"\beval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
+      patterns=(r"(?<![\w.$])eval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
     R("JH103", "Shell command construction", "major", "security",
       "A shell is invoked with a string, so metacharacters in any interpolated value become commands.",
       "Use an argument array with shell disabled, then validate/allowlist values.",
@@ -122,16 +122,7 @@ RULES: List[Rule] = [
     R("JH106", "Unsafe deserialization", "critical", "security",
       "Native deserializers can execute code or construct arbitrary objects when fed hostile data.",
       "Use a data-only format (JSON) with schema validation; never unpickle/unmarshal untrusted bytes.",
-      confidence="high", langs=PY + JS + JVM + CLIKE + ("ruby", "php"),
-      patterns=(
-          r"\bpickle\.loads?\s*\(",
-          r"\bmarshal\.loads?\s*\(",
-          r"\byaml\.load\s*\(",
-          r"\bunserialize\s*\(",
-          r"\bObjectInputStream\b",
-          r"\.readObject\s*\(",
-      ),
-      ignore=r"(?i)(SafeLoader|safe_load|trusted|test|fixture)"),
+      confidence="high", langs=PY + JS + JVM + ("csharp", "ruby", "php"), check="unsafe_deserialization"),
     R("JH107", "Weak cryptography", "major", "security",
       "MD5/SHA-1/DES/RC4/ECB are broken or unsuitable for security-sensitive use.",
       "Use SHA-256+ for digests, bcrypt/argon2/scrypt for passwords, AES-GCM for encryption.",
@@ -638,12 +629,14 @@ _IGNORES: Dict[str, re.Pattern] = {}
 # on public repositories, where these were nearly all of JH101's hits.
 _SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])([^\"'\n]+)\1")
 _SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+$|^<[^>]+>$")
-_SECRET_PREFIX_RE = re.compile(r"^(?:sk-(?:proj-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
+_SECRET_PREFIX_RE = re.compile(r"^(?:sk-(?:proj-|lf-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
 # a UI label like "Bearer Token Env Var" (Title Case); lowercase word runs may be passphrases
 _SECRET_TEXT_RE = re.compile(r"^[A-Z][a-z]*(?: [A-Z][a-z]*)+$")
 _SECRET_RUN_RE = re.compile(r"abcdefgh|01234567|12345678|(.)\1{7,}", re.IGNORECASE)
-# letters only: a segment with digits ("prod-api-9f8a7c6b") is token material
-_SECRET_WORDS_RE = re.compile(r"^[a-z]+(?:[-_.][a-z]+)+$", re.IGNORECASE)
+# words, optionally numbered ("endpoint-secret-0001"); a mixed segment such as
+# "9f8a7c6b5d4e" is token material
+_SECRET_WORDS_RE = re.compile(r"^[a-z]+(?:[-_.](?:[a-z]+|\d{1,4}))+$", re.IGNORECASE)
+_SECRET_CAMEL_RE = re.compile(r"^(?:[a-z]+[-_])*(?:[A-Z][a-z]+){3,}$")
 _SECRET_DESCRIPTIVE_RE = re.compile(
     r"(?:^|[-_.])(?:test|testing|mock|fake|dummy|fixture|stub|static|sample|example|placeholder|local|dev|"
     r"synthetic|managed|token|secret|key|password|passwd|pass|credential|creds?|api|apikey|auth|issuer|client)(?=[-_.]|$)",
@@ -657,11 +650,33 @@ def secret_placeholder(match_text: str) -> bool:
     value = quoted.group(2) if quoted else match_text
     if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
         return True
+    if quoted:
+        key = re.match(r"[\w-]*", match_text).group(0).lower()
+        # the match ran across string boundaries into code: split('secret=')[1]
+        if re.match(r"[)\]\[,.;+]", value):
+            return True
+        # a lowercase name ("identifier", "attribute.name") is not a credential,
+        # unless the key says it may be a password
+        if re.fullmatch(r"[a-z]+(?:[._-][a-z]+)*", value) and "pass" not in key:
+            return True
     if _SECRET_TEXT_RE.match(value):
         return bool(_SECRET_DESCRIPTIVE_RE.search(value.replace(" ", "-")))
     # descriptive words, also after a provider prefix ("sk-proj-SYNTHETIC_CREDENTIAL")
     tail = _SECRET_PREFIX_RE.sub("", value)
+    if tail != value and (re.fullmatch(r"[a-z]+(?:[-_](?:[a-z]+|\d{1,4}))+", tail) or _SECRET_CAMEL_RE.match(tail)):
+        return True                     # "sk-dynamic-file-context", "sk-lf-RandomStringFromLangfuseWebInterface"
     return any(bool(_SECRET_WORDS_RE.match(v) and _SECRET_DESCRIPTIVE_RE.search(v)) for v in (value, tail))
+
+
+_PEM_BODY_RE = re.compile(r"[A-Za-z0-9+/=]{40,}")
+
+
+def pem_has_body(sf: SourceFile, idx: int, end: int) -> bool:
+    """A PEM header is a key only when key material follows it, on the same
+    line (after a literal \\n) or on the next line; `...` or NOTAREALKEY is not."""
+    rest = sf.raw[idx - 1][end:] if 0 < idx <= len(sf.raw) else ""
+    nxt = sf.raw[idx].strip() if idx < len(sf.raw) else ""
+    return bool(_PEM_BODY_RE.search(rest) or _PEM_BODY_RE.match(nxt.strip("'\"`")))
 
 
 def _compile_rules() -> None:
@@ -794,6 +809,12 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if "secret" in rule.tags:
                         if secret_placeholder(m.group(0)):
                             continue
+                        pem = "PRIVATE KEY" in pat.pattern
+                        if pem and not pem_has_body(sf, idx, m.end()):
+                            continue
+                        if pem and ("test" in sf.kinds or is_test_path(sf.rel)):
+                            severity = "major"
+                            message = rule.message + " It is in test data: confirm it is a throwaway test key."
                         ev = redact_secrets(ev)
                         # A generic `key = "..."` assignment in test code is
                         # usually a fixture; provider-shaped tokens and keys

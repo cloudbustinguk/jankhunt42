@@ -127,6 +127,23 @@ Relationship: SPDXRef-app DEPENDS_ON SPDXRef-DOCUMENT
 """
 
 
+SYFT_JSON = {
+    "artifacts": [
+        {"id": "a1", "name": "golang.org/x/text", "version": "v0.20.0", "type": "go-module",
+         "purl": "pkg:golang/golang.org/x/text@v0.20.0", "cpes": [{"cpe": "cpe:2.3:a:golang:text:v0.20.0:*:*:*:*:*:*:*"}],
+         "licenses": [{"value": "BSD-3-Clause", "spdxExpression": "BSD-3-Clause"}],
+         "metadataType": "go-module-buildinfo-entry", "metadata": {"h1Digest": "h1:example"}},
+        {"id": "a2", "name": "left-pad", "version": "1.3.0", "type": "npm", "purl": "pkg:npm/left-pad@1.3.0",
+         "cpes": ["cpe:2.3:a:left-pad:left-pad:1.3.0:*:*:*:*:*:*:*"], "licenses": ["WTFPL"],
+         "metadata": {"author": "Example Author"}},
+    ],
+    "artifactRelationships": [{"parent": "a1", "child": "a2", "type": "dependency-of"}],
+    "source": {"type": "file", "name": "app.tar.gz"},
+    "descriptor": {"name": "syft", "version": "1.0.0"},
+    "schema": {"version": "16.1.0", "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.1.0.json"},
+}
+
+
 def parse(name, text):
     return jh_supply.parse_sbom("/x/" + name, name, text)
 
@@ -201,6 +218,24 @@ class Formats(unittest.TestCase):
             "</components>")
         names = [p["name"] for p in parse("bom.xml", xml)["packages"]]
         self.assertEqual(names, ["app", "app-core", "lib"])        # nested primary yes, pedigree history no
+
+    def test_github_dependency_graph_export_is_unwrapped(self):
+        sbom = parse("sbom.json", json.dumps({"sbom": SPDX2_FULL}))
+        self.assertEqual((sbom["format"], sbom["package_count"], sbom["quality"]["minimum_elements"]),
+                         ("spdx-json", 2, "met"))
+
+    def test_syft_json(self):
+        sbom = parse("app.syft.json", json.dumps(SYFT_JSON))
+        self.assertEqual((sbom["format"], sbom["spec_version"]), ("syft-json", "syft-16.1.0"))
+        pkgs = {p["name"]: p for p in sbom["packages"]}
+        self.assertEqual((pkgs["golang.org/x/text"]["license"], pkgs["golang.org/x/text"]["hashes"]),
+                         ("BSD-3-Clause", ["h1"]))
+        self.assertEqual((pkgs["left-pad"]["supplier"], pkgs["left-pad"]["cpe"][:8]), ("Example Author", "cpe:2.3:"))
+        q = sbom["quality"]
+        # syft's own JSON records no creation time, so it cannot meet the minimum
+        self.assertEqual(q["minimum_elements"], "partial")
+        self.assertIn("timestamp", q["missing"])
+        self.assertTrue(q["document"]["dependency_relationships"] and q["document"]["tool"])
 
     def test_no_components_is_not_met(self):
         q = parse("empty.cdx.json", json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6"}))["quality"]

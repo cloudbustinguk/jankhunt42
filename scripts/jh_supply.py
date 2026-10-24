@@ -134,7 +134,8 @@ def _detect_kind(text: str, name: str) -> Set[str]:
             or "spdxversion:" in low
             or ('"bomformat"' in compact and "cyclonedx" in compact)
             or ("<bom" in low and "cyclonedx" in low)
-            or ('"@graph"' in compact and "spdx" in compact)):
+            or ('"@graph"' in compact and "spdx" in compact)
+            or ('"artifacts"' in compact and '"descriptor"' in compact and "syft" in compact)):
         kinds.add("sbom")
     if (any(h in low_name for h in _ATTEST_HINTS)
             or '"dsseenvelope"' in compact
@@ -600,12 +601,62 @@ def _finalize_sbom(path: str, rel: str, fmt: str, data: Optional[Dict[str, Any]]
     }
 
 
+def _syft_packages(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """syft's native JSON: artifacts with cpes and licenses as strings or
+    objects; Go modules carry an h1 (SHA-256) module digest."""
+    out: List[Dict[str, Any]] = []
+    for a in _as_list(data.get("artifacts")):
+        if not isinstance(a, dict) or not a.get("name"):
+            continue
+        meta = a.get("metadata") if isinstance(a.get("metadata"), dict) else {}
+        cpes = [c.get("cpe") if isinstance(c, dict) else c for c in _as_list(a.get("cpes"))]
+        licenses = [l.get("spdxExpression") or l.get("value") if isinstance(l, dict) else l
+                    for l in _as_list(a.get("licenses"))]
+        hashes = sorted({_scalar(d.get("algorithm")) for d in _as_list(meta.get("digests") or meta.get("digest"))
+                         if isinstance(d, dict) and d.get("algorithm")} | ({"h1"} if meta.get("h1Digest") else set()))
+        out.append({
+            "name": _scalar(a.get("name")),
+            "version": _scalar(a.get("version")),
+            "supplier": _scalar(next((meta.get(k) for k in ("supplier", "publisher", "author", "maintainer")
+                                      if isinstance(meta.get(k), str) and meta.get(k)), "")),
+            "license": " AND ".join(l for l in licenses if l),
+            "purl": _scalar(a.get("purl")),
+            "cpe": _scalar(next((c for c in cpes if c), "")),
+            "hashes": hashes,
+            "id": _scalar(a.get("id")),
+        })
+    return out
+
+
+def _syft_doc(data: Dict[str, Any]) -> Dict[str, Any]:
+    desc = data.get("descriptor") if isinstance(data.get("descriptor"), dict) else {}
+    src = data.get("source") if isinstance(data.get("source"), dict) else {}
+    rels = [r for r in _as_list(data.get("artifactRelationships")) if isinstance(r, dict)]
+    tool = " ".join(x for x in (_scalar(desc.get("name")), _scalar(desc.get("version"))) if x)
+    return {"timestamp": "",                            # syft JSON records no creation time
+            "authors": [], "tools": [tool] if tool else [],
+            "dependencies": sum(1 for r in rels if r.get("type") in ("dependency-of", "contains")),
+            "primary": bool(src.get("name")), "context": []}
+
+
 def parse_sbom(path: str, rel: str, text: str) -> Optional[Dict[str, Any]]:
     stripped = text.lstrip()
     if stripped.startswith("{"):
         data = _json(text)
         if not isinstance(data, dict):
             return None
+        # GitHub's dependency-graph export wraps the SPDX document: {"sbom": {...}}
+        if len(data) == 1 and isinstance(data.get("sbom"), dict) and data["sbom"].get("spdxVersion"):
+            data = data["sbom"]
+        if isinstance(data.get("artifacts"), list) and isinstance(data.get("descriptor"), dict):
+            src = data.get("source") if isinstance(data.get("source"), dict) else {}
+            schema = data.get("schema") if isinstance(data.get("schema"), dict) else {}
+            return _finalize_sbom(path, rel, "syft-json", data, _syft_packages(data), {
+                "name": _scalar(src.get("name")),
+                "spec_version": ("syft-" + _scalar(schema.get("version"))) if schema.get("version") else "syft",
+                "namespace": "",
+                "created": "",
+            }, _syft_doc(data))
         if data.get("spdxVersion"):
             packages = _spdx2_packages(data)
             return _finalize_sbom(path, rel, "spdx-json", data, packages, {

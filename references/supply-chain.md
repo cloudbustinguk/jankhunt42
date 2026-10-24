@@ -45,6 +45,8 @@ signed, fetchable by digest, and verifiable offline after download.
 | SPDX 2.x | JSON (`spdxVersion`, `packages`) and tag-value (`SPDXVersion:`, `PackageName:`) |
 | SPDX 3 | JSON-LD `@graph` with SPDX 3.0.1 elements: `software_Package` (`software_packageVersion`, `software_packageUrl`, `suppliedBy`, `verifiedUsing`, `externalIdentifier`), `CreationInfo`, `software_Sbom`, licence and dependency `Relationship`s |
 | CycloneDX | JSON (`bomFormat: CycloneDX`) and XML `<bom>` |
+| syft | syft's native JSON (`artifacts`, `descriptor`); it records no creation time, so it never meets the minimum elements on its own |
+| GitHub dependency graph | the SPDX 2.3 export from `GET /repos/{owner}/{repo}/dependency-graph/sbom` (the `{"sbom": ...}` wrapper is removed) |
 | GitHub artifact attestations | Raw Sigstore bundle / DSSE JSON, JSONL from `gh attestation download` |
 | Sigstore / in-toto | DSSE envelope, direct in-toto statement, SLSA provenance v0.2/v1 |
 | JFrog AppTrust / `jf evd verify` | JSON with `evidenceVerifications`, `sigstoreBundle`, `verificationResult`, optional `predicate` and `downloadPath` |
@@ -193,6 +195,12 @@ Bill of Materials*, July 2021):
 | dependency relationships | SPDX `DEPENDS_ON`/`CONTAINS`-style relationships, 3.0.1 `dependsOn`/`contains`; CycloneDX `dependencies` with `dependsOn` |
 | author of the SBOM data | SPDX `Person:`/`Organization:` creators (a `Tool:` creator also counts), 3.0.1 `createdBy`; CycloneDX `metadata.authors`, `manufacturer`, `supplier` |
 | timestamp | SPDX `created`; CycloneDX `metadata.timestamp` |
+
+In practice most generated SBOMs leave the supplier out (SPDX
+`NOASSERTION`, no CycloneDX `supplier`): in a trial on real release and
+dependency-graph SBOMs, none of about 2,000 components named one. Expect
+`partial` until the generator is configured to record suppliers;
+jankhunt42 never infers a supplier from a package URL.
 
 `minimum_elements` is `met` when every element is present for every
 component, `partial` when some are missing (the `missing` list names them,

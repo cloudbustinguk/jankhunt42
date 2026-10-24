@@ -187,14 +187,26 @@ class _Parser:
             self.i += 1
         return "\n".join(out)
 
+    def _continues_plain(self, ind: int) -> bool:
+        """The next line is more indented and is not a mapping, sequence, or
+        flow collection: a plain scalar folded over several lines."""
+        if self.i >= len(self.lines) or self.lines[self.i][1] <= ind:
+            return False
+        nxt = self.lines[self.i][2]
+        return not nxt.startswith(("- ", "[", "{", "#")) and nxt != "-" and _split_key(nxt) is None
+
     def _value(self, rest: str, ind: int, depth: int) -> Any:
         if rest in ("|", ">", "|-", ">-", "|+", ">+"):
             return self._block_scalar(ind)
         if rest == "" or rest.startswith(("&", "!")) and " " not in rest:
+            if rest == "" and self._continues_plain(ind):
+                return self._block_scalar(ind).replace("\n", " ")
             if self.i < len(self.lines) and (self.lines[self.i][1] > ind or
                                              (self.lines[self.i][1] == ind and self.lines[self.i][2].startswith("- "))):
                 return self.parse_block(self.lines[self.i][1], depth + 1)
             return None if rest == "" else rest
+        if not rest.startswith(("'", '"', "[", "{")) and self._continues_plain(ind):
+            return rest + " " + self._block_scalar(ind).replace("\n", " ")
         return _scalar(rest)
 
     def parse_map(self, indent: int, depth: int) -> Any:
