@@ -45,6 +45,11 @@ class Item:
     rel: str
     text: str
 
+    def __post_init__(self) -> None:
+        # A UTF-8 byte-order mark (common in .NET appsettings.json) is not content.
+        if self.text.startswith("\ufeff"):
+            self.text = self.text[1:]
+
 
 @dataclass
 class Collected:
@@ -211,6 +216,7 @@ class Ctx:
         self.manifest_deps: List[Tuple[Tuple[str, str], str, int, str]] = []
         self.openapi: List[Tuple[str, List[Dict[str, Any]], List[str]]] = []
         self.parse_failures: List[Dict[str, str]] = []
+        self.templates: List[str] = []
         self.by_adapter: Dict[str, int] = {}
         self.inspected: List[str] = []
         self.warnings: List[str] = []
@@ -294,6 +300,16 @@ PY_IMPORTS = {
     "google.genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
     "groq": ("external", "groq", "api.groq.com"),
     "mistralai": ("external", "mistral", "api.mistral.ai"),
+    "cohere": ("external", "cohere", "api.cohere.com"),
+    "replicate": ("external", "replicate", "api.replicate.com"),
+    "huggingface_hub": ("external", "huggingface", "api-inference.huggingface.co"),
+    "together": ("external", "together", "api.together.xyz"),
+    "vertexai": ("external", "vertex-ai", ""),
+    "langchain_openai": ("external", "openai", "api.openai.com"),
+    "langchain_anthropic": ("external", "anthropic", "api.anthropic.com"),
+    "langchain_google_genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "langchain_mistralai": ("external", "mistral", "api.mistral.ai"),
+    "langchain_groq": ("external", "groq", "api.groq.com"),
 }
 JS_IMPORTS = {
     "pg": ("database", "postgresql", ""), "postgres": ("database", "postgresql", ""),
@@ -332,6 +348,24 @@ JS_IMPORTS = {
     "@mistralai/mistralai": ("external", "mistral", "api.mistral.ai"),
     "@ai-sdk/openai": ("external", "openai", "api.openai.com"),
     "@ai-sdk/anthropic": ("external", "anthropic", "api.anthropic.com"),
+    "@ai-sdk/google": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "@ai-sdk/google-vertex": ("external", "vertex-ai", ""),
+    "@ai-sdk/azure": ("external", "azure-openai", ""),
+    "@ai-sdk/amazon-bedrock": ("external", "bedrock", ""),
+    "@ai-sdk/mistral": ("external", "mistral", "api.mistral.ai"),
+    "@ai-sdk/groq": ("external", "groq", "api.groq.com"),
+    "@ai-sdk/xai": ("external", "xai", "api.x.ai"),
+    "@ai-sdk/deepseek": ("external", "deepseek", "api.deepseek.com"),
+    "@ai-sdk/cohere": ("external", "cohere", "api.cohere.com"),
+    "@ai-sdk/togetherai": ("external", "together", "api.together.xyz"),
+    "@ai-sdk/perplexity": ("external", "perplexity", "api.perplexity.ai"),
+    "@ai-sdk/gateway": ("external", "vercel-ai-gateway", "ai-gateway.vercel.sh"),
+    "@openrouter/ai-sdk-provider": ("external", "openrouter", "openrouter.ai"),
+    "@aws-sdk/client-bedrock-runtime": ("external", "bedrock", ""),
+    "cohere-ai": ("external", "cohere", "api.cohere.com"),
+    "replicate": ("external", "replicate", "api.replicate.com"),
+    "@huggingface/inference": ("external", "huggingface", "api-inference.huggingface.co"),
+    "together-ai": ("external", "together", "api.together.xyz"),
 }
 CS_PATTERNS = [
     (re.compile(r"\bnew\s+SqlConnection\b|\bUseSqlServer\s*\("), ("database", "sqlserver", "")),
@@ -343,7 +377,9 @@ CS_PATTERNS = [
     (re.compile(r"\bnew\s+CosmosClient\b"), ("database", "cosmos", "")),
     (re.compile(r"\bnew\s+Blob(Service|Container)Client\b"), ("storage", "azure-blob", "")),
     (re.compile(r"\bnew\s+ServiceBusClient\b"), ("queue", "servicebus", "")),
-    (re.compile(r"\bnew\s+(OpenAIClient|ChatClient)\b"), ("external", "openai", "api.openai.com")),
+    (re.compile(r"\bnew\s+(OpenAIClient|ChatClient)\b|\bAddOpenAIClient\s*\("), ("external", "openai", "api.openai.com")),
+    (re.compile(r"\bnew\s+AzureOpenAIClient\b|\bAddAzureOpenAIClient\s*\("), ("external", "azure-openai", "")),
+    (re.compile(r"\bnew\s+AnthropicClient\b"), ("external", "anthropic", "api.anthropic.com")),
 ]
 PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items()
                    if k not in ("smtplib", "sqlite3") and not k.startswith("google.")},
@@ -358,7 +394,15 @@ PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items()
                 "google-generativeai": ("external", "google-ai", "generativelanguage.googleapis.com"),
                 "google-genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
                 "firebase-admin": ("database", "firestore", ""), "slack-sdk": ("external", "slack", "slack.com"),
-                "notion-client": ("external", "notion", "api.notion.com")}
+                "notion-client": ("external", "notion", "api.notion.com"),
+                "langchain-openai": ("external", "openai", "api.openai.com"),
+                "langchain-anthropic": ("external", "anthropic", "api.anthropic.com"),
+                "langchain-google-genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+                "huggingface-hub": ("external", "huggingface", "api-inference.huggingface.co"),
+                "azure.ai.openai": ("external", "azure-openai", ""),
+                "aspire.azure.ai.openai": ("external", "azure-openai", ""),
+                "microsoft.extensions.ai.openai": ("external", "openai", "api.openai.com"),
+                "anthropic.sdk": ("external", "anthropic", "api.anthropic.com")}
 PKG_FAMILIES.pop("redis", None)
 PKG_FAMILIES["redis"] = ("database", "redis", "")
 
@@ -437,6 +481,9 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 mods = [m.group(1)] if m.group(1) else [x.strip() for x in m.group(2).split(",")]
         elif lang in ("javascript", "typescript"):
             mods = [m.group(1) for m in _JS_IMPORT_RE.finditer(line)]
+            # AI SDK 5+: `import { gateway } from "ai"` sends model calls through the Vercel AI Gateway.
+            if "ai" in mods and re.search(r"\bgateway\b", line.split(" from ", 1)[0]):
+                mods.append("@ai-sdk/gateway")
         for mod in mods:
             table = PY_IMPORTS if lang == "python" else JS_IMPORTS
             fam = None
@@ -448,7 +495,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 if cand in table:
                     fam = table[cand]
                     break
-            if lang != "python" and not fam and mod.startswith("@aws-sdk/"):
+            if lang != "python" and not fam and mod.startswith("@aws-sdk/") and mod not in table:
                 fam = ("external", "aws", "")
             if fam:
                 families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
@@ -657,7 +704,8 @@ def adapt_config(ctx: Ctx, item: Item) -> None:
 
 def adapt_appsettings(ctx: Ctx, item: Item) -> None:
     try:
-        data = json.loads(item.text)
+        # .NET configuration accepts comments and trailing commas
+        data = jh_agent.loads_jsonc(item.text)
     except ValueError as exc:
         ctx.parse_failures.append({"path": item.rel, "reason": "invalid JSON: %s" % str(exc)[:80]})
         return
@@ -1394,6 +1442,8 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     if low.endswith(".tf"):
         return "terraform", None
     if low.endswith((".yml", ".yaml")):
+        if "{{" in text and re.search(r"(^|/)(templates|charts)/", low):
+            return "template", None              # Helm/Go templates are YAML only once rendered
         if "/.github/workflows/" in "/" + low:
             kind = "actions"
         elif re.match(r"(docker-)?compose([.\-][\w.\-]+)?\.ya?ml$", base):
@@ -1445,6 +1495,10 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
             continue
         if kind == "test":
             tests += 1
+            continue
+        if kind == "template":
+            ctx.templates.append(item.rel)
+            unsupported += 1
             continue
         if kind in ("doc", "unsupported", "yaml"):
             unsupported += 1
@@ -1534,6 +1588,10 @@ def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
     if has_code and workloads:
         out.append({"id": "code-to-workload-binding", "count": len(workloads),
                     "detail": "which workload runs the repository code is not inferred; declare it with passport.bindings if needed"})
+    if ctx.templates:
+        out.append({"id": "unrendered-templates", "count": len(ctx.templates),
+                    "detail": "%d Helm or Go template file(s) were not rendered, so the resources they define are not "
+                              "mapped; render them (for example `helm template`) and map the output" % len(ctx.templates)})
     out.append({"id": "runtime-reachability", "count": None,
                 "detail": "static analysis only: network reachability, firewalls, and live data movement were not tested"})
     return out

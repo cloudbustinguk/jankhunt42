@@ -80,6 +80,12 @@ MUTANTS = [
     ("M18-sbom-always-met", "every SBOM counts as meeting the NTIA minimum elements", "jh_supply.py",
      'status = "not-met" if not total else ("met" if not missing else "partial")', 'status = "met"',
      "test_sbom.py"),
+    ("M19-every-secret-a-placeholder", "the placeholder filter hides real credentials", "jh_rules.py",
+     'def secret_placeholder(match_text: str) -> bool:\n    """True when',
+     'def secret_placeholder(match_text: str) -> bool:\n    return True\n    """True when', "test_precision.py"),
+    ("M20-tls-context-ignored", "verify=False on an HTTP client is no longer reported", "jh_checks.py",
+     "                if not _HTTP_CLIENT_RE.search(window):\n                    break",
+     "                if True:\n                    break", "test_precision.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

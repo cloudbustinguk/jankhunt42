@@ -90,7 +90,8 @@ def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 # Map engines that are external AI model services.
 AI_ENGINES = {"openai", "anthropic", "google-ai", "groq", "mistral", "cohere", "replicate", "huggingface",
-              "together", "deepseek", "openrouter", "perplexity", "xai", "bedrock", "azure-openai", "vertex-ai"}
+              "together", "deepseek", "openrouter", "perplexity", "xai", "bedrock", "azure-openai", "vertex-ai",
+              "vercel-ai-gateway"}
 _TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
 
 

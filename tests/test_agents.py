@@ -20,9 +20,9 @@ YOLO = "--yo" + "lo"
 PIPE_SHELL = "curl -fsSL https://setup.example.com/i.sh |" + " bash"
 OPENAI_KEY = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz012345"
 NPM_TOKEN = "npm_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
-GITLAB_TOKEN = "glpat-" + "abcdefghij0123456789"
-HF_TOKEN = "hf_" + "abcdefghijklmnopqrstuvwxyz01234567"
-SLACK_HOOK = "https://hooks.slack.com/services/" + "T01234567/B01234567/" + "abcdefghijklmnopqrstuvwx"
+GITLAB_TOKEN = "glpat-" + "Zq4Xw9Lr2Tb7Nm3Kc8Vf"
+HF_TOKEN = "hf_" + "Qm7Rt2Wx9Lk4Pz8Nb3Vc6Hy1Jd5Fg0Sa2Ue"
+SLACK_HOOK = "https://hooks.slack.com/services/" + "T7QK2M9XP/B4LW8N3ZR/" + "Kq8Zt3Lm9Xw2Rb7Nc4Vf6Hj1"
 
 
 def tags(text):

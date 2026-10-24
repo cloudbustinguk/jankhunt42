@@ -440,16 +440,28 @@ def _is_tracked(path: str) -> Optional[bool]:
 
 
 _FAKE_VALUES = re.compile(
-    r"(?i)^(?:changeme|change_me|example|placeholder|dummy|fake|test|sample|xxx+|"
-    r"your[_-].*|\.\.\.|null|none|true|false|\$\{.*|.*\{\{.*|.*\{%.*)$"
+    r"(?i)^(?:changeme|change_me|changethis|change[_-]this|changeit|example|placeholder|dummy|fake|test|sample|"
+    r"secret|password|admin|xxx+|your[_-].*|\.\.\.|null|none|true|false|\$\{.*|.*\{\{.*|.*\{%.*)$"
 )
+# Key names that hold credentials, and values that are credentials whatever
+# their key: a URL with a password, or a long high-variety token.
+_SECRET_KEY_NAME = re.compile(r"(?i)(secret|passw|pwd|token|api[_-]?key|private|credential|auth|dsn|"
+                              r"conn(?:ection)?[_-]?str|access[_-]?key|signing|salt|sas)")
+_URL_PASSWORD = re.compile(r"://[^/\s:@]+:([^@/\s]+)@")
 
 
-def _looks_secret_value(value: str) -> bool:
+def _looks_secret_value(value: str, key: str = "") -> bool:
     v = value.strip().strip("'\"")
     if len(v) < 8 or _FAKE_VALUES.match(v):
         return False
-    return True
+    m = _URL_PASSWORD.search(v)
+    if m:
+        return not _FAKE_VALUES.match(m.group(1))
+    if key and _SECRET_KEY_NAME.search(key):
+        return True
+    # no telling key: only a long token with letters and digits counts
+    return len(v) >= 24 and bool(re.search(r"[A-Za-z]", v)) and bool(re.search(r"\d", v)) and " " not in v \
+        and "://" not in v and "/" not in v
 
 
 _SECRET_FILE_NAMES = {
@@ -463,19 +475,26 @@ _SECRET_FILE_NAMES = {
 def secret_file(sf: SourceFile, rule: Rule) -> List[Finding]:
     base = sf.basename.lower()
     is_env = base.startswith(".env") and not re.search(r"\.(example|sample|template|dist|test)$", base)
-    is_key = bool(re.match(r"^id_(?:rsa|ed25519|ecdsa|dsa)$", base)) or base.endswith((".pem", ".key", ".p12", ".pfx"))
+    # a PEM file is a key only if it holds one; certificates are public
+    is_key = bool(re.match(r"^id_(?:rsa|ed25519|ecdsa|dsa)$", base)) or base.endswith((".key", ".p12", ".pfx")) \
+        or (base.endswith(".pem") and "PRIVATE KEY" in sf.text)
     is_named = base in _SECRET_FILE_NAMES and "ci" not in sf.kinds  # a workflow named secrets.yml is CI
     if not (is_env or is_key or is_named):
         return []
 
     strong = bool(re.search(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", sf.text))
     evidence_line = 1
+    # .npmrc/.pypirc: only auth settings carry credentials, not registry URLs
+    auth_only = base in (".npmrc", ".pypirc")
     if not strong:
         for i, line in enumerate(sf.nocomment):
-            m = re.match(r"^\s*([A-Za-z_][\w.-]*)\s*[=:]\s*(.+?)\s*$", line)
+            m = re.match(r"^\s*([@A-Za-z_/][\w.:/@-]*)\s*[=:]\s*(.+?)\s*$", line)
             if not m:
                 continue
-            if _looks_secret_value(m.group(2)):
+            key = m.group(1)
+            if auth_only and not re.search(r"(?i)(_authToken|_auth\b|_password|\bpassword\b)", key):
+                continue
+            if _looks_secret_value(m.group(2), key):
                 strong = True
                 evidence_line = i + 1
                 break
@@ -1454,6 +1473,13 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
         for start, end, name, _async in funcs:
             if not name.startswith("test"):
                 continue
+            decorators = []
+            k = start - 1
+            while k >= 0 and sf.code[k].strip().startswith("@"):
+                decorators.append(sf.code[k].strip())
+                k -= 1
+            if any(re.match(r"@(?:pytest\.)?fixture\b", d) for d in decorators):
+                continue
             body = "\n".join(sf.code[start:end + 1])
             if _PY_ASSERT_RE.search(body) or (calls and calls.search(body)):
                 continue
@@ -1466,22 +1492,64 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
                 break
         return out
 
+    if sf.lang == "rust":
+        return _rust_assertion_free(sf, rule)
+    if sf.lang not in ("js", "ts", "vue", "svelte"):
+        return out
     lines = sf.code
     for i, line in enumerate(lines):
-        if not re.search(r"\b(?:it|test)\s*\(", line):
+        # a test call with a title: test("...", ...) / it('...') / test.only(`...`);
+        # not regex.test(x), a Rust #[tokio::test(...)] attribute, or prose
+        if not _JS_TEST_CALL_RE.search(line):
             continue
         if "{" in line or (i + 1 < len(lines) and lines[i + 1].strip().startswith("{")):
             end, opened = _brace_blocks(sf, i, max_lines=300)
             body = "\n".join(lines[i:end + 1])
-            if opened and not re.search(r"\b(?:expect|assert|should)\b", body):
+            if opened and not _JS_ASSERT_RE.search(body):
                 out.append(make_finding(rule, sf, i + 1, end_line=end + 1,
                                         message="Test block contains no assertion."))
-        else:
-            if not re.search(r"\b(?:expect|assert|should)\b", line):
-                out.append(make_finding(rule, sf, i + 1,
-                                        message="Test contains no assertion on this line."))
+        elif not _JS_ASSERT_RE.search(line):
+            out.append(make_finding(rule, sf, i + 1, message="Test contains no assertion on this line."))
         if len(out) >= 10:
             break
+    return out
+
+
+_JS_TEST_CALL_RE = re.compile(r"(?<![\w.$:#])(?:it|test)(?:\.(?:only|concurrent|skip|fails|each\s*\([^)]*\)))?\s*\(\s*[\"'`]")
+# expect/assert/should, helpers named for them (verifyInput, assertVisible),
+# chai/should chains, ava's t.is/t.true, snapshots
+_JS_ASSERT_RE = re.compile(r"\b(?:expect|assert|should)\b|\b(?:expect|assert|verify|check|should)[A-Z_]\w*\s*\(|"
+                           r"\.should\b|\bt\.(?:is|not|true|false|deepEqual|throws|snapshot|assert)\b|"
+                           r"\.toMatch(?:Inline)?Snapshot\b")
+_RUST_TEST_ATTR_RE = re.compile(r"^\s*#\[(?:[\w:]+::)?test\b")
+# assert macros, helpers named for them, and failing on error: unwrap/expect
+# panic, and `?` in a test that returns Result fails it
+_RUST_ASSERT_RE = re.compile(r"\b(?:assert\w*|debug_assert\w*|prop_assert\w*|panic|unreachable)!|"
+                             r"\b(?:assert|check|verify|expect)_\w+\s*\(|\.unwrap(?:_err)?\(\)|\.expect(?:_err)?\(|"
+                             r"\?\s*[;)]|\?\s*$|\.await\?")
+
+
+def _rust_assertion_free(sf: SourceFile, rule: Rule) -> List[Finding]:
+    out: List[Finding] = []
+    lines = sf.code
+    for i, line in enumerate(lines):
+        if not _RUST_TEST_ATTR_RE.match(line):
+            continue
+        j = next((k for k in range(i + 1, min(i + 8, len(lines))) if re.search(r"\bfn\s+\w+", lines[k])), None)
+        if j is None or any("should_panic" in lines[k] for k in range(i, j)):
+            continue
+        end, opened = _brace_blocks(sf, j, max_lines=400)
+        body = "\n".join(lines[j:end + 1])
+        inner = [l.strip() for l in lines[j + 1:end] if l.strip()]
+        if re.search(r"->\s*(?:[\w:]+::)?Result\b", lines[j]) and inner and not inner[-1].endswith(";") \
+                and inner[-1] not in ("Ok(())", "Ok(())}"):
+            continue                    # the returned Result is the assertion
+        if opened and not _RUST_ASSERT_RE.search(body):
+            name = re.search(r"\bfn\s+(\w+)", lines[j]).group(1)
+            out.append(make_finding(rule, sf, j + 1, end_line=end + 1,
+                                    message="Test '%s' contains no assertion." % name))
+            if len(out) >= 10:
+                break
     return out
 
 
@@ -1542,9 +1610,108 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
     if rule.id == "JH120" and not (has_zip or has_unpack):
         return []
     for i, line in enumerate(sf.code):
-        if ".extractall(" in line or "unpack_archive(" in line:
+        if rule.id == "JH119":
+            # tarfile's "data"/"tar" extraction filters (Python 3.12+, backported)
+            # refuse absolute paths and members outside the destination; the
+            # filter is a string, so read the line with its strings intact
+            text = sf.nocomment[i] if i < len(sf.nocomment) else line
+            hit = ".extractall(" in line and not re.search(r"(?i)zip", line) and not re.search(
+                r"\bfilter\s*=\s*(?:[\"'](?:data|tar)[\"']|tarfile\.(?:data|tar)_filter)", text)
+        else:
+            # zipfile strips absolute paths and ".." components itself, so only
+            # unpack_archive (which can hand tar files to tarfile) is a lead
+            hit = "unpack_archive(" in line
+        if hit:
             out.append(make_finding(rule, sf, i + 1,
                                     message="Archive extraction without path validation enables zip-slip/path traversal."))
             if len(out) >= 5:
                 break
+    return out
+
+
+_HTTP_CLIENT_RE = re.compile(r"\b(?:requests|httpx|aiohttp|urllib3|session|sess|client|http)\s*\.\s*\w+\s*\(|"
+                             r"\b(?:Session|Client|AsyncClient|PoolManager|ClientSession)\s*\(")
+_TLS_PATTERNS: Dict[str, List[re.Pattern]] = {}
+
+
+@check("tls_verify_disabled")
+def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH105. `verify=False` is a TLS setting only for HTTP clients; on any
+    other call it is that function's own flag (verify a checksum, say)."""
+    pats = _TLS_PATTERNS.setdefault(rule.id, [re.compile(p) for p in rule.patterns])
+    out: List[Finding] = []
+    for i, line in enumerate(sf.code):
+        for pat in pats:
+            m = pat.search(line)
+            if not m:
+                continue
+            if "verify" in pat.pattern:
+                window = "\n".join(sf.code[max(0, i - 5):i + 1])
+                if not _HTTP_CLIENT_RE.search(window):
+                    break
+            out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
+            break
+        if len(out) >= 5:
+            break
+    return out
+
+
+_SCRIPT_PATH_RE = re.compile(r"(^|/)(scripts?|bin|cli|tools?|examples?|samples?|demos?|migrations?)/|"
+                             r"(^|/)[^/]*(?:migrate|cli|script)[^/]*\.[cm]?[jt]sx?$", re.IGNORECASE)
+_DEBUG_HOOKS = {
+    "python": (r"\bpdb\.set_trace\s*\(", r"\bbreakpoint\s*\(\s*\)"),
+    "ruby": (r"\bbinding\.pry\b",),
+    "php": (r"\bdd\s*\(", r"\bvar_dump\s*\("),
+    "js": (r"^\s*debugger\s*;?\s*$", r"\bconsole\.log\s*\("),
+}
+
+
+@check("debug_leftover")
+def debug_leftover(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH204. Each language's own debug hooks; console.log only in app code,
+    not in CLI scripts, examples, or migrations whose output is the point."""
+    lang = "js" if sf.lang in ("js", "ts", "vue", "svelte") else sf.lang
+    pats = _DEBUG_HOOKS.get(lang)
+    if not pats:
+        return []
+    cli = bool(_SCRIPT_PATH_RE.search(sf.rel)) or (sf.raw[:1] and sf.raw[0].startswith("#!")) \
+        or "test" in sf.kinds or is_test_path(sf.rel)
+    out: List[Finding] = []
+    for i, line in enumerate(sf.code):
+        for p in pats:
+            if "console" in p and cli:
+                continue
+            m = re.search(p, line)
+            if m:
+                out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
+                break
+        if len(out) >= 5:
+            break
+    return out
+
+
+@check("dangerous_capability")
+def dangerous_capability(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH414. Flag SYS_ADMIN/NET_ADMIN/SYS_PTRACE/ALL only under `add:`;
+    `drop: [ALL]` is the hardened setting, not a risk."""
+    out: List[Finding] = []
+    section: Optional[Tuple[int, str]] = None        # (indent of the add:/drop: key, which)
+    for i, line in enumerate(sf.nocomment):
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        m = re.match(r"^\s*(add|drop)\s*:\s*(.*)$", line)
+        if m:
+            section = (indent, m.group(1))
+            inline = m.group(2)
+            if m.group(1) == "add" and re.search(r"(?i)\b(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)\b", inline):
+                out.append(make_finding(rule, sf, i + 1))
+            continue
+        # a shallower line, or a same-level key, ends the add:/drop: list
+        if section and (indent < section[0] or (indent == section[0] and not line.lstrip().startswith("- "))):
+            section = None
+        if section and section[1] == "add" and re.match(r"(?i)^\s*-\s*['\"]?(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)['\"]?\s*$", line):
+            out.append(make_finding(rule, sf, i + 1))
+        if len(out) >= 5:
+            break
     return out

@@ -283,6 +283,14 @@ inventory.
 
 - Static text only: no data-flow analysis, no evaluation of Helm/Kustomize/
   HCL/variables, no runtime reachability, firewall, or IAM evaluation.
+  Helm and Go templates (YAML with `{{ ... }}` under `templates/` or
+  `charts/`) are listed as the `unrendered-templates` unknown rather than
+  failing to parse: render them (`helm template`) and map the output to see
+  what they define.
+- The YAML reader is a bounded subset: block mappings and sequences, flow
+  collections (also across lines), block scalars, and `---` documents.
+  Anchors and aliases are kept as text. `appsettings*.json` may carry
+  comments and trailing commas, as .NET allows.
 - Effective privileges cannot be proven from a connection string or an SQL
   verb; they are labeled as possibilities until an operator inventory says
   otherwise.

@@ -25,7 +25,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- eighteen mutants that the tests must kill, each with an unmutated control;
+- twenty mutants that the tests must kill, each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.

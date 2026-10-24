@@ -13,8 +13,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Build fake credentials from pieces so this test file itself does not look like
 # a leaked secret to the scanner. The generated fixture still contains them.
-FAKE_KEY="sk_""live_1234567890abcdef"
-FAKE_TOKEN="ghp_""abcdefghijklmnopqrstuvwxyz0123456789"
+FAKE_KEY="sk_""live_Tq9Lm2Xw7Rb4Nc8Vz3Kd"
+FAKE_TOKEN="ghp_""Wq7Lz2Xm9Rt4Nb8Vc3Kd6Hj1Fs5Gp0Ya2Ue4Ti"
 OS_SYSTEM="os.""system"
 XSS_PAYLOAD="<scr""ipt>alert(1)</scr""ipt>"
 export FAKE_KEY FAKE_TOKEN OS_SYSTEM XSS_PAYLOAD

@@ -4,6 +4,79 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.4.1] — 2026-10-24
+
+Precision from a field trial. The scanner and the map were run on eight
+public repositories: two AI web apps, two MCP server projects, a polyglot
+Kubernetes demo, a .NET reference app, a Python web template, and a large
+Rust workspace. Critical findings fell from 111 to 10. Every passport that
+was `insufficient-evidence` only because a file could not be read now has
+full coverage. No rule was removed, and JSON and SARIF fields are unchanged.
+
+### Fixed
+
+- `JH101` no longer reports:
+  - references such as `env(...)`, `{{ ... }}` and `$( ... )`;
+  - generated runs such as `abcdefgh…` and `12345678…`;
+  - descriptive fixture values such as `"test-token"`, `"managed-api-key"`
+    and `"…SYNTHETIC_CREDENTIAL"`, and text labels.
+
+  A generic `key = "..."` assignment in test code is now minor with low
+  confidence. Provider-shaped tokens and private keys keep their severity
+  everywhere.
+- `JH401`:
+  - `.npmrc` and `.pypirc` count only their auth settings.
+  - A `.env` value counts when its key names a credential, or the value is a
+    URL with a password or a long token. Placeholders such as `changethis`
+    do not count.
+  - A PEM file counts only when it holds a private key; certificates are
+    public.
+- `JH414` reports only capabilities that are added. It no longer reports
+  `capabilities.drop: [ALL]`, which is the hardened setting.
+- `JH502` recognises Rust tests: assert macros, `assert_*` helpers,
+  `unwrap`/`expect`, `?`, and a returned `Result`. It also recognises
+  JavaScript helpers named `verify*`, `assert*` or `check*`. It no longer
+  treats `regex.test(x)`, Rust test attributes, markdown, or pytest fixtures
+  named `test_*` as tests.
+- `JH104` requires SQL structure plus real interpolation, or a quote next to
+  `+`. Arithmetic inside SQL text, `?` placeholders, GraphQL builders and URL
+  query names are not dynamic SQL.
+- `JH105` reports `verify=False` only on HTTP clients (requests, httpx,
+  sessions, clients), not on a function's own `verify` flag.
+- `JH112` is limited to Python's `random` and JavaScript's `Math.random`.
+- `JH119` accepts tarfile's `data` and `tar` extraction filters. `JH120` no
+  longer reports `zipfile`, which strips absolute paths and `..` itself.
+- `JH102` ignores `exec` and `eval` of a constant string.
+- `JH204` checks each language's own debug hooks. `console.log` in CLI
+  scripts, examples, migrations and tests is output, not a leftover.
+- Rust test files named `*_tests.rs` and `tests.rs` count as tests.
+- Map coverage:
+  - The YAML reader handles flow collections spread over several lines,
+    which formatters produce for long `needs:` lists, and documents that are
+    a single scalar.
+  - A UTF-8 byte-order mark is stripped.
+  - `appsettings*.json` may contain comments and trailing commas, as .NET
+    allows.
+  - Helm and Go templates are reported as the `unrendered-templates`
+    unknown, instead of parse failures that made coverage partial.
+
+### Added
+
+- More AI services are recognised:
+  - the Vercel AI SDK's provider packages, and its AI Gateway
+    (`import { gateway } from "ai"`);
+  - Cohere, Replicate, Hugging Face, Together, Vertex AI and Bedrock;
+  - LangChain's provider packages;
+  - .NET's Azure OpenAI and OpenAI clients.
+- Mutants M19 (the placeholder filter hides real credentials) and M20 (TLS
+  bypasses on HTTP clients go unreported), for 20 in total.
+
+### Compatibility
+
+- Scan results change. The rules above report fewer findings, and some
+  `JH101` findings in test code are now minor. Passports whose coverage was
+  partial only because of these files can now reach `pass` or `review`.
+
 ## [2.4.0] — 2026-10-24
 
 Evidence you can rely on, and AI governance you can explain. SBOMs are now

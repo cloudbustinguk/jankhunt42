@@ -66,12 +66,14 @@ RULES: List[Rule] = [
           r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
           r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*['\"][^'\"\n]{8,}['\"]",
       ),
-      ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
+      ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
     R("JH102", "Dynamic code execution", "major", "security",
       "eval/exec-style APIs turn data into code and are a classic remote-code-execution sink.",
       "Replace with a parser, dispatch table, or serialization format; never evaluate untrusted input.",
       confidence="medium", langs=JS + PY + ("php", "ruby", "lua"),
-      patterns=(r"\beval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]")),
+      patterns=(r"\beval\s*\(", r"(?<![\w.])exec\s*\(", r"\bnew\s+Function\s*\(", r"\bset(?:Timeout|Interval)\s*\(\s*['\"]"),
+      # a single constant string literal is not data turned into code
+      ignore=r"\b(?:eval|exec)\s*\(\s*[rbu]?([\"'])[^\"'{}$%]*\1\s*[,)]"),
     R("JH103", "Shell command construction", "major", "security",
       "A shell is invoked with a string, so metacharacters in any interpolated value become commands.",
       "Use an argument array with shell disabled, then validate/allowlist values.",
@@ -94,14 +96,21 @@ RULES: List[Rule] = [
       patterns=(
           # `%` as the Python formatting *operator* after a closing quote, not a
           # `%s` placeholder inside a parameterized query (2.1.0 FP fix).
-          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\+|#\{|\$\{|\.format\s*\(|[\"']\s*%\s*[\w(\[{])",
-          r"(?i)\bf['\"][^'\"]*\b(?:select|insert|update|delete)\b",
-          r"(?i)(?:execute|query|exec|raw)\s*\(\s*(?:f['\"]|\$\{|[^)\n]*\+)",
+          # concatenation means a quote next to `+` (`" + x`, `x + "`), not
+          # arithmetic inside the SQL text (`value + 1`)
+          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:[\"'`]\s*\+|\+\s*[\"'`]|#\{|\$\{|\.format\s*\(|[\"']\s*%\s*[\w(\[{])",
+          # an f-string that interpolates into SQL-shaped text
+          r"(?i)\bf([\"'])(?=[^\"']*\{)[^\"']*\b(?:select\b[^\"']{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
+          # a query call built by concatenation; not `"query("` inside a
+          # string (GraphQL builders) or a name like appendRawQuery(
+          r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*\(\s*"
+          r"(?:f['\"]|\$\{|(?:[^)\n\"'+]|\"[^\"\n]*\"|'[^'\n]*')*\+)",
       )),
     R("JH105", "TLS verification disabled", "major", "security",
       "Certificate validation is turned off, so any network attacker can impersonate the peer.",
       "Enable verification and fix the trust chain (CA bundle, hostname, proxy) instead.",
       confidence="high", target="code", langs=PY + JS + JVM + CLIKE + ("ruby", "php", "go"),
+      check="tls_verify_disabled",
       patterns=(
           r"\bverify\s*=\s*False\b",
           r"\brejectUnauthorized\s*:\s*false\b",
@@ -163,10 +172,12 @@ RULES: List[Rule] = [
     R("JH112", "Insecure RNG for secrets", "minor", "security",
       "random/Math.random are predictable and must not generate tokens, salts, keys, or nonces.",
       "Use the platform CSPRNG: secrets/os.urandom, crypto.randomBytes, crypto.getRandomValues.",
-      confidence="low", langs=PY + JS + JVM + CLIKE + ("ruby", "php"),
+      confidence="low", langs=PY + JS,
       patterns=(
-          r"(?i)(?:random\.|Math\.random)[^\n]{0,80}(?:token|secret|password|nonce|salt|key)",
-          r"(?i)(?:token|secret|password|nonce|salt|key)[^\n]{0,80}(?:random\.|Math\.random)",
+          r"(?i)(?:\brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample)\s*\(|\bMath\.random\s*\()"
+          r"[^\n]{0,80}(?:token|secret|password|nonce|salt|key)",
+          r"(?i)(?:token|secret|password|nonce|salt|key)[^\n]{0,80}"
+          r"(?:\brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample)\s*\(|\bMath\.random\s*\()",
       )),
     R("JH115", "JWT verification disabled", "critical", "security",
       "Disabling signature verification or accepting 'none' makes forged tokens indistinguishable from real ones.",
@@ -279,11 +290,7 @@ RULES: List[Rule] = [
     R("JH204", "Debug leftover", "minor", "reliability",
       "Debug output or a debugger hook is still in the code path.",
       "Remove it or route it through the project logger at an appropriate level.",
-      confidence="medium", langs=PY + JS + JVM + CLIKE + ("php", "ruby"),
-      patterns=(
-          r"\bdebugger\s*;?", r"\bpdb\.set_trace\s*\(", r"\bbreakpoint\s*\(\s*\)",
-          r"\bbinding\.pry\b", r"\bdd\s*\(", r"\bvar_dump\s*\(", r"\bconsole\.log\s*\(",
-      )),
+      confidence="medium", langs=PY + JS + ("php", "ruby"), check="debug_leftover"),
     R("JH205", "Commented-out code", "info", "maintainability",
       "Commented code rots, confuses readers, and hides intent; version control already remembers it.",
       "Delete it or restore it with a test; keep comments for why, not what used to be.",
@@ -423,8 +430,7 @@ RULES: List[Rule] = [
     R("JH414", "Dangerous capability added", "major", "security",
       "SYS_ADMIN/NET_ADMIN/SYS_PTRACE/ALL capabilities substantially weaken isolation.",
       "Drop ALL and add only the minimal capability the workload proves it needs.",
-      confidence="medium", target="nocomment", kinds=K8S,
-      patterns=(r"(?i)^\s*-\s*(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)\s*$",)),
+      confidence="medium", target="nocomment", kinds=K8S, check="dangerous_capability"),
     R("JH415", "Kubernetes secret literal", "critical", "security",
       "A Kubernetes Secret manifest embeds a value in plaintext, which is committed to git.",
       "Use an external secret manager/SealedSecret/SOPS; never commit plaintext Secret data.",
@@ -627,6 +633,33 @@ class ScanResult:
 _COMPILED: Dict[str, List[re.Pattern]] = {}
 _IGNORES: Dict[str, re.Pattern] = {}
 
+# Secret-shaped matches that are not credential material: references to
+# where the value lives, generated runs, and descriptive fixture names
+# (`"test-token"`, `"managed-bedrock-api-key"`). Found by running the scanner
+# on public repositories, where these were nearly all of JH101's hits.
+_SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])([^\"'\n]+)\1")
+_SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+$|^<[^>]+>$")
+_SECRET_PREFIX_RE = re.compile(r"^(?:sk-(?:proj-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
+_SECRET_TEXT_RE = re.compile(r"^[A-Za-z]+(?: [A-Za-z]+)+$")          # a label like "Bearer Token Env Var"
+_SECRET_RUN_RE = re.compile(r"abcdefgh|01234567|12345678|(.)\1{7,}", re.IGNORECASE)
+_SECRET_WORDS_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)+$", re.IGNORECASE)
+_SECRET_DESCRIPTIVE_RE = re.compile(
+    r"(?:^|[-_.])(?:test|testing|mock|fake|dummy|fixture|stub|static|sample|example|placeholder|local|dev|"
+    r"synthetic|managed|token|secret|key|password|passwd|pass|credential|creds?|api|apikey|auth|issuer|client)(?=[-_.]|$)",
+    re.IGNORECASE)
+
+
+def secret_placeholder(match_text: str) -> bool:
+    """True when a secret-pattern match is a reference, a generated run, or a
+    descriptive fixture value rather than credential material."""
+    quoted = _SECRET_QUOTED_RE.search(match_text)
+    value = quoted.group(2) if quoted else match_text
+    if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value) or _SECRET_TEXT_RE.match(value):
+        return True
+    # descriptive words, also after a provider prefix ("sk-proj-SYNTHETIC_CREDENTIAL")
+    tail = _SECRET_PREFIX_RE.sub("", value)
+    return any(bool(_SECRET_WORDS_RE.match(v) and _SECRET_DESCRIPTIVE_RE.search(v)) for v in (value, tail))
+
 
 def _compile_rules() -> None:
     if _COMPILED:
@@ -753,10 +786,20 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     m = pat.search(line)
                     if not m:
                         continue
+                    severity = confidence = message = None
                     ev = sf.raw[idx - 1].strip() if 0 < idx <= len(sf.raw) else line.strip()
                     if "secret" in rule.tags:
+                        if secret_placeholder(m.group(0)):
+                            continue
                         ev = redact_secrets(ev)
-                    f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1)
+                        # A generic `key = "..."` assignment in test code is
+                        # usually a fixture; provider-shaped tokens and keys
+                        # keep their severity everywhere.
+                        if "[:=]" in pat.pattern and ("test" in sf.kinds or is_test_path(sf.rel)):
+                            severity, confidence = "minor", "low"
+                            message = rule.message + " It is in test code: confirm it is a fixture, not a real credential."
+                    f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1, severity=severity,
+                                     confidence=confidence, message=message)
                     if acceptor.accept(f):
                         result.findings.append(f)
                     break

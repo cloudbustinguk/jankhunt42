@@ -3,7 +3,8 @@
 
 Supports what Kubernetes manifests, docker-compose files, and GitHub Actions
 workflows use in practice: block mappings and sequences, plain/quoted
-scalars, flow sequences/maps of scalars, comments, `---` document breaks,
+scalars, flow sequences/maps of scalars (also spread over several lines,
+as formatters write long `needs:` lists), comments, `---` document breaks,
 and block scalars (`|`, `>`), which are kept as opaque strings. Anchors,
 aliases, tags, and merge keys are not interpreted; their text is kept as a
 plain scalar. Anything it cannot parse raises YamlError so callers can
@@ -27,6 +28,34 @@ class YamlError(ValueError):
 
 
 _COMMENT_RE = re.compile(r"(^|\s)#.*$")
+# `key: |`, `- >-`, `run: |2`: the lines that follow are an opaque block scalar.
+_BLOCK_INDICATOR_RE = re.compile(r"(?:^|:\s+|^-\s+)[|>][-+0-9]*$")
+
+
+def _flow_depth(text: str) -> int:
+    """Open flow brackets ([ and {) outside quotes."""
+    depth, quote = 0, ""
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+    return depth
+
+
+def _flow_starts(content: str) -> bool:
+    """The value on this line (or the line itself) opens a flow collection."""
+    if content.startswith(("[", "{")):
+        return True
+    rest = content[2:].lstrip() if content.startswith("- ") else content
+    kv = _split_key(rest)
+    return bool(kv and kv[1].startswith(("[", "{")))
 
 
 def _strip_comment(line: str) -> str:
@@ -139,6 +168,10 @@ class _Parser:
             return None
         if content.startswith("- ") or content == "-":
             return self.parse_seq(ind, depth)
+        if content.startswith(("[", "{")) and _flow_depth(content) == 0:
+            # a flow collection on its own line(s) as a block value
+            self.i += 1
+            return _scalar(content)
         return self.parse_map(ind, depth)
 
     def _block_scalar(self, parent_indent: int) -> str:
@@ -207,26 +240,57 @@ def load_all(text: str) -> List[Any]:
     if len(raw) > MAX_LINES:
         raise YamlError("too many lines")
     docs: List[List[Tuple[int, int, str]]] = [[]]
+    pending: Optional[Tuple[int, int, str]] = None     # a flow collection still open
+    block_indent: Optional[int] = None                  # inside a block scalar deeper than this
     for no, line in enumerate(raw, 1):
-        if line.startswith("---") and line[3:].strip() in ("",) or line.strip() == "---":
+        if pending is None and (line.startswith("---") and line[3:].strip() in ("",) or line.strip() == "---"):
             docs.append([])
+            block_indent = None
             continue
-        if line.startswith("..."):
+        if line.startswith("...") and pending is None:
             continue
         if "\t" in line[: len(line) - len(line.lstrip())]:
             raise YamlError("line %d: tab indentation" % no)
         stripped = _strip_comment(line)
         if not stripped.strip():
             continue
-        if stripped.lstrip().startswith("%"):
-            continue
         indent = len(stripped) - len(stripped.lstrip(" "))
-        docs[-1].append((no, indent, stripped.strip()))
+        content = stripped.strip()
+        if pending is not None:
+            pno, pind, ptext = pending
+            joined = ptext + " " + content
+            if _flow_depth(joined) <= 0:
+                docs[-1].append((pno, pind, joined))
+                pending = None
+            elif len(joined) > 100000:
+                raise YamlError("line %d: flow collection too long" % pno)
+            else:
+                pending = (pno, pind, joined)
+            continue
+        if block_indent is not None:
+            if indent > block_indent:
+                docs[-1].append((no, indent, content))
+                continue
+            block_indent = None
+        if content.startswith("%"):
+            continue
+        if _flow_starts(content) and _flow_depth(content) > 0:
+            pending = (no, indent, content)
+            continue
+        docs[-1].append((no, indent, content))
+        if _BLOCK_INDICATOR_RE.search(content):
+            block_indent = indent
         if len(docs) > MAX_DOCS:
             raise YamlError("too many documents")
+    if pending is not None:
+        raise YamlError("line %d: unterminated flow collection" % pending[0])
     out = []
     for lines in docs:
         if not lines:
+            continue
+        if len(lines) == 1 and _split_key(lines[0][2]) is None and not lines[0][2].startswith(("- ", "[", "{")) \
+                and lines[0][2] != "-":
+            out.append(_scalar(lines[0][2]))     # a document that is a single plain scalar
             continue
         p = _Parser(lines)
         value = p.parse_block(lines[0][1], 0)
