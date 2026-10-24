@@ -63,6 +63,17 @@ MUTANTS = [
      'if parts.hostname == API_HOST:', 'if parts.hostname:', "test_verify.py"),
     ("M12-in-repo-verify-plan", "a verification plan inside the repository is trusted", "jh_verify.py",
      'if _inside(path, root):\n        raise PlanError', 'if False:\n        raise PlanError', "test_verify.py"),
+    ("M13-citizen-leads-only-review", "unverified production authority no longer blocks under the citizen profile",
+     "jh_policy.py", '_outcome_for(acts["P-DAT-002"]) if cap == "block" else "review")', '"review")',
+     "test_citizen.py"),
+    ("M14-hidden-tags-ignored", "invisible Unicode tag characters are not reported", "jh_checks.py",
+     'if not flag:\n                hit("tag", run, i)', 'if False:\n                hit("tag", run, i)',
+     "test_agents.py"),
+    ("M15-mcp-unpinned-as-pinned", "an MCP server fetched by npx without a version counts as pinned", "jh_agent.py",
+     '"pinned": bool(_EXACT_VERSION.match(version))}', '"pinned": True}', "test_citizen.py"),
+    ("M16-any-acceptor", "a citizen-profile acceptance by someone who is not a named custodian is accepted",
+     "jh_passport.py", 'reasons.append("accepted_by is not a named custodian (citizen profile)")', 'pass',
+     "test_citizen.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

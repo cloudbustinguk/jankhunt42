@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -108,7 +108,7 @@ EXT_LANG = {
     ".css": "css", ".scss": "css", ".sass": "css", ".less": "css",
     ".yaml": "yaml", ".yml": "yaml", ".json": "json", ".jsonc": "json", ".json5": "json",
     ".toml": "toml", ".ini": "ini", ".cfg": "ini", ".conf": "ini", ".properties": "ini",
-    ".md": "markdown", ".mdx": "markdown", ".rst": "markdown", ".txt": "text",
+    ".md": "markdown", ".mdx": "markdown", ".mdc": "markdown", ".rst": "markdown", ".txt": "text",
     ".tf": "hcl", ".hcl": "hcl", ".tfvars": "hcl",
     ".dockerfile": "docker",
     ".sol": "solidity", ".zig": "zig", ".nim": "nim", ".jl": "julia",
@@ -133,11 +133,50 @@ GENERATED_RE = re.compile(
 DEFAULT_SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target",
     "out", "coverage", ".venv", "venv", "env", "__pycache__", ".mypy_cache",
-    ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".vscode", ".gradle",
+    ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".gradle",
     ".next", ".nuxt", ".cache", ".terraform", "bower_components", "Pods",
     "DerivedData", "site-packages", ".yarn", ".pnpm-store", "tmp", "temp",
 }
-ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".azure"}
+# Agent and editor workspace directories are walked too: what a coding agent
+# or editor does when it opens the repository is part of the attack surface.
+AGENT_DIRS = {".vscode", ".claude", ".cursor", ".gemini", ".codex", ".amazonq", ".windsurf",
+              ".agents", ".opencode", ".roo", ".kiro", ".clinerules", ".continue", ".zed"}
+ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".azure"} | AGENT_DIRS
+
+# Instruction files that coding agents load into their context.
+AGENT_CONTEXT_NAMES = {"agents.md", "agent.md", "claude.md", "claude.local.md", "gemini.md", "skill.md",
+                       ".cursorrules", ".windsurfrules", ".clinerules", ".roorules", "copilot-instructions.md"}
+AGENT_CONTEXT_DIRS = (".cursor/rules/", ".windsurf/rules/", ".clinerules/", ".kiro/steering/", ".roo/",
+                      ".amazonq/rules/", ".continue/rules/", ".claude/commands/", ".claude/agents/",
+                      ".gemini/commands/", ".github/instructions/", ".github/prompts/", ".github/chatmodes/",
+                      ".opencode/agent/", ".opencode/command/")
+# Settings files that change what an agent or editor may do without asking.
+AGENT_CONFIG_FILES = (".vscode/settings.json", ".vscode/tasks.json", ".claude/settings.json",
+                      ".claude/settings.local.json", ".codex/config.toml", ".gemini/settings.json",
+                      ".zed/settings.json")
+MCP_CONFIG_FILES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", ".gemini/settings.json",
+                    ".codex/config.toml", ".amazonq/mcp.json", ".roo/mcp.json", ".kiro/settings/mcp.json",
+                    "claude_desktop_config.json", "opencode.json", "opencode.jsonc")
+
+
+def _ends_with_path(posix: str, suffix: str) -> bool:
+    return ("/" + posix.lower()).endswith("/" + suffix)
+
+
+def is_agent_context(rel: str) -> bool:
+    posix = rel.replace(os.sep, "/")
+    low = "/" + posix.lower()
+    base = os.path.basename(low)
+    if base in AGENT_CONTEXT_NAMES or base.endswith((".instructions.md", ".prompt.md", ".chatmode.md")):
+        return True
+    return any("/" + d in low for d in AGENT_CONTEXT_DIRS) and not base.endswith(".json")
+
+
+def is_mcp_config(rel: str, text: str = "") -> bool:
+    posix = rel.replace(os.sep, "/")
+    if any(_ends_with_path(posix, f) for f in MCP_CONFIG_FILES) or os.path.basename(posix).lower() == "mcp.json":
+        return True
+    return posix.lower().endswith((".json", ".jsonc")) and '"mcpServers"' in text[:65536]
 
 
 def detect_lang(path: str) -> str:
@@ -204,6 +243,14 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("kubernetes")
     if lang == "hcl":
         kinds.add("terraform")
+    if is_agent_context(rel):
+        kinds.add("agent_context")
+    if any(_ends_with_path(posix, f) for f in AGENT_CONFIG_FILES):
+        kinds.add("agent_config")
+    if is_mcp_config(rel, text):
+        kinds.add("mcp_config")
+    if _ends_with_path(posix, ".github/dependabot.yml") or _ends_with_path(posix, ".github/dependabot.yaml"):
+        kinds.add("dependabot")
     if is_test_path(rel):
         kinds.add("test")
     if "github_actions" in kinds or "gitlab_ci" in kinds:
@@ -622,7 +669,18 @@ _TOKEN_RES = [
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{8,}\b"),
     re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"),
     re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{16,}\b"),
-    re.compile(r"\bsk_live_[0-9a-zA-Z]{16,}\b"),
+    re.compile(r"\b[sr]k_live_[0-9a-zA-Z]{16,}\b"),
+    # Registry and AI-provider tokens: the npm and PyPI publish tokens that
+    # 2025's registry worms harvested, and model API keys.
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
+    re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"),
+    re.compile(r"\bgsk_[A-Za-z0-9]{40,}\b"),
+    re.compile(r"\bSG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{30,}\b"),
+    re.compile(r"\bdop_v1_[a-f0-9]{64}\b"),
+    re.compile(r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b"),
+    re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"),
 ]
 
 
@@ -657,7 +715,7 @@ def make_finding(
         line=line,
         column=max(1, column),
         end_line=end_line,
-        evidence=trim(ev or "", 200),
+        evidence=trim(visible_text(ev or ""), 200),
         message=message or rule.message,
         fix=rule.fix,
         confidence=confidence or rule.confidence,
@@ -670,7 +728,18 @@ def sev_at_least(sev: str, threshold: str) -> bool:
     return SEV_RANK.get(sev, 99) <= SEV_RANK.get(threshold, 99)
 
 
-_UNSAFE_CHARS_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]")
+_UNSAFE_CHARS_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\u206a-\u206f"
+                              "\ufeff\U000e0000-\U000e007f]")
+# Invisible characters that can carry hidden text: bidi controls, zero-width
+# and invisible operators, the BOM, and Unicode tag characters.
+_INVISIBLE_RE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
+
+
+def visible_text(text: str) -> str:
+    """Show invisible, bidi and tag characters as <U+XXXX> in machine output,
+    so a finding cannot carry hidden text to a reader or into an agent's
+    context. A leading byte-order mark is dropped."""
+    return _INVISIBLE_RE.sub(lambda m: "<U+%04X>" % ord(m.group()), text.lstrip("\ufeff"))
 
 
 def safe_text(text: object) -> str:

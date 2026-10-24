@@ -351,7 +351,7 @@ def _path_selected(rel: str, paths: Sequence[str], root: str = "") -> bool:
         if root and os.path.isabs(p):
             try:
                 p = os.path.relpath(p, root).replace("\\", "/")
-            except ValueError:
+            except ValueError:  # jankhunt42: ignore JH201 (a path on another Windows drive stays absolute)
                 pass
         while p.startswith("./"):
             p = p[2:]

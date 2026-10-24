@@ -38,6 +38,7 @@ EXPOSURE = {
     "security": 1.00,
     "reliability": 1.00,
     "supply-chain": 1.00,
+    "agent": 1.00,
     "ci": 0.90,
     "maintainability": 0.55,
     "tests": 0.45,
@@ -64,6 +65,7 @@ GRADE_BANDS = ((5, "A"), (15, "B"), (35, "C"), (60, "D"), (100, "E"))
 CATEGORY_DIMENSION = {
     "security": "security",
     "supply-chain": "security",
+    "agent": "security",
     "ci": "security",
     "reliability": "reliability",
     "maintainability": "maintainability",

@@ -266,9 +266,9 @@ class Sanitizing(unittest.TestCase):
             self.assertNotIn(bad, out)
 
     def test_control_characters_neutralized(self):
-        out = G.sanitize_text("x\x1b[31mred\x1b]0;title\x07‮evil")
+        out = G.sanitize_text("x\x1b[31mred\x1b]0;title\x07\u202eevil")
         self.assertNotIn("\x1b", out)
-        self.assertNotIn("‮", out)
+        self.assertNotIn("\u202e", out)
 
     def test_trust_domains(self):
         self.assertEqual(G.trust_domain_for_host("localhost"), "local")

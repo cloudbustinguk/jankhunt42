@@ -21,7 +21,7 @@ PIECES = [
     "https://api.example.com/hook/%s?token=%s" % (SECRET, SECRET),
     "Server=tcp:h,1433;Database=d;User ID=u;Password=%s;" % SECRET,
     "DATABASE_URL=mysql://root:%s@10.0.0.5/app" % SECRET,
-    "\x1b[31m", "\x1b]0;title\x07", "<scr" + "ipt>alert(1)</scr" + "ipt>", "‮", "\x00", "﻿",
+    "\x1b[31m", "\x1b]0;title\x07", "<scr" + "ipt>alert(1)</scr" + "ipt>", "\u202e", "\x00", "\ufeff",
     "import psycopg\n", "import requests\n", "requests.post(\"https://x.example/%s\")\n" % SECRET,
     "kind: Deployment\napiVersion: apps/v1\n", "metadata:\n  name: a\n", "  - name: X_URL\n    value: ",
     "services:\n  db:\n    image: postgres\n", "permissions:\n  contents: write\n", "---\n",

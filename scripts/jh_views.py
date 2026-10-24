@@ -216,6 +216,13 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
         t.kv("lifecycle", "%s  ·  acceptance %s" % (p["lifecycle"]["state"], t.label("not-supplied" if p["lifecycle"]["acceptance"]["state"] == "not-supplied" else "declared"))),
     ]
     out += [""] + t.box(card, "cyan", "can we responsibly ship it?")
+    gov = p.get("governance") or {}
+    if gov.get("profile") == "citizen":
+        plain: List[str] = []
+        for i, line in enumerate(gov.get("brief") or []):
+            body = _wrap(clean(line), t.width - 6, "  " if line.startswith("- ") else "")
+            plain += [c.bold(b) if i == 0 else b for b in body]
+        out += [""] + t.box(plain, "magenta", "in plain terms  ·  citizen-developer profile")
     out += ["", c.bold("why") + c.grey("  (rule outcomes, not a weighted score)")]
     if not d["reasons"]:
         out.append("  no rule triggered " + c.grey("- an assessment, not an approval"))

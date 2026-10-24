@@ -146,6 +146,22 @@ probabilities of compromise.
 | terraform | `resource` blocks for data stores; Owner/Contributor/`roles/owner`/`Action: "*"` grants | assets and privileged IaC principals (best effort; no HCL evaluation) |
 | manifest | `requirements*.txt`, `pyproject.toml`, `package.json`, `*.csproj` | weak `inferred` evidence, only when code shows nothing for that family |
 | openapi | OpenAPI 3 / Swagger 2 documents (YAML or JSON): servers and operations | **no edges**: enriches an `api`/`external` node the code already calls (`openapi_operations`), otherwise records the operations the application `exposes` |
+| mcp | MCP server definitions: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`, `.codex/config.toml` MCP tables, `opencode.json(c)`, `claude_desktop_config.json`, and any JSON with `mcpServers` | an **AI agent** principal per file (`platform: ai-agent`), `calls` to each enabled server (local process or remote endpoint), `connects` from a server to endpoints in its args/env, `authenticates-as` to credentials by name; every capability `unknown`, every edge `declared` |
+
+The code adapters also know the stack AI app builders use: Supabase,
+Firebase/Firestore, Neon/Vercel Postgres, Upstash, Turso, Airtable, and
+Google Sheets clients and hosts (`*.supabase.co`, `*.firebaseio.com`,
+`firestore.googleapis.com`, `*.neon.tech`, `*.upstash.io`, `*.turso.io`,
+`api.airtable.com`, `sheets.googleapis.com`) are data stores; Stripe, Twilio,
+SendGrid, Resend, Slack, Notion, and model APIs (OpenAI, Anthropic, Gemini,
+Groq, Mistral) are external services. A `${PASSWORD}` placeholder in a
+connection string's userinfo no longer hides a concrete host.
+
+The **agent blast radius** from the mcp adapter is walked like any other
+principal: unknown capability counts as possibly anything, so an agent
+whose database server points at a production host is High exposure. The
+`agent-tool-capability` unknown records that each server decides at runtime
+what its tools can do. See `references/citizen.md`.
 
 Endpoint resolution: a code-side environment read (`DATABASE_URL`) is joined
 to a repository definition of the same name (`.env.example`, compose,
@@ -275,6 +291,9 @@ inventory.
 - Logical databases on one server are one node (`databases` attribute); a
   different host or environment is a different node.
 - Monorepos map as one `application` node.
+- MCP servers are mapped from their definitions only: the tools a server
+  exposes, and what they do, are not visible statically. A server that is
+  defined but never enabled in the user's client still appears.
 - Adapter precision and recall are measured only on the synthetic fixtures in
   `tests/` and on the repository's own hand-maintained self-map ground truth;
   no broader accuracy claim is made.

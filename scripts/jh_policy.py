@@ -17,6 +17,14 @@ Hard floors no policy can lower:
     -> insufficient-evidence (a partial scan never passes)
   * verified (provider-verified) sensitive export to an external
     destination -> block
+
+Profiles. `citizen` is for software built by people who are not software
+engineers, typically with an AI coding agent. It tightens everything: a
+named engineering custodian, observed tests and CI, declared data
+classification, and no agent-guardrail bypasses or public exposure are
+required, and unverified authority over production or restricted data
+blocks instead of asking for review. A profile only ever tightens; the
+repository can opt into `citizen` but never out of it.
 """
 from __future__ import annotations
 
@@ -35,19 +43,42 @@ ACTION_RANK = {a: i for i, a in enumerate(ACTIONS)}
 RULES = {
     "P-COV-001": "assessment coverage is missing, partial, or truncated (hard floor)",
     "P-OWN-001": "accountable owner not established",
+    "P-CUS-001": "no engineering custodian named for the software",
     "P-DAT-001": "sensitive data export to an external destination",
     "P-DAT-002": "mutating, destructive, or unknown authority over a production, critical, or restricted asset",
+    "P-DAT-003": "reachable data stores without a declared classification",
+    "P-SEC-001": "credentials or data exposed to the public",
+    "P-AGT-001": "AI agent guardrails bypassed, or agent tooling unpinned",
+    "P-OPS-001": "automated tests or CI not observed",
     "P-EVD-001": "mandatory supply-chain evidence missing",
     "P-JNK-001": "Jank Score policy failed or blocker-severity leads present",
     "P-EXP-001": "exposure class above the policy maximum",
 }
+PROFILES = ("standard", "citizen")
 
 DEFAULT_POLICY: Dict[str, Any] = {
     "schema_version": POLICY_SCHEMA,
-    "require": {"owner": False, "sbom": False, "attestation": False, "verified_attestation": False},
-    "actions": {"P-OWN-001": "review", "P-DAT-001": "review", "P-DAT-002": "review",
-                "P-EVD-001": "insufficient-evidence", "P-JNK-001": "review", "P-EXP-001": "review"},
+    "profile": "standard",
+    "require": {"owner": False, "sbom": False, "attestation": False, "verified_attestation": False,
+                "custodian": False, "tests": False, "ci": False, "classification": False},
+    "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
+                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
+                "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence", "P-JNK-001": "review",
+                "P-EXP-001": "review"},
     "max_exposure": None,
+    # What unverified (static) authority and export leads may do at most.
+    "static_leads": "review",
+}
+
+# The citizen-developer profile: applied tighten-only on top of whatever is
+# in force, so it can only make a decision stricter.
+CITIZEN_PRESET: Dict[str, Any] = {
+    "require": {"owner": True, "custodian": True, "tests": True, "ci": True, "classification": True},
+    "actions": {"P-OWN-001": "block", "P-CUS-001": "block", "P-DAT-001": "block", "P-DAT-002": "block",
+                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
+                "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block"},
+    "max_exposure": "Moderate",
+    "static_leads": "block",
 }
 
 
@@ -57,6 +88,24 @@ class PolicyError(ValueError):
 
 def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"require": {}, "actions": {}}
+    prof = raw.get("profile")
+    if prof is not None:
+        if prof in PROFILES:
+            out["profile"] = prof
+        else:
+            warnings.append("%s policy: ignored profile %r" % (label, str(prof)[:20]))
+    lead = raw.get("static_leads")
+    if lead is not None:
+        if lead in ("review", "block"):
+            out["static_leads"] = lead
+        else:
+            warnings.append("%s policy: ignored static_leads %r" % (label, str(lead)[:20]))
+    cust = raw.get("custodians")
+    if cust is not None:
+        if isinstance(cust, list) and all(isinstance(c, str) and c.strip() for c in cust):
+            out["custodians"] = sorted({c.strip()[:80] for c in cust})[:20]
+        else:
+            warnings.append("%s policy: ignored custodians (expected a list of names)" % label)
     req = raw.get("require") or {}
     if isinstance(req, dict):
         for k, v in req.items():
@@ -80,37 +129,65 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
     return out
 
 
+def _tighten(eff: Dict[str, Any], rp: Dict[str, Any], warnings: List[str], who: str = "repository") -> None:
+    """Apply `rp` to `eff` so that nothing gets weaker."""
+    for k, v in rp.get("require", {}).items():
+        if v and not eff["require"][k]:
+            eff["require"][k] = True
+        elif not v and eff["require"][k]:
+            warnings.append("%s policy cannot relax require.%s; ignored" % (who, k))
+    for k, v in rp.get("actions", {}).items():
+        if ACTION_RANK[v] > ACTION_RANK[eff["actions"][k]]:
+            eff["actions"][k] = v
+        elif ACTION_RANK[v] < ACTION_RANK[eff["actions"][k]]:
+            warnings.append("%s policy cannot weaken %s from %s to %s; ignored" % (who, k, eff["actions"][k], v))
+    mx = rp.get("max_exposure")
+    if mx:
+        cur = eff["max_exposure"]
+        if cur is None or G.EXPOSURE_RANK[mx] < G.EXPOSURE_RANK[cur]:
+            eff["max_exposure"] = mx
+        elif G.EXPOSURE_RANK[mx] > G.EXPOSURE_RANK[cur]:
+            warnings.append("%s policy cannot raise max_exposure above %s; ignored" % (who, cur))
+    if rp.get("static_leads") == "block":
+        eff["static_leads"] = "block"
+    elif rp.get("static_leads") == "review" and eff["static_leads"] == "block":
+        warnings.append("%s policy cannot relax static_leads; ignored" % who)
+
+
+def _apply_profile(eff: Dict[str, Any], profile: str) -> None:
+    if profile == "citizen" and eff["profile"] != "citizen":
+        _tighten(eff, CITIZEN_PRESET, [], "profile")
+        eff["profile"] = "citizen"
+
+
 def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any]],
-          warnings: List[str]) -> Dict[str, Any]:
-    """Effective policy: defaults, then operator overrides, then repository
-    tightening. Repository input can raise actions, add requirements, and
-    lower max_exposure; it can never relax anything."""
+          warnings: List[str], profile: Optional[str] = None) -> Dict[str, Any]:
+    """Effective policy: defaults, then the operator's profile and overrides,
+    then repository tightening. `profile` is the operator's command-line
+    choice. Repository input can raise actions, add requirements, lower
+    max_exposure, and opt into the citizen profile; it can never relax
+    anything."""
     eff = copy.deepcopy(DEFAULT_POLICY)
-    if operator:
-        op = _validate(operator, "operator", warnings)
-        eff["require"].update(op["require"])
-        eff["actions"].update(op["actions"])
-        if "max_exposure" in op:
-            eff["max_exposure"] = op["max_exposure"]
+    eff["custodians"] = []
+    op = _validate(operator, "operator", warnings) if operator else {"require": {}, "actions": {}}
+    _apply_profile(eff, profile or "standard")
+    _apply_profile(eff, op.get("profile", "standard"))
+    eff["require"].update(op["require"])
+    eff["actions"].update(op["actions"])
+    if "max_exposure" in op:
+        eff["max_exposure"] = op["max_exposure"]
+    if "static_leads" in op:
+        eff["static_leads"] = op["static_leads"]
+    if op.get("custodians"):
+        eff["custodians"] = op["custodians"]
     if repository:
         rp = _validate(repository, "repository", warnings)
-        for k, v in rp["require"].items():
-            if v and not eff["require"][k]:
-                eff["require"][k] = True
-            elif not v and eff["require"][k]:
-                warnings.append("repository policy cannot relax require.%s; ignored" % k)
-        for k, v in rp["actions"].items():
-            if ACTION_RANK[v] > ACTION_RANK[eff["actions"][k]]:
-                eff["actions"][k] = v
-            elif ACTION_RANK[v] < ACTION_RANK[eff["actions"][k]]:
-                warnings.append("repository policy cannot weaken %s from %s to %s; ignored" % (k, eff["actions"][k], v))
-        mx = rp.get("max_exposure")
-        if mx:
-            cur = eff["max_exposure"]
-            if cur is None or G.EXPOSURE_RANK[mx] < G.EXPOSURE_RANK[cur]:
-                eff["max_exposure"] = mx
-            elif G.EXPOSURE_RANK[mx] > G.EXPOSURE_RANK[cur]:
-                warnings.append("repository policy cannot raise max_exposure above %s; ignored" % cur)
+        if rp.get("profile") == "standard" and eff["profile"] == "citizen":
+            warnings.append("repository policy cannot leave the citizen profile; ignored")
+        _apply_profile(eff, rp.get("profile", "standard"))
+        _tighten(eff, rp, warnings)
+        if rp.get("custodians"):
+            warnings.append("custodians in a repository policy are declarations; use passport.custodians")
     return eff
 
 
@@ -169,6 +246,19 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
             add("P-OWN-001", "pass", "owner not established; not required at exposure %s" % exposure)
     else:
         add("P-OWN-001", "pass", "owner %s" % owner)
+    # P-CUS-001
+    custodians = list(policy.get("custodians") or []) or list(facts.get("declared_custodians") or [])
+    if not policy["require"]["custodian"]:
+        add("P-CUS-001", "pass", "custodian not required by this policy")
+    elif not custodians:
+        outcome = OUTCOMES[max(OUTCOME_RANK["insufficient-evidence"], OUTCOME_RANK[_outcome_for(acts["P-CUS-001"])])]
+        add("P-CUS-001", outcome, "no engineering custodian is named (passport.custodians or the operator policy); "
+                                  "someone with engineering responsibility must answer for this software")
+    elif policy.get("custodians"):
+        add("P-CUS-001", "pass", "custodian(s) named by the operator policy: %s" % ", ".join(custodians))
+    else:
+        add("P-CUS-001", "pass", "custodian(s) declared in the repository: %s (a declaration; the custodian accepts "
+                                 "accountability by signing the acceptance record)" % ", ".join(custodians))
 
     nodes = {n["id"]: n for n in (graph or {}).get("nodes", [])}
     edges = [e for e in (graph or {}).get("edges", []) if e.get("verification") != "refuted"]
@@ -179,10 +269,11 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         if e["kind"] == "exports" and t.get("trust_domain") == "external" and \
                 (e.get("data_sensitivity") in ("confidential", "restricted") or _sensitive(nodes.get(e["source"], {}))):
             (verified_x if e["verification"] == "provider-verified" else static_x).append(e["id"])
+    cap = policy.get("static_leads", "review")
     if verified_x:
         add("P-DAT-001", "block", "verified export of sensitive data to an external destination", verified_x, floor=True)
     elif static_x:
-        add("P-DAT-001", _outcome_for(acts["P-DAT-001"]) if acts["P-DAT-001"] != "block" else "review",
+        add("P-DAT-001", _outcome_for(acts["P-DAT-001"]) if acts["P-DAT-001"] != "block" or cap == "block" else "review",
             "declared or observed sensitive export to an external destination; verify the flow", static_x)
     else:
         add("P-DAT-001", "pass", "0 sensitive external exports observed (co-reachability alone is not a flow)")
@@ -200,12 +291,47 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         add("P-DAT-002", _outcome_for(acts["P-DAT-002"]),
             "verified mutating/destructive authority over a production, critical, or restricted asset", verified_a)
     elif potential_a:
-        # Static leads never block by themselves: they ask for grant verification.
-        add("P-DAT-002", "review" if acts["P-DAT-002"] != "off" else "pass",
+        # Static leads ask for grant verification; they block only where the
+        # policy says unverified authority must be proven first (citizen).
+        lead = "pass" if acts["P-DAT-002"] == "off" else (
+            _outcome_for(acts["P-DAT-002"]) if cap == "block" else "review")
+        add("P-DAT-002", lead,
             "possible mutating, destructive, or unknown authority over a production, critical, or restricted asset; "
-            "verify effective grants", potential_a)
+            "verify effective grants" + ("; unverified authority blocks under this policy" if lead == "block" else ""),
+            potential_a)
     else:
         add("P-DAT-002", "pass", "0 such authorities observed")
+    # P-DAT-003
+    unclassified = [n for n in nodes.values() if n.get("kind") in ("database", "storage", "queue")
+                    and n.get("trust_domain") != "local" and n.get("sensitivity") == "unknown"]
+    if policy["require"]["classification"] and unclassified:
+        labels = sorted(str(n.get("display_label", n["id"])) for n in unclassified)
+        add("P-DAT-003", _outcome_for(acts["P-DAT-003"]),
+            "%d reachable data store(s) have no declared sensitivity: %s" % (len(labels), ", ".join(labels[:5])),
+            [n["id"] for n in unclassified])
+    else:
+        add("P-DAT-003", "pass", "data classification not required" if not policy["require"]["classification"]
+            else "every reachable data store has a declared sensitivity")
+    # P-SEC-001 and P-AGT-001 (scanner leads with a public or agent blast radius)
+    for rule, key, what in (("P-SEC-001", "exposure_findings", "public exposure"),
+                            ("P-AGT-001", "agent_findings", "agent guardrail")):
+        found = list(facts.get(key) or [])
+        if found:
+            add(rule, _outcome_for(acts[rule]), "%d %s lead(s): %s" % (
+                len(found), what, "; ".join("%s %s:%s" % (f["rule"], f["path"], f["line"]) for f in found[:5])),
+                ["finding:%s:%s:%s" % (f["rule"], f["path"], f["line"]) for f in found])
+        else:
+            add(rule, "pass", "0 %s leads" % what)
+    # P-OPS-001
+    ops = facts.get("operations") or {}
+    missing_ops = [area for area in ("tests", "ci") if policy["require"][area] and ops.get(area) != "observed"]
+    if missing_ops:
+        add("P-OPS-001", _outcome_for(acts["P-OPS-001"]), "%s not observed in the repository%s" % (
+            " and ".join(missing_ops), "; a declaration is not enough under this policy"
+            if any(ops.get(a) == "declared" for a in missing_ops) else ""))
+    else:
+        add("P-OPS-001", "pass", "tests and CI not required" if not (policy["require"]["tests"] or policy["require"]["ci"])
+            else "required tests/CI evidence observed")
     # P-EVD-001
     sup = facts.get("supply") or {}
     missing = []

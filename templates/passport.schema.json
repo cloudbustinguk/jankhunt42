@@ -249,6 +249,70 @@
       "items": {
         "type": "string"
       }
+    },
+    "governance": {
+      "type": "object",
+      "description": "Governance profile and the evidence behind P-SEC-001/P-AGT-001 (added in 2.3.0). The citizen profile is a governance choice made by an operator or declared by the repository, never an inference about authorship.",
+      "properties": {
+        "profile": {
+          "enum": [
+            "standard",
+            "citizen"
+          ]
+        },
+        "custodians": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "custodian_source": {
+          "enum": [
+            "operator-policy",
+            "repository",
+            "none"
+          ]
+        },
+        "public_exposure_leads": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "agent_leads": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "agent": {
+          "type": "object",
+          "properties": {
+            "configs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "servers": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "brief": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "the decision in plain language; shown first in citizen-profile views"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
     }
   }
 }

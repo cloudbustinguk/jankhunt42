@@ -43,7 +43,7 @@ class Adapters(unittest.TestCase):
 
     def test_python_literal_endpoint_and_sql_ops(self):
         src = ('import psycopg\nconn = psycopg.connect("postgresql://u:%s@pg.prod.internal/ledger")\n'
-               'conn.execute("DELETE FROM entries WHERE id = %%s")\nconn.execute("SELECT a FROM b")\n' % PW)
+               'conn.execute("DELETE FROM entries WHERE id = %%s")\nconn.execute("SELECT a FROM b")\n' % PW)  # jankhunt42: ignore JH104 (fixture text)
         rep = build({"svc.py": src})
         es = edges_to(rep, "pg.prod.internal")
         caps = {(e["kind"], e["capability"], e["verification"]) for e in es}

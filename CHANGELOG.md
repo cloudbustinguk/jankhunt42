@@ -4,10 +4,97 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [2.3.0] — 2026-10-24
+
+Governing citizen developers and the blast radius their software inherits.
+People who are not software engineers now ship software with AI coding
+agents; this release checks what those agents are allowed to do, maps what
+their tools can reach, and adds a strict passport profile for software built
+this way. Everything stays offline and static, and existing JSON and SARIF
+fields are unchanged.
+
+### Added
+
+- `passport --profile citizen` (also `"profile": "citizen"` in an operator
+  policy, or `passport.profile` in repository config, which can opt in but
+  never out). It requires an owner, a named engineering custodian, observed
+  tests and CI, and declared data classification, and it blocks on public
+  exposure, agent-guardrail leads, exposure above Moderate, sensitive
+  external exports, a failed Jank Score policy, and authority over
+  production or restricted data that nobody has verified
+  (`static_leads: block`).
+- Five passport rules: `P-CUS-001` (engineering custodian), `P-DAT-003`
+  (data classification), `P-SEC-001` (credentials or data exposed to the
+  public), `P-AGT-001` (agent guardrails bypassed or agent tooling
+  unpinned), and `P-OPS-001` (tests and CI observed). Under the standard
+  profile `P-SEC-001` and `P-AGT-001` give `review`, and the others apply only
+  when a policy requires them.
+- Custodians: `custodians` in an operator policy or `passport.custodians` in
+  the repository (a declaration). Under the citizen profile an acceptance
+  record must be signed by a named custodian.
+- A `governance` section in passports: profile, custodians, the leads behind
+  `P-SEC-001`/`P-AGT-001`, the AI agent tooling found in the map, and a
+  plain-language brief, which citizen passports lead with in the terminal,
+  Markdown, and HTML views. `--redact` hides server names, credentials,
+  endpoints, and custodians.
+- The map's `mcp` adapter: MCP server definitions for Claude Code, Cursor,
+  VS Code, Gemini CLI, Codex, opencode, and Claude Desktop become an AI agent
+  principal with edges to each server, the endpoints it is pointed at, and
+  its credentials (by name only), plus an `agent-tool-capability` unknown.
+- The map recognizes the stack AI app builders use: Supabase,
+  Firebase/Firestore, Neon, Upstash, Turso, Airtable, and Google Sheets as
+  data stores, and Stripe, Twilio, SendGrid, Resend, Slack, Notion, and model
+  APIs as external services.
+- 17 scanner rules (96 in total), with a new `agent` category scored under
+  security:
+  - `JH701`-`JH708` (agent): suspicious agent instructions (hidden HTML
+    comments with commands or credential references, instruction overrides,
+    "do not tell the user", pipe-to-shell, credential exfiltration); agent
+    CLIs run with approval-bypass flags; approval bypasses committed in VS
+    Code, Claude Code, Codex, or Zed settings; folder-open tasks, project
+    hooks, credential helpers, and API base-URL or proxy overrides; MCP
+    servers launched from unpinned packages or images, holding literal
+    credentials, or reached over plaintext HTTP; issue, PR, or comment text
+    fed to AI agent steps in GitHub workflows.
+  - `JH131`-`JH134`: hidden Unicode (tag characters, decoded for the
+    reviewer; bidi controls; invisible characters; stacked variation
+    selectors); secrets shipped to the browser through public env prefixes,
+    including Supabase `service_role` keys; `dangerouslyAllowBrowser` LLM
+    clients; data stores open to the public (Firebase rules, disabled
+    row-level security, permissive policies, writes granted to `anon`,
+    public buckets and IAM bindings).
+  - `JH427`-`JH431`: `toJSON(secrets)`, `secrets: inherit`, pip extra
+    indexes (dependency confusion), Dependabot external code execution, and
+    Dependabot without a cooldown.
+- `JH101` and redaction know npm, PyPI, GitLab, Hugging Face, Groq,
+  SendGrid, DigitalOcean, Shopify, and Slack webhook formats, and PGP
+  private key blocks.
+- `references/citizen.md`, routing and doctrine for citizen developers in
+  `SKILL.md`, and four selftest mutants (16 in total).
 
 ### Changed
 
+- `JH418` also covers `workflow_run`, `refs/pull/...` refs, fork repository
+  checkouts, `allow-unsafe-pr-checkout: true`, and `gh pr checkout` or
+  `git fetch` of pull-request refs in run steps; it looks only at the step
+  it reports. `JH419` knows more untrusted fields (discussions, commit
+  messages and authors, PR head labels, `workflow_run` heads) and also
+  checks `actions/github-script` scripts.
+- Finding evidence shows invisible, bidi, and tag characters as `<U+XXXX>`,
+  and terminal output neutralizes tag and invisible format characters too,
+  so hidden text cannot ride a report into a reader's or an agent's context.
+- The effective policy has new keys (`profile`, `custodians`,
+  `static_leads`, more `require` entries), so policy hashes changed;
+  acceptance records bound to an earlier hash must be re-issued.
+- Directory walks (outside git) now include agent and editor workspace
+  directories such as `.vscode`, `.claude`, `.cursor`, and `.codex`.
+- CI uses Node 24 action majors pinned to full commit SHAs
+  (`actions/checkout` v7.0.1 with `persist-credentials: false`,
+  `actions/setup-python` v6.3.0, `actions/attest-build-provenance` v4.2.2,
+  `softprops/action-gh-release` v3.0.3). The README CI example uses current
+  majors.
+- The `SKILL.md` description is within the 1,024-character Agent Skills
+  limit.
 - Terminal views use the HTML views' colours: the scan report palette for
   `scan`, the explorer palette for `map` and `passport`. Exact in truecolor
   terminals (`COLORTERM=truecolor`), nearest xterm-256 otherwise, and the
@@ -16,7 +103,20 @@ semantic versioning.
   to step through unrelated 256-colour hues), blast-radius path edges are
   magenta, grades are coloured badges, severities and hot-spot bars match the
   scan report, and `declared` evidence is violet. Text is unchanged.
-- README shows screenshots of the three HTML views.
+- README shows screenshots of the HTML views, including a citizen-profile passport.
+
+### Fixed
+
+- `JH502` flagged nearly every unittest-style test: `self.assertEqual` and
+  friends did not match its word-boundary pattern. It now accepts any
+  `assert*` call and assertions made inside helper methods (directly or
+  through other helpers).
+- A connection string whose password is a placeholder
+  (`postgresql://user:${PASSWORD}@host/db`) lost its concrete host and
+  became an unresolved target.
+- `JH401` treated a CI workflow named `secrets.yml` as a credential file.
+- Test fixtures carried literal bidi and byte-order-mark characters; they
+  are escape sequences now.
 
 ## [2.2.0] — 2026-10-24
 

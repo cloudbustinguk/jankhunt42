@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.3.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -19,6 +19,23 @@ jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill
 | **Can we responsibly ship it?** | `passport` | A software passport linking ownership, provenance, data sources, operations evidence, the Jank Score and the exposure class to an explainable `pass` / `review` / `insufficient-evidence` / `block` decision |
 
 Each answer keeps its own evidence model. A Jank Score is not an exposure class, and neither is a release decision. A scanner lead is not a confirmed defect, a graph path is not proven access, and a passport is not an approval.
+
+## Citizen developers and AI agents
+
+People who are not software engineers now build and ship software with AI coding agents. That software inherits their credentials, the tools their agent is wired to, and their access to production data, so its blast radius is real even when nobody on the team has read the code. jankhunt42 governs it in three offline steps:
+
+```sh
+jankhunt42 scan . --category agent          # what an agent would do when it opens or works in this repository
+jankhunt42 map .                            # what the software and its agent's MCP servers can reach
+jankhunt42 passport . --profile citizen     # a strict release decision, explained in plain terms
+```
+
+- **Agent workspace checks** (`JH701`-`JH708`): approval bypasses committed in VS Code, Claude Code, Codex, or Zed settings; folder-open tasks, project hooks, and API base-URL overrides; agent CLIs run with permission-bypass flags; MCP servers launched from unpinned packages, holding literal credentials, or reached over plaintext HTTP; hidden HTML-comment instructions, "do not tell the user", and credential exfiltration in agent instruction files; issue and PR text fed to AI steps in CI.
+- **Mistakes AI-built apps make** (`JH131`-`JH134`): secrets behind `NEXT_PUBLIC_`/`VITE_`-style prefixes (including Supabase `service_role` keys), `dangerouslyAllowBrowser` LLM clients, open Firebase rules, disabled row-level security, write policies `USING (true)`, public buckets, and invisible Unicode (tag characters are decoded for the reviewer).
+- **The agent's blast radius:** `map` turns MCP server definitions into an AI-agent principal with edges to each server, the endpoints it is pointed at, and the credentials it holds (by name only). An agent whose database server points at production is High exposure, exactly like code with the same reach.
+- **The citizen profile** blocks a release without an owner, a named engineering **custodian**, observed tests and CI, and declared data classification; on public exposure or agent-guardrail leads; above Moderate exposure; and on authority over production or restricted data that nobody has verified. The passport leads with a plain-language brief, and an acceptance record must be signed by a named custodian.
+
+The profile is a governance choice made by an operator (`--profile citizen`, or `"profile": "citizen"` in an operator policy) or declared by the repository (`passport.profile`), never a guess about who wrote the code, and the repository can opt in but never out. Details, the incidents these checks map to, and limits: [`references/citizen.md`](references/citizen.md).
 
 ## 60-second quick start
 
@@ -159,7 +176,11 @@ The same fixture with `--html`: each view is one self-contained, offline file (n
 
 `jankhunt42 passport tests/fixtures/demo-app --html` is the software passport: the decision, the rules that produced it, and the evidence behind each area. It is printable.
 
-![The jankhunt42 software passport: release assessment review, Jank Score 67/100 grade E, exposure High, evidence coverage 4 of 9, lifecycle assessed, followed by the two review reasons and the table of all seven rules with their outcomes](assets/readme/software-passport.png)
+![The jankhunt42 software passport: release assessment review, Jank Score 67/100 grade E, exposure High, evidence coverage 4 of 9, lifecycle assessed, followed by the two review reasons and the table of every rule with its outcome](assets/readme/software-passport.png)
+
+`jankhunt42 passport . --profile citizen --html` on a small synthetic app built the way AI app builders do: a Supabase and OpenAI front end, a Cursor MCP config whose unpinned database server points at a production host, and VS Code agent auto-approve. It was generated in a scratch directory for this screenshot and is not checked in, because its agent settings are deliberately unsafe; the test suite builds the same kind of app at test time.
+
+![The jankhunt42 citizen-profile passport: release assessment block, profile citizen with no custodian named, exposure High, then an "in plain terms" brief listing eight blocking reasons in plain language, what the software and its AI agent set-up can reach (including an unpinned database tool server reaching a production host), and the first rule reasons](assets/readme/citizen-passport.png)
 
 `jankhunt42 scan tests/fixtures/demo-app --html` is the scan report: the Jank Score, the severity mix, the four-dimension scorecard, hot spots, and every finding with its evidence.
 
@@ -193,7 +214,7 @@ jankhunt42 map . --mermaid > map.mmd           # Mermaid flowchart for docs
 jankhunt42 map . --csv map-csv                 # nodes.csv + edges.csv (formula-injection safe)
 ```
 
-**Discovery** is offline and static. It reads Python, JavaScript/TypeScript and .NET code; `.env`, config and appsettings files; Kubernetes workloads and RBAC; docker-compose; GitHub Actions permissions and cloud logins; Terraform data stores and privileged role grants; and dependency manifests (as weak evidence). Secret references are recorded by name and never dereferenced. Dynamic endpoints become explicit unresolved targets rather than invented hosts.
+**Discovery** is offline and static. It reads Python, JavaScript/TypeScript and .NET code; `.env`, config and appsettings files; Kubernetes workloads and RBAC; docker-compose; GitHub Actions permissions and cloud logins; Terraform data stores and privileged role grants; MCP server definitions for coding agents (Claude Code, Cursor, VS Code, Gemini CLI, Codex, opencode, Claude Desktop); and dependency manifests (as weak evidence). Hosted data services such as Supabase, Firebase, Neon, Upstash, Airtable, and Google Sheets count as data stores. Secret references are recorded by name and never dereferenced. Dynamic endpoints become explicit unresolved targets rather than invented hosts.
 
 **Blast radius** walks each principal's admissible edges separately for confidentiality, integrity and availability. It uses a bounded, deterministic traversal with witness paths, and every reachable asset is counted once. Unknown capability counts as *possibly* anything, never read-only. An independent brute-force oracle checks the traversal on thousands of seeded graphs.
 
@@ -220,11 +241,12 @@ jankhunt42 passport . --json                   # jankhunt.passport.v1 (templates
 jankhunt42 passport . --html > passport.html   # printable, offline
 jankhunt42 passport . --policy ../policy.json  # operator policy (outside the repo)
 jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
+jankhunt42 passport . --profile citizen        # strict governance for software built by non-engineers
 jankhunt42 passport . --compare ../old-passport.json      # regressions since a stored passport
 jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance record, bound to revision + policy
 ```
 
-The decision is the most severe of seven named rules. These cover coverage (a hard floor), owner, sensitive external export, production authority, mandatory supply-chain evidence, the Jank Score policy, and maximum exposure. It is never a weighted average, and `insufficient-evidence` can never become `pass`.
+The decision is the most severe of twelve named rules. These cover coverage (a hard floor), owner, engineering custodian, sensitive external export, production authority, data classification, public exposure, agent guardrails, tests and CI, mandatory supply-chain evidence, the Jank Score policy, and maximum exposure. It is never a weighted average, and `insufficient-evidence` can never become `pass`. Under the default `standard` profile, the custodian, classification, and tests/CI rules apply only when a policy requires them, and static leads ask for review rather than block; the `citizen` profile requires all of them and blocks.
 
 Policy precedence is defaults < operator `--policy` (outside the repository) < hard floors. Repository config (`passport.policy`, or a `--policy` file inside the repo) can only tighten.
 
@@ -249,13 +271,15 @@ jankhunt42 score . --json               # Jank Score 2.0 breakdown
 jankhunt42 rules --category security    # the rule catalog
 ```
 
-There are 79 static rules. They cover:
+There are 96 static rules. They cover:
 
-- secrets and credentials;
+- secrets and credentials, including registry and AI-provider token formats;
+- AI-agent workspaces and citizen-built apps (above);
 - injection, unsafe deserialization and archives, and crypto/TLS/JWT/CORS mistakes;
 - swallowed errors, missing timeouts, blocking calls in async code;
 - complexity, and test hygiene;
-- Docker and Compose, Kubernetes security context, GitHub Actions and GitLab CI pitfalls;
+- Docker and Compose, Kubernetes security context, GitHub Actions and GitLab CI pitfalls (including `toJSON(secrets)`, `secrets: inherit`, and checkouts of untrusted pull-request code that bypass `actions/checkout`'s protection);
+- dependency confusion through pip extra indexes, and Dependabot without a cooldown or with external code execution;
 - lockfiles, unpinned dependencies, and broken Markdown links.
 
 `scan --cve` adds OSV.dev advisories. It is opt-in, and only package name, version and ecosystem leave the machine.
@@ -367,10 +391,11 @@ jobs:
   assure:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4   # pin to a SHA in production
+      - uses: actions/checkout@v7   # pin to a SHA in production
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --sarif > jankhunt42.sarif
@@ -378,9 +403,9 @@ jobs:
       - name: What changed in what it can reach
         if: github.event_name == 'pull_request'
         run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 map . --base "${{ github.event.pull_request.base.sha }}" --md >> "$GITHUB_STEP_SUMMARY"
-      - name: Passport (enforced)
+      - name: Passport (enforced; add --profile citizen for software built by non-engineers)
         run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 passport . --json --fail-on block > passport.json
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: jankhunt42.sarif
@@ -410,7 +435,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- nine mutants that the tests must kill, each with an unmutated control;
+- sixteen mutants that the tests must kill, each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
@@ -432,7 +457,8 @@ scripts/jh_score.py      Jank Score 2.0                              scripts/jh_
 scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_hunt.py     deep hunt and merge
 scripts/jh_graph.py      graph model, sanitizing, reachability, exposure, diff, redaction
 scripts/jh_map.py        discovery adapters, coverage, map views    scripts/jh_yaml.py     bounded YAML subset reader
-scripts/jh_policy.py     passport rules and precedence              scripts/jh_passport.py passport assembly
+scripts/jh_policy.py     passport rules, profiles, precedence       scripts/jh_passport.py passport assembly
+scripts/jh_agent.py      MCP and agent workspace config parsing
 scripts/jh_views.py      map/passport terminal views                scripts/jh_explorer.py offline HTML explorer
 scripts/jh_selftest.py   self-assurance orchestrator                scripts/selftest.sh    shell regression suite
 tests/                   unittest suite, oracle, fixtures (synthetic), golden snapshots
@@ -445,6 +471,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
 - 2.1.0 adds options only (`map --what-if/--drift/--mermaid/--csv`, `passport --acceptance/--compare/--against`), plus `passport.bindings`. It also narrows `JH104`, which no longer flags parameterized `%s`/`%(name)s` placeholders; this removes findings and never adds them.
 - 2.2.0 adds options only (`supply-chain --verify/--online/--fetch-dir`, `passport --verify/--online`) and additive fields (`key_source`, `origin`, `verification`). JFrog records whose key came from the Sigstore bundle now carry a warning; their state is unchanged.
+- 2.3.0 adds 17 rules (`JH131`-`JH134`, `JH427`-`JH431`, `JH701`-`JH708`, with the new `agent` category), `passport --profile`, `passport.profile` and `passport.custodians`, five passport rules, an additive `governance` section, and the map's `mcp` adapter. Every older rule's catalog entry and every existing JSON and SARIF field is unchanged. Under the standard profile, `P-SEC-001` and `P-AGT-001` add `review` reasons when their leads appear. The effective policy gained keys, so the policy hash changed: acceptance records bound to an earlier hash must be re-issued. `JH502` no longer fires on unittest-style assertions or on assertions made in helper methods, and `JH401` no longer treats a CI workflow named `secrets.yml` as a credential file.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.
@@ -464,6 +491,7 @@ To add a rule, add it to `RULES` in `jh_rules.py` (or a `check=` in `jh_checks.p
 ## Limitations
 
 - **Heuristics:** findings and edges come from static text, not data flow or runtime observation. They can miss things and can fire on examples.
+- **Agents:** agent-workspace rules read configuration text; they do not run the agent or its MCP servers, and agent settings change between versions. A server's tools, and what they can do, are not visible statically. The citizen profile governs the release decision; it is not a sandbox.
 - **Map:** no Helm, Kustomize, HCL or variable evaluation. No live network, firewall or IAM evaluation. Which workload runs the repository code is not inferred; declare it with `passport.bindings`. Monorepos map as one application. `.sql` migrations and tests are not mapped. Mermaid output is not checked with a Mermaid renderer.
 - **Effective privileges:** these are never proven from repository evidence. Verified authority needs an operator inventory, and jankhunt42 does not verify that inventory's own provenance.
 - **Exposure and decisions:** these are explainable heuristics, not calibrated probabilities or compliance results. Adapter accuracy is measured only on this repository's synthetic fixtures and its own ground truth.

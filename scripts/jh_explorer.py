@@ -328,9 +328,15 @@ card(cards,'technical jank score',A.jank.score+'/100','grade '+A.jank.grade+' ·
 card(cards,'exposure',A.exposure.class,'separate from the Jank Score','lvl-'+A.exposure.class);
 card(cards,'evidence coverage',C.evidence_areas_present+'/'+C.evidence_areas_total,'areas observed, declared, or inferred');
 card(cards,'lifecycle',P.lifecycle.state,'acceptance: '+P.lifecycle.acceptance.state);
+const G=P.governance||{profile:'standard',custodians:[],brief:[],agent:{servers:[]}};
+if(G.profile==='citizen')card(cards,'profile','citizen','custodian: '+(G.custodians.join(', ')||'not named'),G.custodians.length?'out-pass':'out-block');
 const doc=document.getElementById('doc');
 function sec(title){const s=add(doc,el('section'));add(s,el('h2',null,title));return s;}
-let s=sec('why this decision');add(s,el('p',{class:'muted'},D.note));let ul=add(s,el('ul'));
+let s;
+if(G.profile==='citizen'){s=sec('in plain terms · citizen-developer profile');let pl=null;
+  G.brief.forEach((b,i)=>{if(b.startsWith('- ')){if(!pl)pl=add(s,el('ul'));add(pl,el('li',null,b.slice(2)));}
+    else{pl=null;const para=add(s,el('p',null,i===0?'':b));if(i===0)add(para,el('b',{class:'out-'+D.result},b));}});}
+s=sec('why this decision');add(s,el('p',{class:'muted'},D.note));let ul=add(s,el('ul'));
 if(!D.reasons.length)add(ul,el('li',null,'No rule triggered. This is an assessment, not an approval.'));
 D.reasons.forEach(r=>{const li=add(ul,el('li'));add(li,el('b',{class:'out-'+r.outcome},r.outcome+' '));add(li,el('code',null,r.rule));li.appendChild(document.createTextNode((r.hard_floor?' (hard floor) ':' ')+r.message));});
 s=sec('all rules');const t=add(s,el('table',{class:'grid'}));const h=add(add(t,el('thead')),el('tr'));['rule','outcome','detail'].forEach(x=>add(h,el('th',null,x)));
@@ -344,6 +350,9 @@ s=sec('provenance');add(s,el('p',null,P.provenance.sboms+' SBOM(s), '+(P.provena
 ul=add(s,el('ul'));(P.subject.artifact_digests||[]).forEach(d=>add(ul,el('li',{class:'mono'},d.digest+' — '+d.verification)));
 s=sec('data sources ('+(P.data.sources||[]).length+')');const t3=add(s,el('table',{class:'grid'}));const h3=add(add(t3,el('thead')),el('tr'));['source','kind','sensitivity','criticality','environment','trust'].forEach(x=>add(h3,el('th',null,x)));
 const tb3=add(t3,el('tbody'));(P.data.sources||[]).forEach(d=>{const tr=add(tb3,el('tr'));[d.label,d.kind,d.sensitivity,d.criticality,d.environment,d.trust_domain].forEach(v=>add(tr,el('td',null,v)));});
+if((G.agent.servers||[]).length){s=sec('AI agent tooling ('+G.agent.servers.length+' MCP server(s))');add(s,el('p',{class:'muted'},'what an agent session in this repository is wired to; each server decides at runtime what its tools can do'));
+  const t4=add(s,el('table',{class:'grid'}));const h4=add(add(t4,el('thead')),el('tr'));['server','transport','pinned','credentials','reaches'].forEach(x=>add(h4,el('th',null,x)));
+  const tb4=add(t4,el('tbody'));G.agent.servers.forEach(v=>{const tr=add(tb4,el('tr'));[v.name,v.transport,v.pinned===null||v.pinned===undefined?'n/a':(v.pinned?'yes':'no'),(v.credentials||[]).join(', ')||'none',(v.reaches||[]).join(', ')||'-'].forEach(x=>add(tr,el('td',null,x)));});}
 if(P.remediation.length){s=sec('top remediation steps');const ol=add(s,el('ol'));P.remediation.forEach(r=>add(ol,el('li',null,r)));}
 s=sec('unknowns');ul=add(s,el('ul'));P.unknowns.forEach(u=>add(ul,el('li',null,u.id+': '+u.detail)));
 s=sec('limitations');ul=add(s,el('ul'));P.limitations.forEach(u=>add(ul,el('li',null,u)));

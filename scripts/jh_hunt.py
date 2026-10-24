@@ -263,6 +263,7 @@ LEAD_QUESTIONS = {
     "tests": "What regression would this test fail to catch, and what is the cheapest test that would catch it?",
     "supply-chain": "Can an attacker influence this reference, and which credentials or artifacts does it reach?",
     "ci": "Can an untrusted change influence this workflow, and what can the job read or write?",
+    "agent": "What would an AI agent that opens or reads this repository do, without asking, and with which credentials?",
     "docs": "Could this mislead an operator into a destructive or insecure action?",
 }
 

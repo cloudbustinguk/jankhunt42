@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import jh_graph as G
 import jh_map
 import jh_policy
-from jh_core import TOOL, VERSION, is_test_path, safe_text
+from jh_core import SEV_RANK, TOOL, VERSION, is_agent_context, is_mcp_config, is_test_path, safe_text
 
 PASSPORT_SCHEMA = "jankhunt.passport.v1"
 
@@ -36,6 +36,98 @@ _OWNER_TOKEN = re.compile(r"^@[\w.\-]+(/[\w.\-]+)?$")
 
 AREAS = ("ownership", "provenance", "data_inventory", "ci", "tests", "observability",
          "health_checks", "runbook", "security_policy")
+
+# Scanner leads that put credentials or data in front of the public.
+EXPOSURE_RULES = {"JH132", "JH133", "JH134"}
+SECRET_RULES = {"JH101", "JH401", "JH415"}
+
+
+def _lead(f: Any) -> Dict[str, Any]:
+    return {"rule": f.rule, "path": safe_text(f.path), "line": f.line, "severity": f.severity, "title": f.title}
+
+
+def governance_leads(findings: Sequence[Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(public-exposure leads, agent-guardrail leads) at major severity or above."""
+    serious = [f for f in findings if SEV_RANK.get(f.severity, 99) <= SEV_RANK["major"]]
+    exposure = [_lead(f) for f in serious if f.rule in EXPOSURE_RULES
+                or (f.rule in SECRET_RULES and f.severity in ("blocker", "critical"))]
+    agent = [_lead(f) for f in serious if f.category == "agent"
+             or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path)))]
+    key = lambda d: (d["path"], d["line"], d["rule"])
+    return sorted(exposure, key=key)[:50], sorted(agent, key=key)[:50]
+
+
+def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What the repository's AI agent configuration wires an agent to."""
+    if map_report is None:
+        return {"configs": [], "servers": []}
+    nodes = {n["id"]: n for n in map_report["graph"]["nodes"]}
+    edges = map_report["graph"]["edges"]
+    agents = sorted(n["id"] for n in nodes.values() if n["attributes"].get("platform") == "ai-agent")
+    servers = []
+    for a in agents:
+        for e in sorted((e for e in edges if e["source"] == a), key=lambda e: e["target"]):
+            t = nodes[e["target"]]
+            creds = sorted(ref.split(" ", 1)[-1] for x in edges
+                           if x["source"] == t["id"] and x["kind"] == "authenticates-as"
+                           for ref in nodes[x["target"]]["attributes"].get("credential_refs", []))
+            reach = sorted(nodes[x["target"]]["display_label"] for x in edges
+                           if x["source"] == t["id"] and x["kind"] == "connects")
+            servers.append({"name": str(t["attributes"].get("mcp_server", t["display_label"]))[:60],
+                            "transport": t["attributes"].get("transport", "remote"),
+                            "pinned": t["attributes"].get("pinned"),
+                            "credentials": creds[:10], "reaches": reach[:10]})
+    return {"configs": sorted({str(nodes[a]["attributes"].get("config", "")) for a in agents}), "servers": servers[:50]}
+
+
+_PLAIN = {
+    "P-COV-001": "We could not see enough of the project to judge it.",
+    "P-OWN-001": "Nobody is named as the owner.",
+    "P-CUS-001": "No engineer is named as its custodian, so nobody with engineering responsibility answers for it.",
+    "P-DAT-001": "It may send sensitive data to an outside service.",
+    "P-DAT-002": "It can change or delete data in a production or sensitive system, and nobody has confirmed "
+                 "that this access is limited.",
+    "P-DAT-003": "Nobody has said how sensitive the data it touches is.",
+    "P-SEC-001": "Secret keys or data are exposed to the public.",
+    "P-AGT-001": "The AI agent set-up can act without asking, or pulls tools that can change without notice.",
+    "P-OPS-001": "There are no automated tests or CI to catch mistakes before they ship.",
+    "P-EVD-001": "Required build records are missing.",
+    "P-JNK-001": "The code has serious quality or security problems.",
+    "P-EXP-001": "It can reach more than this policy allows.",
+}
+_VERDICT = {
+    "block": "Not ready to ship. Fix every blocking item below; then an engineering custodian must review and sign off.",
+    "insufficient-evidence": "Cannot be judged yet: evidence is missing. Supply what is listed below and re-run.",
+    "review": "Needs an engineer's review before it ships.",
+    "pass": "No blocking issue found. This is an automated check, not approval: the custodian still signs off.",
+}
+
+
+def plain_brief(p: Dict[str, Any]) -> List[str]:
+    """The decision in plain language, for the person who built the software
+    and the custodian who answers for it."""
+    d = p["assessment"]["decision"]
+    gov = p["governance"]
+    lines = [_VERDICT[d["result"]]]
+    for r in d["reasons"]:
+        lines.append("- %s" % _PLAIN.get(r["rule"], r["title"]))
+    servers = gov.get("agent", {}).get("servers", [])
+    agent_only = {label for sv in servers for label in sv.get("reaches", [])}
+    sources = p["data"].get("sources", [])
+    stores = [s for s in sources if s["kind"] in ("database", "storage", "queue") and s["label"] not in agent_only]
+    if stores:
+        lines.append("The software can reach: %s." % "; ".join(
+            "%s (%s%s)" % (s["label"], s["environment"] if s["environment"] != "unknown" else "environment unknown",
+                           ", %s data" % s["sensitivity"] if s["sensitivity"] != "unknown" else "")
+            for s in stores[:5]))
+    if servers:
+        lines.append("Its AI agent set-up connects to %d tool server(s): %s." % (len(servers), "; ".join(
+            "%s%s%s%s" % (sv["name"], " (unpinned)" if sv.get("pinned") is False else "",
+                          " with %s" % ", ".join(sv["credentials"]) if sv.get("credentials") else "",
+                          ", reaching %s" % ", ".join(sv["reaches"]) if sv.get("reaches") else "")
+            for sv in servers[:5])))
+    lines.append("Custodian: %s." % (", ".join(gov["custodians"]) if gov["custodians"] else "not named"))
+    return lines
 
 
 def _ev(evidence: List[Dict[str, Any]], area: str, state: str, path: str, line: int, detail: str) -> str:
@@ -217,6 +309,20 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
                          "highest-severity leads (`jankhunt42 scan --min-severity critical`).")
         elif rule == "P-EXP-001":
             steps.append("Reduce exposure below the policy maximum: remove unneeded write/delete paths shown by `jankhunt42 map`.")
+        elif rule == "P-CUS-001":
+            steps.append("Name an engineering custodian who reviews and answers for this software (`passport.custodians`, "
+                         "or `custodians` in the operator policy); the custodian signs the acceptance record.")
+        elif rule == "P-SEC-001":
+            steps.append("Rotate exposed keys, move secrets to server-side code, and close public data access "
+                         "(`jankhunt42 scan . --rule JH132 --rule JH133 --rule JH134`).")
+        elif rule == "P-AGT-001":
+            steps.append("Remove agent approval bypasses, auto-run hooks, and credential literals from the repository, "
+                         "and pin every MCP server (`jankhunt42 scan . --category agent`).")
+        elif rule == "P-OPS-001":
+            steps.append("Add automated tests and a CI workflow that runs them on every change.")
+        elif rule == "P-DAT-003":
+            steps.append("Declare the sensitivity of every data store in `passport.assets` "
+                         "(public, internal, confidential, or restricted).")
     if owner_state == "unknown" and not any("owner" in s for s in steps):
         steps.append("Declare an accountable owner (CODEOWNERS or `passport.owners`).")
     for area in ("observability", "health_checks", "runbook"):
@@ -227,12 +333,23 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
     return steps[:8]
 
 
+def _declared_custodians(passport_cfg: Dict[str, Any], warnings: List[str]) -> List[str]:
+    raw = passport_cfg.get("custodians")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(c, str) and c.strip() for c in raw):
+        warnings.append("passport.custodians: expected a list of names; ignored")
+        return []
+    return sorted({G.sanitize_text(c.strip(), 80) for c in raw})[:20]
+
+
 def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], items: Sequence[jh_map.Item],
           scan_files: int, scan_loc: int, jank: Dict[str, Any], findings_counts: Dict[str, int],
           supply: Optional[Dict[str, Any]], map_report: Optional[Dict[str, Any]],
           passport_cfg: Dict[str, Any], config_path: Optional[str], operator_policy: Optional[Dict[str, Any]],
           operator_policy_label: str, repo_policy_paths: Sequence[str], fail_on: Optional[str],
-          warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
+          warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = (),
+          findings: Sequence[Any] = (), profile: Optional[str] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -240,10 +357,15 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     prov = provenance(supply, evidence)
     data = data_inventory(map_report)
     repo_policies = [passport_cfg["policy"]] if isinstance(passport_cfg.get("policy"), dict) else []
+    if passport_cfg.get("profile") is not None:
+        # `passport.profile` is the repository opting into stricter governance.
+        repo_policies.insert(0, {"profile": passport_cfg.get("profile")})
     repo_policies += list(extra_repo_policies)
-    eff = jh_policy.merge(operator_policy, repo_policies[0] if repo_policies else None, warns)
+    eff = jh_policy.merge(operator_policy, repo_policies[0] if repo_policies else None, warns, profile)
     for extra in repo_policies[1:]:
         eff = jh_policy.merge(eff, extra, warns)  # still tighten-only for the repository input
+    declared_custodians = _declared_custodians(passport_cfg, warns)
+    exposure_leads, agent_leads = governance_leads(findings)
     exposure = map_report["assessment"]["exposure"]["class"] if map_report else "Unknown"
     if map_report:
         warns.extend(map_report.get("warnings", []))
@@ -261,6 +383,10 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "supply": {"sbom": prov.get("sboms", 0), "attestations": len(prov.get("attestations", [])),
                    "verified_attestations": prov.get("verified_attestations_reported", 0),
                    "verification_problems": (prov.get("verification") or {}).get("problems", [])},
+        "declared_custodians": declared_custodians,
+        "exposure_findings": exposure_leads,
+        "agent_findings": agent_leads,
+        "operations": {k: v["state"] for k, v in ops.items()},
     }
     decision = jh_policy.evaluate(eff, facts, map_report["graph"] if map_report else None)
     sources = [{"kind": "default"}]
@@ -311,6 +437,19 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             },
         },
         "ownership": own,
+        "governance": {
+            "profile": eff["profile"],
+            "custodians": eff.get("custodians") or declared_custodians,
+            "custodian_source": ("operator-policy" if eff.get("custodians") else
+                                 "repository" if declared_custodians else "none"),
+            "public_exposure_leads": exposure_leads,
+            "agent_leads": agent_leads,
+            "agent": agent_tooling(map_report),
+            "brief": [],
+            "note": ("the citizen profile governs software built by people who are not software engineers: "
+                     "it requires a named engineering custodian and blocks on unverified authority"
+                     if eff["profile"] == "citizen" else "standard profile"),
+        },
         "provenance": prov,
         "data": data,
         "operations": ops,
@@ -327,6 +466,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "truncation": map_report["truncation"] if map_report else {"truncated": False, "reasons": []},
         "graph_ref": map_report["scan_id"] if map_report else None,
     }
+    report["governance"]["brief"] = plain_brief(report)
     return jh_map.finalize_report(report)
 
 
@@ -356,6 +496,17 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
             r["subject"] = "subject-%d" % i
             r["reason"] = r["outcome"]
         ver["problems"] = ["verification problem %d" % i for i, _ in enumerate(ver.get("problems", []), 1)]
+    gov = rep.get("governance")
+    if gov:
+        gov["custodians"] = ["custodian-%d" % i for i, _ in enumerate(gov["custodians"], 1)]
+        for i, sv in enumerate(gov["agent"]["servers"], 1):
+            sv["name"] = "server-%d" % i
+            sv["credentials"] = ["credential-%d" % j for j, _ in enumerate(sv["credentials"], 1)]
+            sv["reaches"] = ["endpoint-%d" % j for j, _ in enumerate(sv["reaches"], 1)]
+        gov["agent"]["configs"] = ["config-%d" % i for i, _ in enumerate(gov["agent"]["configs"], 1)]
+        for lead in gov["public_exposure_leads"] + gov["agent_leads"]:
+            lead["path"] = "file"
+        gov["brief"] = plain_brief(rep)
     rep["scope"]["redaction"] = "share"
     rep["unknowns"] = [{"id": u["id"], "count": u.get("count"), "detail": u["detail"]} for u in rep["unknowns"]]
     return rep
@@ -377,7 +528,11 @@ def markdown(p: Dict[str, Any]) -> str:
              "- Lifecycle: %s; acceptance: %s" % (p["lifecycle"]["state"], p["lifecycle"]["acceptance"]["state"]),
              "- Revision: %s%s" % (p["subject"]["revision"] or "unknown (not a git checkout)",
                                    " (working tree dirty)" if p["subject"].get("working_tree_dirty") else ""),
-             "", "## Why this decision", ""]
+             ""]
+    gov = p.get("governance") or {}
+    if gov.get("profile") == "citizen":
+        lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
+    lines += ["## Why this decision", ""]
     if d["reasons"]:
         for r in d["reasons"]:
             lines.append("- **%s** `%s`%s: %s" % (r["outcome"], r["rule"], " (hard floor)" if r["hard_floor"] else "", r["message"]))
@@ -457,6 +612,11 @@ def apply_acceptance(p: Dict[str, Any], record: Dict[str, Any], trusted: bool, l
         reasons.append("accepted_at missing or not ISO-8601")
     if record.get("expires") is not None and expires is None:
         reasons.append("expires is not ISO-8601")
+    gov = p.get("governance") or {}
+    if gov.get("profile") == "citizen" and gov.get("custodian_source") != "none":
+        acceptor = str(record.get("accepted_by", "")).strip().lower()
+        if acceptor and acceptor not in {c.lower() for c in gov.get("custodians", [])}:
+            reasons.append("accepted_by is not a named custodian (citizen profile)")
     rejected = bool(reasons)
     if decision in ("block", "insufficient-evidence"):
         reasons.append("a %s decision cannot be accepted" % decision)

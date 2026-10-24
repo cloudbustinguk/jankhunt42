@@ -15,6 +15,10 @@ import _util
 from _util import run_cli
 
 PREVIOUS = os.environ.get("JH_PREVIOUS_TAG", "v1.1.0")
+# Rules added since 1.1.0 (documented in CHANGELOG 2.3.0). Every older rule
+# must stay identical; only these ids may be new.
+ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "JH430", "JH431",
+               "JH701", "JH702", "JH703", "JH704", "JH705", "JH706", "JH707", "JH708"}
 
 
 def strip_volatile(obj):
@@ -83,6 +87,7 @@ class CrossVersion(unittest.TestCase):
         os.makedirs(probe, exist_ok=True)
         shutil.copy(os.path.join(self.tmp, "ledger.py"), os.path.join(probe, "ledger.py"))
         with open(os.path.join(probe, "bad.py"), "w") as fh:
+            # jankhunt42: ignore JH104 (writes a deliberately vulnerable probe file)
             fh.write('def f(c, n):\n    return c.execute("SELECT * FROM t WHERE n = \'%s\'" % n)\n')
         old = json.loads(self.run_old("scan", probe, "--json", "--rule", "JH104").stdout)
         new = json.loads(run_cli("scan", probe, "--json", "--rule", "JH104").stdout)
@@ -106,6 +111,9 @@ class CrossVersion(unittest.TestCase):
                      ("scan", self.root, "--sarif")):
             old = json.loads(self.run_old(*args).stdout)
             new = json.loads(run_cli(*args).stdout)
+            if args == ("rules", "--json"):
+                self.assertEqual({r["id"] for r in new} - {r["id"] for r in old}, ADDED_RULES)
+                new = [r for r in new if r["id"] not in ADDED_RULES]
             self.assertEqual(strip_volatile(old), strip_volatile(new), args)
 
     def test_markdown_scan_identical_modulo_version(self):

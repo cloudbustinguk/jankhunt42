@@ -22,6 +22,7 @@ jankhunt42 passport . --html > passport.html   # offline, printable
 jankhunt42 passport . --redact --json          # shareable: no hosts, owners, or snippets
 jankhunt42 passport . --policy ../policy.json  # operator policy (outside the repository)
 jankhunt42 passport . --fail-on block          # enforce: exit 1 on block
+jankhunt42 passport . --profile citizen        # software built by non-engineers: strict, explained in plain terms
 jankhunt42 passport . --inventory ../inventory.json
 jankhunt42 passport . --acceptance ../acceptance.json        # operator acceptance record
 jankhunt42 passport . --compare old-passport.json            # what changed since a stored passport
@@ -45,6 +46,7 @@ decision is at or above that outcome (`pass < review < insufficient-evidence
 | `assessment.exposure` | `map` exposure class | Low / Moderate / High / Critical / Unknown |
 | `assessment.decision` | policy rules below | pass / review / insufficient-evidence / block |
 | `ownership` | `CODEOWNERS` (observed), `passport.owners` (declared) | observed / declared / unknown |
+| `governance` | profile, custodians, public-exposure and agent leads, AI agent tooling from the map, plain-language brief | standard / citizen |
 | `provenance` | SBOMs and attestations via `supply-chain` parsers | observed / not-observed |
 | `data` | data sources from the map, with classifications and who classified them | assessed / not assessed |
 | `operations` | CI config, tests, observability SDKs, health probes, runbooks, `SECURITY.md` | observed / inferred / declared / not-observed |
@@ -59,22 +61,34 @@ telemetry; it does not prove alerting). Emails in `CODEOWNERS` are redacted.
 ## Decision rules
 
 The decision is the most severe rule outcome. It is never a weighted average,
-and a strong area never offsets a weak one.
+and a strong area never offsets a weak one. Defaults below are for the
+`standard` profile; the `citizen` profile column is in
+`references/citizen.md`.
 
 | Rule | Triggers | Default outcome |
 |---|---|---|
 | `P-COV-001` (hard floor) | no files scanned; no supported files mapped; map coverage `partial`; analysis truncated | insufficient-evidence |
 | `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`) | review (insufficient-evidence when required) |
+| `P-CUS-001` | `require.custodian` and no custodian named in the operator policy or `passport.custodians` | pass unless required; then block |
 | `P-DAT-001` | `exports` of sensitive data to an external destination | review; **block** (hard floor) when provider-verified |
-| `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block **only** for provider-verified authority |
+| `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |
+| `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
+| `P-SEC-001` | scanner leads that expose credentials or data to the public: `JH132`, `JH133`, `JH134` (major or above), critical `JH101`/`JH401`/`JH415` | review |
+| `P-AGT-001` | agent-guardrail leads: any `agent`-category rule (`JH701`-`JH708`) at major or above, or hidden Unicode in an agent file | review |
+| `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
 | `P-EVD-001` | `require.sbom`, `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
 
-Static leads never block on their own: an observed `DELETE` or a declared
-connection asks for grant verification (`review`), whatever the policy says.
-Co-reachability of a sensitive source and an external destination raises
-exposure but is not a transfer and does not trigger `P-DAT-001`.
+Under the default `static_leads: review`, static leads never block on their
+own: an observed `DELETE` or a declared connection asks for grant
+verification (`review`). `static_leads: block` (set by the citizen profile)
+reverses the burden of proof on purpose: unverified authority over
+production, critical, or restricted data, and a declared or observed
+sensitive export, block until an operator inventory verifies the grants or
+the flow is removed. Co-reachability of a sensitive source and an external
+destination raises exposure but is not a transfer and does not trigger
+`P-DAT-001`.
 
 ## Policy files and precedence
 
@@ -83,9 +97,17 @@ exposure but is not a transfer and does not trigger `P-DAT-001`.
   "schema_version": "jankhunt.policy.v1",
   "require": {"owner": true, "sbom": true, "attestation": false, "verified_attestation": false},
   "actions": {"P-JNK-001": "block", "P-DAT-002": "block", "P-OWN-001": "insufficient-evidence"},
-  "max_exposure": "High"
+  "max_exposure": "High",
+  "profile": "citizen",
+  "custodians": ["@example-org/platform"],
+  "static_leads": "block"
 }
 ```
+
+`require` also takes `custodian`, `tests`, `ci`, and `classification`.
+`profile` is `standard` or `citizen`; `custodians` (operator policy only)
+names the engineers who answer for the software; `static_leads` is `review`
+or `block`.
 
 Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
 
@@ -96,8 +118,13 @@ Actions are `off`, `review`, `insufficient-evidence`, or `block`. Precedence:
    not proof of organizational authority.
 3. **Repository policy**: `passport.policy` in `.jankhunt42.json`/`.toml`,
    or a `--policy` file inside the repository. **Tighten-only**: it may raise
-   actions, add requirements, and lower `max_exposure`; any attempt to relax
-   is ignored with a warning.
+   actions, add requirements, lower `max_exposure`, and opt into the citizen
+   profile (`passport.profile: "citizen"`); any attempt to relax, or to
+   leave the citizen profile, is ignored with a warning.
+
+`--profile citizen` on the command line is the operator's choice and is
+applied first; explicit operator actions can then relax single rules, and
+repository tightening comes last. A profile never loosens anything.
 
 The effective policy and its SHA-256 (`policy.hash`) are embedded in every
 passport, together with each source.
@@ -114,6 +141,8 @@ passport, together with each source.
       {"match": "reports", "sensitivity": "confidential"}
     ],
     "operations": {"runbook": true},
+    "custodians": ["@example-org/platform"],
+    "profile": "citizen",
     "bindings": [{"workload": "Deployment payments-prod/payments-api"}],
     "policy": {"require": {"owner": true}}
   }
@@ -121,10 +150,12 @@ passport, together with each source.
 ```
 
 Declarations are context with `declared` provenance. They classify assets and
-name owners; they cannot verify anything, and they cannot override an
-operator inventory or relax policy. Code-origin statements (human,
-AI-assisted, citizen-developed) are not read and cannot change any
-assessment: identical evidence produces an identical passport.
+name owners and custodians; they cannot verify anything, and they cannot
+override an operator inventory or relax policy. Code-origin statements
+(human, AI-assisted, citizen-developed) are not read: the citizen profile is
+a governance choice made by the operator or the repository, not an
+inference about authorship, and identical evidence under the same policy
+produces an identical passport.
 
 ## Acceptance records (`--acceptance`)
 
@@ -147,7 +178,7 @@ The record is honoured only if it lives **outside** the scanned repository. A re
 
 - **Accepted:** when the revision, policy hash and decision match, the optional digest and environment match, the working tree is clean, and the record has not expired, `lifecycle.state` becomes `accepted` with `acceptance.state: declared-by-operator`. That is an unsigned operator statement, not a verification.
 - **Invalidated:** any mismatch gives `invalidated`, with named reasons: `revision-changed`, `policy-changed`, `decision-changed`, `digest-changed`, `environment-changed`, `working-tree-dirty`, `expired`.
-- **Rejected:** a `block` or `insufficient-evidence` decision can never be accepted.
+- **Rejected:** a `block` or `insufficient-evidence` decision can never be accepted. Under the citizen profile, a record whose `accepted_by` is not a named custodian is rejected too.
 
 The decision itself never changes because of acceptance. `--redact` hides the acceptor.
 

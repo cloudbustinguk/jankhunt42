@@ -161,6 +161,20 @@ KNOWN_EXTERNAL = {
     "api.sendgrid.com": ("external", "sendgrid"),
     "api.twilio.com": ("external", "twilio"),
 }
+# Hosted data services reached over HTTPS: an app builder's database is
+# often just a URL.
+HOST_SUFFIX_FAMILIES = (
+    (".supabase.co", ("database", "supabase")),
+    (".firebaseio.com", ("database", "firebase-rtdb")),
+    (".firebasedatabase.app", ("database", "firebase-rtdb")),
+    ("firestore.googleapis.com", ("database", "firestore")),
+    ("firebasestorage.googleapis.com", ("storage", "firebase-storage")),
+    (".neon.tech", ("database", "postgresql")),
+    (".upstash.io", ("database", "redis")),
+    (".turso.io", ("database", "sqlite")),
+    ("api.airtable.com", ("database", "airtable")),
+    ("sheets.googleapis.com", ("database", "google-sheets")),
+)
 _PROD_TOKENS = ("prod", "production", "prd", "live")
 _NONPROD_TOKENS = ("dev", "develop", "development", "test", "testing", "staging", "stage",
                    "stg", "qa", "uat", "sandbox", "local", "preview")
@@ -241,10 +255,15 @@ def parse_endpoint(raw: str) -> Optional[Dict[str, Any]]:
             return None
         rest = m.group(2)
         tail = raw[m.start(2):].split()[0] if raw[m.start(2):].split() else ""
-        hostpart = tail.split("/")[0].split("@")[-1]
+        authority = tail.split("/")[0]
+        hostpart = authority.split("@")[-1]
         if _PLACEHOLDER_RE.search(hostpart) or not re.match(r"^\[?[A-Za-z0-9._\-:\]]+$", hostpart or "x"):
             return {"kind": kind, "engine": engine, "host": "", "port": None, "path": "",
                     "resolved": False, "scheme": scheme}
+        if "@" in authority:
+            # Userinfo is dropped anyway; a ${PASSWORD} placeholder in it must
+            # not hide a concrete host.
+            rest = re.split(r"[\s'\"`<>(){},;\\]", tail[len(authority.rsplit("@", 1)[0]) + 1:], maxsplit=1)[0]
         try:
             parts = urllib.parse.urlsplit("%s://%s" % (scheme, rest))
             host = (parts.hostname or "").lower()
@@ -265,8 +284,13 @@ def parse_endpoint(raw: str) -> Optional[Dict[str, Any]]:
             port = None
         if kind == "api":
             known = KNOWN_EXTERNAL.get(host)
+            hosted = next((fam for suffix, fam in HOST_SUFFIX_FAMILIES
+                           if host == suffix.lstrip(".") or host.endswith(suffix)), None)
             if known:
                 kind, engine = known
+            elif hosted:
+                kind, engine = hosted
+                path = ""
             elif trust_domain_for_host(host) == "external":
                 kind = "external"
         return {"kind": kind, "engine": engine, "host": host, "port": port,

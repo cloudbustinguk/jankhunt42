@@ -29,9 +29,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+import jh_agent
 import jh_graph as G
 import jh_yaml
-from jh_core import (TOOL, VERSION, DEFAULT_SKIP_DIRS, discover_files, is_test_path,
+from jh_core import (TOOL, VERSION, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
 
 
@@ -277,6 +278,22 @@ PY_IMPORTS = {
     "openai": ("external", "openai", "api.openai.com"),
     "anthropic": ("external", "anthropic", "api.anthropic.com"),
     "smtplib": ("external", "smtp", ""),
+    # The stack AI app builders reach for: hosted databases, spreadsheets as
+    # databases, payments, messaging, and model APIs.
+    "supabase": ("database", "supabase", ""), "firebase_admin": ("database", "firestore", ""),
+    "gspread": ("database", "google-sheets", "sheets.googleapis.com"),
+    "pygsheets": ("database", "google-sheets", "sheets.googleapis.com"),
+    "pyairtable": ("database", "airtable", "api.airtable.com"),
+    "notion_client": ("external", "notion", "api.notion.com"),
+    "slack_sdk": ("external", "slack", "slack.com"),
+    "stripe": ("external", "stripe", "api.stripe.com"),
+    "twilio": ("external", "twilio", "api.twilio.com"),
+    "sendgrid": ("external", "sendgrid", "api.sendgrid.com"),
+    "resend": ("external", "resend", "api.resend.com"),
+    "google.generativeai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "google.genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "groq": ("external", "groq", "api.groq.com"),
+    "mistralai": ("external", "mistral", "api.mistral.ai"),
 }
 JS_IMPORTS = {
     "pg": ("database", "postgresql", ""), "postgres": ("database", "postgresql", ""),
@@ -296,6 +313,25 @@ JS_IMPORTS = {
     "openai": ("external", "openai", "api.openai.com"),
     "@anthropic-ai/sdk": ("external", "anthropic", "api.anthropic.com"),
     "nodemailer": ("external", "smtp", ""),
+    "@supabase/supabase-js": ("database", "supabase", ""), "@supabase/ssr": ("database", "supabase", ""),
+    "firebase/firestore": ("database", "firestore", ""), "firebase/database": ("database", "firebase-rtdb", ""),
+    "firebase/storage": ("storage", "firebase-storage", ""), "firebase-admin": ("database", "firestore", ""),
+    "@vercel/postgres": ("database", "postgresql", ""), "@neondatabase/serverless": ("database", "postgresql", ""),
+    "@planetscale/database": ("database", "mysql", ""), "@upstash/redis": ("database", "redis", ""),
+    "@libsql/client": ("database", "sqlite", ""), "drizzle-orm": ("database", "sql", ""),
+    "airtable": ("database", "airtable", "api.airtable.com"),
+    "@notionhq/client": ("external", "notion", "api.notion.com"),
+    "@slack/web-api": ("external", "slack", "slack.com"),
+    "stripe": ("external", "stripe", "api.stripe.com"),
+    "twilio": ("external", "twilio", "api.twilio.com"),
+    "@sendgrid/mail": ("external", "sendgrid", "api.sendgrid.com"),
+    "resend": ("external", "resend", "api.resend.com"),
+    "@google/generative-ai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "@google/genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+    "groq-sdk": ("external", "groq", "api.groq.com"),
+    "@mistralai/mistralai": ("external", "mistral", "api.mistral.ai"),
+    "@ai-sdk/openai": ("external", "openai", "api.openai.com"),
+    "@ai-sdk/anthropic": ("external", "anthropic", "api.anthropic.com"),
 }
 CS_PATTERNS = [
     (re.compile(r"\bnew\s+SqlConnection\b|\bUseSqlServer\s*\("), ("database", "sqlserver", "")),
@@ -309,7 +345,8 @@ CS_PATTERNS = [
     (re.compile(r"\bnew\s+ServiceBusClient\b"), ("queue", "servicebus", "")),
     (re.compile(r"\bnew\s+(OpenAIClient|ChatClient)\b"), ("external", "openai", "api.openai.com")),
 ]
-PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items() if k not in ("smtplib", "sqlite3")},
+PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items()
+                   if k not in ("smtplib", "sqlite3") and not k.startswith("google.")},
                 **{k.lower(): v for k, v in JS_IMPORTS.items()},
                 "psycopg2-binary": ("database", "postgresql", ""), "npgsql": ("database", "postgresql", ""),
                 "microsoft.data.sqlclient": ("database", "sqlserver", ""),
@@ -317,7 +354,11 @@ PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items() if 
                 "stackexchange.redis": ("database", "redis", ""), "mongodb.driver": ("database", "mongodb", ""),
                 "azure.storage.blobs": ("storage", "azure-blob", ""),
                 "azure.messaging.servicebus": ("queue", "servicebus", ""),
-                "redis-py": ("database", "redis", ""), "mysqlclient": ("database", "mysql", "")}
+                "redis-py": ("database", "redis", ""), "mysqlclient": ("database", "mysql", ""),
+                "google-generativeai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+                "google-genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+                "firebase-admin": ("database", "firestore", ""), "slack-sdk": ("external", "slack", "slack.com"),
+                "notion-client": ("external", "notion", "api.notion.com")}
 PKG_FAMILIES.pop("redis", None)
 PKG_FAMILIES["redis"] = ("database", "redis", "")
 
@@ -399,7 +440,11 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
         for mod in mods:
             table = PY_IMPORTS if lang == "python" else JS_IMPORTS
             fam = None
-            for cand in (mod, ".".join(mod.split(".")[:3]), ".".join(mod.split(".")[:2]), mod.split(".")[0]):
+            parts = mod.split("/")
+            js_root = "/".join(parts[:2]) if mod.startswith("@") else parts[0]
+            cands = ((mod, ".".join(mod.split(".")[:3]), ".".join(mod.split(".")[:2]), mod.split(".")[0])
+                     if lang == "python" else (mod, "/".join(parts[:2]), js_root))
+            for cand in cands:
                 if cand in table:
                     fam = table[cand]
                     break
@@ -1259,6 +1304,73 @@ def apply_inventory(g: G.Graph, inv: Dict[str, Any], trusted: bool, warnings: Li
 
 
 # ---------------------------------------------------------------------------
+# AI agent tooling (MCP server definitions)
+# ---------------------------------------------------------------------------
+
+def adapt_mcp(ctx: Ctx, item: Item) -> None:
+    """What an AI agent session in this repository is wired to: one agent
+    principal per config file, an edge to every MCP server it would start,
+    and the endpoints and credentials each server is handed. The servers'
+    own tools are not visible here, so every capability is unknown."""
+    g = ctx.g
+    servers = [s for s in jh_agent.mcp_servers(item.rel, item.text) if not s.disabled]
+    if not servers:
+        return
+    lines = item.text.split("\n")
+    client = jh_agent.client_for(item.rel)
+    ev = g.add_evidence(item.rel, 1, "mcp:config", "MCP config for %s" % client, "declared")
+    agent = g.add_node("workload", ["ai-agent", item.rel], "AI agent (%s, %s)" % (client, os.path.basename(item.rel)),
+                       trust_domain="local", attributes={"platform": "ai-agent", "client": client,
+                                                         "config": item.rel}, evidence=ev)
+    for s in servers:
+        snippet = lines[s.line - 1] if 0 < s.line <= len(lines) else s.name
+        sev = g.add_evidence(item.rel, s.line, "mcp:server", snippet, "declared",
+                             assumptions=["an MCP server definition; whether the agent starts it is not verified"])
+        if s.transport == "stdio":
+            src = jh_agent.launch_source(s.command, s.args)
+            attrs: Dict[str, Any] = {"platform": "mcp", "transport": "stdio", "mcp_server": s.name,
+                                     "command": os.path.basename(s.command.replace("\\", "/"))[:40]}
+            if src:
+                attrs.update({"launcher": src["launcher"], "package": src["package"][:120],
+                              "pinned": src["pinned"]})
+            sid = g.add_node("workload", ["mcp-server", item.rel, s.name], "MCP server %s (local)" % s.name,
+                             trust_domain="local", attributes=attrs, evidence=sev)
+            g.add_edge(agent, sid, "calls", "unknown", "declared", "high", evidence=sev, assumptions=[
+                "a local MCP server runs with the developer's privileges; its tools decide what it can read, "
+                "write, or execute"] + ([] if not src or src["pinned"] else [
+                    "unpinned: every start runs the newest release of %s" % src["package"][:80]]))
+        elif s.url:
+            ep = G.parse_endpoint(s.url)
+            if not ep:
+                continue
+            sid = ctx.endpoint_node(ep, evidence=sev, label_suffix=" (MCP %s)" % s.name[:40])
+            if sid:
+                g.nodes[sid]["attributes"]["mcp_server"] = s.name
+            g.add_edge(agent, sid, "calls", "unknown", "declared", "high", evidence=sev, assumptions=[
+                "a remote MCP server; the tools it exposes and what they reach are decided by its operator"])
+        else:
+            continue
+        # Endpoints the server is pointed at (connection strings in args or env).
+        values = [("arg", a) for a in s.args] + [("env:" + k, v) for k, v in sorted(s.env.items())]
+        for where, value in values:
+            ep = G.parse_endpoint(value)
+            if not ep or (ep["kind"] in ("api", "external") and not (where.startswith("env:")
+                                                                      and endpointish(where[4:]))):
+                continue
+            nid = ctx.endpoint_node(ep, evidence=sev, unresolved_hint=where[4:] if where.startswith("env:") else "")
+            if nid and nid != sid:
+                g.add_edge(sid, nid, "connects", "unknown", "declared", "medium", evidence=sev, assumptions=[
+                    "endpoint handed to MCP server %s; the grants of its credentials are not verified" % s.name])
+        # Credentials, by name only: values are never read into the graph.
+        for name in jh_agent.credential_names(s):
+            iid = g.add_node("identity", ["mcp-credential", item.rel, s.name, name],
+                             "credential %s (MCP %s)" % (name, s.name), trust_domain="external",
+                             attributes={"credential_refs": ["env %s" % name]}, evidence=sev)
+            g.add_edge(sid, iid, "authenticates-as", "unknown", "declared", "high", evidence=sev, assumptions=[
+                "the server acts with this credential; its scopes are not visible in the repository"])
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -1269,6 +1381,8 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
         return "test", None
     if low.endswith((".md", ".rst", ".txt")) and not base.startswith("requirements"):
         return "doc", None
+    if is_mcp_config(rel, text):
+        return "mcp", None
     if base.startswith("requirements") and base.endswith(".txt") or base in ("pyproject.toml", "pipfile", "package.json") \
             or base.endswith(".csproj"):
         return "manifest", None
@@ -1310,7 +1424,7 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
 
 
 ADAPTERS = ("python", "javascript", "dotnet", "config", "appsettings", "kubernetes", "compose",
-            "github-actions", "terraform", "manifest", "openapi")
+            "github-actions", "terraform", "manifest", "openapi", "mcp")
 
 
 def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.Graph, Ctx, Dict[str, Any]]:
@@ -1351,6 +1465,8 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
                 adapt_manifest(ctx, item)
             elif kind == "openapi":
                 adapt_openapi(ctx, item, docs or [])
+            elif kind == "mcp":
+                adapt_mcp(ctx, item)
         except (RecursionError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
             # A malformed file degrades coverage; it never aborts the map.
             ctx.parse_failures.append({"path": item.rel, "reason": "%s: %s" % (type(exc).__name__, safe_text(str(exc))[:60])})
@@ -1392,8 +1508,15 @@ def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
     if env:
         out.append({"id": "environment", "count": len(env),
                     "detail": "%d asset(s) have unknown environment (production vs non-production)" % len(env)})
+    servers = [n for n in nodes if n["attributes"].get("platform") == "mcp"]
+    servers += [n for n in nodes if n["attributes"].get("mcp_server") and n["kind"] != "workload"]
+    if servers:
+        out.append({"id": "agent-tool-capability", "count": len(servers),
+                    "detail": "%d MCP server(s): what their tools can read, write, or run is decided by each server "
+                              "at runtime and is not visible in the repository" % len(servers)})
     has_code = any(e["source"] == ctx.app for e in edges)
-    workloads = [n for n in nodes if n["kind"] == "workload" and n["attributes"].get("platform") != "github-actions"]
+    workloads = [n for n in nodes if n["kind"] == "workload"
+                 and n["attributes"].get("platform") not in ("github-actions", "ai-agent", "mcp")]
     if has_code and workloads:
         out.append({"id": "code-to-workload-binding", "count": len(workloads),
                     "detail": "which workload runs the repository code is not inferred; declare it with passport.bindings if needed"})

@@ -286,6 +286,13 @@ cat > "$FIX/app.log" <<'LOG'
 2026-01-01T00:00:02Z WARN slow request 33333333-3333-3333-3333-333333333333 took 1200ms
 LOG
 
+# AI-agent workspace and citizen-app mistakes (2.3.0 rules).
+mkdir -p "$FIX/.vscode" "$FIX/web"
+printf '{\n  "chat.tools.autoApprove": true\n}\n' > "$FIX/.vscode/settings.json"
+printf '{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "some-mcp-server"]}}}\n' > "$FIX/.mcp.json"
+printf 'NEXT_PUBLIC_%s=%s\n' "STRIPE_SECRET_KEY" "$FAKE_KEY" > "$FIX/web/.env.production"
+printf 'service cloud.firestore {\n  match /{d=**} { allow read, write: if true; }\n}\n' > "$FIX/firestore.rules"
+
 cat > "$FIX/suppressed.py" <<'PY'
 # jankhunt42: ignore-file JH303
 VERY_LONG_LINE = "x" * 400
@@ -315,6 +322,7 @@ required = {
     "JH406", "JH407", "JH408", "JH409", "JH410", "JH412", "JH413", "JH415",
     "JH416", "JH417", "JH418", "JH419", "JH420", "JH421", "JH422", "JH424",
     "JH501", "JH502", "JH503", "JH504", "JH601",
+    "JH132", "JH134", "JH703", "JH705",
 }
 missing = sorted(required - ids)
 assert not missing, "missing rules: %s" % missing
@@ -965,9 +973,10 @@ grep -q "Log triage" "$TMP/report.md" || fail "report missing triage"
 "$PY" - "$TMP/rules.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d) == 79, len(d)
+assert len(d) == 96, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" in ids and "JH101" in ids, ids
+assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 9)}, ids
 print("rules: %d" % len(d))
 PY
 
