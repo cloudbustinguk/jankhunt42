@@ -1,6 +1,7 @@
-"""Documentation is executable: README samples are generated from the
-synthetic fixture, and every jankhunt42 command shown in README.md and
-SKILL.md runs against the real CLI (or is skipped for a stated reason)."""
+"""Documentation is executable: the text samples in references/examples.md
+are generated from the synthetic fixture, and every jankhunt42 command
+shown in README.md and SKILL.md runs against the real CLI (or is skipped
+for a stated reason)."""
 import json
 import os
 import re
@@ -46,8 +47,10 @@ def commands(text):
 
 
 class Samples(unittest.TestCase):
-    def test_readme_samples_match_generated_snapshots(self):
-        text = read("README.md")
+    EXAMPLES = os.path.join("references", "examples.md")
+
+    def test_example_samples_match_generated_snapshots(self):
+        text = read(self.EXAMPLES)
         found = SAMPLE_RE.findall(text)
         self.assertEqual({f[1] for f in found}, {"map-100", "passport-100"})
 
@@ -57,11 +60,15 @@ class Samples(unittest.TestCase):
 
         if UPDATE:
             new = SAMPLE_RE.sub(lambda m: m.group(1) + body(m.group(2)) + m.group(4), text)
-            with open(os.path.join(_util.ROOT, "README.md"), "w", encoding="utf-8") as fh:
+            with open(os.path.join(_util.ROOT, self.EXAMPLES), "w", encoding="utf-8") as fh:
                 fh.write(new)
             text = new
         for _, name, content, _ in SAMPLE_RE.findall(text):
-            self.assertEqual(content, body(name), "README sample %s is stale (JH_UPDATE_SNAPSHOTS=1)" % name)
+            self.assertEqual(content, body(name), "example %s is stale (JH_UPDATE_SNAPSHOTS=1)" % name)
+
+    def test_readme_gallery_images_exist(self):
+        for src in re.findall(r'<img src="([^"]+)"', read("README.md")):
+            self.assertTrue(os.path.exists(os.path.join(_util.ROOT, src)), src)
 
 
 @unittest.skipUnless(shutil.which("bash") and shutil.which("git"), "needs bash and git")

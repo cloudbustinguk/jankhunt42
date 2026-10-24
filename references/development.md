@@ -1,0 +1,77 @@
+# Development, architecture, and compatibility
+
+## Development
+
+```sh
+export PYTHONDONTWRITEBYTECODE=1              # selftest.sh rejects stray __pycache__ in the skill dir
+python3 -m unittest discover -s tests         # fast suite
+bash scripts/selftest.sh                       # end-to-end regression
+python3 scripts/jankhunt42 selftest --full     # everything, with a gate
+JH_UPDATE_SNAPSHOTS=1 python3 -m unittest discover -s tests -p test_terminal.py   # accept an intended view change
+```
+
+To add a rule, add it to `RULES` in `jh_rules.py` (or a `check=` in `jh_checks.py`), add a fixture case to `selftest.sh`, and run the self-scan. To add a map adapter, add it to `jh_map.py` with positive *and* negative fixtures in `tests/test_map.py`. Keep every claim's `verification` honest, and update `tests/fixtures/self-expected.json` by hand if this repository's own connectivity changes. Fixtures must be synthetic.
+
+## Self-assurance
+
+```sh
+jankhunt42 selftest           # the unit suite
+jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-evidence gate
+```
+
+`selftest --full` runs:
+
+- the unittest suite: an independent reference oracle for reachability, metamorphic and monotonicity properties, adapter fixtures, policy precedence, `--base` isolation, seeded fuzzing, golden terminal snapshots, schema checks, and cross-version compatibility against the previous local release tag;
+- the end-to-end shell regression suite;
+- a self-map compared with a hand-maintained ground truth;
+- a self-scan and self-passport, reported but never self-approving;
+- eighteen mutants that the tests must kill, each with an unmutated control;
+- a privacy scan of shipped files and generated artifacts;
+- a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
+- the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
+
+Python 3.9 is past its upstream end of life. It stays the minimum only because some systems still ship it as their `python3` (for example macOS Command Line Tools and RHEL 9); use a current Python where you can. TOML config needs 3.11+; JSON config works everywhere.
+
+Missing optional tools are reported as `skip`, never as a pass. A perfect self-score is not evidence of correctness; the independent checks are.
+
+## Architecture
+
+```text
+SKILL.md                 routing doctrine for agents (three questions, permission gates)
+references/              method, playbooks, toolbox, scoring, review, supply-chain, deep-hunt,
+                         connectivity (map), passport (passport, exposure, policy), citizen,
+                         ai-governance, examples, development
+templates/               report templates; review-receipt, map, and passport JSON Schemas
+scripts/jankhunt42       CLI entry point
+scripts/jh_core.py       types, discovery, sanitizer, safe_text      scripts/jh_rules.py, jh_checks.py  scanner rules
+scripts/jh_score.py      Jank Score 2.0                              scripts/jh_review.py   diff review and receipts
+scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_hunt.py     deep hunt and merge
+scripts/jh_graph.py      graph model, sanitizing, reachability, exposure, diff, redaction
+scripts/jh_map.py        discovery adapters, coverage, map views    scripts/jh_yaml.py     bounded YAML subset reader
+scripts/jh_policy.py     passport rules, profiles, precedence       scripts/jh_passport.py passport assembly
+scripts/jh_agent.py      MCP and agent workspace config parsing    scripts/jh_frameworks.py NIST AI RMF / AIGP crosswalk
+scripts/jh_views.py      map/passport terminal views                scripts/jh_explorer.py offline HTML explorer
+scripts/jh_selftest.py   self-assurance orchestrator                scripts/selftest.sh    shell regression suite
+tests/                   unittest suite, oracle, fixtures (synthetic), golden snapshots
+```
+
+There is no circular dependency between scoring, the graph and the passport: they share only the canonical JSON shapes. `scan` never computes a passport.
+
+## Compatibility and migration
+
+- Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
+- 2.1.0 adds options only (`map --what-if/--drift/--mermaid/--csv`, `passport --acceptance/--compare/--against`), plus `passport.bindings`. It also narrows `JH104`, which no longer flags parameterized `%s`/`%(name)s` placeholders; this removes findings and never adds them.
+- 2.2.0 adds options only (`supply-chain --verify/--online/--fetch-dir`, `passport --verify/--online`) and additive fields (`key_source`, `origin`, `verification`). JFrog records whose key came from the Sigstore bundle now carry a warning; their state is unchanged.
+- 2.3.0 adds 17 rules (`JH131`-`JH134`, `JH427`-`JH431`, `JH701`-`JH708`, with the new `agent` category), `passport --profile`, `passport.profile` and `passport.custodians`, five passport rules, an additive `governance` section, and the map's `mcp` adapter. Every older rule's catalog entry and every existing JSON and SARIF field is unchanged. Under the standard profile, `P-SEC-001` and `P-AGT-001` add `review` reasons when their leads appear. The effective policy gained keys, so the policy hash changed: acceptance records bound to an earlier hash must be re-issued. Under the citizen profile, governance leads ignore repository scan config and inline pragmas, and only a custodian named in the operator policy lets `P-CUS-001` pass or signs an acceptance. `JH502` no longer fires on unittest-style assertions or on assertions made in helper methods, and `JH401` no longer treats a CI workflow named `secrets.yml` as a credential file.
+- 2.4.0 adds `supply-chain --require-sbom-minimum`, policy `require.sbom_minimum`, the passport rule `P-AI-001`, and additive fields: SBOM `quality`, `hashes` and `cpe`; summary `sbom_minimum_elements`; passport `ai`, `alignment`, `provenance.sbom_minimum_elements` and `sbom_missing`. Under the standard profile, `P-AI-001` adds a `review` reason when sensitive data is reachable alongside an external AI service. The effective policy gained keys, so the policy hash changed again: re-issue acceptance records. SPDX 3.0.1 and tag-value SBOMs now yield versions, purls and suppliers that were missed before, and a CycloneDX `group` no longer counts as a supplier.
+- New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
+- The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
+- Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.
+
+## Publishing checklist
+
+- [ ] `jankhunt42 selftest --full` gate is `pass` on a clean checkout.
+- [ ] The version is synchronized in `SKILL.md`, `scripts/jh_core.py`, `README.md`, and `CHANGELOG.md`.
+- [ ] No `__pycache__`, generated reports, secrets, private prompts, or agent working files are committed.
+- [ ] README and SKILL commands are exercised by `tests/test_docs.py`.
+- [ ] The tag matches the version, and the release archive is built from the clean tree by `provenance.yml`.

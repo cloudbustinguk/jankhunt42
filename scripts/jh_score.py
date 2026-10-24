@@ -310,7 +310,9 @@ def scorecard_tty(report: ScoreReport, color: Any, width: int) -> List[str]:
     # Tones and grade colours follow the HTML scan report (score ring bands,
     # grade badges); jh_render.score_tone is the shared banding.
     from jh_render import score_tone
-    gauge_width = max(16, width - 36)
+    # The row around the gauge takes 45 columns ("  JANK  ", score, grade
+    # badge, the longest label, policy), so the gauge gets the rest.
+    gauge_width = max(16, width - 45)
     filled = int(round(gauge_width * report.score / 100.0))
     tone = score_tone(report.score)
     gauge = color.tone(tone, "█" * filled) + color.dim("░" * (gauge_width - filled))

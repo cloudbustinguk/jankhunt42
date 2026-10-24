@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [2.4.0] — 2026-10-24
 
 Evidence you can rely on, and AI governance you can explain. SBOMs are now
 checked against the minimum elements. The passport inventories the AI
@@ -60,7 +60,17 @@ unchanged.
 - CycloneDX: the supplier no longer falls back to `group`, which is a
   namespace. The XML parser reads suppliers, licences, hashes, and CPEs, and
   no longer counts tool components as packages.
+- The terminal scan view's Jank headline row was 9 columns wider than its
+  frame and wrapped at every width; the gauge now takes only the space left.
 - CHANGELOG: restored the 2.0.0 heading, which was lost in 2.1.0.
+
+### Changed
+
+- The README is reorganized around a gallery that pairs each terminal view
+  with its HTML view (scan, map, passport, citizen passport), followed by one
+  command reference. The generated text samples moved to
+  `references/examples.md`. Architecture, development, self-assurance, and
+  migration notes moved to `references/development.md`.
 
 ### Compatibility
 
