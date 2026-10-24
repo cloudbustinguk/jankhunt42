@@ -397,7 +397,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - nine mutants that the tests must kill, each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
-- the suite on locally cached Python 3.9/3.12/3.13/3.14 container images, which are never pulled.
+- the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
 
 Python 3.9 is past its upstream end of life. It stays the minimum only because some systems still ship it as their `python3` (for example macOS Command Line Tools and RHEL 9); use a current Python where you can. TOML config needs 3.11+; JSON config works everywhere.
 

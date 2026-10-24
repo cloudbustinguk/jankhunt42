@@ -36,7 +36,8 @@ additive.
   re-checked with cosign when the plan names a certificate identity.
 - Three more selftest mutants (not-run counted as verified, token sent on
   redirect, in-repository plan trusted).
-- Python 3.14 joins the CI matrix and the `selftest --full` container matrix.
+- The CI matrix and the `selftest --full` container matrix now cover every
+  minor version from 3.9 to 3.14 (3.10, 3.11, and 3.14 added).
   Python 3.9 remains the minimum for systems that still ship it, although it
   is past its upstream end of life.
 

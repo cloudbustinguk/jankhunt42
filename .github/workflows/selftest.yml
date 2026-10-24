@@ -24,6 +24,10 @@ jobs:
           # still has it so the 3.9+ compatibility claim stays tested.
           - python-version: "3.9"
             os: ubuntu-22.04
+          - python-version: "3.10"
+            os: ubuntu-latest
+          - python-version: "3.11"
+            os: ubuntu-latest
           - python-version: "3.12"
             os: ubuntu-latest
           - python-version: "3.13"
