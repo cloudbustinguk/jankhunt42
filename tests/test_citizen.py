@@ -190,6 +190,23 @@ class Profile(unittest.TestCase):
                          ("block", True, "Moderate"))
         self.assertEqual(sum("profile_exceptions" in w for w in warns), 3)
 
+    def test_repository_tightening_survives_operator_exceptions(self):
+        op = {"profile": "citizen", "profile_exceptions": {"require.tests": False}}
+        warns = []
+        eff = jh_policy.merge(op, [{"require": {"tests": True}}, {"max_exposure": "Low"}], warns)
+        self.assertEqual((eff["require"]["tests"], eff["max_exposure"]), (True, "Low"))
+        self.assertFalse(any("ignored profile_exceptions" in w for w in warns))
+        empty = []
+        jh_policy.merge({"profile_exceptions": {}}, None, empty, "citizen")
+        self.assertEqual(empty, [])
+
+    def test_custodian_rule_can_be_turned_off_by_the_operator(self):
+        eff = jh_policy.merge({"profile": "citizen", "profile_exceptions": {"P-CUS-001": "off"}}, None, [])
+        facts = {"files_scanned": 1, "map_files_inspected": 1, "exposure": "Low", "owner_state": "observed",
+                 "declared_custodians": ["me"], "operations": {"tests": "observed", "ci": "observed"}}
+        out = jh_policy.evaluate(eff, facts, {"nodes": [], "edges": []})
+        self.assertEqual([r["outcome"] for r in out["rules"] if r["rule"] == "P-CUS-001"], ["pass"])
+
     def test_exceptions_cover_requirements_and_ceilings(self):
         warns = []
         op = {"profile": "citizen", "profile_exceptions": {"require.tests": False, "max_exposure": "High"}}
@@ -411,6 +428,27 @@ class CitizenPassport(unittest.TestCase):
             os.remove(cfg)
             shutil.rmtree(os.path.dirname(cs))
         self.assertIn("JH704", {l["rule"] for l in cit["governance"]["agent_leads"]})
+
+    def test_repository_ignore_globs_cannot_hide_governance_leads(self):
+        cfg = os.path.join(self.app, ".jankhunt42.json")
+        env = os.path.join(self.app, "web", ".env.production")
+        os.makedirs(os.path.dirname(env), exist_ok=True)
+        with open(env, "w") as fh:
+            fh.write("NEXT_PUBLIC_" + "OPENAI_API_KEY=\n")
+        with open(cfg, "w") as fh:
+            json.dump({"ignore": ["web/**"]}, fh)
+        try:
+            std = json.loads(run_cli("passport", self.app, "--json").stdout)
+            cit = json.loads(run_cli("passport", self.app, "--profile", "citizen", "--json").stdout)
+            capped = json.loads(run_cli("passport", self.app, "--profile", "citizen", "--json", "--max-files", "2").stdout)
+        finally:
+            os.remove(cfg)
+            shutil.rmtree(os.path.dirname(env))
+        self.assertNotIn("web/.env.production", {l["path"] for l in std["governance"]["public_exposure_leads"]})
+        self.assertIn("web/.env.production", {l["path"] for l in cit["governance"]["public_exposure_leads"]})
+        self.assertTrue(any("reached --max-files" in w for w in capped["warnings"]))
+        self.assertEqual({r["rule"]: r["outcome"] for r in capped["assessment"]["decision"]["reasons"]}["P-COV-001"],
+                         "insufficient-evidence")
 
     def test_shareable_passport_withholds_warnings(self):
         p = json.loads(json.dumps(self.p))

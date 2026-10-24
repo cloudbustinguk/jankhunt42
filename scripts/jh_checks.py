@@ -1083,9 +1083,11 @@ _PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba
 _NET_SEND_RE = re.compile(r"(?i)\b(?:curl|wget|ncat|invoke-webrequest|invoke-restmethod)\b|\bnc\s+-|\bfetch\s*\(")
 # Syntax that actually ships data: an upload flag, a pipe into a network
 # tool, or a file read inlined into the command.
-_SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*['\"]?@|--data(?:-[a-z]+)?[\s=]+['\"]?@|\s-F\s*\S*@|\s-F\s|--form\b|"
+_REDIRECTED_CREDENTIAL = (r"\s<\s*['\"]?\S*?(?:\.ssh/|id_rsa|id_ed25519|\.aws/credentials|\.env\b|\.npmrc|\.pypirc|"
+                          r"\.netrc|\.git-credentials|\.kube/config|\.docker/config)")
+_SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*['\"]?@|--data(?:-[a-z]+)?[\s=]+['\"]?[\w.\-]*@|\s-F\s*\S*@|\s-F\s|--form\b|"
                            r"--upload-file\b|\s-T\s|--post-file\b|\|\s*(?:curl|wget|nc|ncat)\b|"
-                           r"\$\(\s*(?:<|cat\b)|`\s*cat\b|\s<\s*(?:~|\$HOME|\$\{HOME\}|/|\.)\S*|-InFile\b|"
+                           r"\$\(\s*(?:<|cat\b)|`\s*cat\b|" + _REDIRECTED_CREDENTIAL + r"|-InFile\b|"
                            r"-Body\s*\(?\s*(?:Get-Content|gc|cat)\b|readFileSync\s*\(|\.read_(?:text|bytes)\s*\(|"
                            r"open\([^)]*\)\.read\s*\()")
 

@@ -356,7 +356,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           operator_policy_label: str, repo_policy_paths: Sequence[str], fail_on: Optional[str],
           warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = (),
           findings: Sequence[Any] = (), governance_findings: Optional[Sequence[Any]] = None,
-          governance_tuned: Optional[Sequence[Any]] = None, profile: Optional[str] = None) -> Dict[str, Any]:
+          governance_tuned: Optional[Sequence[Any]] = None, governance_truncated: bool = False,
+          profile: Optional[str] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -368,9 +369,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         # `passport.profile` is the repository opting into stricter governance.
         repo_policies.insert(0, {"profile": passport_cfg.get("profile")})
     repo_policies += list(extra_repo_policies)
-    eff = jh_policy.merge(operator_policy, repo_policies[0] if repo_policies else None, warns, profile)
-    for extra in repo_policies[1:]:
-        eff = jh_policy.merge(eff, extra, warns)  # still tighten-only for the repository input
+    # One merge for every repository input, so operator exceptions are applied
+    # once and repository tightening really comes last.
+    eff = jh_policy.merge(operator_policy, repo_policies, warns, profile)
     declared_custodians = _declared_custodians(passport_cfg, warns)
     exposure_leads, agent_leads = governance_leads(governance_tuned if governance_tuned is not None else findings)
     suppressed = 0
@@ -379,9 +380,10 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         seen = {_lead_key(d) for d in exposure_leads + agent_leads}
         suppressed = len({_lead_key(d) for d in raw_exposure + raw_agent} - seen)
         if eff["profile"] == "citizen":
-            # Union: the repository can add or raise leads, never remove them.
-            exposure_leads = sorted({_lead_key(d): d for d in exposure_leads + raw_exposure}.values(), key=_lead_key)
-            agent_leads = sorted({_lead_key(d): d for d in agent_leads + raw_agent}.values(), key=_lead_key)
+            # Union: the repository can add or raise leads, never remove them
+            # (the tuned lead comes last, so a raised severity is kept).
+            exposure_leads = sorted({_lead_key(d): d for d in raw_exposure + exposure_leads}.values(), key=_lead_key)
+            agent_leads = sorted({_lead_key(d): d for d in raw_agent + agent_leads}.values(), key=_lead_key)
         if suppressed:
             warns.append("%d public-exposure or agent lead(s) are suppressed or re-rated by repository scan config or "
                          "inline pragmas%s" % (suppressed, "; the citizen profile does not honour them"
@@ -408,6 +410,12 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "agent_findings": agent_leads,
         "operations": {k: v["state"] for k, v in ops.items()},
     }
+    if governance_truncated:
+        reason = "the governance scan (without repository ignore globs) reached --max-files; raise the limit"
+        warns.append(reason)
+        if eff["profile"] == "citizen":
+            facts["truncated"] = True
+            facts["truncation_reasons"] = list(facts["truncation_reasons"]) + [reason]
     decision = jh_policy.evaluate(eff, facts, map_report["graph"] if map_report else None)
     sources = [{"kind": "default"}]
     if operator_policy is not None:

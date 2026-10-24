@@ -39,9 +39,23 @@ jobs:
         with:
           subject-path: "jankhunt42-*.tar.gz"
 
+      # The release notes are the tag's CHANGELOG.md section; a tag without
+      # one fails here rather than publishing an empty release.
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" 'index($0, "## [" v "]") == 1 { found = 1; next }
+                               found && /^## \[/ { exit }
+                               found { print }' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+
       - name: Attach tarball and attestation to the GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           files: |
             jankhunt42-*.tar.gz
+          body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true

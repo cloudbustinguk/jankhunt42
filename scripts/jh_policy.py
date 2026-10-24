@@ -102,7 +102,7 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
             warnings.append("%s policy: ignored static_leads %r" % (label, str(lead)[:20]))
     exc = raw.get("profile_exceptions")
     if exc is not None:
-        if isinstance(exc, dict) and exc and all(_valid_exception(k, v) for k, v in exc.items()):
+        if isinstance(exc, dict) and all(_valid_exception(k, v) for k, v in exc.items()):
             out["profile_exceptions"] = dict(sorted(exc.items()))
         else:
             warnings.append("%s policy: ignored profile_exceptions (expected rule ids mapped to actions, "
@@ -195,7 +195,7 @@ def _apply_exception(eff: Dict[str, Any], key: str, value: Any) -> None:
         eff[key] = value
 
 
-def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any]],
+def merge(operator: Optional[Dict[str, Any]], repository: Any,
           warnings: List[str], profile: Optional[str] = None) -> Dict[str, Any]:
     """Effective policy: defaults, operator overrides, then the citizen
     profile (tighten-only, so an ordinary operator policy cannot weaken it),
@@ -235,8 +235,9 @@ def merge(operator: Optional[Dict[str, Any]], repository: Optional[Dict[str, Any
             warnings.append("operator exception under the citizen profile: %s is %s" % (key, value))
     elif op.get("profile_exceptions"):
         warnings.append("operator policy: profile_exceptions apply only under the citizen profile; ignored")
-    if repository:
-        rp = _validate(repository, "repository", warnings)
+    repositories = repository if isinstance(repository, (list, tuple)) else ([repository] if repository else [])
+    for raw_repo in repositories:
+        rp = _validate(raw_repo, "repository", warnings)
         if rp.get("profile") == "standard" and eff["profile"] == "citizen":
             warnings.append("repository policy cannot leave the citizen profile; ignored")
         _apply_profile(eff, rp.get("profile", "standard"))
@@ -308,6 +309,8 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     declared = list(facts.get("declared_custodians") or [])
     if not policy["require"]["custodian"]:
         add("P-CUS-001", "pass", "custodian not required by this policy")
+    elif acts["P-CUS-001"] == "off" and not named:
+        add("P-CUS-001", "pass", "custodian rule turned off by the operator policy")
     elif named:
         add("P-CUS-001", "pass", "custodian(s) named by the operator policy: %s" % ", ".join(named))
     elif declared:

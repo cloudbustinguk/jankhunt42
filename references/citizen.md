@@ -102,7 +102,9 @@ include a scan of the shipped rules that ignores repository scan config
 ignore` pragmas, joined with the repository-tuned scan: the repository can
 add or raise leads but never remove them. The passport reports exactly how
 many leads repository tuning would have hidden
-(`governance.repository_suppressed_leads`), under either profile.
+(`governance.repository_suppressed_leads`), under either profile. If that
+untuned scan reaches `--max-files`, the citizen passport is
+`insufficient-evidence` (coverage) rather than quietly scanning less.
 
 ### The custodian
 
@@ -114,6 +116,8 @@ software: they review it, own its incidents, and sign its acceptance.
 - `passport.custodians` in `.jankhunt42.json` is recorded as a declaration
   (`repository`), but the software's author could name anyone, including
   themselves, so it does not satisfy `P-CUS-001`.
+- An operator who deliberately does not want the rule can relax it with
+  `profile_exceptions` (`"require.custodian": false`, or `"P-CUS-001": "off"`).
 
 Under the citizen profile an acceptance record must be signed by a
 custodian named in the operator policy (`accepted_by` matches one of

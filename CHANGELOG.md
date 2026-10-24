@@ -40,7 +40,10 @@ fields are unchanged.
   warning. Governance leads also come from a scan that ignores repository
   scan config and inline pragmas (the repository can add leads, never
   remove them), and `governance.repository_suppressed_leads` reports
-  exactly what repository tuning would hide.
+  exactly what repository tuning would hide. If that scan reaches
+  `--max-files`, a citizen passport is `insufficient-evidence`. All
+  repository policies are merged in one pass, after the operator's
+  exceptions.
 - Shareable (`--redact`) maps and passports withhold warnings, which can
   quote declaration patterns, object names, and paths.
 - A `governance` section in passports: profile, custodians, the leads behind
@@ -105,7 +108,8 @@ fields are unchanged.
   (`actions/checkout` v7.0.1 with `persist-credentials: false`,
   `actions/setup-python` v6.3.0, `actions/attest-build-provenance` v4.2.2,
   `softprops/action-gh-release` v3.0.3). The README CI example uses current
-  majors.
+  majors. GitHub releases now carry their CHANGELOG section as release
+  notes (earlier releases showed only a compare link).
 - The `SKILL.md` description is within the 1,024-character Agent Skills
   limit.
 - Terminal views use the HTML views' colours: the scan report palette for

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import fnmatch
 import os
 import re
 import sys
@@ -125,17 +126,24 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
     return root, sources, skipped
 
 
+def _globbed(rel: str, patterns: Sequence[str]) -> bool:
+    return any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p) for p in patterns)
+
+
 def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
-             preloaded: Optional[Tuple[Any, List[Any], int]] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
+             preloaded: Optional[Tuple[Any, List[Any], int]] = None,
+             cfg: Optional[Any] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
     """Scan with repository config applied. `preloaded` is (root, sources,
-    skipped) already discovered with the config's ignore globs applied."""
+    skipped) already discovered with the config's ignore globs applied;
+    `cfg` is a config the caller already loaded (and reported)."""
     t0 = time.time()
-    cfg = jh_config.load_config_for_root(
-        _probe_root(args.paths),
-        explicit_path=getattr(args, "config", None),
-        disabled=getattr(args, "no_config", False),
-    )
-    jh_config.emit_warnings(cfg)
+    if cfg is None:
+        cfg = jh_config.load_config_for_root(
+            _probe_root(args.paths),
+            explicit_path=getattr(args, "config", None),
+            disabled=getattr(args, "no_config", False),
+        )
+        jh_config.emit_warnings(cfg)
     if preloaded is not None:
         root, sources, skipped = preloaded
     else:
@@ -796,15 +804,22 @@ def cmd_passport(args: argparse.Namespace) -> int:
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
         min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
         since=None, config=args.config, no_config=args.no_config, calibrate=False)
-    # Files are read once (twice only when repository config adds ignore
-    # globs): the main scan sees the repository's tuning; the governance
-    # scans run in memory on the governance rules only.
-    scan_cfg = jh_config.load_config_for_root(root, explicit_path=args.config, disabled=args.no_config)
+    # Files are read once: the main scan sees the repository's tuning (its
+    # ignore globs filter the same sources in memory), and the governance
+    # scans run in memory on the governance rules only. Only when the
+    # untuned discovery reaches --max-files is the tuned set discovered
+    # again, so the main scan is never starved by ignored trees.
+    scan_cfg = cfg
     operator_excludes = list(args.exclude or ())
     raw_pre = _load_sources([root], operator_excludes, args.max_files, args.max_file_bytes)
-    main_pre = (_load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
-                if scan_cfg.ignore_globs else raw_pre)
-    _, result, _meta = run_scan(scan_args, preloaded=main_pre)
+    raw_capped = len(raw_pre[1]) + raw_pre[2] >= args.max_files
+    if not scan_cfg.ignore_globs:
+        main_pre = raw_pre
+    elif not raw_capped:
+        main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
+    else:
+        main_pre = _load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
+    _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
     # Governance leads (P-SEC-001, P-AGT-001). Raw: the shipped rules with no
     # repository ignore globs, config, or inline pragmas, which is what the
     # citizen profile uses so the repository cannot opt out. Tuned: the same
@@ -848,7 +863,8 @@ def cmd_passport(args: argparse.Namespace) -> int:
         config_path=os.path.basename(cfg.source) if cfg.source else None,
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
-        findings=result.findings, governance_findings=raw, governance_tuned=tuned, profile=args.profile)
+        findings=result.findings, governance_findings=raw, governance_tuned=tuned,
+        governance_truncated=raw_capped, profile=args.profile)
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")
