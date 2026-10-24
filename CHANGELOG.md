@@ -36,9 +36,15 @@ additive.
   re-checked with cosign when the plan names a certificate identity.
 - Three more selftest mutants (not-run counted as verified, token sent on
   redirect, in-repository plan trusted).
+- Python 3.14 joins the CI matrix and the `selftest --full` container matrix.
+  Python 3.9 remains the minimum for systems that still ship it, although it
+  is past its upstream end of life.
 
 ### Fixed
 
+- `gh` accepts only one signer constraint; verification passes the most
+  specific one in the plan (found by a live check against the v2.1.0
+  release, now covered by the tests).
 - Passport provenance listed every attestation's kind as `unknown`; it now
   reports the predicate kind (for example `slsa-provenance-v1`).
 

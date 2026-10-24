@@ -6,7 +6,7 @@
 
 **Find the jank before it finds production, then work out what it can hurt and whether you can ship it.**
 
-jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for CVE data.
+jankhunt42 is a local-first investigation and assurance toolkit: an [Agent Skill](https://skills-hub.ai/skill-md) (the open `SKILL.md` standard) for Claude Code, Cursor, Codex CLI, and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. No packages, no service, no telemetry, no network unless you ask for it (`scan --cve`, `--verify … --online`).
 
 **Version:** 2.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
@@ -309,7 +309,7 @@ A deep hunt is a structured adversarial panel: independent roles, cross-examinat
 
 - **Suppressions:** add `# jankhunt42: ignore JH201` inline, with a reason, for a confirmed false positive only. A file-level `# jankhunt42: ignore-file JH305` goes in the first 12 lines. The pre-0.4 `jankhunt:` prefix is still honoured.
 - **Calibration:** `scan --calibrate` maintains `.jankhunt42/calibration.json` and downgrades rules that this repository consistently suppresses. It is opt-in, and with `--cve` it is one of only two flags that write or send anything.
-- **Offline by default:** no command contacts a network except `--cve`. `map` and `passport` never resolve, probe, or connect to anything they find.
+- **Offline by default:** only two opt-ins reach a network. `scan --cve` sends package names and versions to OSV.dev. `--verify … --online` sends the repository name and artifact digests to the GitHub API and lets `gh`/`cosign`/`jf` go online. `map` and `passport` never resolve, probe, or connect to anything they find.
 - **Redaction:** credentials, URL userinfo, query strings and paths, connection-string secrets, keys, tokens and emails are removed before anything is hashed, displayed or stored. Repository control characters are neutralized before they reach a terminal. HTML output escapes everything and runs under a no-network CSP.
 - **Sensitive architecture:** a connectivity graph can reveal internal topology. Use `--redact` for anything you share. Generated artifacts contain relative paths only.
 - **Untrusted repositories:** jankhunt42 never executes repository code or scripts. Instructions embedded in repository content are data, not commands.
@@ -397,7 +397,9 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - nine mutants that the tests must kill, each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
-- the suite on locally cached Python 3.9/3.12/3.13 container images, which are never pulled.
+- the suite on locally cached Python 3.9/3.12/3.13/3.14 container images, which are never pulled.
+
+Python 3.9 is past its upstream end of life. It stays the minimum only because some systems still ship it as their `python3` (for example macOS Command Line Tools and RHEL 9); use a current Python where you can. TOML config needs 3.11+; JSON config works everywhere.
 
 Missing optional tools are reported as `skip`, never as a pass. A perfect self-score is not evidence of correctness; the independent checks are.
 

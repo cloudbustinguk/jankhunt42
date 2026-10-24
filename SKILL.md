@@ -16,7 +16,7 @@ metadata:
 
 **Prime directive:** find the root cause and prove it. A change that makes the symptom disappear without a causal explanation is not a fix; it is a new bug with better marketing.
 
-jankhunt42 is a workflow plus a stdlib-only CLI (`scripts/jankhunt42`). The workflow is mandatory; the CLI is an accelerant. Everything runs locally and offline. The only exception is the opt-in `scan --cve`, which sends package names and versions to OSV.dev.
+jankhunt42 is a workflow plus a stdlib-only CLI (`scripts/jankhunt42`). The workflow is mandatory; the CLI is an accelerant. Everything runs locally and offline, with two opt-in exceptions: `scan --cve` sends package names and versions to OSV.dev, and `--verify PLAN --online` sends the repository name and artifact digests to the GitHub API and lets the named verifiers go online. Never add `--online` unless the user asked for online verification.
 
 **Jank doesn't check who or what wrote the line.** Copilot paste-ins, low-code flows wired up by citizen developers, and "quick scripts" that became services fail the same ways hand-written code does: a pasted secret, happy-path logic with swallowed errors, duplicated scaffolding, no tests. jankhunt42 scores what the code and its configuration actually do. It never infers authorship, and declarations of origin do not change any score or decision.
 

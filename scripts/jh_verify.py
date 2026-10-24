@@ -51,6 +51,9 @@ MAX_ZIP_MEMBERS = 200
 MAX_ZIP_TOTAL = 100_000_000
 MAX_TOOL_OUTPUT = 8_000_000
 OUTCOMES = ("tool-verified", "signature-only", "failed", "not-run", "error")
+GH_SIGNER_FLAGS = (("certificate_identity", "--cert-identity"),
+                   ("certificate_identity_regexp", "--cert-identity-regex"),
+                   ("signer_workflow", "--signer-workflow"), ("signer_repo", "--signer-repo"))
 
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 _OWNER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -537,10 +540,11 @@ def _verify_gh(plan: Dict[str, Any], tools: _Tools, scrub: _Scrub, subj: Dict[st
     argv = [exe, "attestation", "verify", subj["path"] or subj["oci"], "--format", "json",
             "--predicate-type", subj["predicate_type"]]
     argv += ["--repo", ident["repo"]] if ident.get("repo") else ["--owner", ident["owner"]]
-    for key, flag in (("signer_workflow", "--signer-workflow"), ("signer_repo", "--signer-repo"),
-                      ("certificate_identity", "--cert-identity"),
-                      ("certificate_identity_regexp", "--cert-identity-regex"),
-                      ("oidc_issuer", "--cert-oidc-issuer"), ("source_ref", "--source-ref")):
+    # gh accepts only one of these signer constraints; pass the most specific.
+    constraint = next(((key, flag) for key, flag in GH_SIGNER_FLAGS if ident.get(key)), None)
+    if constraint:
+        argv += [constraint[1], ident[constraint[0]]]
+    for key, flag in (("oidc_issuer", "--cert-oidc-issuer"), ("source_ref", "--source-ref")):
         if ident.get(key):
             argv += [flag, ident[key]]
     if ident.get("deny_self_hosted_runners"):
@@ -550,7 +554,8 @@ def _verify_gh(plan: Dict[str, Any], tools: _Tools, scrub: _Scrub, subj: Dict[st
     if tr:
         argv += ["--custom-trusted-root", tr]
     common = {"tool_version": tools.version("gh"), "command": scrub.argv(argv), "mode": mode,
-              "predicate_type": subj["predicate_type"], "sha256": subj.get("sha256")}
+              "predicate_type": subj["predicate_type"], "sha256": subj.get("sha256"),
+              "signer_constraint": constraint[1] if constraint else "repository only"}
     try:
         rc, out, err = tools.run(argv)
     except subprocess.TimeoutExpired:
@@ -558,7 +563,9 @@ def _verify_gh(plan: Dict[str, Any], tools: _Tools, scrub: _Scrub, subj: Dict[st
     except OSError as exc:
         return _result("gh", label, "error", "gh could not be started: %s" % scrub.text(str(exc)), **common)
     if rc != 0:
-        return _result("gh", label, "failed", scrub.text(err or out) or "gh exited %d" % rc, exit_code=rc, **common)
+        return _result("gh", label, "failed", "gh rejected the attestation (subject digest, signer identity, or "
+                       "trust root did not match): %s" % (scrub.text(err or out) or "exit %d" % rc),
+                       exit_code=rc, **common)
     matches, identity, problem = _gh_matches(out, subj.get("sha256"), ident.get("repo_id"))
     if problem:
         outcome = "failed" if "repository ID" in problem or "subject digest" in problem else "error"

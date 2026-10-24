@@ -347,7 +347,7 @@ def check_python_matrix() -> Check:
         c.status, c.detail = "skip", "docker not available; matrix not run (not a pass)"
         return c
     ran = []
-    for image in ("python:3.9-slim", "python:3.12-slim", "python:3.13-slim"):
+    for image in ("python:3.9-slim", "python:3.12-slim", "python:3.13-slim", "python:3.14-slim"):
         probe = subprocess.run([docker, "image", "inspect", image], capture_output=True, timeout=60)
         if probe.returncode != 0:
             ran.append({"image": image, "status": "skip", "detail": "image not cached locally; not pulled"})

@@ -238,7 +238,7 @@ Paths are relative to the plan file. Schema: `templates/verify.schema.json`.
 
 | Verifier | Command | Identity checked |
 |---|---|---|
-| `gh` (default) | `gh attestation verify SUBJECT --repo/--owner … [--signer-workflow …] [--bundle B] [--custom-trusted-root R] --format json` | yes: repository, optional workflow, OIDC issuer; `repo_id` is compared with the certificate's repository ID, which survives renames |
+| `gh` (default) | `gh attestation verify SUBJECT --repo/--owner … [ONE SIGNER FLAG] [--bundle B] [--custom-trusted-root R] --format json` | yes: repository, OIDC issuer, and one signer constraint (gh allows only one; the most specific is used: `certificate_identity`, then `certificate_identity_regexp`, `signer_workflow`, `signer_repo`, recorded as `signer_constraint`); `repo_id` is compared with the certificate's repository ID, which survives renames |
 | `cosign` | `cosign verify-blob-attestation --bundle B --type T --certificate-identity[-regexp] … --certificate-oidc-issuer … [--trusted-root R]` | yes: certificate identity and issuer (cosign 3.x flags; `tools.cosign_args` adds flags for older versions) |
 | `jf` | `jf evd verify --subject-repo-path P (--public-keys K \| --use-artifactory-keys) --format json` | by key source: a key you supplied or an Artifactory key is identity; a Sigstore bundle key is re-checked with cosign when the plan names a certificate identity, otherwise `signature-only` |
 

@@ -59,6 +59,11 @@ if args in (["--version"], ["version"]):
 with open(os.path.join(here, name + ".calls"), "a") as fh:
     fh.write(json.dumps(args) + "\n")
 b = beh.get(name, {{}})
+group = [f for f in ("--cert-identity", "--cert-identity-regex", "--signer-repo", "--signer-workflow") if f in args]
+if name == "gh" and len(group) > 1:
+    sys.stderr.write("if any flags in the group [cert-identity cert-identity-regex signer-repo signer-workflow] "
+                     "are set none of the others can be\n")
+    sys.exit(1)
 if b.get("stderr"):
     sys.stderr.write(b["stderr"])
 if name == "gh" and b.get("rc", 0) == 0:
@@ -192,6 +197,17 @@ class Offline(Base):
         self.assertEqual(att["exporter_verification"], "unverified")
         self.assertEqual(rep["gate"]["result"], "pass")
         self.assertEqual(rep["summary"]["tool_verified_attestations"], 1)
+
+    def test_gh_gets_one_signer_constraint(self):
+        ident = "https://github.com/example-org/app/.github/workflows/release.yml@refs/tags/v1"
+        rep = self.verify(identity={"repo": "example-org/app", "certificate_identity": ident,
+                                    "signer_workflow": "example-org/app/.github/workflows/release.yml"})
+        r = rep["verification"]["results"][0]
+        self.assertEqual(r["outcome"], "tool-verified", r["reason"])
+        self.assertEqual(r["signer_constraint"], "--cert-identity")
+        argv = self.calls("gh")[0]
+        self.assertEqual(argv[argv.index("--cert-identity") + 1], ident)
+        self.assertNotIn("--signer-workflow", argv)
 
     def test_offline_without_trusted_root_does_not_run(self):
         with NoNetwork():
