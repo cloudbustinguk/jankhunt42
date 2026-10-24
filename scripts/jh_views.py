@@ -112,7 +112,7 @@ def clean(text: object) -> str:
 
 def asciify(text: str) -> str:
     """ASCII fallback for TERM=dumb or non-UTF-8 terminals."""
-    table = {"·": "-", "→": "->", "…": "...", "—": "-", "–": "-", "⇒": "=>", "│": "|", "└": "`", "█": "#", "░": "."}
+    table = {"·": "-", "→": "->", "…": "...", "—": "-", "–": "-", "⇒": "=>", "│": "|", "└": "`", "█": "#", "░": ".", "◆": "*"}
     out = "".join(table.get(ch, ch) for ch in text)
     return out.encode("ascii", "replace").decode("ascii")
 
@@ -179,6 +179,16 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
         edge = c.magenta if d["tier"] in ("verified", "supported") else (lambda x: c.dim(c.magenta(x)))
         wrapped = [("    " + ln if not ln.startswith("      ") else ln) for ln in _wrap(ptxt, t.width - 6, "      ")]
         out += paint_edges(wrapped, edge, t.arrow())
+    creds = jh_map.credential_rows(report)
+    if creds:
+        out += ["", c.bold("credential blast radius") + c.grey("  (what each identity unlocks; informational)")]
+        for r in creds:
+            out.append("  %s %s%s" % (c.magenta("◆"), c.bold(clean(r["label"])),
+                                      c.yellow("  " + " ".join(r["flags"])) if r["flags"] else ""))
+            body = "unlocks %d (%d mutating): %s  ·  held by %s" % (
+                r["unlocks"], r["mutating"], ", ".join(r["targets"]) or "nothing mapped",
+                ", ".join(r["holders"]) or "no visible holder")
+            out += [c.grey("    " + ln.strip()) for ln in _wrap(clean(body), t.width - 6, "    ")]
     out += ["", c.bold("unknowns") + c.grey("  (unknown is not safe, and not dangerous)")]
     for u in report["unknowns"]:
         for i, ln in enumerate(_wrap("%s: %s" % (u["id"], clean(u["detail"])), t.width - 6, "    ")):

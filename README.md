@@ -8,14 +8,14 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.4.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.5.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
 | Question | Commands | What you get |
 |---|---|---|
 | **What's broken?** | `scan`, `score`, `review`, `triage`, `doctor`, `hunt` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts; log clustering; an opt-in adversarial deep hunt |
-| **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, confidentiality/integrity/availability blast radius, trust-boundary crossings, explicit unknowns, and a graph diff |
+| **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
 | **Can we responsibly ship it?** | `passport`, `supply-chain` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision |
 
 Each answer keeps its own evidence model:

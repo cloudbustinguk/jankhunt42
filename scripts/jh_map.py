@@ -200,6 +200,9 @@ def endpointish(name: str) -> bool:
     return bool(_ENDPOINTISH.search(name)) and not _SECRETISH.search(name)
 
 
+SECRET_STORES = ("azure-keyvault",)
+
+
 class Ctx:
     def __init__(self, graph: G.Graph, app_name: str):
         self.g = graph
@@ -215,6 +218,10 @@ class Ctx:
         self.k8s_bindings: List[Tuple[Dict[str, Any], str, int]] = []
         self.manifest_deps: List[Tuple[Tuple[str, str], str, int, str]] = []
         self.openapi: List[Tuple[str, List[Dict[str, Any]], List[str]]] = []
+        # azurerm/azuread resource and data blocks, resolved across files
+        self.tf_azure: List[Dict[str, Any]] = []
+        # NAME -> distinct string values assigned anywhere in Python code
+        self.str_vars: Dict[str, Set[str]] = {}
         self.parse_failures: List[Dict[str, str]] = []
         self.templates: List[str] = []
         self.by_adapter: Dict[str, int] = {}
@@ -223,6 +230,16 @@ class Ctx:
 
     def endpoint_node(self, ep: Dict[str, Any], env_hint: str = "unknown", unresolved_hint: str = "",
                       evidence: Optional[str] = None, label_suffix: str = "") -> Optional[str]:
+        nid = self._endpoint_node(ep, env_hint, unresolved_hint, evidence, label_suffix)
+        if nid and self.g.nodes[nid]["attributes"].get("engine") in SECRET_STORES \
+                and self.g.nodes[nid]["sensitivity"] == "unknown":
+            # a secret store holds credentials, like a Kubernetes Secret
+            self.g.nodes[nid]["sensitivity"] = "restricted"
+            self.g.nodes[nid]["classification_source"] = "resource-type: credentials"
+        return nid
+
+    def _endpoint_node(self, ep: Dict[str, Any], env_hint: str, unresolved_hint: str,
+                       evidence: Optional[str], label_suffix: str) -> Optional[str]:
         kind = ep["kind"]
         engine = ep.get("engine") or kind
         if ep.get("resolved"):
@@ -310,6 +327,12 @@ PY_IMPORTS = {
     "langchain_google_genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
     "langchain_mistralai": ("external", "mistral", "api.mistral.ai"),
     "langchain_groq": ("external", "groq", "api.groq.com"),
+    "pyspark": ("database", "spark", ""), "delta": ("database", "spark", ""),
+    "databricks.sdk": ("external", "databricks-api", ""), "snowflake.connector": ("database", "snowflake", ""),
+    "pyodbc": ("database", "sql", ""), "pymssql": ("database", "sqlserver", ""), "oracledb": ("database", "oracle", ""),
+    "azure.data.tables": ("database", "azure-table", ""), "azure.keyvault.secrets": ("storage", "azure-keyvault", ""),
+    "azure.storage.filedatalake": ("storage", "azure-blob", ""), "azure.eventhub": ("queue", "eventhub", ""),
+    "azure.kusto.data": ("database", "kusto", ""), "azure.search.documents": ("database", "azure-search", ""),
 }
 JS_IMPORTS = {
     "pg": ("database", "postgresql", ""), "postgres": ("database", "postgresql", ""),
@@ -367,6 +390,52 @@ JS_IMPORTS = {
     "@huggingface/inference": ("external", "huggingface", "api-inference.huggingface.co"),
     "together-ai": ("external", "together", "api.together.xyz"),
 }
+GO_IMPORTS = {
+    "github.com/lib/pq": ("database", "postgresql", ""), "github.com/jackc/pgx": ("database", "postgresql", ""),
+    "github.com/go-sql-driver/mysql": ("database", "mysql", ""),
+    "github.com/denisenkom/go-mssqldb": ("database", "sqlserver", ""),
+    "github.com/microsoft/go-mssqldb": ("database", "sqlserver", ""),
+    "go.mongodb.org/mongo-driver": ("database", "mongodb", ""), "github.com/redis/go-redis": ("database", "redis", ""),
+    "github.com/go-redis/redis": ("database", "redis", ""), "github.com/mattn/go-sqlite3": ("database", "sqlite", ""),
+    "modernc.org/sqlite": ("database", "sqlite", ""), "github.com/databricks/databricks-sql-go": ("database", "databricks", ""),
+    "github.com/snowflakedb/gosnowflake": ("database", "snowflake", ""),
+    "github.com/aws/aws-sdk-go-v2/service/s3": ("storage", "s3", ""), "github.com/aws/aws-sdk-go/service/s3": ("storage", "s3", ""),
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb": ("database", "dynamodb", ""),
+    "github.com/aws/aws-sdk-go-v2/service/sqs": ("queue", "sqs", ""), "cloud.google.com/go/storage": ("storage", "gcs", ""),
+    "cloud.google.com/go/bigquery": ("database", "bigquery", ""), "cloud.google.com/go/pubsub": ("queue", "pubsub", ""),
+    "github.com/Azure/azure-sdk-for-go/sdk/storage/azblob": ("storage", "azure-blob", ""),
+    "github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos": ("database", "cosmos", ""),
+    "github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets": ("storage", "azure-keyvault", ""),
+    "github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus": ("queue", "servicebus", ""),
+    "github.com/segmentio/kafka-go": ("queue", "kafka", ""), "github.com/rabbitmq/amqp091-go": ("queue", "amqp", ""),
+    "github.com/sashabaranov/go-openai": ("external", "openai", "api.openai.com"),
+    "github.com/openai/openai-go": ("external", "openai", "api.openai.com"),
+    "github.com/anthropics/anthropic-sdk-go": ("external", "anthropic", "api.anthropic.com"),
+    "google.golang.org/genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
+}
+RUST_IMPORTS = {
+    "sqlx": ("database", "sql", ""), "tokio_postgres": ("database", "postgresql", ""), "postgres": ("database", "postgresql", ""),
+    "diesel": ("database", "sql", ""), "sea_orm": ("database", "sql", ""), "rusqlite": ("database", "sqlite", ""),
+    "redis": ("database", "redis", ""), "mongodb": ("database", "mongodb", ""), "tiberius": ("database", "sqlserver", ""),
+    "aws_sdk_s3": ("storage", "s3", ""), "aws_sdk_dynamodb": ("database", "dynamodb", ""),
+    "azure_storage_blobs": ("storage", "azure-blob", ""), "azure_security_keyvault": ("storage", "azure-keyvault", ""),
+    "azure_data_cosmos": ("database", "cosmos", ""), "lapin": ("queue", "amqp", ""), "rdkafka": ("queue", "kafka", ""),
+    "async_openai": ("external", "openai", "api.openai.com"),
+}
+JAVA_IMPORTS = {
+    "org.postgresql": ("database", "postgresql", ""), "com.microsoft.sqlserver": ("database", "sqlserver", ""),
+    "com.mysql": ("database", "mysql", ""), "oracle.jdbc": ("database", "oracle", ""),
+    "com.databricks": ("database", "databricks", ""), "net.snowflake": ("database", "snowflake", ""),
+    "com.mongodb": ("database", "mongodb", ""), "redis.clients.jedis": ("database", "redis", ""),
+    "software.amazon.awssdk.services.s3": ("storage", "s3", ""), "com.amazonaws.services.s3": ("storage", "s3", ""),
+    "com.azure.storage.blob": ("storage", "azure-blob", ""), "com.azure.cosmos": ("database", "cosmos", ""),
+    "com.azure.security.keyvault": ("storage", "azure-keyvault", ""),
+    "com.azure.messaging.servicebus": ("queue", "servicebus", ""), "org.apache.kafka": ("queue", "kafka", ""),
+    "com.azure.ai.openai": ("external", "azure-openai", ""), "com.openai": ("external", "openai", "api.openai.com"),
+}
+_GO_IMPORT_RE = re.compile(r'^\s*(?:import\s+)?(?:[\w.]+\s+)?"([\w./\-]+)"\s*$')
+_RUST_USE_RE = re.compile(r"^\s*(?:pub\s+)?use\s+(\w+)(?:::|;)")
+_JAVA_IMPORT_RE = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)")
 CS_PATTERNS = [
     (re.compile(r"\bnew\s+SqlConnection\b|\bUseSqlServer\s*\("), ("database", "sqlserver", "")),
     (re.compile(r"\bNpgsql(Connection|DataSource)\b|\bUseNpgsql\s*\("), ("database", "postgresql", "")),
@@ -405,6 +474,16 @@ PKG_FAMILIES = {**{k.split(".")[0].lower(): v for k, v in PY_IMPORTS.items()
                 "langchain-google-genai": ("external", "google-ai", "generativelanguage.googleapis.com"),
                 "huggingface-hub": ("external", "huggingface", "api-inference.huggingface.co"),
                 "azure.ai.openai": ("external", "azure-openai", ""),
+                **{k.lower(): v for k, v in GO_IMPORTS.items()}, **RUST_IMPORTS,
+                "tokio-postgres": ("database", "postgresql", ""), "aws-sdk-s3": ("storage", "s3", ""),
+                "async-openai": ("external", "openai", "api.openai.com"),
+                "postgresql": ("database", "postgresql", ""), "mssql-jdbc": ("database", "sqlserver", ""),
+                "mysql-connector-j": ("database", "mysql", ""), "databricks-jdbc": ("database", "databricks", ""),
+                "snowflake-jdbc": ("database", "snowflake", ""), "azure-storage-blob": ("storage", "azure-blob", ""),
+                "azure-security-keyvault-secrets": ("storage", "azure-keyvault", ""), "azure-cosmos": ("database", "cosmos", ""),
+                "databricks-sql-connector": ("database", "databricks", ""), "databricks-sdk": ("external", "databricks-api", ""),
+                "snowflake-connector-python": ("database", "snowflake", ""), "pyspark": ("database", "spark", ""),
+                "azure-keyvault-secrets": ("storage", "azure-keyvault", ""),
                 "aspire.azure.ai.openai": ("external", "azure-openai", ""),
                 "microsoft.extensions.ai.openai": ("external", "openai", "api.openai.com"),
                 "anthropic.sdk": ("external", "anthropic", "api.anthropic.com")}
@@ -429,6 +508,9 @@ _ENV_RES = [
     re.compile(r"""GetConnectionString\s*\(\s*"([\w.\-]+)"\s*\)"""),
     re.compile(r"""Configuration\s*\[\s*"([\w:.\-]+)"\s*\]"""),
     re.compile(r"""settings\.([A-Z][A-Z0-9_]+)\b"""),
+    re.compile(r"""os\.(?:Getenv|LookupEnv)\s*\(\s*"([A-Za-z_]\w*)\""""),            # Go
+    re.compile(r"""env::var(?:_os)?\s*\(\s*"([A-Za-z_]\w*)\""""),                    # Rust
+    re.compile(r"""System\.getenv\s*\(\s*"([A-Za-z_]\w*)\""""),                     # Java
 ]
 _SQL_SRC = [
     ("read", r"SELECT\b[^;]{0,200}?\bFROM\b"),
@@ -442,6 +524,7 @@ _SQL_SRC = [
 _SQL = [(cap, re.compile(r"\b(?:%s)" % src)) for cap, src in _SQL_SRC] + \
        [(cap, re.compile(r"(?<=[\"'`])\s*(?:%s)" % src, re.I)) for cap, src in _SQL_SRC]
 CAP_EDGE = {"read": "reads", "write": "writes", "delete": "deletes", "admin": "administers"}
+TQ = '"' * 3
 # storage/queue operations: regex -> (kind filter, capability)
 _OPS = [
     (re.compile(r"\.(get_object|download_file|download_fileobj|download_blob|download_to_filename|download_as_bytes|GetObject)\b"), ("storage", "read")),
@@ -449,12 +532,60 @@ _OPS = [
     (re.compile(r"\.(delete_object|delete_objects|delete_blob|DeleteObject)\b"), ("storage", "delete")),
     (re.compile(r"\.(send_message|send_messages|basic_publish|publish|produce|sendMessage|SendMessageAsync)\s*\("), ("queue", "write")),
 ]
+# Key Vault and Spark/Databricks file operations
+_OPS += [
+    (re.compile(r"\.(get_secret|GetSecret|GetSecretAsync|getSecret)\s*\("), ("storage", "read")),
+    (re.compile(r"\.(set_secret|SetSecret|SetSecretAsync|setSecret)\s*\("), ("storage", "write")),
+    (re.compile(r"\.(begin_delete_secret|StartDeleteSecret|StartDeleteSecretAsync|beginDeleteSecret)\s*\("), ("storage", "delete")),
+    (re.compile(r"\bdbutils\.fs\.(?:ls|head)\s*\(|\.read\b.*\.(?:load|parquet|csv|json|text|orc)\s*\("), ("storage", "read")),
+    (re.compile(r"\bdbutils\.fs\.(?:put|cp|mv|mkdirs)\s*\(|\.write\b.*\.(?:save|parquet|csv|json|text|orc)\s*\("), ("storage", "write")),
+    (re.compile(r"\bdbutils\.fs\.rm\s*\("), ("storage", "delete")),
+]
+# Spark tables: three-part names are Unity Catalog (catalog.schema.table)
+# a name segment: identifier characters and f-string {variables}
+_SEG = r"(?:[\w`]|\{[A-Za-z_]\w*\})+"
+_UC_READ_RE = re.compile(r"""\b(?:spark\.(?:read\.)?table|DeltaTable\.forName\s*\(\s*\w+\s*,)\s*\(?\s*f?["'`](%s(?:\.%s){0,2})["'`]"""
+                         % (_SEG, _SEG))
+_UC_WRITE_RE = re.compile(r"""\.(?:saveAsTable|insertInto|toTable)\s*\(\s*f?["'`](%s(?:\.%s){0,2})["'`]""" % (_SEG, _SEG))
+_UC_SQL_RE = re.compile(r"""(?i)\b(FROM|JOIN|USING|INTO|UPDATE|OVERWRITE|TABLE|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?"""
+                        r"""(%s\.%s\.%s)(?![\w{])""" % (_SEG, _SEG, _SEG))
+
+
+def _uc_sql_cap(verb: str, before: str) -> Optional[str]:
+    """Capability of a SQL reference from its verb and the words before it
+    on the line: a delete, a create-or-replace, an insert-overwrite."""
+    verb, before = verb.upper(), re.sub(r"\s+", " ", before.upper())
+    if verb in ("FROM", "JOIN", "USING"):
+        return "delete" if re.search(r"\bDELETE\s*$", before) else "read"
+    if verb in ("INTO", "UPDATE"):
+        return "write"
+    if verb == "OVERWRITE":
+        return "delete"                 # INSERT OVERWRITE replaces the table's data
+    if re.search(r"\b(DROP|TRUNCATE)\s*$", before) or re.search(r"\bOR REPLACE\s*(?:TEMP\w*\s*)?$", before) \
+            or re.search(r"\bOVERWRITE\s*$", before):
+        return "delete" if verb == "TABLE" or "DROP" in before[-6:] else "write"
+    if re.search(r"\bALTER\s*$", before):
+        return "admin"
+    if re.search(r"\bCREATE\s*(?:TEMP\w*\s*)?(?:EXTERNAL\s*)?$", before):
+        return "write"
+    return None                         # DESCRIBE TABLE, OPTIMIZE, comments about tables
+_SPARK_FILE_RE = re.compile(r"\bspark\.|pyspark|SparkSession|\bdbutils\.|DeltaTable")
+# simple string assignments, for resolving f-string table names
+_STR_ASSIGN_RE = re.compile(r"""^\s*([A-Za-z_]\w*)\s*=\s*f?(["'])((?:[\w.`\-]|\{[A-Za-z_]\w*\})+)\2\s*(?:#.*)?$""")
+_FVAR_RE = re.compile(r"\{([A-Za-z_]\w*)\}")
+_DBUTILS_SECRET_RE = re.compile(r"""dbutils\.secrets\.get(?:Bytes)?\s*\(\s*(?:scope\s*=\s*)?["']([\w.\-]+)["']\s*,\s*(?:key\s*=\s*)?["']([\w.\-]+)["']""")
+# Python/.NET/JS constructors, Go azidentity.New...(), Java ...Builder()
+_AZURE_CRED_RE = re.compile(r"\b(?:New)?(DefaultAzureCredential|ManagedIdentityCredential|ClientSecretCredential|"
+                            r"ClientCertificateCredential|WorkloadIdentityCredential|AzureCliCredential|"
+                            r"ChainedTokenCredential|InteractiveBrowserCredential|UsernamePasswordCredential)"
+                            r"(?:Builder)?\s*\(")
+_CLOUD_HOST_RE = re.compile(r"""["'`](?:https?://)?((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})(?::\d+)?["'`/;]""")
 _BOTO_RE = re.compile(r"""boto3\.(?:client|resource)\s*\(\s*["'](\w+)["']""")
 _BOTO_SERVICES = {"s3": ("storage", "s3"), "sqs": ("queue", "sqs"), "sns": ("queue", "sns"),
                   "dynamodb": ("database", "dynamodb"), "rds": ("database", "rds-api"),
                   "secretsmanager": ("external", "aws-secrets-manager"), "kinesis": ("queue", "kinesis")}
 _BUCKET_RE = re.compile(r"""\bBucket\s*=\s*["']([a-z0-9][a-z0-9.\-]{1,62})["']""")
-_DB_URL_RE = re.compile(r"""["'`]((?:%s)://[^"'`\s]+)""" % "|".join(
+_DB_URL_RE = re.compile(r"""["'`]((?:jdbc:)?(?:%s)://[^"'`\s]+)""" % "|".join(
     re.escape(s) for s in sorted(set(G.DB_SCHEMES) | set(G.QUEUE_SCHEMES) | {"s3", "gs", "abfss", "wasbs"},
                                  key=len, reverse=True)), re.I)
 
@@ -463,18 +594,54 @@ def _in_string(code_line: str, pos: int) -> bool:
     return pos < len(code_line) and code_line[pos] == " " or pos >= len(code_line)
 
 
+def _databricks_source(text: str) -> str:
+    """A Databricks source-format notebook (.py) keeps SQL cells in
+    `# MAGIC %sql` comment lines; turn each into a spark.sql() call on the
+    same lines so its table operations count and line numbers stay true."""
+    lines = text.split("\n")
+    out: List[str] = []
+    in_sql = False
+    for ln in lines:
+        body = ln[len("# MAGIC"):].lstrip() if ln.startswith("# MAGIC") else None
+        if body is not None and body.startswith("%sql"):
+            if in_sql:
+                out[-1] += TQ + ")"
+            out.append("spark.sql(" + TQ + body[4:].replace(TQ, ""))
+            in_sql = True
+        elif body is not None and in_sql:
+            out.append(body.replace(TQ, ""))
+        else:
+            if in_sql:
+                out[-1] += TQ + ")"
+                in_sql = False
+            out.append(ln)
+    if in_sql:
+        out[-1] += TQ + ")"
+    return "\n".join(out)
+
+
 def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
+    if lang == "python" and item.text.startswith("# Databricks notebook source"):
+        item = Item(item.rel, _databricks_source(item.text))
     code, nocomment, _ = sanitize(item.text, {"javascript": "js", "typescript": "ts"}.get(lang, lang))
     g = ctx.g
     families: Dict[Tuple[str, str], Tuple[str, int, str]] = {}  # family -> (host, line, snippet)
     targets: Dict[str, Set[str]] = {}  # node kind -> node ids touched in this file
-    adapter = {"python": "python", "csharp": "dotnet"}.get(lang, "javascript")
+    adapter = {"python": "python", "csharp": "dotnet", "go": "go", "rust": "rust", "java": "jvm",
+               "kotlin": "jvm"}.get(lang, "javascript")
 
     def touch(nid: Optional[str]) -> None:
         if nid:
             targets.setdefault(g.nodes[nid]["kind"], set()).add(nid)
 
     env_hint = _file_env(item.rel)
+    sparky = lang == "python" and bool(_SPARK_FILE_RE.search(item.text))
+    local_vars: Dict[str, str] = {}
+    if sparky:
+        for ln in nocomment:
+            m = _STR_ASSIGN_RE.match(ln) if len(ln) <= MAX_LINE else None
+            if m:
+                local_vars.setdefault(m.group(1), m.group(3))
     for idx, line in enumerate(nocomment, 1):
         if len(line) > MAX_LINE:
             continue
@@ -484,6 +651,16 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
             m = _PY_IMPORT_RE.match(line)
             if m:
                 mods = [m.group(1)] if m.group(1) else [x.strip() for x in m.group(2).split(",")]
+        elif lang in ("go", "rust", "java", "kotlin"):
+            table, rx = {"go": (GO_IMPORTS, _GO_IMPORT_RE), "rust": (RUST_IMPORTS, _RUST_USE_RE)}.get(
+                lang, (JAVA_IMPORTS, _JAVA_IMPORT_RE))
+            m = rx.match(line)
+            if m:
+                mod = m.group(1)
+                fam = next((v for k, v in sorted(table.items(), key=lambda kv: -len(kv[0]))
+                            if mod == k or mod.startswith(k + "/") or mod.startswith(k + ".")), None)
+                if fam:
+                    families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
         elif lang in ("javascript", "typescript"):
             mods = [m.group(1) for m in _JS_IMPORT_RE.finditer(line)]
             # AI SDK 5+: `import { gateway } from "ai"` sends model calls through the Vercel AI Gateway.
@@ -504,6 +681,56 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 fam = ("external", "aws", "")
             if fam:
                 families.setdefault((fam[0], fam[1]), (fam[2], idx, line))
+        # cloud data and AI hosts written as bare hostnames (server_hostname=, host=)
+        for m in _CLOUD_HOST_RE.finditer(line):
+            fam = G.hosted_family(m.group(1), tenant_only=True)
+            if fam and _in_string(code[idx - 1] if idx - 1 < len(code) else "", m.start(1)) \
+                    and "@" not in line[max(0, m.start(1) - 1):m.start(1)]:
+                ev = g.add_evidence(item.rel, idx, adapter + ":cloud-host", line, "observed")
+                nid = ctx.endpoint_node({"kind": fam[0], "engine": fam[1], "host": m.group(1).lower(), "port": None,
+                                         "path": "", "resolved": True}, env_hint, evidence=ev)
+                touch(nid)
+                g.add_edge(ctx.app, nid, "connects", "unknown", "observed", "medium", evidence=ev,
+                           assumptions=["cloud service host observed in code; effective grants and live reachability not verified"])
+        # Spark / Databricks tables and secrets
+        if sparky:
+            for rx, cap0 in ((_UC_READ_RE, "read"), (_UC_WRITE_RE, "write")):
+                for m in rx.finditer(line):
+                    if "." not in m.group(1) and "{" not in m.group(1):
+                        continue             # a bare table name: the default schema, nothing to place
+                    cap = cap0
+                    if cap == "write" and re.search(r"""mode\s*\(\s*["']overwrite["']|\.overwrite\b""",
+                                                    " ".join(nocomment[max(0, idx - 3):idx])):
+                        cap = "delete"           # overwrite replaces the table's data
+                    _uc_edge(ctx, item.rel, adapter, idx, line, m.group(1), cap, env_hint, local_vars)
+            for m in _UC_SQL_RE.finditer(line):
+                if not _in_string(code[idx - 1] if idx - 1 < len(code) else "", m.start(2)):
+                    continue             # `from a.b.c import x` is Python, not SQL
+                cap = _uc_sql_cap(m.group(1), line[:m.start(1)])
+                if cap:
+                    _uc_edge(ctx, item.rel, adapter, idx, line, m.group(2), cap, env_hint, local_vars)
+        if lang == "python":
+            for m in _DBUTILS_SECRET_RE.finditer(line):
+                ev = g.add_evidence(item.rel, idx, adapter + ":databricks-secret", line, "observed",
+                                    assumptions=["secret read by scope and key name; its value and what it unlocks are not visible"])
+                iid = g.add_node("identity", ["databricks-secret", m.group(1), m.group(2)],
+                                 "databricks secret %s/%s" % (m.group(1), m.group(2)), trust_domain="unknown",
+                                 environment=G.infer_environment(m.group(1), env_hint),
+                                 attributes={"credential_refs": ["secret scope %s key %s" % (m.group(1), m.group(2))],
+                                             "platform": "databricks"}, evidence=ev)
+                g.add_edge(ctx.app, iid, "authenticates-as", "unknown", "observed", "medium", evidence=ev,
+                           assumptions=["the code reads this secret; what it grants is not visible in the repository"])
+        # Azure AD credentials (managed identity, service principal, developer login)
+        for m in _AZURE_CRED_RE.finditer(line):
+            ev = g.add_evidence(item.rel, idx, adapter + ":azure-credential", line, "observed",
+                                assumptions=["the Azure identity's role assignments are not visible in code"])
+            ckind = m.group(1)
+            iid = g.add_node("identity", ["azure-credential", ckind], "azure identity (%s)" % ckind, trust_domain="external",
+                             attributes={"platform": "azure", "credential_type": ckind,
+                                         "secretless": ckind in ("DefaultAzureCredential", "ManagedIdentityCredential",
+                                                                 "WorkloadIdentityCredential")}, evidence=ev)
+            g.add_edge(ctx.app, iid, "authenticates-as", "unknown", "observed", "medium", evidence=ev,
+                       assumptions=["the Azure identity's role assignments are not visible in code"])
         if lang in ("python", "javascript", "typescript"):
             for rx, fam in CODE_PATTERNS:
                 if rx.search(line):
@@ -550,9 +777,10 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
         for rx in _ENV_RES:
             for m in rx.finditer(line):
                 ctx.uses.append((m.group(1), item.rel, idx, set(), line))
-        # SQL verbs inside string literals
+        # SQL verbs inside string literals (in Spark files, spark.sql text is
+        # read reference by reference above, so it is not counted twice)
         cl = code[idx - 1] if idx - 1 < len(code) else ""
-        for cap, rx in _SQL:
+        for cap, rx in () if sparky and ("spark.sql" in line or _UC_SQL_RE.search(line)) else _SQL:
             m = rx.search(line)
             if m and _in_string(cl, m.start()):
                 targets.setdefault("_sql", set()).add("%s|%d|%s" % (cap, idx, line))
@@ -643,6 +871,42 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                    assumptions=["import or client type only; target, reachability and grants unknown"])
     ctx._pending_ops = getattr(ctx, "_pending_ops", [])
     ctx._pending_ops.append((item.rel, adapter, targets))
+
+
+def _uc_edge(ctx: Ctx, rel: str, adapter: str, idx: int, line: str, name: str, cap: str, env_hint: str,
+             local_vars: Dict[str, str]) -> None:
+    """A Spark table access: catalog.schema.table names a Unity Catalog catalog;
+    a two-part name lives in the workspace's default catalog. f-string
+    variables are resolved where a simple assignment gives their value; a
+    catalog that stays unresolved gets its own node, never a guess."""
+    g = ctx.g
+    resolved = _resolve_template(name.replace("`", ""), local_vars, ctx)
+    parts = resolved.split(".")
+    assumption = "table operation observed in code; it does not prove the runtime identity holds this grant"
+    if len(parts) > 3 or (len(parts) == 1 and "{" not in parts[0]):
+        return
+    if len(parts) == 3 and "{" not in parts[0]:
+        catalog = parts[0]
+    elif len(parts) == 2 and "{" not in parts[0]:
+        catalog = "default"
+    else:
+        catalog = ""                    # {var}.x or {var}: the catalog is decided at runtime
+    ev = g.add_evidence(rel, idx, adapter + ":spark-table-%s" % cap, line, "observed",
+                        assumptions=[assumption] + ([] if resolved == name.replace("`", "") else
+                                                    ["table name resolved from string assignments to %s" % resolved[:80]]))
+    if catalog:
+        nid = g.add_node("database", ["databricks-catalog", catalog], "databricks catalog %s" % catalog,
+                         trust_domain="unknown", environment=G.infer_environment(catalog, env_hint),
+                         attributes={"engine": "databricks", "catalog": catalog}, evidence=ev)
+    else:
+        var = _FVAR_RE.search(parts[0])
+        hint = var.group(1) if var else "runtime"
+        nid = g.add_node("database", ["databricks-catalog", "unresolved", hint],
+                         "databricks catalog (unresolved target: %s)" % hint, trust_domain="unknown",
+                         environment=env_hint, attributes={"engine": "databricks", "unresolved": True, "via": [hint]},
+                         evidence=ev)
+    # not touch()ed: per-reference capabilities supersede the file-level SQL verb fallback
+    g.add_edge(ctx.app, nid, CAP_EDGE[cap], cap, "observed", "medium", evidence=ev, assumptions=[assumption])
 
 
 def _attach_ops(ctx: Ctx) -> None:
@@ -1077,6 +1341,7 @@ _TF_ADMIN_ROLES = re.compile(r'(?i)role_definition_name\s*=\s*"(Owner|Contributo
 
 
 def adapt_terraform(ctx: Ctx, item: Item) -> None:
+    _collect_tf_azure(ctx, item)
     g = ctx.g
     lines = item.text.split("\n")
     env_hint = _file_env(item.rel)
@@ -1089,6 +1354,9 @@ def adapt_terraform(ctx: Ctx, item: Item) -> None:
         if m and depth == 0:
             current = (m.group(1), m.group(2), idx)
             rtype = m.group(1)
+            if rtype.startswith(("azurerm_", "azuread_")):
+                depth += line.count("{") - line.count("}")
+                continue                    # read in full by _collect_tf_azure / _resolve_tf_azure
             for rx, kind in _TF_KINDS:
                 if rx.search(rtype):
                     ev = g.add_evidence(item.rel, idx, "terraform:resource", line, "declared",
@@ -1097,7 +1365,9 @@ def adapt_terraform(ctx: Ctx, item: Item) -> None:
                                trust_domain="unknown", environment=G.infer_environment(m.group(2), env_hint),
                                attributes={"engine": rtype.split("_")[0], "iac": "terraform"}, evidence=ev)
                     break
-        if current and _TF_ADMIN_ROLES.search(line):
+        if current and current[0].startswith(("azurerm_", "azuread_")):
+            pass
+        elif current and _TF_ADMIN_ROLES.search(line):
             rtype, rname, _ = current
             ev = g.add_evidence(item.rel, idx, "terraform:privileged-grant", line, "declared",
                                 assumptions=["best-effort HCL reading; the grant's principal and scope are not resolved"])
@@ -1112,6 +1382,277 @@ def adapt_terraform(ctx: Ctx, item: Item) -> None:
         if depth <= 0:
             depth = 0
             current = None
+
+
+# azurerm resource type -> (node kind, engine); compute types get a workload node
+_AZ_DATA = {
+    "mssql_server": ("database", "sqlserver"), "sql_server": ("database", "sqlserver"),
+    "mssql_database": ("database", "sqlserver"), "sql_database": ("database", "sqlserver"),
+    "mssql_managed_instance": ("database", "sqlserver"),
+    "postgresql_server": ("database", "postgresql"), "postgresql_flexible_server": ("database", "postgresql"),
+    "postgresql_flexible_server_database": ("database", "postgresql"), "postgresql_database": ("database", "postgresql"),
+    "mysql_server": ("database", "mysql"), "mysql_flexible_server": ("database", "mysql"),
+    "cosmosdb_account": ("database", "cosmos"), "redis_cache": ("database", "redis"),
+    "storage_account": ("storage", "azure-blob"), "storage_container": ("storage", "azure-blob"),
+    "storage_queue": ("queue", "azure-queue"), "storage_table": ("database", "azure-table"),
+    "key_vault": ("storage", "azure-keyvault"), "servicebus_namespace": ("queue", "servicebus"),
+    "servicebus_queue": ("queue", "servicebus"), "servicebus_topic": ("queue", "servicebus"),
+    "eventhub_namespace": ("queue", "eventhub"), "eventhub": ("queue", "eventhub"),
+    "databricks_workspace": ("database", "databricks"), "synapse_workspace": ("database", "synapse"),
+    "kusto_cluster": ("database", "kusto"), "search_service": ("database", "azure-search"),
+    "cognitive_account": ("external", "azure-ai"),
+}
+_AZ_COMPUTE = {"linux_web_app", "windows_web_app", "app_service", "function_app", "linux_function_app",
+               "windows_function_app", "container_app", "container_group", "kubernetes_cluster",
+               "linux_virtual_machine", "windows_virtual_machine", "virtual_machine", "logic_app_standard",
+               "logic_app_workflow", "api_management", "data_factory", "spring_cloud_app", "static_web_app"}
+_AZ_ROLE_GUIDS = {"8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner", "b24988ac-6180-42a0-ab88-20f7382dd24c": "Contributor",
+                  "acdd72a7-3385-48ef-bd42-f606fba81ae7": "Reader",
+                  "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9": "User Access Administrator"}
+_TF_ATTR_RE = re.compile(r'^\s*([A-Za-z_][\w-]*)\s*=\s*(.+?)\s*$')
+_TF_BLOCK_RE = re.compile(r'^\s*([A-Za-z_][\w-]*)\s*\{\s*$')
+_TF_AZ_BLOCK_RE = re.compile(r'^\s*(resource|data)\s+"((?:azurerm|azuread)_\w+)"\s+"([\w-]+)"\s*\{')
+_TF_REF_RE = re.compile(r"\b(data\.)?(azurerm_\w+|azuread_\w+)\.(\w+)((?:\[\d+\])?(?:\.\w+(?:\[\d+\])?)*)")
+
+
+def azure_role_capability(role: str) -> str:
+    """Capability an Azure built-in role grants over its scope's data and
+    configuration (by role name; custom roles stay unknown)."""
+    r = role.strip().lower()
+    if r in ("owner", "contributor", "user access administrator", "role based access control administrator") \
+            or r.endswith((" data owner", " administrator")) or r in ("storage account contributor",
+                                                                     "sql server contributor", "sql db contributor"):
+        return "admin"
+    if r.endswith((" data contributor", " writer", " sender", " data sender")) or r in (
+            "key vault secrets officer", "key vault crypto officer", "acrpush"):
+        return "write"
+    if r == "reader" or r.endswith((" reader", " receiver", " data receiver")) or r in (
+            "key vault secrets user", "key vault crypto user", "acrpull"):
+        return "read"
+    return "unknown"
+
+
+def _collect_tf_azure(ctx: Ctx, item: Item) -> None:
+    """Record every azurerm/azuread resource block with its top-level
+    attributes and nested blocks; resolved across files after all files."""
+    lines = item.text.split("\n")
+    blocks = ctx.tf_azure
+    i = 0
+    while i < len(lines):
+        m = _TF_AZ_BLOCK_RE.match(lines[i]) if len(lines[i]) <= MAX_LINE else None
+        if not m:
+            i += 1
+            continue
+        start, depth = i, 0
+        attrs: Dict[str, str] = {}
+        nested: List[Tuple[str, Dict[str, str]]] = []
+        cur: Optional[Tuple[str, Dict[str, str]]] = None
+        while i < len(lines):
+            line = lines[i]
+            target = attrs if depth == 1 else (cur[1] if depth == 2 and cur is not None else None)
+            bm = _TF_BLOCK_RE.match(line) if depth == 1 else None
+            am = _TF_ATTR_RE.match(line) if target is not None and not bm else None
+            if bm:
+                cur = (bm.group(1), {})
+                nested.append(cur)
+            elif am and target is not None:
+                value = _tf_value(am.group(2))
+                # a list written across lines: read on to its closing bracket
+                while value.startswith("[") and value.count("[") > value.count("]") and i + 1 < len(lines) \
+                        and i - start < 2000:
+                    i += 1
+                    value += " " + _tf_value(lines[i])
+                target[am.group(1)] = value
+            depth += line.count("{") - line.count("}")
+            if depth == 1 and cur is not None and line.strip() == "}":
+                cur = None
+            i += 1
+            if depth <= 0:
+                break
+        blocks.append({"rel": item.rel, "line": start + 1, "type": m.group(2), "name": m.group(3),
+                       "data": m.group(1) == "data", "attrs": attrs, "nested": nested, "text": lines[start]})
+
+
+def _tf_value(raw: str) -> str:
+    """An HCL attribute value without a trailing # or // comment."""
+    v = raw.strip()
+    if v.startswith('"'):
+        m = re.match(r'"(?:[^"\\]|\\.)*"', v)
+        return m.group(0) if m else v
+    return re.split(r"\s(?:#|//)", " " + v, maxsplit=1)[0].strip()
+
+
+def _tf_str(value: str) -> str:
+    v = value.strip()
+    return v[1:-1] if len(v) >= 2 and v[0] == v[-1] == '"' else ""
+
+
+def _resolve_tf_azure(ctx: Ctx) -> None:
+    g = ctx.g
+    blocks = ctx.tf_azure
+    if not blocks:
+        return
+    nodes: Dict[Tuple[str, str], str] = {}       # ("[data.]type", name) -> node id
+    identities: Dict[Tuple[str, str], str] = {}  # ("[data.]type", name) -> managed identity node id
+    uai_links: List[Tuple[str, Tuple[str, str], str]] = []   # (workload, identity key, evidence)
+
+    def key_of(b: Dict[str, Any]) -> Tuple[str, str]:
+        return (("data." if b["data"] else "") + b["type"], b["name"])
+
+    def ref_key(m: Any) -> Tuple[str, str]:
+        return ((m.group(1) or "") + m.group(2), m.group(3))
+
+    def ev_for(b: Dict[str, Any], adapter: str, assumption: str) -> str:
+        return g.add_evidence(b["rel"], b["line"], adapter, b["text"], "declared",
+                              assumptions=[assumption, "best-effort HCL reading; variables, modules and count/for_each "
+                                                       "are not evaluated"])
+
+    for b in blocks:
+        short = b["type"].split("_", 1)[1]
+        env = G.infer_environment(b["name"], _tf_str(b["attrs"].get("name", "")), _file_env(b["rel"]))
+        label = _tf_str(b["attrs"].get("name", "")) or b["name"]
+        if b["data"] and short not in _AZ_DATA and short != "user_assigned_identity":
+            continue                    # data sources other than existing assets add no node
+        if short in _AZ_DATA:
+            kind, engine = _AZ_DATA[short]
+            if short == "cognitive_account" and _tf_str(b["attrs"].get("kind", "")).lower() == "openai":
+                engine = "azure-openai"
+            ev = ev_for(b, "terraform:azure-resource", "existing resource referenced by IaC" if b["data"]
+                        else "resource declared in IaC; applied state not verified")
+            extra: Dict[str, Any] = {"engine": engine, "iac": "terraform", "azure_type": b["type"]}
+            if b["data"]:
+                extra["existing"] = True
+            nid = g.add_node(kind, ["terraform", b["type"], label], "%s %s" % (engine, label),
+                             trust_domain="unknown", environment=env, attributes=extra, evidence=ev)
+            if nid is None:
+                continue
+            if engine in SECRET_STORES:
+                # a secret store holds credentials, like a Kubernetes Secret
+                g.nodes[nid]["sensitivity"] = "restricted"
+                g.nodes[nid]["classification_source"] = "resource-type: credentials"
+            nodes[key_of(b)] = wid = nid
+        elif short == "user_assigned_identity":
+            ev = ev_for(b, "terraform:azure-identity", "resource declared in IaC; applied state not verified")
+            iid = g.add_node("identity", ["azure-uai", b["name"]], "managed identity %s" % label,
+                             trust_domain="external", environment=env,
+                             attributes={"platform": "azure", "credential_type": "user-assigned managed identity",
+                                         "secretless": True}, evidence=ev)
+            if iid:
+                identities[key_of(b)] = iid
+            continue
+        elif short in _AZ_COMPUTE or any(n in ("identity", "kubelet_identity") for n, _ in b["nested"]):
+            # compute, or any other resource that runs as an identity (a Databricks access connector)
+            ev = ev_for(b, "terraform:azure-compute", "resource declared in IaC; applied state not verified")
+            wid = g.add_node("workload", ["terraform", b["type"], b["name"]], "%s %s" % (short.replace("_", " "), label),
+                             trust_domain="unknown", environment=env,
+                             attributes={"platform": "azure", "azure_type": b["type"], "iac": "terraform"}, evidence=ev)
+            if wid is None:
+                continue
+            nodes[key_of(b)] = wid
+        else:
+            continue
+        for bname, battrs in b["nested"]:
+            if bname not in ("identity", "kubelet_identity"):
+                continue
+            itype = _tf_str(battrs.get("type", "")) or ("kubelet" if bname == "kubelet_identity" else "")
+            if "SystemAssigned" in itype or bname == "kubelet_identity":
+                iid = g.add_node("identity", ["azure-mi", b["type"], b["name"], bname],
+                                 "%s of %s" % ("kubelet identity" if bname == "kubelet_identity" else
+                                               "managed identity", label),
+                                 trust_domain="external", environment=env,
+                                 attributes={"platform": "azure", "credential_type": "system-assigned managed identity",
+                                             "secretless": True}, evidence=ev)
+                if iid:
+                    identities[key_of(b)] = iid
+                    g.add_edge(wid, iid, "authenticates-as", "unknown", "declared", "high", evidence=ev,
+                               assumptions=["the resource runs as its managed identity"])
+            for ref in _TF_REF_RE.finditer(battrs.get("identity_ids", "")):
+                if ref.group(2) == "azurerm_user_assigned_identity":
+                    uai_links.append((wid, ref_key(ref), ev))
+    for wid, uai, ev in uai_links:
+        iid = identities.get(uai)
+        if iid:
+            g.add_edge(wid, iid, "authenticates-as", "unknown", "declared", "high", evidence=ev,
+                       assumptions=["the resource runs as this user-assigned managed identity"])
+
+    def principal(expr: str, b: Dict[str, Any], ev: str) -> str:
+        m = _TF_REF_RE.search(expr)
+        if m and ref_key(m) in identities:
+            return identities[ref_key(m)]
+        im = re.search(r"\b(data\.)?([a-z]\w*)\.([\w-]+)\.identity\b", expr)
+        if im:
+            # <resource>.identity[0].principal_id: that resource's own managed identity
+            key = ((im.group(1) or "") + im.group(2), im.group(3))
+            iid = g.add_node("identity", ["azure-mi-ref", key[0], key[1]],
+                             "managed identity of %s.%s" % (im.group(2), im.group(3)), trust_domain="external",
+                             attributes={"platform": "azure", "credential_type": "system-assigned managed identity",
+                                         "secretless": True}, evidence=ev)
+            if iid and key in nodes:
+                g.add_edge(nodes[key], iid, "authenticates-as", "unknown", "declared", "high", evidence=ev,
+                           assumptions=["the resource runs as its managed identity"])
+            if iid:
+                identities[key] = iid
+                return iid
+        label = re.sub(r"\s+", " ", expr.strip())[:60] or "unknown principal"
+        if "azurerm_client_config" in expr:
+            label = "the identity running terraform"
+        return g.add_node("identity", ["azure-principal", label], "azure principal %s" % label, trust_domain="external",
+                          attributes={"platform": "azure"}, evidence=ev)
+
+    def scope_node(expr: str, b: Dict[str, Any], ev: str) -> str:
+        m = _TF_REF_RE.search(expr)
+        if m and ref_key(m) in nodes:
+            return nodes[ref_key(m)]
+        broad = True                    # authority over everything in it
+        if m and m.group(2) == "azurerm_resource_group":
+            label = "azure resource group %s" % m.group(3)
+        elif re.search(r"(?i)managementGroups|management_group", expr):
+            label = "azure management group"
+        elif "subscription" in expr:
+            label = "azure subscription"
+        else:
+            label = "azure scope %s" % re.sub(r"\s+", " ", expr.strip())[:50]
+            broad = False               # a reference not resolved here (a variable or module output)
+        return g.add_node("external", ["azure-scope", label], label, trust_domain="external",
+                          criticality="critical" if label in ("azure subscription", "azure management group") else "unknown",
+                          attributes={"engine": "azure", "scope": "broad" if broad else "unresolved"}, evidence=ev)
+
+    for b in blocks:
+        short = b["type"].split("_", 1)[1]
+        if short == "role_assignment":
+            role = _tf_str(b["attrs"].get("role_definition_name", ""))
+            if not role:
+                gm = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+                               b["attrs"].get("role_definition_id", ""))
+                role = _AZ_ROLE_GUIDS.get(gm.group(1), "") if gm else ""
+            cap = azure_role_capability(role) if role else "unknown"
+            ev = ev_for(b, "terraform:azure-role-assignment",
+                        "role assignment declared in IaC (%s); applied state, conditions and inherited assignments not "
+                        "verified" % (role or "role not resolved"))
+            src = principal(b["attrs"].get("principal_id", ""), b, ev)
+            dst = scope_node(b["attrs"].get("scope", ""), b, ev)
+            g.add_edge(src, dst, {"admin": "administers", "write": "writes", "read": "reads"}.get(cap, "connects"),
+                       cap, "declared", "medium", evidence=ev,
+                       assumptions=["role %s on this scope" % (role or "unresolved")])
+        elif short in ("key_vault_access_policy", "key_vault"):
+            policies = [b["attrs"]] if short == "key_vault_access_policy" else [a for n, a in b["nested"] if n == "access_policy"]
+            for pol in policies:
+                perms = " ".join(pol.get(k, "") for k in ("secret_permissions", "key_permissions", "certificate_permissions")).lower()
+                if not perms.strip():
+                    continue
+                # reading secrets and changing them are separate authorities: one edge each
+                caps = [c for c, rx in (("read", r'"(get|list|all)"'),
+                                        ("delete" if re.search(r'"(purge|delete|all)"', perms) else "write",
+                                         r'"(set|import|create|update|restore|recover|purge|delete|all)"'))
+                        if re.search(rx, perms)] or ["unknown"]
+                ev = ev_for(b, "terraform:key-vault-access-policy",
+                            "Key Vault access policy declared in IaC; applied state not verified")
+                src = principal(pol.get("object_id", ""), b, ev)
+                kv = (nodes.get(key_of(b)) if short == "key_vault"
+                      else scope_node(pol.get("key_vault_id", ""), b, ev))
+                for cap in caps if kv else ():
+                    g.add_edge(src, kv, CAP_EDGE.get(cap, "connects"), cap, "declared", "medium", evidence=ev,
+                               assumptions=["Key Vault access policy permissions: %s" % re.sub(r"\s+", " ", perms)[:80]])
 
 
 def adapt_manifest(ctx: Ctx, item: Item) -> None:
@@ -1132,6 +1673,24 @@ def adapt_manifest(ctx: Ctx, item: Item) -> None:
         for idx, line in enumerate(lines, 1):
             for m in re.finditer(r'PackageReference\s+Include="([^"]+)"', line):
                 names.append((m.group(1).lower(), idx, line))
+    elif base == "go.mod":
+        for idx, line in enumerate(lines, 1):
+            m = re.match(r"^\s*(?:require\s+)?([\w.\-]+(?:/[\w.\-]+)+)\s+v\d", line)
+            if m:
+                mod = m.group(1)
+                # match the longest known module path this module sits under
+                key = next((k for k in sorted(GO_IMPORTS, key=len, reverse=True)
+                            if mod == k or mod.startswith(k + "/")), mod)
+                names.append((key.lower(), idx, line))
+    elif base == "pom.xml":
+        for idx, line in enumerate(lines, 1):
+            for m in re.finditer(r"<artifactId>\s*([\w.\-]+)\s*</artifactId>", line):
+                names.append((m.group(1).lower(), idx, line))
+    elif base.startswith("build.gradle"):
+        for idx, line in enumerate(lines, 1):
+            m = re.search(r"""(?:implementation|api|compile|runtimeOnly)\s*\(?\s*["']([\w.\-]+):([\w.\-]+)""", line)
+            if m:
+                names.append((m.group(2).lower(), idx, line))
     else:
         for idx, line in enumerate(lines, 1):
             m = re.match(r"""^\s*["']?([A-Za-z0-9][A-Za-z0-9._\-]*)""", line)
@@ -1452,9 +2011,12 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
         return "doc", None
     if is_mcp_config(rel):
         return "mcp", None
-    if base.startswith("requirements") and base.endswith(".txt") or base in ("pyproject.toml", "pipfile", "package.json") \
-            or base.endswith(".csproj"):
+    if base.startswith("requirements") and base.endswith(".txt") or base in (
+            "pyproject.toml", "pipfile", "package.json", "go.mod", "cargo.toml", "pom.xml", "build.gradle",
+            "build.gradle.kts") or base.endswith(".csproj"):
         return "manifest", None
+    if low.endswith(".ipynb"):
+        return "notebook", None
     if base.startswith("appsettings") and base.endswith(".json"):
         return "appsettings", None
     if low.endswith(".tf"):
@@ -1491,15 +2053,68 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
         return "config", None
     lang = detect_lang(rel)
     lang = {"js": "javascript", "ts": "typescript"}.get(lang, lang)
-    if lang in ("python", "javascript", "typescript", "csharp"):
+    if lang in ("python", "javascript", "typescript", "csharp", "go", "rust", "java", "kotlin"):
         return "code:" + lang, None
     if is_mcp_config(rel, text):
         return "mcp", None
     return "unsupported", None
 
 
-ADAPTERS = ("python", "javascript", "dotnet", "config", "appsettings", "kubernetes", "compose",
+def _notebook_code(text: str) -> str:
+    """A Jupyter or Databricks notebook's code cells as one Python text;
+    %sql cells become spark.sql() calls so their table operations count.
+    Evidence line numbers then count these joined code lines."""
+    data = json.loads(text)
+    out: List[str] = []
+    for cell in data.get("cells", []) if isinstance(data, dict) else []:
+        if not isinstance(cell, dict) or cell.get("cell_type") != "code":
+            continue
+        src = cell.get("source", "")
+        src = "".join(src) if isinstance(src, list) else str(src)
+        if src.lstrip().startswith("%sql"):
+            body = src.lstrip()[4:].replace(TQ, "")
+            out.append("spark.sql(" + TQ + body + TQ + ")")
+        else:
+            out.append("\n".join(l for l in src.split("\n") if not l.lstrip().startswith(("%", "!"))))
+    return "\n".join(out)
+
+
+ADAPTERS = ("python", "javascript", "dotnet", "go", "rust", "jvm", "config", "appsettings", "kubernetes", "compose",
             "github-actions", "terraform", "manifest", "openapi", "mcp")
+
+
+def _collect_str_vars(ctx: Ctx, items: Sequence[Item]) -> None:
+    """Simple `NAME = "value"` assignments across Python files and notebooks
+    (Databricks configuration is often set in one notebook and %run from
+    others). Only a name with one distinct value repository-wide is used."""
+    for item in items:
+        low = item.rel.lower()
+        if not (low.endswith(".py") or low.endswith(".ipynb")) or is_test_path(item.rel):
+            continue
+        try:
+            text = _notebook_code(item.text) if low.endswith(".ipynb") else item.text
+        except ValueError:
+            continue
+        for line in text.split("\n"):
+            m = _STR_ASSIGN_RE.match(line) if len(line) <= MAX_LINE else None
+            if m:
+                ctx.str_vars.setdefault(m.group(1), set()).add(m.group(3))
+
+
+def _resolve_template(name: str, local: Dict[str, str], ctx: Ctx, depth: int = 0) -> str:
+    """Substitute f-string {variables} from this file's assignments, then from
+    a repository-wide assignment with a single value. Unresolved variables
+    stay as {name}."""
+    if depth > 4 or "{" not in name:
+        return name
+
+    def one(m: "re.Match[str]") -> str:
+        var = m.group(1)
+        if var in local:
+            return _resolve_template(local[var], local, ctx, depth + 1)
+        vals = ctx.str_vars.get(var) or set()
+        return _resolve_template(next(iter(vals)), local, ctx, depth + 1) if len(vals) == 1 else m.group(0)
+    return _FVAR_RE.sub(one, name)
 
 
 def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.Graph, Ctx, Dict[str, Any]]:
@@ -1508,6 +2123,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
     counts: Dict[str, int] = {}
     unsupported = 0
     tests = 0
+    _collect_str_vars(ctx, items)
     for item in sorted(items, key=lambda i: i.rel):
         kind, docs = _classify_file(item.rel, item.text)
         if kind.startswith("yaml-error:"):
@@ -1524,10 +2140,13 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
             unsupported += 1
             continue
         adapter = {"code:python": "python", "code:javascript": "javascript", "code:typescript": "javascript",
-                   "code:csharp": "dotnet", "k8s": "kubernetes", "actions": "github-actions"}.get(kind, kind)
+                   "code:csharp": "dotnet", "code:go": "go", "code:rust": "rust", "code:java": "jvm", "code:kotlin": "jvm",
+                   "k8s": "kubernetes", "actions": "github-actions", "notebook": "python"}.get(kind, kind)
         try:
             if kind.startswith("code:"):
                 adapt_code(ctx, item, kind.split(":", 1)[1])
+            elif kind == "notebook":
+                adapt_code(ctx, Item(item.rel, _notebook_code(item.text)), "python")
             elif kind == "config":
                 adapt_config(ctx, item)
             elif kind == "appsettings":
@@ -1567,6 +2186,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
     _resolve_k8s_rbac(ctx)
     _resolve_manifests(ctx)
     _resolve_openapi(ctx)
+    _resolve_tf_azure(ctx)
     stats = {"by_adapter": dict(sorted(counts.items())), "unsupported_files": unsupported,
              "test_files_excluded": tests}
     return g, ctx, stats
@@ -1593,10 +2213,22 @@ def _unknowns(g: G.Graph, ctx: Ctx) -> List[Dict[str, Any]]:
     if uncls:
         out.append({"id": "data-classification", "count": len(uncls),
                     "detail": "%d asset(s) have no declared data sensitivity" % len(uncls)})
+    hinted = [n for n in uncls if n["attributes"].get("sensitivity_hint")]
+    if hinted:
+        out.append({"id": "sensitive-by-name", "count": len(hinted),
+                    "detail": "%d unclassified asset(s) have names suggesting personal, health or financial data (%s); "
+                              "declare their sensitivity in passport.assets" % (
+                                  len(hinted), ", ".join(sorted({h for n in hinted for h in n["attributes"]["sensitivity_hint"]})[:6]))})
     env = [n for n in assets if n["environment"] == "unknown"]
     if env:
         out.append({"id": "environment", "count": len(env),
                     "detail": "%d asset(s) have unknown environment (production vs non-production)" % len(env)})
+    pivots = {e["source"] for e in edges if e["capability"] in ("read", "admin") and e["verification"] != "refuted"
+              and g.nodes[e["target"]]["attributes"].get("engine") in SECRET_STORES}
+    if pivots:
+        out.append({"id": "secret-store-pivot", "count": len(pivots),
+                    "detail": "%d principal(s) or identit(ies) can read a secret store; the secrets it holds may "
+                              "unlock systems that are not in this graph" % len(pivots)})
     servers = [n for n in nodes if n["attributes"].get("platform") == "mcp"]
     if servers:
         out.append({"id": "agent-tool-capability", "count": len(servers),
@@ -1651,6 +2283,13 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
     bound = apply_bindings(g, ctx.app, (declarations or {}).get("bindings") or [], warnings) if declarations else 0
     if inventory:
         apply_inventory(g, inventory, inventory_trusted, warnings, inventory_label or "inventory")
+    for node in g.nodes.values():
+        if node["kind"] in ("database", "storage", "queue", "api"):
+            a = node["attributes"]
+            hints = G.sensitivity_hints(node["display_label"], a.get("catalog", ""),
+                                        *(a.get("databases") or []), *(a.get("paths") or []))
+            if hints:
+                a["sensitivity_hint"] = hints
     g.finalize()
     graph = {"nodes": g.node_list(), "edges": g.edge_list()}
     coverage = {
@@ -1830,6 +2469,26 @@ def top_paths(report: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
     return uniq[:limit]
 
 
+def credential_rows(report: Dict[str, Any], limit: int = 5) -> List[Dict[str, Any]]:
+    """Identities worth a reader's attention: those that unlock mutating
+    authority, are shared, or pivot through a secret store or broad scope."""
+    nodes = {n["id"]: n for n in report["graph"]["nodes"]}
+    rows = []
+    cbr = report["assessment"].get("credential_blast_radius") or {}
+    for r in cbr.get("identities", []):
+        flags = [f for f in r["flags"] if f != "holder-not-visible"]
+        if not (r["mutating"] or flags):
+            continue
+        names = [nodes[t]["display_label"] for t in r["unlocks"] if t in nodes]
+        rows.append({"label": r["label"], "flags": r["flags"],
+                     "holders": [nodes[h]["display_label"] for h in r["holders"] if h in nodes],
+                     "unlocks": len(r["unlocks"]), "mutating": len(r["mutating"]),
+                     "targets": names[:4] + (["+%d more" % (len(names) - 4)] if len(names) > 4 else [])})
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def path_text(report: Dict[str, Any], principal: str, path: Sequence[str]) -> str:
     labels = _labels(report)
     edges = {e["id"]: e for e in report["graph"]["edges"]}
@@ -1873,6 +2532,14 @@ def markdown(report: Dict[str, Any]) -> str:
                                                     ", heuristic strength %.3f" % d["strength"] if "strength" in d else "",
                                                     d["why"]))
         lines.append("  - `%s`" % path_text(report, d["principal"], d["path"]).replace("`", "'"))
+    creds = credential_rows(report)
+    if creds:
+        lines += ["", "## Credential blast radius", "",
+                  "What each identity unlocks if it is misused or leaks (informational; it does not change the exposure)."]
+        for r in creds:
+            lines.append("- **%s**%s: unlocks %d (%d mutating): %s; held by %s" % (
+                r["label"], " [%s]" % ", ".join(r["flags"]) if r["flags"] else "", r["unlocks"], r["mutating"],
+                ", ".join(r["targets"]) or "nothing mapped", ", ".join(r["holders"]) or "no visible holder"))
     lines += ["", "## Unknowns", ""]
     for u in report["unknowns"]:
         lines.append("- %s: %s" % (u["id"], u["detail"]))

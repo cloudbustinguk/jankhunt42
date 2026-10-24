@@ -158,7 +158,7 @@ class Adapters(unittest.TestCase):
         self.assertEqual(rep["coverage"]["status"], "partial")
 
     def test_no_supported_files_is_none_and_unknown(self):
-        rep = build({"main.go": "package main\n"})
+        rep = build({"Main.hs": "main = pure ()\n"})
         self.assertEqual(rep["coverage"]["status"], "none")
         self.assertEqual(rep["assessment"]["exposure"]["class"], "Unknown")
 

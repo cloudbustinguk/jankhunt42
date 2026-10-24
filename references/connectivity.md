@@ -69,7 +69,12 @@ rather than a node: a boundary crossing is any edge whose endpoints sit in
 different known domains or environments. Sensitivity and criticality come only
 from declarations (`.jankhunt42.json` `passport.assets`) or an operator
 inventory, never from guessing at names; environment may be *inferred* from
-tokens such as `prod`/`staging` in hostnames, namespaces, or file names.
+tokens such as `prod`/`staging` in hostnames, namespaces, or file names. The
+one exception is a credential store: Kubernetes Secrets and Azure Key Vault
+are `restricted` by resource type (`classification_source: resource-type:
+credentials`). Names that suggest personal, health or financial data
+(`payroll`, `patient`, `ledger`, `customer`…) add a `sensitivity_hint`
+attribute and the `sensitive-by-name` unknown, never a sensitivity.
 
 Edges: `connects`, `authenticates-as`, `reads`, `writes`, `deletes`,
 `administers`, `calls`, `publishes`, `exports`, `depends-on`, each with a
@@ -132,19 +137,45 @@ trust domains is shown for context only; it saturates at 1.5 and never blocks
 or lowers anything. These are explainable heuristics, not calibrated
 probabilities of compromise.
 
+## Credential blast radius
+
+The exposure class asks what each principal can hurt. The credential blast
+radius asks the same question from the credential's side: for every
+`identity` node (a managed identity, service principal, deploy identity,
+`GITHUB_TOKEN`, Databricks secret, Kubernetes service account), what it
+unlocks if it is misused or leaks, and which principals hold it. It walks the
+same edges with the same admissibility table, starting at the identity.
+
+Each entry (`assessment.credential_blast_radius.identities`) lists `holders`,
+`unlocks` (asset, impacts, best tier, witness path), the `mutating` subset,
+whether the identity is `secretless` (managed or workload identity), and flags:
+
+| Flag | Meaning |
+|---|---|
+| `shared` | two or more principals hold an identity with mutating authority, so one leak or misuse reaches every holder's authority |
+| `secret-store-pivot` | it can read a credential store; the secrets inside may unlock systems that are not in the graph (also the `secret-store-pivot` unknown) |
+| `broad-scope` | it holds a role on a subscription, resource group, or other scope wider than the mapped assets |
+| `holder-not-visible` | grants are declared for it, but nothing in the repository runs as it |
+
+Entries are ordered by mutating reach, then total reach, then holders. The
+section is informational: it never changes the exposure class, so the
+monotonicity guarantee above still holds.
+
 ## Adapters
 
 | Adapter | Reads | Emits |
 |---|---|---|
-| python | imports, client constructors, literal DB/queue URLs, HTTP calls (literal or URL constant), `os.environ`/`getenv`, SQL verbs in string literals, S3/Blob/queue operations, boto3 service clients | connects/calls/reads/writes/deletes/administers/publishes |
-| javascript | `require`/`import` of DB, cloud, queue, LLM SDKs; `fetch`/axios calls; `process.env` | same |
-| dotnet | `SqlConnection`, `UseNpgsql`, `ConnectionMultiplexer`, Azure clients, `HttpClient`, `GetConnectionString`, `Configuration[...]` | same |
+| python | imports, client constructors, literal DB/queue URLs, HTTP calls (literal or URL constant), `os.environ`/`getenv`, SQL verbs in string literals, S3/Blob/queue and Key Vault secret operations, boto3 service clients, Spark/Unity Catalog tables, `dbutils.secrets`/`dbutils.fs`, Azure credentials | connects/calls/reads/writes/deletes/administers/publishes/authenticates-as |
+| javascript | `require`/`import` of DB, cloud, queue, LLM SDKs; `fetch`/axios calls; `process.env`; Azure credentials | same |
+| dotnet | `SqlConnection`, `UseNpgsql`, `ConnectionMultiplexer`, Azure clients and credentials, `HttpClient`, `GetConnectionString`, `Configuration[...]` | same |
+| go, rust, jvm | Go imports, Rust `use`, Java/Kotlin imports of database, cloud, queue, and model SDKs; JDBC URLs; `os.Getenv`/`env::var`/`System.getenv`; SQL verbs; Azure credentials | same |
+| notebook | Jupyter and Databricks `.ipynb` code cells (read by the python adapter); `%sql` cells count as `spark.sql`; other magics are skipped | same |
 | config / appsettings | `.env*`, `*.properties`, `*.ini`, `*.toml`, config/settings JSON, `appsettings*.json` `ConnectionStrings` | declared endpoints (definitions for the env-var join) |
 | kubernetes | workloads, `serviceAccountName`, env values, `secretKeyRef` (name only, never dereferenced), `envFrom`, Role/ClusterRole + bindings | workloads, identities, RBAC authority over the Kubernetes API and Secrets |
 | compose | services, data-store images, `depends_on`, environment | workloads, data stores, dependencies |
 | github-actions | `permissions:` (top-level and per job), `environment:`, cloud login actions, `secrets.*` names | workflow, `GITHUB_TOKEN` scopes, OIDC and deploy identities |
-| terraform | `resource` blocks for data stores; Owner/Contributor/`roles/owner`/`Action: "*"` grants | assets and privileged IaC principals (best effort; no HCL evaluation) |
-| manifest | `requirements*.txt`, `pyproject.toml`, `package.json`, `*.csproj` | weak `inferred` evidence, only when code shows nothing for that family |
+| terraform | `resource` blocks for data stores; Owner/Contributor/`roles/owner`/`Action: "*"` grants. `azurerm`/`azuread` in depth: data stores, Key Vault, Databricks, Synapse, Service Bus and AI accounts (also `data` blocks for existing ones); compute with `identity {}` blocks; user-assigned identities; `azurerm_role_assignment` (role by name or built-in GUID, scope and principal resolved by reference); Key Vault access policies | assets, workloads, managed identities, and declared grants with capabilities from the role (best effort; no HCL evaluation) |
+| manifest | `requirements*.txt`, `pyproject.toml`, `package.json`, `*.csproj`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle(.kts)` | weak `inferred` evidence, only when code shows nothing for that family |
 | openapi | OpenAPI 3 / Swagger 2 documents (YAML or JSON): servers and operations | **no edges**: enriches an `api`/`external` node the code already calls (`openapi_operations`), otherwise records the operations the application `exposes` |
 | mcp | MCP server definitions: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`, `.codex/config.toml` MCP tables, `opencode.json(c)`, `claude_desktop_config.json`, and any JSON with `mcpServers` | an **AI agent** principal per file (`platform: ai-agent`), `calls` to each enabled server (local process or remote endpoint), `connects` from a server to endpoints in its args/env, `authenticates-as` to credentials by name; every capability `unknown`, every edge `declared` |
 
@@ -156,6 +187,37 @@ Google Sheets clients and hosts (`*.supabase.co`, `*.firebaseio.com`,
 SendGrid, Resend, Slack, Notion, and model APIs (OpenAI, Anthropic, Gemini,
 Groq, Mistral) are external services. A `${PASSWORD}` placeholder in a
 connection string's userinfo no longer hides a concrete host.
+
+**Cloud data platforms.** Hosts identify the service: Azure SQL
+(`*.database.windows.net`), Azure Database for PostgreSQL/MySQL, Cosmos DB,
+Storage (blob, dfs, file, queue, table), Service Bus, Azure Cache for Redis,
+Key Vault, Databricks (`*.azuredatabricks.net`, `*.cloud.databricks.com`),
+Synapse, Fabric/OneLake, Data Explorer, AI Search, Azure OpenAI and AI
+services; AWS RDS, Redshift and S3; BigQuery and Cloud Storage; Snowflake;
+MongoDB Atlas. A per-tenant host written as a bare string
+(`server_hostname="adb-1.2.azuredatabricks.net"`) is a node; a shared global
+endpoint named alone is not, because lookup tables and docs name those
+without connecting. JDBC URLs are parsed with their `;property=value` tail
+removed.
+
+**Spark and Unity Catalog.** `spark.read.table`, `spark.table` and
+`DeltaTable.forName` read; `saveAsTable`, `insertInto` and `toTable` write,
+and a write with `mode("overwrite")` counts as delete. `spark.sql` text with
+three-part names (`catalog.schema.table`) reads (`FROM`/`JOIN`), writes
+(`INTO`/`UPDATE`), deletes (`DELETE FROM`, `TRUNCATE`, `DROP`), or
+administers (`ALTER TABLE`). Each catalog is one `database` node; a two-part
+name is the workspace's `default` catalog. `dbutils.secrets.get(scope, key)`
+becomes an identity named by scope and key; the value is never read.
+
+**Azure identity.** `DefaultAzureCredential`, `ManagedIdentityCredential`,
+`WorkloadIdentityCredential` (secretless) and `ClientSecretCredential`,
+`ClientCertificateCredential` and similar (secret-bearing) in Python, .NET,
+JavaScript and Go become identity nodes the application `authenticates-as`.
+Their role assignments are not visible in code; in Terraform they are, and
+the role name sets the capability: Owner, Contributor, User Access
+Administrator and `* Data Owner` administer; `* Data Contributor`, writers
+and senders write; Reader, `* Data Reader`, receivers and Key Vault Secrets
+User read; custom roles stay `unknown`.
 
 The **agent blast radius** from the mcp adapter is walked like any other
 principal: unknown capability counts as possibly anything, so an agent
@@ -294,6 +356,12 @@ inventory.
 - Effective privileges cannot be proven from a connection string or an SQL
   verb; they are labeled as possibilities until an operator inventory says
   otherwise.
+- Terraform is read block by block: modules, variables, `count`/`for_each`,
+  inherited role assignments, conditions, and deny assignments are not
+  evaluated. A principal given as a variable becomes an `azure principal`
+  node with no visible holder.
+- Spark tables are grouped by catalog, not by table. Notebook evidence line
+  numbers count the notebook's joined code cells, not the JSON file's lines.
 - Which workload runs the repository code is not inferred; declare it with a
   `passport.bindings` entry.
 - Logical databases on one server are one node (`databases` attribute); a

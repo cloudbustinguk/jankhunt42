@@ -493,11 +493,15 @@ def _looks_secret_value(value: str, key: str = "") -> bool:
     m = _URL_PASSWORD.search(v)
     if m:
         return not _FAKE_VALUES.match(m.group(1))
+    # public by design: Supabase publishable and anon keys
+    if v.startswith("sb_publishable_") or _jwt_role(v) == "anon" or (key and _PUBLIC_BY_DESIGN.search(key.upper())):
+        return False
     if key and _secret_key_name(key):
         return True
-    # no telling key: only a long token with letters and digits counts
-    return len(v) >= 24 and bool(re.search(r"[A-Za-z]", v)) and bool(re.search(r"\d", v)) and " " not in v \
-        and "://" not in v and "/" not in v
+    # no telling key: only a long base62-like token (mixed case and digits)
+    # counts; hex ids, hashes and UUIDs are not secrets
+    return len(v) >= 24 and bool(re.search(r"[a-z]", v)) and bool(re.search(r"[A-Z]", v)) \
+        and bool(re.search(r"\d", v)) and " " not in v and "://" not in v and "/" not in v
 
 
 _SECRET_FILE_NAMES = {
@@ -891,18 +895,23 @@ _SECRET_VALUE_RE = re.compile(r"^(?:sk-|sk_live_|rk_live_|sk_test_|gh[pousr]_|gi
                               r"npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30})")
 
 
-def _service_role_jwt(value: str) -> bool:
-    """A Supabase service_role key is a JWT whose payload says so."""
+def _jwt_role(value: str) -> str:
+    """The `role` claim of a JWT (Supabase: anon is public, service_role is secret)."""
     parts = value.split(".")
     if len(parts) != 3 or not value.startswith("eyJ") or len(parts[1]) > 2000:
-        return False
+        return ""
     import base64
     import json
     try:
         payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
     except (ValueError, TypeError):
-        return False
-    return isinstance(payload, dict) and payload.get("role") == "service_role"
+        return ""
+    return str(payload.get("role", "")) if isinstance(payload, dict) else ""
+
+
+def _service_role_jwt(value: str) -> bool:
+    """A Supabase service_role key is a JWT whose payload says so."""
+    return _jwt_role(value) == "service_role"
 
 
 @check("public_env_secret")
@@ -922,7 +931,13 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                 elif _PUBLIC_SECRET_NAME.search(name) and not _PUBLIC_BY_DESIGN.search(name):
                     hit = (name, "is named as a secret")
         else:
+            code = sf.code[i] if i < len(sf.code) else line
             for m in _PUBLIC_SECRET_NAME.finditer(line):
+                # read in code (import.meta.env.X, process.env["X"]), not
+                # mentioned in a sentence inside a string
+                in_code = code[m.start():m.end()] == m.group(1)
+                if not in_code and not re.search(r"env\s*\[\s*[\"'`]$", line[:m.start()]):
+                    continue
                 if not _PUBLIC_BY_DESIGN.search(m.group(1)):
                     hit = (m.group(1), "is named as a secret")
                     break
@@ -958,6 +973,10 @@ _TF_PUBLIC_RES = (
      "The storage account allows public blob access."),
     (re.compile(r"""^\s*container_access_type\s*=\s*["'](?:blob|container)["']"""), "major",
      "The storage container is publicly readable."),
+    (re.compile(r"""^\s*end_ip_address\s*=\s*["']255\.255\.255\.255["']"""), "major",
+     "The database firewall rule admits every IPv4 address on the internet."),
+    (re.compile(r"""^\s*publicly_accessible\s*=\s*true\b"""), "major",
+     "The database instance has a public endpoint."),
 )
 
 
@@ -989,8 +1008,14 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
         text = "\n".join(sf.nocomment)
         for rx, severity, message in _SQL_STATEMENT_RES:
             for m in rx.finditer(text):
-                out.append(make_finding(rule, sf, text.count("\n", 0, m.start()) + 1, severity=severity,
-                                        message=message))
+                sev, msg = severity, message
+                role = re.search(r"(?is)\bto\s+([\w\",\s]+?)\s+(?:using|with\s+check)\b", m.group(0))
+                if "policy" in m.group(0).lower() and role and not re.search(
+                        r"(?i)\b(public|anon|authenticated)\b", role.group(1)):
+                    # every row, but only for one named (often internal service) role
+                    sev, msg = "minor", message.replace("to every role it applies to", "to the role it names") + \
+                        " It applies to %s only; confirm that role is internal." % role.group(1).strip()
+                out.append(make_finding(rule, sf, text.count("\n", 0, m.start()) + 1, severity=sev, message=msg))
         return sorted(out, key=lambda f: f.line)[:10]
     if sf.lang == "hcl":
         for i, line in enumerate(sf.nocomment):
@@ -1111,6 +1136,9 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
         extra: Dict[str, Any] = {"characters": dict(sorted(points.items())[:20])}
         if decoded:
             extra["hidden_text"] = trim(redact_secrets(decoded), 120)
+        if ("test" in sf.kinds or is_test_path(sf.rel)) and severity != "critical":
+            # fuzz corpora and parser tests carry hostile Unicode on purpose
+            severity, message = "minor", message + " It is in test data, where hostile input is usually deliberate."
         out.append(make_finding(rule, sf, idx + 1, severity=severity, column=column, message=message,
                                 evidence="; ".join(names), extra=extra))
         if len(out) >= 10:
@@ -1748,7 +1776,10 @@ def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
                     depth += sf.code[k][m.start() if k == i else 0:].count("(") - sf.code[k][m.start() if k == i else 0:].count(")")
                     if depth <= 0:
                         break
-                if re.search(r"\b(?:Safe|CSafe|Base)Loader\b", "\n".join(call)):
+                text = "\n".join(call)
+                alias = re.search(r"\bLoader\s*=\s*(\w+)\s*[,)]", text)
+                if re.search(r"\b(?:Safe|CSafe|Base)Loader\b", text) or (alias and re.search(
+                        r"\b(?:C?SafeLoader|BaseLoader)\s+as\s+%s\b" % re.escape(alias.group(1)), sf.text)):
                     continue
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
             break

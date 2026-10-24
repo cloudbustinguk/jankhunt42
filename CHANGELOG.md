@@ -4,6 +4,82 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.5.0] — 2026-10-24
+
+### Added
+
+The blast radius map now covers cloud data platforms and cloud identity,
+trained on a trial of 24 public Databricks, Azure Terraform, SQL Server,
+PostgreSQL and Snowflake repositories.
+
+- **Data platforms:**
+  - Hosts for Azure SQL, PostgreSQL and MySQL, Cosmos DB, Storage, Service
+    Bus, Redis, Key Vault, Databricks, Synapse, Fabric/OneLake, Data
+    Explorer, AI Search, Azure OpenAI; AWS RDS, Redshift and S3; BigQuery
+    and Cloud Storage; Snowflake; MongoDB Atlas.
+  - JDBC URLs, including SQL Server's `;databaseName=` properties.
+  - Per-tenant hosts written as bare strings
+    (`server_hostname="adb-….azuredatabricks.net"`).
+- **Spark and Databricks:**
+  - Unity Catalog reads, writes and deletes from `spark.read.table`,
+    `saveAsTable` (overwrite counts as delete) and `spark.sql` text,
+    including `CREATE OR REPLACE TABLE`, `INSERT OVERWRITE` and `MERGE`.
+  - f-string table names (`f"{catalog}.silver.orders"`) are resolved through
+    simple string assignments in the file or, for a single value, anywhere
+    in the repository. An unresolved catalog gets its own node.
+  - `dbutils.secrets` as a named identity, and `dbutils.fs` operations.
+  - Jupyter notebooks and Databricks source notebooks, including `%sql`
+    and `# MAGIC %sql` cells.
+  - Three-part SQL names count only in Spark files, so SQL Server's
+    `database.dbo.table` is not taken for a catalog.
+- **More languages:** Go, Rust, Java and Kotlin imports and environment
+  reads, plus `go.mod`, `Cargo.toml`, `pom.xml` and `build.gradle`
+  manifests.
+- **Azure identity:**
+  - `DefaultAzureCredential`, managed identity and service principal
+    credentials in Python, .NET, JavaScript, Go and Java.
+  - Key Vault secret reads, writes and deletes.
+  - Terraform `azurerm` read in depth: managed identities on any resource
+    with an `identity` block, user-assigned identities, role assignments
+    with capabilities taken from the role name or built-in GUID (including
+    `<resource>.identity[0].principal_id` principals), Key Vault access
+    policies, multi-line lists, and `data` blocks for existing resources.
+- **Credential blast radius**, a new graph heuristic: for each identity,
+  what it unlocks if misused or leaked, and who holds it. Flags: `shared`,
+  `secret-store-pivot`, `broad-scope`, `holder-not-visible`. It is shown
+  in every map view and never changes the exposure class.
+- Key Vault is `restricted` by resource type, as Kubernetes Secrets already
+  were. Names that suggest personal, health or financial data add a
+  `sensitivity_hint` and the `sensitive-by-name` unknown, never a
+  sensitivity.
+- `JH134` flags database firewall rules open to every IPv4 address and
+  `publicly_accessible = true` database instances.
+
+### Fixed
+
+From a trial on 47 public citizen-developer and vibe-coded repositories:
+Lovable and bolt.new apps, Replit and streamlit apps, and Python,
+TypeScript, C#, Go, Rust and C++ projects.
+
+- `JH101`:
+  - The `sk-` pattern needs a word boundary; URL slugs such as
+    `Risk-Management-…` matched it.
+  - These are not secrets: URLs without a password, a key's own name as its
+    value, the xkcd example passphrase, concatenations, and descriptive
+    fixture tokens with short ids.
+  - Translation files are skipped, and documentation is minor.
+- `JH401` treats Supabase publishable and anon keys as public. Without a
+  telling key name, only base62-like tokens count, not hex ids or hashes.
+- `JH104` looks for concatenation in the SQL literal or the query's first
+  argument, not in later, parameterized arguments.
+- `JH106` accepts `Loader=Loader` aliased from `SafeLoader`.
+- `JH112` no longer treats a bare `key` (React and history keys) as a
+  secret.
+- `JH131` is minor in test data, where hostile Unicode is deliberate.
+- `JH132` needs the variable to be read in code, not mentioned in a string.
+- `JH134` rates a `USING (true)` policy for one named role as minor.
+  `public`, `anon` and `authenticated` stay major.
+
 ## [2.4.2] — 2026-10-24
 
 A second, wider field trial and an SBOM trial. Eleven more public repositories

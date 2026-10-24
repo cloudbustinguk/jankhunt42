@@ -67,7 +67,7 @@ class Snapshots(unittest.TestCase):
         self.assertIn("0 known [verified]", mono)
 
     def test_empty_graph_says_zero_observed_not_none_possible(self):
-        col = jh_map.Collected(items=[jh_map.Item("main.go", "package main\n")], considered=1)
+        col = jh_map.Collected(items=[jh_map.Item("Main.hs", "main = pure ()\n")], considered=1)
         rep = jh_map.build_report(col, "/x", "empty", "t", None)
         out = jh_views.map_tty(rep, color=False, columns=80)
         self.assertIn("Unknown", out)

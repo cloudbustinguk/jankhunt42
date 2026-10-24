@@ -36,12 +36,24 @@ highest-impact admissible paths
     k8s Deployment payments-prod/payments-api -[authenticates-as/unknown, declared]→ k8s service account
       payments-prod/payments-api -[reads/read, declared]→ kubernetes secrets (cluster)
 
+credential blast radius  (what each identity unlocks; informational)
+  ◆ GITHUB_TOKEN (deploy.yml)
+    unlocks 1 (1 mutating): GitHub repository (this repo)  ·  held by CI workflow deploy.yml
+  ◆ azure deploy identity (deploy.yml)
+    unlocks 1 (1 mutating): azure cloud control plane  ·  held by CI workflow deploy.yml
+  ◆ azure principal var.deployer_principal_id  holder-not-visible
+    unlocks 1 (1 mutating): postgresql ledger-prod  ·  held by no visible holder
+  ◆ k8s service account payments-prod/payments-api  secret-store-pivot
+    unlocks 1 (0 mutating): kubernetes secrets (cluster)  ·  held by k8s Deployment payments-prod/payments-api
+
 unknowns  (unknown is not safe, and not dangerous)
   ? effective-privileges: effective grants are not verified for 19 edge(s); static evidence cannot prove privileges
   ? unresolved-targets: 1 endpoint(s) are resolved only at runtime (environment, secrets, or SDK defaults)
   ? unknown-capability: 7 connection(s) have unknown capability; treated as possibly read, write, or destructive
   ? data-classification: 6 asset(s) have no declared data sensitivity
-  ? environment: 7 asset(s) have unknown environment (production vs non-production)
+  ? sensitive-by-name: 1 unclassified asset(s) have names suggesting personal, health or financial data (ledger);
+      declare their sensitivity in passport.assets
+  ? environment: 6 asset(s) have unknown environment (production vs non-production)
   ? code-to-workload-binding: which workload runs the repository code is not inferred; declare it with
       passport.bindings if needed
   ? runtime-reachability: static analysis only: network reachability, firewalls, and live data movement were not

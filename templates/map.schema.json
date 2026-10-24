@@ -417,6 +417,45 @@
               ]
             }
           }
+        },
+        "credential_blast_radius": {
+          "type": "object",
+          "required": [
+            "basis",
+            "identities"
+          ],
+          "properties": {
+            "identities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "identity",
+                  "label",
+                  "secretless",
+                  "holders",
+                  "unlocks",
+                  "mutating",
+                  "flags",
+                  "truncated"
+                ],
+                "properties": {
+                  "flags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "shared",
+                        "secret-store-pivot",
+                        "broad-scope",
+                        "holder-not-visible"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

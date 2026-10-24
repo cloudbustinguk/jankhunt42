@@ -292,6 +292,12 @@ if(DATA.warnings.length){sc=section(cv,'warnings');ul=add(sc,el('ul'));DATA.warn
 sc=section(cv,'highest-impact paths');ul=add(sc,el('ul'));
 Object.keys(ass.blast_radius).forEach(p=>(ass.blast_radius[p].drivers||[]).slice(0,6).forEach(d=>{const li=add(ul,el('li'));add(li,el('b',{class:'lvl-'+d.level},d.level+' '));
   li.appendChild(document.createTextNode(d.impact+' ('+d.tier+') '+byId[p].display_label+' → '+(byId[d.node]?byId[d.node].display_label:d.node)+': '+d.why));}));
+const CBR=((ass.credential_blast_radius||{}).identities||[]).filter(r=>r.mutating.length||r.flags.some(f=>f!=='holder-not-visible'));
+if(CBR.length){sc=section(cv,'credential blast radius (what each identity unlocks; informational)');ul=add(sc,el('ul'));
+  const lbl=id=>byId[id]?byId[id].display_label:id;
+  CBR.slice(0,20).forEach(r=>{const li=add(ul,el('li'));add(li,el('b',null,lbl(r.identity)+' '));
+   li.appendChild(document.createTextNode((r.flags.length?'['+r.flags.join(', ')+'] ':'')+'unlocks '+Object.keys(r.unlocks).length+' ('+r.mutating.length+' mutating): '+
+    Object.keys(r.unlocks).map(lbl).join(', ')+' · held by '+(r.holders.map(lbl).join(', ')||'no visible holder')));});}
 if(DATA.delta){document.getElementById('tab-delta').hidden=false;const dv=document.getElementById('view-delta');const D=DATA.delta;
   sc=section(dv,'delta '+D.base+' → '+D.head);sc.appendChild(dl([['exposure',D.exposure.base+' → '+D.exposure.head],['nodes',' +'+D.nodes.added.length+' / -'+D.nodes.removed.length],
    ['edges',' +'+D.edges.added.length+' / -'+D.edges.removed.length],['escalations',D.permission_escalations.length],['newly reachable sensitive',D.newly_reachable_sensitive.length],

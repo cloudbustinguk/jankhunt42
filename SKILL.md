@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.4.2"
+  version: "2.5.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -140,6 +140,7 @@ How to use it:
 
 - Start from the **highest-impact admissible paths** and open their receipts (`file:line`). Each path is a possibility to verify, not proof of access.
 - Read evidence states literally. `observed` and `declared` are repository text, `inferred` is a heuristic, and `verified` only comes from an operator inventory outside the repository. "0 known" with many potential paths is the normal, honest result for static evidence.
+- Read the **credential blast radius** for identities flagged `shared`, `secret-store-pivot`, or `broad-scope`. One leak or misuse there reaches everything they unlock, whichever workload holds them.
 - Report the **unknowns** with the result: unknown capability, unresolved targets, missing data classification, unknown environment. Unknown is not safe and not dangerous; it is work.
 - Never upgrade a connection string to a grant, an import to a data flow, or a `secretKeyRef` to a disclosed secret.
 - For a diff, `--base` compares committed trees only; mention escalations and newly reachable sensitive assets first.

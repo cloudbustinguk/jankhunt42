@@ -174,7 +174,52 @@ HOST_SUFFIX_FAMILIES = (
     (".turso.io", ("database", "sqlite")),
     ("api.airtable.com", ("database", "airtable")),
     ("sheets.googleapis.com", ("database", "google-sheets")),
+    # Azure data, messaging, secrets and AI services
+    (".postgres.database.azure.com", ("database", "postgresql")),
+    (".mysql.database.azure.com", ("database", "mysql")),
+    (".database.windows.net", ("database", "sqlserver")),
+    (".sql.azuresynapse.net", ("database", "synapse")),
+    (".documents.azure.com", ("database", "cosmos")),
+    (".table.core.windows.net", ("database", "azure-table")),
+    (".blob.core.windows.net", ("storage", "azure-blob")),
+    (".dfs.core.windows.net", ("storage", "azure-blob")),
+    (".file.core.windows.net", ("storage", "azure-files")),
+    (".queue.core.windows.net", ("queue", "azure-queue")),
+    (".servicebus.windows.net", ("queue", "servicebus")),
+    (".redis.cache.windows.net", ("database", "redis")),
+    (".vault.azure.net", ("storage", "azure-keyvault")),
+    (".azuredatabricks.net", ("database", "databricks")),
+    (".search.windows.net", ("database", "azure-search")),
+    (".kusto.windows.net", ("database", "kusto")),
+    ("onelake.dfs.fabric.microsoft.com", ("storage", "onelake")),
+    (".datawarehouse.fabric.microsoft.com", ("database", "fabric-warehouse")),
+    (".openai.azure.com", ("external", "azure-openai")),
+    (".cognitiveservices.azure.com", ("external", "azure-ai")),
+    # AWS, Google Cloud and hosted warehouses
+    (".rds.amazonaws.com", ("database", "sql")),
+    (".redshift.amazonaws.com", ("database", "redshift")),
+    (".redshift-serverless.amazonaws.com", ("database", "redshift")),
+    (".s3.amazonaws.com", ("storage", "s3")),
+    ("bigquery.googleapis.com", ("database", "bigquery")),
+    ("storage.googleapis.com", ("storage", "gcs")),
+    (".snowflakecomputing.com", ("database", "snowflake")),
+    (".cloud.databricks.com", ("database", "databricks")),
+    (".gcp.databricks.com", ("database", "databricks")),
+    (".mongodb.net", ("database", "mongodb")),
+    (".cockroachlabs.cloud", ("database", "postgresql")),
 )
+
+
+def hosted_family(host: str, tenant_only: bool = False) -> Optional[Tuple[str, str]]:
+    """The (kind, engine) of a cloud data or AI service host, if known.
+
+    tenant_only: match only per-tenant hosts under a service suffix
+    (<account>.blob.core.windows.net), not shared global endpoints, which
+    code and lookup tables name without connecting to them."""
+    host = host.lower().rstrip(".")
+    return next((fam for suffix, fam in HOST_SUFFIX_FAMILIES
+                 if (host == suffix.lstrip(".") and not tenant_only)
+                 or (suffix.startswith(".") and host.endswith(suffix))), None)
 _PROD_TOKENS = ("prod", "production", "prd", "live")
 _NONPROD_TOKENS = ("dev", "develop", "development", "test", "testing", "staging", "stage",
                    "stg", "qa", "uat", "sandbox", "local", "preview")
@@ -255,6 +300,9 @@ def parse_endpoint(raw: str) -> Optional[Dict[str, Any]]:
             return None
         rest = m.group(2)
         tail = raw[m.start(2):].split()[0] if raw[m.start(2):].split() else ""
+        if raw[:m.start(1)].lower().endswith("jdbc:"):
+            # JDBC: properties follow the authority after ';'
+            tail = tail.split(";")[0]
         authority = tail.split("/")[0]
         hostpart = authority.split("@")[-1]
         if _PLACEHOLDER_RE.search(hostpart) or not re.match(r"^\[?[A-Za-z0-9._\-:\]]+$", hostpart or "x"):
@@ -284,8 +332,7 @@ def parse_endpoint(raw: str) -> Optional[Dict[str, Any]]:
             port = None
         if kind == "api":
             known = KNOWN_EXTERNAL.get(host)
-            hosted = next((fam for suffix, fam in HOST_SUFFIX_FAMILIES
-                           if host == suffix.lstrip(".") or host.endswith(suffix)), None)
+            hosted = hosted_family(host)
             if known:
                 kind, engine = known
             elif hosted:
@@ -561,16 +608,19 @@ def _adjacency(edges: Iterable[Dict[str, Any]], impact: str) -> Dict[str, List[T
 
 
 def reach(edges: Sequence[Dict[str, Any]], source: str, impact: str,
-          max_depth: int = DEFAULT_DEPTH) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+          max_depth: int = DEFAULT_DEPTH,
+          adj: Optional[Dict[str, List[Tuple[str, str, int]]]] = None) -> Tuple[Dict[str, Dict[str, Any]], bool]:
     """Bounded reachability from `source` for one impact.
 
     Returns ({node_id: {"tier": int, "path": [edge ids], "depth": n}}, truncated).
     A node's tier is the best (max over paths) of the weakest edge on the
     path (min over edges), within max_depth hops. Each node appears once,
     however many routes reach it. Cycles terminate because each tier pass is
-    a plain BFS with a visited set.
+    a plain BFS with a visited set. `adj` is _adjacency(edges, impact),
+    for callers that walk from many sources over one graph.
     """
-    adj = _adjacency(edges, impact)
+    if adj is None:
+        adj = _adjacency(edges, impact)
     result: Dict[str, Dict[str, Any]] = {}
     truncated = False
     for tier in (3, 2, 1, 0):
@@ -794,6 +844,84 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
     return EXPOSURE_CLASSES[level], drivers
 
 
+_SENS_NAME_RE = re.compile(
+    r"(?i)(?:^|[^a-z])(customer|patient|payment|payroll|salar(?:y|ies)|hr|pii|ledger|billing|invoice|card|"
+    r"ssn|medical|health|clinical|employee|tax|bank|finance|kyc|gdpr|phi|identity|passport|credit)(?:s)?(?=$|[^a-z])")
+
+
+def sensitivity_hints(*names: str) -> List[str]:
+    """Words in an asset's names that suggest personal, health or financial
+    data. A hint only: it never sets or raises the declared sensitivity."""
+    found: Set[str] = set()
+    for name in names:
+        for m in _SENS_NAME_RE.finditer((name or "").replace("_", "-")):
+            found.add(m.group(1).lower())
+    return sorted(found)
+
+
+def credential_radius(graph_nodes: Dict[str, Dict[str, Any]], edges: Sequence[Dict[str, Any]],
+                      max_depth: int = DEFAULT_DEPTH) -> Dict[str, Any]:
+    """What each identity or credential unlocks if it is misused or leaks,
+    and which principals share it.
+
+    This is the blast radius seen from the credential rather than the code:
+    a key held by three services, or a managed identity with a subscription
+    role, matters whichever workload holds it. It is informational and never
+    changes the exposure class, which stays monotone over principals.
+    """
+    live = [e for e in edges if e["verification"] != "refuted"]
+    adjs = {impact: _adjacency(live, impact) for impact in IMPACTS}
+    held_by: Dict[str, Set[str]] = {}
+    for e in live:
+        if e["kind"] == "authenticates-as":
+            held_by.setdefault(e["target"], set()).add(e["source"])
+    out: List[Dict[str, Any]] = []
+    for nid in sorted(n for n, node in graph_nodes.items() if node["kind"] == "identity"):
+        node = graph_nodes[nid]
+        holders = sorted(held_by.get(nid, ()))
+        unlocked: Dict[str, Dict[str, Any]] = {}
+        truncated = False
+        for impact in IMPACTS:
+            r, trunc = reach(live, nid, impact, max_depth, adjs[impact])
+            truncated = truncated or trunc
+            for tid, info in r.items():
+                if graph_nodes[tid]["kind"] == "identity":
+                    continue
+                cur = unlocked.setdefault(tid, {"impacts": [], "tier": TIER_NAMES[info["tier"]], "path": info["path"]})
+                cur["impacts"].append(impact)
+                if info["tier"] > TIER_BY_NAME[cur["tier"]]:
+                    cur["tier"], cur["path"] = TIER_NAMES[info["tier"]], info["path"]
+        if not unlocked and len(holders) < 2:
+            continue
+        mutating = sorted(t for t, u in unlocked.items() if set(u["impacts"]) & {"integrity", "availability"})
+        flags: List[str] = []
+        if len(holders) >= 2 and mutating:
+            flags.append("shared")              # one leak or misuse reaches every holder's authority
+        if any(graph_nodes[t].get("classification_source") == "resource-type: credentials"
+               and "confidentiality" in unlocked[t]["impacts"] for t in unlocked):
+            flags.append("secret-store-pivot")  # secrets it can read may unlock systems not in this graph
+        if any(graph_nodes[t].get("attributes", {}).get("scope") == "broad" for t in unlocked):
+            flags.append("broad-scope")         # a subscription or resource-group role covers more than is mapped
+        if not holders:
+            flags.append("holder-not-visible")
+        out.append({
+            "identity": nid,
+            "label": node["display_label"],
+            "secretless": bool(node.get("attributes", {}).get("secretless")),
+            "holders": holders,
+            "unlocks": {k: unlocked[k] for k in sorted(unlocked)},
+            "mutating": mutating,
+            "flags": flags,
+            "truncated": truncated,
+        })
+    out.sort(key=lambda r: (-len(r["mutating"]), -len(r["unlocks"]), -len(r["holders"]), r["identity"]))
+    return {
+        "basis": ("reach from each identity or credential over the same edges as the principal blast radius; "
+                  "informational, it does not change the exposure class"),
+        "identities": out,
+    }
+
+
 def assess(graph: Dict[str, Any], files_inspected: int, max_depth: int = DEFAULT_DEPTH) -> Dict[str, Any]:
     """Blast radius for every principal plus the overall exposure class."""
     nodes = {n["id"]: n for n in graph["nodes"]}
@@ -837,6 +965,7 @@ def assess(graph: Dict[str, Any], files_inspected: int, max_depth: int = DEFAULT
                     "note": "saturating complexity indicator; informational, never blocks"},
         "truncated_reachability": truncated,
         "blast_radius": radii,
+        "credential_blast_radius": credential_radius(nodes, edges, max_depth),
     }
 
 
@@ -986,6 +1115,9 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
         ev["snippet"] = ""
         ev["hash"] = ""
     rep = sub(rep)
+    labels = {n["id"]: n["display_label"] for n in rep["graph"]["nodes"]}
+    for r in (rep.get("assessment", {}).get("credential_blast_radius") or {}).get("identities", []):
+        r["label"] = labels.get(r["identity"], r["identity"])
     rep["scope"]["redaction"] = "share"
     rep["scope"]["root"] = "."
     rep["scope"]["name"] = "application"

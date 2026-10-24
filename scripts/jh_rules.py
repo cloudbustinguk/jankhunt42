@@ -52,7 +52,7 @@ RULES: List[Rule] = [
           r"github_pat_[A-Za-z0-9_]{22,}",
           r"xox[baprs]-[A-Za-z0-9-]{10,}",
           r"AIza[0-9A-Za-z_\-]{35}",
-          r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}",
+          r"(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_\-]{20,}",          # not "Risk-Management-..."
           r"[sr]k_live_[0-9a-zA-Z]{20,}",
           r"\bnpm_[A-Za-z0-9]{36}\b",
           r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,}",
@@ -98,13 +98,16 @@ RULES: List[Rule] = [
           # `%s` placeholder inside a parameterized query (2.1.0 FP fix).
           # concatenation means a quote next to `+` (`" + x`, `x + "`), not
           # arithmetic inside the SQL text (`value + 1`)
-          r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:[\"'`]\s*\+|\+\s*[\"'`]|#\{|\$\{|\.format\s*\(|[\"']\s*%\s*[\w(\[{])",
+          # (inside the SQL literal itself, not in a later argument:
+          # exec("UPDATE t SET url = ?", base + "/x") is parameterized)
+          r"(?i)\b(?:select\b[^\"'`\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\"'`\n]*"
+          r"(?:#\{|\$\{|[\"'`]\s*(?:\+|\.format\s*\(|%\s*[\w(\[{]))",
           # an f-string that interpolates into SQL-shaped text
           r"(?i)\bf([\"'])(?=[^\"']*\{)[^\"']*\b(?:select\b[^\"']{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
           # a query call built by concatenation; not `"query("` inside a
           # string (GraphQL builders) or a name like appendRawQuery(
           r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*\(\s*"
-          r"(?:f['\"]|\$\{|(?:[^)\n\"'+]|\"[^\"\n]*\"|'[^'\n]*')*\+)",
+          r"(?:f['\"]|\$\{|(?:[^)\n\"'+,]|\"[^\"\n]*\"|'[^'\n]*')*\+)",       # in the first argument
       )),
     R("JH105", "TLS verification disabled", "major", "security",
       "Certificate validation is turned off, so any network attacker can impersonate the peer.",
@@ -165,9 +168,10 @@ RULES: List[Rule] = [
       "Use the platform CSPRNG: secrets/os.urandom, crypto.randomBytes, crypto.getRandomValues.",
       confidence="low", langs=PY + JS,
       patterns=(
+          # a bare `key` is usually a React or history key, not a secret
           r"(?i)(?:\brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample)\s*\(|\bMath\.random\s*\()"
-          r"[^\n]{0,80}(?:token|secret|password|nonce|salt|key)",
-          r"(?i)(?:token|secret|password|nonce|salt|key)[^\n]{0,80}"
+          r"[^\n]{0,80}(?:token|secret|passw|nonce|salt|otp|api_?key|private_?key|secret_?key|session_?id)",
+          r"(?i)(?:token|secret|passw|nonce|salt|otp|api_?key|private_?key|secret_?key|session_?id)[^\n]{0,80}"
           r"(?:\brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample)\s*\(|\bMath\.random\s*\()",
       )),
     R("JH115", "JWT verification disabled", "critical", "security",
@@ -256,8 +260,8 @@ RULES: List[Rule] = [
       confidence="high", target="code", langs=JS + ("html",),
       patterns=(r"\bdangerouslyAllowBrowser\s*:\s*true\b",)),
     R("JH134", "Data store open to the public", "critical", "security",
-      "Security rules, row-level security, or storage ACLs let anyone on the internet read or change the data.",
-      "Require authentication and per-user conditions in rules and policies, enable row-level security on every exposed table, and keep buckets private.",
+      "Security rules, row-level security, storage ACLs, or database firewalls let anyone on the internet read or change the data.",
+      "Require authentication and per-user conditions in rules and policies, enable row-level security on every exposed table, keep buckets private, and keep databases off the public internet.",
       confidence="high", check="public_data_store"),
 
     # --------------------------------------------------------------- reliability
@@ -653,6 +657,12 @@ def secret_placeholder(match_text: str) -> bool:
         return True
     if quoted:
         key = re.match(r"[\w-]*", match_text).group(0).lower()
+        # a URL without a password, the key's own name as its value
+        # (password: "password"), the xkcd example passphrase, a concatenation
+        if re.match(r"https?://(?![^/\s]*:[^/\s]*@)", value) or \
+                re.sub(r"[\W_]", "", value.lower()) == re.sub(r"[\W_]", "", key) or \
+                re.fullmatch(r"(?i)correct[ _-]?horse[ _-]?battery(?:[ _-]?staple)?", value) or re.match(r"\s+\+\s", value):
+            return True
         # the match ran across string boundaries into code: split('secret=')[1]
         if re.match(r"[)\]]", value) and re.search(r"[.(]\w", value):
             return True
@@ -664,12 +674,20 @@ def secret_placeholder(match_text: str) -> bool:
         return bool(_SECRET_DESCRIPTIVE_RE.search(value.replace(" ", "-")))
     # descriptive words, also after a provider prefix ("sk-proj-SYNTHETIC_CREDENTIAL")
     tail = _SECRET_PREFIX_RE.sub("", value)
+    for v in (value, tail):
+        # two or more words, one descriptive, plus at most short ids ("test_redaction_d84e11")
+        segs = [x for x in re.split(r"[-_.]", v) if x]
+        words = [x for x in segs if x.isalpha()]
+        if len(words) >= 2 and any(_SECRET_DESCRIPTIVE_RE.search(w) for w in words) \
+                and all(len(x) <= 8 for x in segs if not x.isalpha()):
+            return True
     if tail != value and (re.fullmatch(r"[a-z]+(?:[-_](?:[a-z]+|\d{1,4}))+", tail) or _SECRET_CAMEL_RE.match(tail)):
         return True                     # "sk-dynamic-file-context", "sk-lf-RandomStringFromLangfuseWebInterface"
     return any(bool(_SECRET_WORDS_RE.match(v) and _SECRET_DESCRIPTIVE_RE.search(v)) for v in (value, tail))
 
 
 _PEM_BODY_RE = re.compile(r"[A-Za-z0-9+/=]{40,}")
+_I18N_PATH_RE = re.compile(r"(?i)(^|/)(i18n|l10n|locales?|lang|langs|translations?)/|(^|/)i18n\.[jt]sx?$|\.po$")
 
 
 def pem_has_body(sf: SourceFile, idx: int, end: int) -> bool:
@@ -825,12 +843,17 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity = "major"
                             message = rule.message + " It is in test data: confirm it is a throwaway test key."
                         ev = redact_secrets(ev)
-                        # A generic `key = "..."` assignment in test code is
-                        # usually a fixture; provider-shaped tokens and keys
-                        # keep their severity everywhere.
-                        if "[:=]" in pat.pattern and ("test" in sf.kinds or is_test_path(sf.rel)):
-                            severity, confidence = "minor", "low"
-                            message = rule.message + " It is in test code: confirm it is a fixture, not a real credential."
+                        # A generic `key = "..."` assignment in test code or
+                        # docs is usually a fixture or an example, and in
+                        # translation files a label; provider-shaped tokens
+                        # and keys keep their severity everywhere.
+                        if "[:=]" in pat.pattern:
+                            if _I18N_PATH_RE.search(sf.rel):
+                                continue
+                            if "test" in sf.kinds or is_test_path(sf.rel) or sf.lang in ("markdown", "text"):
+                                severity, confidence = "minor", "low"
+                                message = rule.message + " It is in test code or documentation: confirm it is an " \
+                                                         "example, not a real credential."
                     f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1, severity=severity,
                                      confidence=confidence, message=message)
                     if acceptor.accept(f):

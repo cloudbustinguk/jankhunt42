@@ -39,7 +39,7 @@ class Scanner(unittest.TestCase):
         # assembled so this file's own scan sees no assignment
         "app/still_secret.py": ("tok" + "en = \"prod-api-" + "9f8a7c6b5d4e3f2a\"\n"
                                 "sec" + "ret = \"client_secret_" + "8f3kd92mfa0q\"\n"
-                                "pass" + "word = \"correct horse " + "battery staple\"\n"),
+                                "pass" + "word = \"violet tractor " + "lantern mosaic\"\n"),
         "app/evals.php": "<?php\neval(\"$code;\");\n",
         "app/evals.rb": "eval(\"#{params[:x]}\")\n",
         "app/evals.py": "x = eval(\"1\"); y = eval(user)\n",
@@ -93,6 +93,27 @@ class Scanner(unittest.TestCase):
         "app/Imports.java": "import java.beans.XMLDecoder;\nclass A {}\n",
         "app/noqa.py": "try:\n    a()\nexcept:  # noqa: E722\n    pass\n",
         "app/eslint.ts": "try {\n  a()\n} catch { // eslint-disable-line no-empty\n}\n",
+        # citizen-developer repositories
+        "data/jobs.json": "{\"url\": \"https://jobs.example.invalid/job/Analyst-Risk-Management-and-Analytics_R1\"}\n",
+        "app/oauth.go": "var c = Config{Tok" + "en: \"https://oauth2.example.invalid/token\"}\n",
+        "web/src/i18n.ts": "export const de = { pass" + "word: \"Passwort\" }\n",
+        "app/about.ts": "const f = { pass" + "word: \"password\" }\n",
+        "app/e2e_support.ts": "export const PASS" + "WORD = \"correct horse battery\"\n",
+        "app/redact.py": "SAMPLE = \"sk-" + "test_redaction_d84e11\"\n",
+        "app/conn.py": "cs = \"Username=app;Pass" + "word=\" + config[\"Password\"] + \";SSL Mode=VerifyFull;\"\n",
+        "docs/USING.md": "pass" + "word: \"Portions Counted (24 h)\"\n",
+        "web/.env": ("VITE_SUPABASE_PUBLISHABLE_KEY=\"sb_publishable_" + "MI3dLcNkBEyCZyIzQuRAhQ_UUeeEh4Q\"\n"
+                     "ISSUER_POLICY=e1ddde8138579e255482791d9fba0778cb1f5c7b435be7b3e42069de\n"),
+        "tools/scopes.py": ("try:\n    from yaml import CSafeLoader as Loader\nexcept ImportError:\n"
+                            "    from yaml import SafeLoader as Loader\nimport yaml\nd = yaml.load(f, Loader=Loader)\n"),
+        "src/PatientAI.tsx": ("const apiKey = import.meta.env.VITE_GEMINI_API_KEY;\n"
+                              "const hint = 'Add VITE_GEMINI_API_KEY to your .env file';\n"),
+        "db/args.go": ("h.exec(\"UPDATE items SET url = ? WHERE id = ?\", site.URL+\"/posts/a.html\", item)\n"
+                       "q := \"SEL" + "ECT count(*) FROM feeds WHERE id = ? AND \"+listedSQL(\"feeds\")\n"),
+        "tests/testdata/seeds.txt": "<p>\u202ertl</p>\n",
+        "db/policies.sql": ("CREATE POLICY svc ON public.state FOR ALL TO app_service USING (true) WITH CHECK (true);\n"
+                            "CREATE POLICY leads ON public.leads FOR ALL TO authenticated USING (true) WITH CHECK (true);\n"),
+        "web/router.js": "history.pushState({ key: Math.random().toString(36) }, '', p)\nconst token = Math.random().toString(36)\n",
         "tools/extract_multi.py": "import tarfile\nt = tarfile.open(p)\nt.extractall(\n    dest,\n    filter=\"data\",\n)\n",
         "core/src/session_tests.rs": "let secret = \"%s\";\n" % RANDOM,
         "tests/test_client.py": "api_key = \"%s\"\nGITHUB = \"%s\"\n" % (RANDOM, GH_TOKEN),
@@ -229,6 +250,23 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.hits("JH106", "app/Imports.java"), [])
         self.assertEqual(self.lines("JH201", "app/noqa.py"), [3])
         self.assertEqual(self.lines("JH201", "app/eslint.ts"), [3])
+
+    def test_citizen_developer_round(self):
+        for path in ("data/jobs.json", "app/oauth.go", "web/src/i18n.ts", "app/about.ts", "app/e2e_support.ts",
+                     "app/redact.py", "app/conn.py"):
+            self.assertEqual(self.hits("JH101", path), [], path)
+        self.assertEqual([(f["severity"], f["confidence"]) for f in self.hits("JH101", "docs/USING.md")],
+                         [("minor", "low")])
+        self.assertEqual(self.hits("JH401", "web/.env"), [])
+        self.assertEqual(self.hits("JH106", "tools/scopes.py"), [])
+        self.assertEqual(self.lines("JH132", "src/PatientAI.tsx"), [1])
+
+    def test_citizen_developer_round_two(self):
+        self.assertEqual(self.lines("JH104", "db/args.go"), [2])
+        self.assertEqual([f["severity"] for f in self.hits("JH131", "tests/testdata/seeds.txt")], ["minor"])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH134", "db/policies.sql")),
+                         [(1, "minor"), (2, "major")])
+        self.assertEqual(self.lines("JH112", "web/router.js"), [2])
 
     def test_secrets(self):
         self.assertEqual(self.hits("JH101", "app/settings.py"), [])
