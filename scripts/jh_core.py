@@ -117,7 +117,7 @@ EXT_LANG = {
 
 TEST_PATH_RE = re.compile(
     r"(^|/)(tests?|testing|specs?|__tests__|testdata|fixtures?|e2e|integration-tests?|testutils?|"
-    r"test[_-]?(?:support|helpers?|vectors)|apitests?|__mocks__|mocks?|stubs?)(/|$)"
+    r"test[_-]?(?:support|helpers?|vectors)|apitests?|__mocks__)(/|$)"
     r"|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$|(^|/)test-[^/]*\.(?:[cm]?js|ts)$"
     r"|(_test\.|\.test\.|\.spec\.|_spec\.|Test\.java$|Tests?\.cs$|_test\.go$|_tests\.rs$|(^|/)tests\.rs$)",
     re.IGNORECASE,
@@ -723,8 +723,11 @@ def load_source(path: Path, root: Path) -> Optional[SourceFile]:
 # Misc helpers
 # ---------------------------------------------------------------------------
 
+# wider than JH101's detection on purpose: prefixed names (AWS_SECRET_ACCESS_KEY) and quoted keys
+# ("db_password": ...) are redacted whatever the value looks like
 _SECRET_LINE_RE = re.compile(
-    r"(?i)(\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*['\"])([^'\"\n]{4,})(['\"])"
+    r"(?i)(\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b"
+    r"['\"]?\s*[:=]\s*['\"])([^'\"\n]{4,})(['\"])"
 )
 _TOKEN_RES = [
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),

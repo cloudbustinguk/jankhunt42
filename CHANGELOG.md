@@ -13,29 +13,36 @@ by the maintainer), and one gap it pointed to.
 
 - `JH101` reads credentials written as a quoted key (`"db_password": "..."`
   in JSON or a Python dict) or a prefixed name (`DB_PASSWORD = "..."`,
-  `POLYGON_API_KEY: '...'`). Neither form matched before. The value must
-  look like a credential: no spaces, a letter and a digit, and no words
-  such as "test", "fake", "e2e" or "secret". UI text such as
-  `"password": "Mot de passe"` therefore stays out. A doctest example
-  (`>>> scrub({"password": ...})`) is minor.
+  `AWS_SECRET_ACCESS_KEY = "..."`, `SERVICE_API_KEY: '...'`). Neither form
+  matched before. The value must look like a credential: no spaces, a
+  letter and a digit, and no words such as "test", "fake", "e2e" or
+  "secret". UI text such as `"password": "Mot de passe"` therefore stays out.
+- Redaction covers the same forms in every rule's evidence (JSON, SARIF,
+  Markdown, HTML and terminal), so a report never repeats the credential
+  it found.
 
 ### Fixed
 
 - `JH505` needs a test runner before `.only(` (`describe`, `it`, `test`,
-  `context`, `suite`, `test.describe.serial`, `QUnit`, `tap` and so on). A
-  builder method such as Go's `picker.only(t)` is not a focused test.
+  `context`, `suite`, `test.describe.serial`, `Deno.test`, `QUnit.module`,
+  `tap`, `.only.each` and so on). A builder method such as Go's
+  `picker.only(t)` is not a focused test.
 - `JH504`: `expect(true)` counts only with a matcher that passes
-  (`toBe(true)`, `toBeTruthy()`, chai `.to.be.true`).
-  `expect(true).toBe(false)` is an always-failing guard, not a tautology.
+  (`toBe(true)`, `toBeTruthy()`, chai `.to.be.true` or `.to.be.equal(true)`).
+  `expect(true).toBe(false)` is an always-failing guard, not a tautology,
+  including when the matcher is on the next line.
 - `JH104`: SQL in a quoted literal that closes before a `${...}` is
   parameterized. The interpolation is a later bound argument
-  (`.query("... ?2").run(id, \`repo:${id}\`)`).
-- `JH111`: in a shell script, a pipeline inside a quoted argument of a
-  command that does not run it (`require_tool zz "... (curl ... | sh)"`, `echo`)
-  is minor, with an install-hint note. It stays critical after `sh -c`,
-  `ssh`, `eval` or `docker exec`, and in CI YAML.
+  (`.query("... ?2").run(id, \`u:${id}\`)`).
+- `JH111`: `echo "curl ... | sh" | sh` used to be skipped as printed text,
+  but it pipes the text into a shell, so it is now reported. In a shell
+  script, a pipeline inside a quoted argument of a command that only
+  reports it (`echo`, `warn`, `require_tool zz "... (curl ... | sh)"`) is
+  minor, with an install-hint note. Any other command word (`retry`,
+  `trap`, `alias`), a `$(...)` inside the quotes, or a pipe or redirect
+  after them keeps it critical, as do `sh -c`, `ssh`, `eval` and CI YAML.
 - Test-path detection also covers test-support folders (`testutil/`,
-  `test_support/`, `apitest/`, `mocks/`, `stubs/`, `test-vectors/`) and
+  `test_support/`, `apitest/`, `test-vectors/`, Jest's `__mocks__/`) and
   `test-*.js`/`.ts` scripts.
 
 ## [2.7.1] — 2026-10-25

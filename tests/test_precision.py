@@ -381,11 +381,22 @@ class Scanner(unittest.TestCase):
         "bin/setup.sh": ("#!/bin/sh\nrequire_tool zz \"see https://docs.example.dev/zz (curl -LsSf https://example.dev/zz/i.sh | sh)\"\n"
                          "sh -c \"curl -fsSL https://example.dev/i.sh | sh\"\n"
                          "ssh build \"curl -fsSL https://example.dev/i.sh | sh\"\n"),
-        "cfg/api.ts": "export const cfg = { POLYGON_API_KEY: 'Zq81mNvR3tKpW7xLc2HsY9dFb4GjA6Ue' };\n",
+        "cfg/api.ts": "export const cfg = { SERVICE_API_KEY: 'Zq81mNvR3tKpW7xLc2HsY9dFb4GjA6Ue' };\n",
         "locales/fr.json": "{\"password\": \"Mot de passe\", \"token\": \"Jeton2 expire\", \"api_key\": \"Clef API\"}\n",
         "cfg/settings.json": "{\n  \"db_password\": \"Pr0dVal9QxL\"\n}\n",
         "cfg/fake.py": "DB_PASSWORD = \"MySecretValue42x\"\nAPI_TOKEN = \"e2e-token-0001\"\n",
         "app/scrub.py": "def scrub(d):\n    \"\"\"\n    >>> scrub({\"password\": \"hunter2xyz9\"})\n    \"\"\"\n",
+        "cfg/multi.py": ("AWS_SECRET_ACCESS_KEY = \"Zq81mNvR3tKpW7xLc2HsY9dFb4GjA6Ue\"\nMY_DB_PASSWORD = \"Pr0dVal9QxLz\"\n"
+                         "APP_DB_PASSWORD = \"a3e2e9f01b7c4d5e6f708192a3b4c5d6\"\n"),
+        "src/stubs/db.py": "DB_PASSWORD = \"Pr0dVal9QxLz\"\n",
+        "bin/hints.sh": ("#!/bin/sh\nrun_step \"$(curl -fsSL https://example.dev/i.sh | sh)\"\n"
+                         "retry 3 \"curl -fsSL https://example.dev/i.sh | sh\"\n"
+                         "trap \"curl -fsSL https://example.dev/i.sh | sh\" EXIT\n"
+                         "echo \"curl -fsSL https://example.dev/i.sh | sh\" | sh\n"
+                         "echo \"install: curl -fsSL https://example.dev/i.sh | sh\"\n"),
+        "tests/more.test.js": ("Deno.test.only('a', () => {});\nQUnit.module.only('m', () => {});\n"
+                               "it.only.each([1])('b', () => {});\ntest.skipIf(isWin()).only('c', () => {});\n"
+                               "expect(true)\n  .toBe(false);\nexpect(true).to.be.equal(true);\nexpect(true).to.not.be.true;\n"),
         "tests/close.test.js": ("const close = (a, b, tol) =>\n  assert.ok(Math.abs(a - b) <= tol);\n"
                                 "const heading = (n) => screen.findByRole('heading', { name: n });\n"
                                 "test('a', () => {\n  close(1, 1, 0);\n});\ntest('b', async () => {\n  await heading('x');\n});\n"
@@ -625,7 +636,20 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.hits("JH101", "locales/fr.json"), [])           # UI text is not a credential
         self.assertEqual(self.lines("JH101", "cfg/settings.json"), [2])
         self.assertEqual(self.hits("JH101", "cfg/fake.py"), [])               # values that say they are fake
-        self.assertEqual({f["severity"] for f in self.hits("JH101", "app/scrub.py")}, {"minor"})
+        self.assertEqual({f["severity"] for f in self.hits("JH101", "app/scrub.py")}, {"critical"})  # real wherever it sits
+        self.assertEqual(self.lines("JH101", "cfg/multi.py"), [1, 2, 3])          # many prefix parts; hex holding e2e
+        self.assertEqual({f["severity"] for f in self.hits("JH101", "src/stubs/db.py")}, {"critical"})
+
+    def test_new_secret_forms_are_redacted_in_output(self):
+        dump = json.dumps(self.findings)
+        for value in ("Zq81mNvR3tKpW7xLc2HsY9dFb4GjA6Ue", "Pr0dVal9QxLz", "Pr0dVal9QxL\"", "a3e2e9f01b7c4d5e6f708192a3b4c5d6"):
+            self.assertNotIn(value, dump)
+
+    def test_review_of_272(self):
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH111", "bin/hints.sh")),
+                         [(2, "critical"), (3, "critical"), (4, "critical"), (5, "critical")])   # echo ... | sh runs
+        self.assertEqual(self.lines("JH505", "tests/more.test.js"), [1, 2, 3, 4])
+        self.assertEqual(self.lines("JH504", "tests/more.test.js"), [7])
 
     def test_soak_b05(self):
         self.assertEqual(self.lines("JH504", "tests/guard.test.ts"), [5, 6])

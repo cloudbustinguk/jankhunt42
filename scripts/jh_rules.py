@@ -73,10 +73,11 @@ RULES: List[Rule] = [
           r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])(?:(?!\1)[^\n]){8,}\1",
           # a quoted key ("db_password": "...") or a prefixed name (DB_PASSWORD = "..."): the value must look
           # like a credential (no spaces, a letter and a digit), so UI text ("password": "Mot de passe") is not
-          r"(?i)(?:\b[a-z0-9]+[_-](?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b[\"']?|"
+          r"(?i)(?:\b(?:[a-z0-9]+[_-])+(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b[\"']?|"
           r"[\"'](?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)[\"'])\s*[:=]\s*"
           r"([\"'])(?=[^\s\"']*\d)(?=[^\s\"']*[A-Za-z])"
-          r"(?![^\s\"']*(?:test|e2e|mock|stub|fake|dummy|demo|never|secret|passw|example|sample|changeme|redact))"
+          r"(?![^\s\"']*(?:test|(?<![0-9a-f])e2e(?![0-9a-f])|mock|stub|fake|dummy|demo|never|secret|passw|example|"
+          r"sample|changeme|redact))"
           r"[^\s\"']{8,}\1",
       ),
       ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
@@ -547,16 +548,19 @@ RULES: List[Rule] = [
       "Assert a specific value or behavior that would change if the code broke.",
       confidence="high", target="nocomment", kinds=TEST + ("test",),
       patterns=(r"\bassert\s+True\b",
-                r"\bexpect\s*\(\s*true\s*\)\s*(?:;|\)|$|\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*true\s*\)|"
+                r"\bexpect\s*\(\s*true\s*\)\s*(?:;|\)|\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*true\s*\)|"
                 r"\.(?:toBeTruthy|toBeTrue|toBeDefined)\s*\(\s*\)|\.not\.(?:toBeFalsy|toBeNull|toBeUndefined)\s*\(\s*\)|"
-                r"\.not\.toBe\s*\(\s*false\s*\)|\.to\.(?:be\.)?(?:true|ok)\b|\.to\.(?:equal|eql)\s*\(\s*true\s*\))",
+                r"\.not\.toBe\s*\(\s*false\s*\)|\.to\.(?:be\.)?(?:true|ok)\b|\.to\.exist\b|"
+                r"\.to\.(?:be\.)?(?:equal|eql)\s*\(\s*true\s*\)|\.to\.not\.(?:be\.)?(?:false|null|undefined)\b|"
+                r"\.to\.not\.(?:be\.)?(?:equal|eql)\s*\(\s*false\s*\))",
                 r"\bassertEqual\s*\(\s*True\s*,\s*True")),
     R("JH505", "Focused test", "major", "tests",
       "A focused test (.only/fit/fdescribe) silently skips the rest of the suite in many runners.",
       "Remove the focus marker before merging.",
       confidence="high", target="code", kinds=TEST + ("test",),
-      patterns=(r"(?<![\w$.])(?:describe|it|test|context|suite|specify|fixture|scenario|feature|QUnit|tap|t|bench)"
-                r"(?:\.(?:describe|serial|parallel|concurrent|sequential|skipIf\([^)]*\)|runIf\([^)]*\)))*\.only\s*\(",
+      patterns=(r"(?<![\w$])(?:describe|it|test|context|suite|specify|fixture|scenario|feature|module|QUnit|tap|t|bench)"
+                r"(?:\.(?:describe|test|module|serial|parallel|concurrent|sequential|"
+                r"(?:skipIf|runIf)\((?:[^()]|\([^()]*\))*\)))*\.only(?:\.each)?\s*\(",
                 r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`,]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`,]")),
 
     # ---------------------------------------------------------------------- docs
@@ -957,9 +961,6 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity, confidence = "minor", "low"
                             message = (rule.message + " Here it is text inside a quoted argument of `%s`, which looks "
                                        "like an install hint; confirm that command does not run it." % hint)
-                    if rule.id == "JH101" and re.match(r"\s*(?:>>>|\.\.\.)\s", line) and "(?i)" in pat.pattern[:4]:
-                        severity, confidence = "minor", "low"
-                        message = rule.message + " It is a doctest example."
                     if rule.id == "JH122" and "docker" not in pat.pattern and not _container_command(sf, idx):
                         continue            # a flag in a list of strings, not in a container command
                     if rule.id == "JH104" and not _dynamic_sql(sf, idx, line, m, pat.pattern):
@@ -1111,8 +1112,11 @@ def _example_context(f: Finding) -> None:
 def _pipe_to_shell_severity(line: str, match: str) -> Optional[str]:
     """None when the curl|sh text is printed, not run; major for an official
     vendor installer over https; otherwise the rule's critical."""
-    if re.match(r"""^\s*(?:-\s+)?(?:echo|printf|print|puts|console\.log|log|info|warn|say)\b""", line) or \
-            re.search(r"""(?:echo|printf)\s+["'][^"']*$""", line[:line.find(match)] if match in line else ""):
+    printed = re.match(r"""^\s*(?:-\s+)?(?:echo|printf|print|puts|console\.log|log|info|warn|say)\b""", line) or \
+        re.search(r"""(?:echo|printf)\s+["'][^"']*$""", line[:line.find(match)] if match in line else "")
+    # echo "curl ... | sh" | sh pipes the printed text into a shell: that runs it
+    if printed and not re.search(r"""["']\s*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b""", line[line.find(match) + len(match):]
+                                 if match in line else ""):
         return None
     between = re.sub(r"^\W*(?:curl|wget)\b|\|.*$", "", match)
     if not re.search(r"[-$/:]|http", between):
@@ -1205,26 +1209,29 @@ def _container_command(sf: SourceFile, idx: int) -> bool:
                 or re.match(r"""\s*["']?(?:options|runArgs)["']?\s*:""", sf.nocomment[idx - 1]))
 
 
-_EXECUTOR_WORDS = {"sh", "bash", "zsh", "ksh", "dash", "eval", "exec", "ssh", "su", "sudo", "doas", "env", "nohup",
-                   "time", "timeout", "command", "xargs", "watch", "docker", "podman", "kubectl", "nsenter", "chroot",
-                   "script", "parallel", "tmux", "screen", "flock", "nice", "ionice", "stdbuf", "busybox"}
+# commands that print or report their argument; anything else may run it (retry, trap, alias, ansible -a)
+_HINT_WORDS = re.compile(r"(?i)^(?:echo|printf|print|say|msg|note|hint|tip|info|warn\w*|err(?:or)?|die|fail|abort|"
+                         r"log(?:_\w+)?|need\w*|require\w*|missing\w*|suggest\w*|usage)$")
 
 
 def _quoted_hint(sf: SourceFile, line: str, m: "re.Match[str]") -> Optional[str]:
     """The command word when a shell script's curl|sh sits inside a quoted
-    argument of a command that does not run it (`require_tool zz "... (curl ... | sh)"`,
-    `echo "..."`); None when it may run (sh -c, ssh host, eval, docker exec)."""
+    argument of a command that prints or reports it (`echo "..."`,
+    `require_tool zz "... (curl ... | sh)"`). None when anything may run it:
+    another command word, a $(...) or backtick inside the quotes, or a pipe,
+    redirect or chain after them."""
     if sf.lang != "shell":
         return None
     before = line[:m.start()]
     for q in ('"', "'"):
         if before.count(q) % 2 == 1 and q in line[m.end():]:
-            head = before[:before.rfind(q)]
-            if re.search(r"(?:^|\s)-\w*c\s*$|\$\(|`|\|\s*$|[;&]", head):
+            start = before.rfind(q)
+            end = line.index(q, m.end())
+            head, inner, tail = before[:start], line[start + 1:end], line[end + 1:]
+            if re.search(r"\$\(|`|<\(", inner) or re.search(r"[|;&<>`]|\$\(", head + tail):
                 return None
             words = head.split()
-            if not words or re.match(r"\w+=", words[0]) or words[0] in _EXECUTOR_WORDS or \
-                    any(w in _EXECUTOR_WORDS for w in words[:3]):
+            if not words or not _HINT_WORDS.match(words[0]):
                 return None
             return words[0]
     return None
