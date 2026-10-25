@@ -1,0 +1,60 @@
+# Citizen-developer pull-request gate (jankhunt42 passport, citizen profile).
+#
+# Run this as a REQUIRED workflow from a protected repository that citizen
+# developers cannot change, for example through an organization ruleset that
+# requires it on their repositories. That protected repository holds:
+#   policy/citizen.json   the operator policy (custodians, allowed_registries, ...)
+#   rules/<repo>.json     each repository's rulesets, exported from the GitHub REST API
+#                         (GET /repos/{owner}/{repo}/rulesets/{id}) by an operator job
+# Both are outside the code under review, so the passport treats them as
+# operator input; a copy inside the citizen's repository would only count as
+# a repository declaration.
+#
+# The job has a read-only token and no secrets: it reads code, never runs it.
+# It fails on insufficient-evidence as well as block: a change that cannot be
+# judged (unknown change control, unclassified data) does not merge.
+# Pin jankhunt42 to a release commit after verifying its attestation
+# (gh attestation verify --repo cloudbustinguk/jankhunt42 jankhunt42-<version>.tar.gz).
+name: citizen-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  passport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the change under review
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          path: app
+          persist-credentials: false
+
+      - name: Check out the operator policy (protected repository)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: your-org/citizen-gate-policy
+          path: gate
+          persist-credentials: false
+
+      - name: Check out jankhunt42 (pinned release)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: cloudbustinguk/jankhunt42
+          ref: v2.6.0
+          path: gate/jankhunt42
+          persist-credentials: false
+
+      - name: Software passport (citizen profile)
+        env:
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          python3 gate/jankhunt42/scripts/jankhunt42 passport app \
+            --profile citizen \
+            --policy gate/policy/citizen.json \
+            --branch-rules "gate/rules/$REPO.json" \
+            --fail-on insufficient-evidence --md

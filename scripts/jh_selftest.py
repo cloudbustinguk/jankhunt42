@@ -86,6 +86,26 @@ MUTANTS = [
     ("M20-tls-context-ignored", "verify=False on an HTTP client is no longer reported", "jh_checks.py",
      "                elif not _HTTP_CALLEE_RE.search(callee):\n                    break",
      "                elif True:\n                    break", "test_precision.py"),
+    ("M21-bypass-actors-ignored", "a GitHub App or deploy key that can bypass the branch rules is not reported",
+     "jh_change.py", 'apps = [b for b in gate.bypass or [] if b["actor_type"] in APP_ACTORS]', "apps = []",
+     "test_containment.py"),
+    ("M22-repo-branch-rules-trusted", "a branch-rules export inside the repository counts as provider-verified",
+     "jh_change.py", 'source = "provider-verified" if export_trusted else "declared"', 'source = "provider-verified"',
+     "test_containment.py"),
+    ("M23-safeloader-always", "every yaml.load counts as using a safe loader", "jh_checks.py",
+     'if re.search(r"\\b(?:Safe|CSafe|Base)Loader\\b", text) or (alias and re.search(',
+     'if True or (alias and re.search(', "test_precision.py"),
+    ("M24-disallowed-registries-ignored", "a package source outside allowed_registries passes P-SUP-001",
+     "jh_policy.py", '    elif reg.get("disallowed"):', "    elif False:", "test_containment.py"),
+    ("M25-egress-outside-hidden", "a host reached outside the declared egress boundary is not reported",
+     "jh_egress.py", "        if denied or (not allowed and not any_open):", "        if False:", "test_containment.py"),
+    ("M26-branch-ci-write-ignored", "a write-scoped token on an any-branch push workflow is ignored",
+     "jh_checks.py", "        write = _grants_write_explicit(perms)", "        write = False", "test_containment.py"),
+    ("M27-shared-tenant-wildcards", "a sandbox wildcard on a shared cloud domain is not reported", "jh_checks.py",
+     "    if any(base == s or base.endswith(s) for s in _SHARED_TENANT):", "    if False:", "test_containment.py"),
+    ("M28-citizen-declared-change-control", "repository-declared change control satisfies P-CHG-001 under the "
+     "citizen profile", "jh_policy.py", '    elif citizen and cc["state"] == "declared":', "    elif False:",
+     "test_containment.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

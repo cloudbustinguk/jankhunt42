@@ -54,6 +54,8 @@ RULES = {
     "P-EVD-001": "mandatory supply-chain evidence missing",
     "P-JNK-001": "Jank Score policy failed or blocker-severity leads present",
     "P-EXP-001": "exposure class above the policy maximum",
+    "P-CHG-001": "agent or citizen code can reach the default branch without an independent human review",
+    "P-SUP-001": "package managers may resolve from a registry outside the allowed list",
 }
 PROFILES = ("standard", "citizen")
 
@@ -62,11 +64,13 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "profile": "standard",
     "require": {"owner": False, "sbom": False, "sbom_minimum": False, "attestation": False,
                 "verified_attestation": False, "custodian": False, "tests": False, "ci": False,
-                "classification": False},
+                "classification": False, "change_control": False, "registry_pinning": False},
     "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
-                "P-JNK-001": "review", "P-EXP-001": "review"},
+                "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review"},
+    # Registry URL prefixes or host names packages may come from (operator policy only).
+    "allowed_registries": [],
     "max_exposure": None,
     # What unverified (static) authority and export leads may do at most.
     "static_leads": "review",
@@ -75,10 +79,12 @@ DEFAULT_POLICY: Dict[str, Any] = {
 # The citizen-developer profile: applied tighten-only on top of whatever is
 # in force, so it can only make a decision stricter.
 CITIZEN_PRESET: Dict[str, Any] = {
-    "require": {"owner": True, "custodian": True, "tests": True, "ci": True, "classification": True},
+    "require": {"owner": True, "custodian": True, "tests": True, "ci": True, "classification": True,
+                "change_control": True, "registry_pinning": True},
     "actions": {"P-OWN-001": "block", "P-CUS-001": "block", "P-DAT-001": "block", "P-DAT-002": "block",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
-                "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block"},
+                "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block",
+                "P-CHG-001": "block", "P-SUP-001": "block"},
     "max_exposure": "Moderate",
     "static_leads": "block",
 }
@@ -109,6 +115,12 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
         else:
             warnings.append("%s policy: ignored profile_exceptions (expected rule ids mapped to actions, "
                             "require.<key>: false, max_exposure, or static_leads)" % label)
+    regs = raw.get("allowed_registries")
+    if regs is not None:
+        if isinstance(regs, list) and all(isinstance(r, str) and r.strip() for r in regs):
+            out["allowed_registries"] = sorted({r.strip()[:200] for r in regs})[:50]
+        else:
+            warnings.append("%s policy: ignored allowed_registries (expected a list of URL prefixes or host names)" % label)
     cust = raw.get("custodians")
     if cust is not None:
         if isinstance(cust, list) and all(isinstance(c, str) and c.strip() for c in cust):
@@ -218,6 +230,8 @@ def merge(operator: Optional[Dict[str, Any]], repository: Any,
         eff["static_leads"] = op["static_leads"]
     if op.get("custodians"):
         eff["custodians"] = op["custodians"]
+    if op.get("allowed_registries"):
+        eff["allowed_registries"] = op["allowed_registries"]
     if "citizen" in (profile, op.get("profile")):
         exceptions = op.get("profile_exceptions", {})
         before = {"require": dict(eff["require"]), "max_exposure": eff["max_exposure"],
@@ -246,6 +260,8 @@ def merge(operator: Optional[Dict[str, Any]], repository: Any,
         _tighten(eff, rp, warnings)
         if rp.get("custodians"):
             warnings.append("custodians in a repository policy are declarations; use passport.custodians")
+        if rp.get("allowed_registries"):
+            warnings.append("repository policy cannot approve package registries; ignored")
         if rp.get("profile_exceptions"):
             warnings.append("repository policy cannot grant profile_exceptions; ignored")
     return eff
@@ -456,6 +472,45 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
             add("P-EXP-001", "pass", "exposure %s within policy maximum %s" % (exposure, mx))
     else:
         add("P-EXP-001", "pass", "no maximum exposure configured")
+
+    # P-CHG-001: change control on the default branch
+    cc = facts.get("change_control") or {"state": "unknown", "severe": [], "weak": [], "unknown": []}
+    citizen = policy.get("profile") == "citizen"
+    if not policy["require"]["change_control"] or acts["P-CHG-001"] == "off":
+        add("P-CHG-001", "pass", "change control not required by this policy (evidence: %s)" % cc["state"])
+    elif cc["severe"]:
+        add("P-CHG-001", _outcome_for(acts["P-CHG-001"]),
+            "the default branch can change without an independent human review (%s evidence): %s"
+            % (cc["state"], "; ".join(cc.get("details", cc["severe"])[:3])))
+    elif cc["state"] == "unknown" or cc["unknown"]:
+        add("P-CHG-001", "insufficient-evidence",
+            "change control on the default branch is unknown%s; supply the repository's rulesets or branch "
+            "protection (--branch-rules, exported from outside the repository)"
+            % (" (%s not in the evidence)" % ", ".join(cc["unknown"]) if cc["unknown"] and cc["state"] != "unknown" else ""))
+    elif citizen and cc["state"] == "declared":
+        add("P-CHG-001", "insufficient-evidence",
+            "change control is only declared in the repository; under the citizen profile the provider's rulesets "
+            "must be supplied from outside the repository (--branch-rules)")
+    elif cc["weak"]:
+        add("P-CHG-001", "review" if acts["P-CHG-001"] != "off" else "pass",
+            "review is required but weakened (%s evidence): %s" % (cc["state"], ", ".join(w.replace("_", " ") for w in cc["weak"])))
+    else:
+        add("P-CHG-001", "pass", "independent review required on the default branch (%s evidence)" % cc["state"])
+    # P-SUP-001: package sources against the operator's allowed registries
+    reg = facts.get("registry") or {}
+    allowed = policy.get("allowed_registries") or []
+    if not allowed:
+        add("P-SUP-001", "pass", "no allowed registries configured by the operator")
+    elif reg.get("disallowed"):
+        bad = reg["disallowed"]
+        add("P-SUP-001", _outcome_for(acts["P-SUP-001"]), "%d package source(s) outside the allowed registries: %s"
+            % (len(bad), "; ".join("%s %s (%s:%s)" % (b["ecosystem"], b["url"], b["path"], b["line"]) for b in bad[:4])))
+    elif reg.get("unconfigured") and policy["require"]["registry_pinning"]:
+        add("P-SUP-001", "insufficient-evidence", "package manager(s) in use with no registry configured in the "
+            "repository, so the machine or CI runner decides: %s" % ", ".join(reg["unconfigured"]))
+    else:
+        add("P-SUP-001", "pass", "every declared or recorded package source is allowed%s" % (
+            "; not configured in the repository: %s" % ", ".join(reg["unconfigured"]) if reg.get("unconfigured") else ""))
 
     result = "pass"
     for r in results:

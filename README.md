@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.5.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.6.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -16,7 +16,7 @@ jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent
 |---|---|---|
 | **What's broken?** | `scan`, `score`, `review`, `triage`, `doctor`, `hunt` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts; log clustering; an opt-in adversarial deep hunt |
 | **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
-| **Can we responsibly ship it?** | `passport`, `supply-chain` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision |
+| **Can we responsibly ship it?** | `passport`, `supply-chain` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
 
 Each answer keeps its own evidence model:
 
@@ -96,8 +96,10 @@ jankhunt42 map .                            # what the software and its agent's 
 jankhunt42 passport . --profile citizen     # a strict release decision, explained in plain terms
 ```
 
-- **Agent workspace checks** (`JH701`-`JH708`):
+- **Agent workspace checks** (`JH701`-`JH711`, `JH432`):
   - approval bypasses committed in VS Code, Claude Code, Codex, or Zed settings;
+  - sandboxes that let agent commands reach any host, the Docker socket, or credential paths (Codex, Claude Code, OpenShell), and dev containers that weaken isolation;
+  - CI that runs any pushed branch, an agent's included, with secrets or a write token;
   - commands that run on folder open, in dev containers, or in hooks;
   - agent CLIs started with bypass flags;
   - unpinned or credential-holding MCP servers;
@@ -131,7 +133,7 @@ jankhunt42 scan . --html > jankhunt42.html
 jankhunt42 scan . --fail-on critical     # explicit CI gate
 jankhunt42 scan . --since HEAD           # whole-tree plus new-code score
 jankhunt42 score . --json                # Jank Score 2.0 breakdown
-jankhunt42 rules --category security     # the catalog of 96 rules
+jankhunt42 rules --category security     # the catalog of 100 rules
 jankhunt42 review . --base HEAD~1 --json # committed changes, with receipts
 jankhunt42 review . --staged --md
 jankhunt42 review . --commit HEAD --brief            # handoff for a semantic reviewer
@@ -160,6 +162,7 @@ jankhunt42 passport . --policy ../policy.json  # operator policy (outside the re
 jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
 jankhunt42 passport . --compare ../old-passport.json      # regressions since a stored passport
 jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance, bound to revision and policy
+jankhunt42 passport . --branch-rules ../rules/app.json    # rulesets exported by an operator: is review enforced?
 jankhunt42 supply-chain . --json                          # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog
 jankhunt42 supply-chain . --require-sbom-minimum          # fail unless an SBOM has the NTIA minimum elements
 jankhunt42 supply-chain . --verify ../verify-plan.json    # run gh/cosign/jf against a plan outside the repo

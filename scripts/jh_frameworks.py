@@ -99,6 +99,8 @@ RULES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "P-EVD-001": (("GOVERN 6.1", "MAP 4.1", "MANAGE 3.1"), ("IV",)),
     "P-JNK-001": (("MEASURE 2.5", "MEASURE 2.7"), ("III",)),
     "P-EXP-001": (("GOVERN 1.3", "MAP 5.1", "MANAGE 1.2"), ("I",)),
+    "P-CHG-001": (("GOVERN 3.2", "MAP 3.5"), ("III",)),
+    "P-SUP-001": (("GOVERN 6.1", "MAP 4.1", "MANAGE 3.1"), ("IV",)),
 }
 EVIDENCE: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "ai.model_services": (("GOVERN 1.6", "MAP 4.1", "MAP 4.2"), ("IV",)),

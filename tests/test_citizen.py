@@ -247,7 +247,8 @@ class CitizenRules(unittest.TestCase):
         self.eff = jh_policy.merge({"custodians": ["@eng-lead"]}, None, [], "citizen")
         self.facts = {"files_scanned": 3, "map_files_inspected": 2, "exposure": "Moderate", "owner_state": "observed",
                       "declared_custodians": ["@eng-lead"], "operations": {"tests": "observed", "ci": "observed"},
-                      "jank_policy": "pass"}
+                      "jank_policy": "pass",
+                      "change_control": {"state": "provider-verified", "severe": [], "weak": [], "unknown": []}}
         self.graph = {"nodes": [node("app", "application"),
                                 node("db", environment="production", sensitivity="internal")],
                       "edges": [edge("e1", "app", "db", "connects", "unknown", "declared")]}

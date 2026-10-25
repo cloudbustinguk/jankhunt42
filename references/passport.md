@@ -28,6 +28,7 @@ jankhunt42 passport . --acceptance ../acceptance.json        # operator acceptan
 jankhunt42 passport . --compare old-passport.json            # what changed since a stored passport
 jankhunt42 passport --compare old.json --against new.json    # two stored passports, no scan
 jankhunt42 passport . --verify ../verify-plan.json           # run gh/cosign/jf on the provenance first
+jankhunt42 passport . --branch-rules ../rules/app.json       # the repository's rulesets, exported by an operator
 ```
 
 Advisory by default (exit `0` whatever the decision). `--fail-on review`,
@@ -52,12 +53,15 @@ decision is at or above that outcome (`pass < review < insufficient-evidence
 | `alignment` | orientation crosswalk from every rule and evidence area to NIST AI RMF subcategories and AIGP domains ([`ai-governance.md`](ai-governance.md)) | orientation only |
 | `data` | data sources from the map, with classifications and who classified them | assessed / not assessed |
 | `operations` | CI config, tests, observability SDKs, health probes, runbooks, `SECURITY.md` | observed / inferred / declared / not-observed |
+| `change_control` | the default branch's merge gate, from `--branch-rules` or Terraform GitHub resources (below) | provider-verified / declared / unknown; each check met / not-met / unknown |
+| `package_sources` | registries each package manager resolves from: committed config (declared) and lockfiles (observed), assessed against `allowed_registries` | observed / declared / unknown per ecosystem |
+| `egress` | declared agent-sandbox allowlists compared with the hosts the map reaches (`references/connectivity.md`) | declared / unknown |
 | `subject` | git revision, dirty flag, artifact digests from attestation subjects | digests labeled exporter-reported |
 | `remediation` | derived from triggered rules and missing evidence | top steps |
 | `unknowns`, `limitations` | map unknowns and fixed statements | |
 
-Evidence coverage is reported as "N of 9 areas observed, declared, or
-inferred". Observability from an SDK reference is `inferred` (it suggests
+Evidence coverage is reported as "N of 10 areas observed, declared, or
+inferred" (`change_control` is the tenth). Observability from an SDK reference is `inferred` (it suggests
 telemetry; it does not prove alerting). Emails in `CODEOWNERS` are redacted.
 
 ## Decision rules
@@ -76,12 +80,14 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
 | `P-SEC-001` | scanner leads that expose credentials or data to the public: `JH132`, `JH133`, `JH134` (major or above), critical `JH101`/`JH401`/`JH415` | review |
-| `P-AGT-001` | agent-guardrail leads: any `agent`-category rule (`JH701`-`JH708`) at major or above, or hidden Unicode in an agent file | review |
+| `P-AGT-001` | agent-guardrail leads at major or above: any `agent`-category rule (`JH701`-`JH711`: approvals, MCP servers, sandboxes, dev containers), agent-branch CI with secrets (`JH432`), or hidden Unicode in an agent file | review |
 | `P-AI-001` | a confidential or restricted data store and an external AI model service are reachable from the same principal (co-reachability, not a data flow) | review |
 | `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
 | `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
+| `P-CHG-001` | `require.change_control` and code can reach the default branch without an independent human review: no pull-request rule with an approval, or a GitHub App or deploy key that can bypass the rules (weaker gaps such as no last-push approval or no required checks: review) | pass unless required; then review (unknown → insufficient-evidence) |
+| `P-SUP-001` | `allowed_registries` is set and a declared or lockfile-recorded package source is outside it (a manager with no committed registry config: insufficient-evidence when `require.registry_pinning`) | pass unless registries are listed; then review |
 
 Under the default `static_leads: review`, static leads never block on their
 own: an observed `DELETE` or a declared connection asks for grant
@@ -110,7 +116,11 @@ governance decision someone has to record. It still claims no data flow.
 }
 ```
 
-`require` also takes `custodian`, `tests`, `ci`, and `classification`.
+`require` also takes `custodian`, `tests`, `ci`, `classification`,
+`change_control`, and `registry_pinning`. `allowed_registries` (operator
+policy only; a repository cannot widen it) lists registry URL prefixes or
+host names packages may come from, such as
+`"https://artifacts.example.internal/api/npm/"`.
 `profile` is `standard` or `citizen`; `custodians` (operator policy only)
 names the engineers who answer for the software; `static_leads` is `review`
 or `block`; `profile_exceptions` (operator policy only, citizen profile
@@ -140,6 +150,78 @@ pragmas, so the repository can add leads but not remove them.
 
 The effective policy and its SHA-256 (`policy.hash`) are embedded in every
 passport, together with each source.
+
+## Change control (`--branch-rules`)
+
+`change_control` answers one question: can code, an AI agent's included,
+reach the default branch without an independent human review? Evidence,
+strongest first:
+
+- `--branch-rules FILE`: the repository's rulesets or classic branch
+  protection as the GitHub REST API returns them. Accepted shapes: one
+  ruleset (`GET /repos/{owner}/{repo}/rulesets/{id}`), a list of rulesets,
+  the active rules for a branch (`GET .../rules/branches/{branch}`, which
+  omits bypass actors, so that check stays `unknown`), classic protection
+  (`GET .../branches/{branch}/protection`), or a wrapper
+  `{"default_branch", "rulesets", "branch_protection", "branch_rules"}`.
+  Outside the repository it is **provider-verified**; inside it is only a
+  declaration, with a warning.
+- Terraform `github_repository_ruleset` and `github_branch_protection` in
+  the repository: **declared** intent, not proof of what is applied.
+- Nothing: **unknown**, never "absent".
+
+Rulesets count only when `enforcement` is `active` and their conditions
+include the default branch (`~DEFAULT_BRANCH`, `~ALL`, or its name;
+`--default-branch` overrides the branch git reports). The checks:
+
+| Check | Met when |
+|---|---|
+| `pull_request_review` | a pull request with at least one approval is required |
+| `code_owner_review` | code-owner review is required |
+| `last_push_approval` | the last push must be approved by someone other than the pusher (otherwise an agent can push after approval) |
+| `status_checks` | at least one status check is required |
+| `deletion_protected`, `force_push_protected` | the branch cannot be deleted or force-pushed |
+| `no_app_bypass` | no bypass actor of type `Integration` (a GitHub App) or `DeployKey` |
+| `codeowners_coverage` | `CODEOWNERS` has a catch-all pattern with an owner |
+
+`P-CHG-001` gives its full action for a missing review or an app bypass,
+`review` for the weaker gaps, and `insufficient-evidence` when the evidence
+is unknown. Under the citizen profile a repository declaration alone does
+not satisfy it: the export must come from outside the repository.
+
+## Package sources and allowed registries
+
+Committed configuration declares where packages come from: `.npmrc`,
+`.yarnrc(.yml)`, `bunfig.toml`, `pip.conf`/`pip.ini`, `--index-url` and
+`--extra-index-url` in requirements files, `pyproject.toml` (Poetry, uv,
+PDM sources), `Pipfile`, Maven `pom.xml` and `settings.xml` mirrors, Gradle
+`repositories` (`mavenCentral()`, `google()`, `maven { url ... }`; not
+`publishing`), `nuget.config`, and `.cargo/config.toml`. Lockfiles
+(`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `uv.lock`,
+`poetry.lock`, `Pipfile.lock`) record where packages were fetched from and
+are **observed**. A manager in use with no committed configuration is
+**unknown**: the developer's machine or the CI runner decides, and the
+public registry is only its default.
+
+## The citizen pull-request gate
+
+[`templates/citizen-gate.yml`](../templates/citizen-gate.yml) is a
+required-workflow recipe: a `pull_request` job with `permissions: contents:
+read`, no secrets, and SHA-pinned checkouts. It runs
+
+```sh
+jankhunt42 passport app --profile citizen --policy gate/policy/citizen.json \
+  --branch-rules "gate/rules/$REPO.json" --fail-on insufficient-evidence --md
+```
+
+with the operator policy and the exported rulesets checked out from a
+protected repository the citizen cannot change, so both are operator input.
+It fails on `insufficient-evidence` as well as `block`, so a change that
+cannot be judged (unknown change control, unclassified data, a package
+manager with no registry config) does not merge. `scripts/selftest.sh` runs
+the template's own command against a synthetic compliant fixture (pass), the
+same fixture pointed at a public registry (blocked by `P-SUP-001`), and the
+same fixture without its ruleset export (insufficient evidence).
 
 ## Repository declarations
 

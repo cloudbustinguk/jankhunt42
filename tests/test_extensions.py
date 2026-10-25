@@ -396,16 +396,16 @@ class Compare(unittest.TestCase):
         self.assertIn("ownership", d["evidence_areas"])
 
     def test_edited_document_fails_integrity(self):
-        doc = json.load(open(self.old))
+        doc = _util.read_json(self.old)
         doc["assessment"]["decision"]["result"] = "pass"
         edited = os.path.join(self.tmp, "edited.json")
-        json.dump(doc, open(edited, "w"))
+        _util.write_json(edited, doc)
         d = json.loads(run_cli("passport", "--compare", self.old, "--against", edited, "--json").stdout)
         self.assertEqual(d["new"]["integrity"], "mismatch")
 
     def test_wrong_schema_is_usage_error(self):
         bad = os.path.join(self.tmp, "bad.json")
-        json.dump({"schema_version": "jankhunt.map.v1"}, open(bad, "w"))
+        _util.write_json(bad, {"schema_version": "jankhunt.map.v1"})
         self.assertEqual(run_cli("passport", "--compare", bad, "--against", self.old).returncode, 2)
         self.assertEqual(run_cli("passport", "--against", self.old).returncode, 2)
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -196,6 +196,14 @@ def detect_lang(path: str) -> str:
     return EXT_LANG.get(ext, "text")
 
 
+def _looks_like_sandbox_policy(text: str) -> bool:
+    """An OpenShell sandbox policy: schema version 1 with network_policies or
+    filesystem/landlock sections at the top level."""
+    head = text[:200000]
+    return bool(re.search(r"(?m)^version\s*:\s*1\s*$", head)
+                and re.search(r"(?m)^(?:network_policies|filesystem_policy|landlock)\s*:", head))
+
+
 def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
     """Classify a file for infrastructure-specific rules."""
     kinds: Set[str] = set()
@@ -250,6 +258,8 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("agent_config")
     if is_mcp_config(rel, text):
         kinds.add("mcp_config")
+    if lang in ("yaml", "json") and _looks_like_sandbox_policy(text):
+        kinds.add("sandbox_policy")
     if _ends_with_path(posix, ".github/dependabot.yml") or _ends_with_path(posix, ".github/dependabot.yaml"):
         kinds.add("dependabot")
     if is_test_path(rel):

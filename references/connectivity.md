@@ -244,6 +244,30 @@ vendored trees, files over `--max-file-bytes`, anything beyond `--max-files`,
 and git symlinks/submodules. These appear in `coverage`. Malformed YAML/JSON
 is recorded as a parse failure and makes coverage `partial`.
 
+## Egress boundary (`egress`)
+
+A committed, structured network allowlist for an AI agent's sandbox is read
+as a **declared boundary**:
+
+- Codex `config.toml`: `features.network_proxy.domains` and
+  `permissions.<name>.network.domains` (`allow` / `deny`), with a note when
+  `features.network_proxy.enabled` is not `true`; `network_access = true`
+  in `[sandbox_workspace_write]` or `mode = "full"` is an open network.
+- Claude Code `.claude/settings*.json`: `sandbox.network.allowedDomains` and
+  `deniedDomains`.
+- OpenShell policies: every `network_policies` endpoint `host` and
+  `allowed_ips` (default deny).
+
+It is compared with the resolved hosts the map reaches (any principal,
+including AI agents and MCP servers), in both directions, with the evidence
+tier of the best path: **outside** (a reached host no allowlist admits, or
+one a deny list names), **unused** (an allowed entry nothing mapped reaches;
+tooling such as package registries may still need it), and **wildcards**.
+With no allowlist committed, `egress.state` is `unknown`: the reachable
+network is not known, which is not the same as open. Whether a sandbox
+enforces its allowlist at runtime is not verified; `--redact` keeps only the
+counts.
+
 ## Redaction and safety
 
 - Before anything is hashed, displayed, or stored, URLs lose userinfo, query,

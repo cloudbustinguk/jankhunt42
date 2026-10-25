@@ -169,9 +169,9 @@ class CliPassport(unittest.TestCase):
 
     def test_declared_owner(self):
         os.remove(os.path.join(self.root, "CODEOWNERS"))
-        cfg = json.load(open(os.path.join(self.root, ".jankhunt42.json")))
+        cfg = _util.read_json(os.path.join(self.root, ".jankhunt42.json"))
         cfg["passport"]["owners"] = ["team-ledger"]
-        json.dump(cfg, open(os.path.join(self.root, ".jankhunt42.json"), "w"))
+        _util.write_json(os.path.join(self.root, ".jankhunt42.json"), cfg)
         _, p = self.pp()
         self.assertEqual(p["ownership"]["state"], "declared")
 
@@ -180,7 +180,7 @@ class CliPassport(unittest.TestCase):
                 "subject": [{"name": "app.tar.gz", "digest": {"sha256": "ab" * 32}}],
                 "predicateType": "https://slsa.dev/provenance/v1", "predicate": {}}
         os.makedirs(os.path.join(self.root, "attest"))
-        json.dump(stmt, open(os.path.join(self.root, "attest", "provenance.intoto.json"), "w"))
+        _util.write_json(os.path.join(self.root, "attest", "provenance.intoto.json"), stmt)
         _, p = self.pp()
         self.assertEqual(p["provenance"]["state"], "observed")
         d = p["subject"]["artifact_digests"][0]
@@ -189,11 +189,11 @@ class CliPassport(unittest.TestCase):
     def test_policy_inside_repo_is_tighten_only(self):
         pol = {"actions": {"P-DAT-002": "off", "P-JNK-001": "off"}}
         path = os.path.join(self.root, "policy.json")
-        json.dump(pol, open(path, "w"))
+        _util.write_json(path, pol)
         _, inside = self.pp("--policy", path)
         self.assertIn("P-DAT-002", [x["rule"] for x in inside["assessment"]["decision"]["reasons"]])
         outside = os.path.join(self.tmp, "operator.json")
-        json.dump(pol, open(outside, "w"))
+        _util.write_json(outside, pol)
         _, op = self.pp("--policy", outside)
         self.assertNotIn("P-JNK-001", [x["rule"] for x in op["assessment"]["decision"]["reasons"]])
         self.assertEqual(op["assessment"]["decision"]["policy"]["sources"][1]["kind"], "operator-supplied")
@@ -262,7 +262,7 @@ class Schemas(unittest.TestCase):
             root = os.path.join(tmp, "demo")
             shutil.copytree(os.path.join(_util.FIXTURES, "demo-app"), root)
             for cmd, name in (("map", "map.schema.json"), ("passport", "passport.schema.json")):
-                schema = json.load(open(os.path.join(_util.ROOT, "templates", name)))
+                schema = _util.read_json(os.path.join(_util.ROOT, "templates", name))
                 data = json.loads(run_cli(cmd, root, "--json").stdout)
                 self.check(schema, data)
         finally:

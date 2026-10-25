@@ -1011,17 +1011,22 @@ def diff(base: Dict[str, Any], head: Dict[str, Any]) -> Dict[str, Any]:
     for key in sorted(set(bc) | set(hc)):
         before = bc.get(key, {})
         after = hc.get(key, {})
-        bmax = max((CAP_RANK[c] for c in before), default=-2)
-        amax = max((CAP_RANK[c] for c in after), default=-2)
-        new_caps = sorted(set(after) - set(before))
         if not before:
             continue
-        if amax > bmax or (new_caps and amax >= bmax and any(CAP_RANK[c] > bmax for c in new_caps)):
-            escalations.append({"source": key[0], "target": key[1], "identity_ref": key[2] or None,
-                                "before": sorted(before), "after": sorted(after)})
-        elif after and amax < bmax:
-            reductions.append({"source": key[0], "target": key[1], "identity_ref": key[2] or None,
-                               "before": sorted(before), "after": sorted(after)})
+        # Unknown capability is possibly anything, never "less than read": a
+        # change to unknown is a possible escalation, never a reduction, and a
+        # capability becoming known is compared with what was known before.
+        bmax = max((CAP_RANK[c] for c in before if c != "unknown"), default=-2)
+        amax = max((CAP_RANK[c] for c in after if c != "unknown"), default=-2)
+        became_unknown = "unknown" in after and "unknown" not in before and bmax < CAP_RANK["admin"]
+        entry = {"source": key[0], "target": key[1], "identity_ref": key[2] or None,
+                 "before": sorted(before), "after": sorted(after)}
+        if amax > bmax:
+            escalations.append(dict(entry, was_unknown=True) if "unknown" in before and bmax < 0 else entry)
+        elif became_unknown:
+            escalations.append(dict(entry, possible=True))
+        elif after and amax < bmax and "unknown" not in after:
+            reductions.append(entry)
     # Newly reachable assets per principal and impact.
     newly: List[Dict[str, Any]] = []
     br_b = base.get("assessment", {}).get("blast_radius", {})
@@ -1115,6 +1120,12 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
         ev["snippet"] = ""
         ev["hash"] = ""
     rep = sub(rep)
+    eg = rep.get("egress")
+    if isinstance(eg, dict) and eg.get("state") == "declared":
+        # hostnames and allowlist entries are topology: keep only the counts
+        rep["egress"] = {"state": "declared", "boundaries": len(eg.get("boundaries", [])),
+                         "outside": len(eg.get("outside", [])), "unused": len(eg.get("unused", [])),
+                         "wildcards": len(eg.get("wildcards", [])), "note": "counts only in the shareable copy"}
     labels = {n["id"]: n["display_label"] for n in rep["graph"]["nodes"]}
     for r in (rep.get("assessment", {}).get("credential_blast_radius") or {}).get("identities", []):
         r["label"] = labels.get(r["identity"], r["identity"])

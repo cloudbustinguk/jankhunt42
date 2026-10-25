@@ -1,4 +1,5 @@
 """Shared helpers for the jankhunt42 unittest suite (stdlib only)."""
+import json
 import os
 import subprocess
 import sys
@@ -37,3 +38,13 @@ def edge(eid, s, t, kind="connects", cap="unknown", ver="observed"):
     return {"id": eid, "source": s, "target": t, "kind": kind, "capability": cap, "identity_ref": None,
             "verification": ver, "confidence": "medium", "source_trust": "repository", "evidence_refs": [],
             "assumptions": [], "trust_boundary": {"domain": None, "environment": None}}
+
+
+def read_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def write_json(path, data):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)

@@ -992,10 +992,10 @@ grep -q "Log triage" "$TMP/report.md" || fail "report missing triage"
 "$PY" - "$TMP/rules.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d) == 96, len(d)
+assert len(d) == 100, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" in ids and "JH101" in ids, ids
-assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 9)}, ids
+assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711"}, ids
 print("rules: %d" % len(d))
 PY
 
@@ -1154,6 +1154,44 @@ set -e
 [ "$rc" = 1 ] || fail "passport --fail-on review should exit 1 on the demo (got $rc)"
 note "map/passport: versioned JSON, offline HTML, enforcement opt-in"
 
+# The citizen pull-request gate recipe: run the template's own command in the
+# layout the workflow checks out (app/, gate/policy, gate/rules, gate/jankhunt42).
+GATE="$TMP/gate-run"
+mkdir -p "$GATE"
+cp -R "$SKILL/tests/fixtures/citizen-gate/app" "$SKILL/tests/fixtures/citizen-gate/gate" "$GATE/"
+ln -s "$SKILL" "$GATE/gate/jankhunt42"
+GATE_CMD="$("$PY" - "$SKILL" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts")
+import jh_yaml
+doc = jh_yaml.load_all(open(sys.argv[1] + "/templates/citizen-gate.yml").read())[0]
+runs = [s["run"] for job in doc["jobs"].values() for s in job["steps"] if "jankhunt42 passport" in str(s.get("run", ""))]
+assert len(runs) == 1, runs
+assert doc["permissions"] == {"contents": "read"}, doc["permissions"]
+print(runs[0].replace("python3 ", sys.executable + " ", 1) if not sys.argv[1:] else runs[0])
+PY
+)" || fail "could not read the gate command from templates/citizen-gate.yml"
+set +e
+(cd "$GATE" && REPO=app PYTHON="$PY" bash -c "${GATE_CMD/python3 /$PY }" > "$TMP/gate-pass.md" 2>&1); rc=$?
+set -e
+[ "$rc" = 0 ] || { cat "$TMP/gate-pass.md" >&2; fail "citizen gate should pass the compliant fixture (exit $rc)"; }
+printf 'registry=https://registry.npmjs.org/\n' > "$GATE/app/.npmrc"
+set +e
+(cd "$GATE" && REPO=app bash -c "${GATE_CMD/python3 /$PY }" > "$TMP/gate-block.md" 2>&1); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "citizen gate should block a public registry (exit $rc)"
+grep -q 'P-SUP-001' "$TMP/gate-block.md" || fail "the blocked gate run does not name P-SUP-001"
+printf 'registry=https://registry.internal.example/api/npm/npm-remote/\n' > "$GATE/app/.npmrc"
+# the rules/branches export omits bypass actors: change control is then unknown
+"$PY" -c 'import json, sys; d = json.load(open(sys.argv[1])); json.dump(d["rulesets"][0]["rules"], open(sys.argv[1], "w"))' \
+  "$GATE/gate/rules/app.json"
+set +e
+(cd "$GATE" && REPO=app bash -c "${GATE_CMD/python3 /$PY }" > "$TMP/gate-unknown.md" 2>&1); rc=$?
+set -e
+[ "$rc" = 1 ] || fail "citizen gate should fail when change control is unknown (exit $rc)"
+grep -q 'P-CHG-001' "$TMP/gate-unknown.md" || fail "the unknown gate run does not name P-CHG-001"
+note "citizen gate: template command passes the compliant fixture, fails an unapproved registry and unknown change control"
+
 # ---------------------------------------------------------------------------
 # Docs and packaging sanity
 # ---------------------------------------------------------------------------
@@ -1165,7 +1203,8 @@ for doc in "$SKILL/SKILL.md" "$SKILL/README.md" "$SKILL/CHANGELOG.md" \
            "$SKILL/templates/hunt-report.md" "$SKILL/templates/panel-finding.json" \
            "$SKILL/templates/review-receipt.schema.json" \
            "$SKILL/references/connectivity.md" "$SKILL/references/passport.md" \
-           "$SKILL/templates/map.schema.json" "$SKILL/templates/passport.schema.json"; do
+           "$SKILL/templates/map.schema.json" "$SKILL/templates/passport.schema.json" \
+           "$SKILL/templates/citizen-gate.yml"; do
   [ -s "$doc" ] || fail "missing or empty doc: $doc"
 done
 grep -q '^license: MIT' "$SKILL/SKILL.md" || fail "SKILL.md missing top-level license"

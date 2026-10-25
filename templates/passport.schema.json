@@ -457,6 +457,245 @@
           "description": "quoted NIST AI RMF subcategory statements cited by the triggered rules"
         }
       }
+    },
+    "egress": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "declared",
+            "unknown"
+          ]
+        },
+        "outside": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "unused": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "wildcards": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "boundaries": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        }
+      }
+    },
+    "change_control": {
+      "type": "object",
+      "required": [
+        "state",
+        "checks"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "provider-verified",
+            "declared",
+            "unknown"
+          ]
+        },
+        "checks": {
+          "type": "object",
+          "properties": {
+            "pull_request_review": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "code_owner_review": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "last_push_approval": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "status_checks": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "deletion_protected": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "force_push_protected": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "no_app_bypass": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            },
+            "codeowners_coverage": {
+              "type": "object",
+              "required": [
+                "state",
+                "detail"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "met",
+                    "not-met",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "package_sources": {
+      "type": "object",
+      "required": [
+        "ecosystems"
+      ],
+      "properties": {
+        "ecosystems": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "state",
+              "sources"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "observed",
+                  "declared",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        },
+        "assessment": {
+          "type": "object",
+          "properties": {
+            "disallowed": {
+              "type": "array"
+            },
+            "unconfigured": {
+              "type": "array"
+            },
+            "allowed_registries": {
+              "type": "array"
+            }
+          }
+        }
+      }
     }
   }
 }

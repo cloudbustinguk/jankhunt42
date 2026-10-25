@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import ipaddress
 import os
 import re
 import subprocess
@@ -659,7 +660,7 @@ _GH_SCRIPT_RE = re.compile(r"^(\s*)(?:-\s*)?(?:run|script)\s*:\s*(.*)$")
 # untrusted input, plus discussions and workflow_run heads).
 _GH_UNTRUSTED_FIELD = (
     r"github\.(?:head_ref|event\.(?:"
-    r"pull_request\.head\.(?:ref|sha|label|repo\.default_branch)|"
+    r"pull_request\.head\.(?:ref|label|repo\.default_branch)|"
     r"(?:issue|pull_request|comment|review|review_comment|discussion)\.(?:title|body)|"
     r"head_commit\.(?:message|author\.(?:name|email))|"
     r"commits(?:\[\d+\]|\.\*)\.(?:message|author\.(?:name|email))|"
@@ -939,7 +940,9 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                 in_code = code[m.start():m.end()] == m.group(1)
                 read = re.search(r"(?:\benv\.|\benv\s*\[\s*[\"'`])$", line[:m.start()])
                 key = sf.lang in ("json", "yaml", "toml", "docker") and re.match(r"""\s*["']?\s*[:=]""", line[m.end():])
-                if not (in_code or read or key):
+                # a bare identifier is a local name unless the line reads the environment
+                env_line = re.search(r"process\.env|import\.meta\.env|\$env/|\benv\b", line)
+                if not (read or key or (in_code and (env_line or sf.lang in ("html", "docker")))):
                     continue
                 if not _PUBLIC_BY_DESIGN.search(m.group(1)):
                     hit = (m.group(1), "is named as a secret")
@@ -988,14 +991,19 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
     base = sf.basename.lower()
     out: List[Finding] = []
     if base.endswith(".rules") or base == "firestore.rules":
+        if is_test_path(sf.rel) or ".test." in base or "emulator" in sf.rel.lower():
+            return []                   # emulator and test rules never reach production
         # Firebase security rules: an unconditional or `if true` allow is open to the internet.
         for i, raw in enumerate(sf.raw):
             line = re.sub(r"//.*$", "", raw)
             for m in _RULES_ALLOW_RE.finditer(line):
                 cond = (m.group(2) or "").strip()
                 if not cond or cond == "true":
-                    out.append(make_finding(rule, sf, i + 1, message=(
-                        "This rule allows %s to anyone on the internet, signed in or not." % m.group(1).strip())))
+                    ops = {o.strip() for o in m.group(1).split(",")}
+                    read_only = ops <= {"read", "get", "list"}
+                    out.append(make_finding(rule, sf, i + 1, severity="major" if read_only else None, message=(
+                        "This rule allows %s to anyone on the internet, signed in or not%s." % (
+                            m.group(1).strip(), "; confirm the data is meant to be public" if read_only else ""))))
                 elif re.match(r"request\.time\s*<\s*timestamp\.date\(", cond):
                     out.append(make_finding(rule, sf, i + 1, severity="major", message=(
                         "A test-mode rule leaves %s open to anyone until its date passes." % m.group(1).strip())))
@@ -1004,7 +1012,7 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
         for i, line in enumerate(sf.nocomment):
             m = re.search(r"""["']\.(read|write)["']\s*:\s*(?:true\b|["']true["'])""", line)
             if m:
-                out.append(make_finding(rule, sf, i + 1, message=(
+                out.append(make_finding(rule, sf, i + 1, severity="major" if m.group(1) == "read" else None, message=(
                     "Realtime Database rules let anyone %s this path." % m.group(1))))
         return out[:10]
     if sf.lang == "sql":
@@ -1298,6 +1306,261 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
+# ---------------------------------------------------------------- agent sandboxes (JH709-JH711)
+
+# Shared multi-tenant domains: a wildcard there reaches hosts anyone can create.
+_SHARED_TENANT = (".amazonaws.com", ".cloudfront.net", ".azurewebsites.net", ".blob.core.windows.net",
+                  ".windows.net", ".googleapis.com", ".appspot.com", ".run.app", ".cloudfunctions.net",
+                  ".herokuapp.com", ".vercel.app", ".netlify.app", ".pages.dev", ".workers.dev", ".github.io",
+                  ".githubusercontent.com", ".ngrok.io", ".ngrok-free.app", ".trycloudflare.com", ".firebaseapp.com",
+                  ".web.app", ".r2.dev", ".supabase.co", ".fly.dev", ".onrender.com", ".repl.co", ".glitch.me")
+_SANDBOX_ESCAPE_CMDS = re.compile(r"^(?:\*|\*\*|(?:ba|z|da|fi)?sh|python3?|node|deno|bun|ruby|perl|php|docker|podman|"
+                                  r"sudo|su|env|xargs|npx|uvx|pnpx|bunx|curl|wget|nc|ncat|ssh|scp|rsync|kubectl|gh|aws|"
+                                  r"gcloud|az)(?:\s+\*+)?$")
+_CRED_PATHS = re.compile(r"^(?:/|~|~/|/home/?|/root/?|\$HOME/?|~/\.(?:ssh|aws|azure|config/gcloud|kube|docker|gnupg|"
+                         r"npmrc|netrc|git-credentials)(?:/.*)?)$")
+
+
+def _wild_host(host: str) -> Optional[str]:
+    """Why a host pattern is too broad, or None."""
+    h = host.strip().lower().split(":")[0]
+    if h in ("*", "**", "*.*", "**.*"):
+        return "every host"
+    if "*" not in h:
+        return None
+    base = "." + h.lstrip("*.")
+    if base.count(".") <= 1:
+        return "every name under the top-level domain %s" % base
+    if any(base == s or base.endswith(s) for s in _SHARED_TENANT):
+        return "every tenant of the shared domain %s, where anyone can create a host" % base
+    return None
+
+
+def _private_cidr(entry: str) -> Optional[str]:
+    e = entry.strip().lower()
+    if e in ("0.0.0.0/0", "::/0", "0.0.0.0", "*"):
+        return "every address"
+    try:
+        net = ipaddress.ip_network(e, strict=False)
+    except ValueError:
+        return None
+    shared = net.version == 4 and net.subnet_of(ipaddress.ip_network("100.64.0.0/10"))   # carrier-grade NAT
+    return "a private network range" if net.is_private or shared else None
+
+
+def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
+    """(line, section, key, raw value) for simple TOML key = value lines."""
+    section = ""
+    for i, line in enumerate(sf.nocomment):
+        m = re.match(r"^\s*\[\s*([^\]]+?)\s*\]\s*$", line)
+        if m:
+            section = m.group(1).replace('"', "").replace("'", "")
+            continue
+        m = re.match(r"""^\s*("[^"]*"|'[^']*'|[\w.\-*]+)\s*=\s*(.+?)\s*$""", line)
+        if m:
+            yield i + 1, section, m.group(1).strip("\"'"), m.group(2)
+
+
+def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
+    out: List[Finding] = []
+    for line, section, key, value in _toml_sections(sf):
+        v = value.strip().strip("\"'").lower()
+        if section == "sandbox_workspace_write" and key == "network_access" and v == "true":
+            out.append(make_finding(rule, sf, line, message=(
+                "Codex's workspace-write sandbox lets every command reach any host on the network.")))
+        elif (section.endswith("network_proxy.domains") or re.search(r"(?:^|\.)network\.domains$", section)) \
+                and v == "allow" and _wild_host(key):
+            out.append(make_finding(rule, sf, line, message=(
+                "The Codex network allowlist admits %s." % _wild_host(key))))
+        elif re.match(r"^permissions\.[^.]+\.network$", section) and key == "mode" and v == "full":
+            out.append(make_finding(rule, sf, line, message=(
+                "Codex permission profile '%s' gives commands full network access." % section.split(".")[1])))
+        elif not section and key == "default_permissions" and v == ":danger-full-access":
+            out.append(make_finding(rule, sf, line, message=(
+                "Codex's default permission profile has no filesystem or network sandbox.")))
+        elif re.search(r"network_proxy$", section) and key == "domains" and re.search(r"""["']\*["']\s*=\s*["']allow""", value):
+            out.append(make_finding(rule, sf, line, message="The Codex network allowlist admits every host."))
+    return out[:10]
+
+
+def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
+    data = _settings(sf)
+    box = data.get("sandbox") if isinstance(data, dict) else None
+    if not isinstance(box, dict):
+        return []
+    out: List[Finding] = []
+
+    def add(key: str, message: str, severity: Optional[str] = None) -> None:
+        out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % key)), message=message,
+                                severity=severity or rule.severity))
+
+    net = box.get("network") if isinstance(box.get("network"), dict) else {}
+    for d in net.get("allowedDomains") if isinstance(net.get("allowedDomains"), list) else []:
+        why = _wild_host(str(d))
+        if why:
+            add("allowedDomains", "The Claude Code sandbox pre-allows %s (%s)." % (why, trim(str(d), 40)))
+            break
+    if net.get("allowAllUnixSockets") is True:
+        add("allowAllUnixSockets", "Sandboxed commands can connect to every Unix socket, including the Docker "
+                                   "socket, which controls the host.")
+    for p in net.get("allowUnixSockets") if isinstance(net.get("allowUnixSockets"), list) else []:
+        if "docker.sock" in str(p) or "podman" in str(p):
+            add("allowUnixSockets", "Sandboxed commands can use the container engine socket (%s), which controls "
+                                    "the host." % trim(str(p), 50))
+            break
+    for c in box.get("excludedCommands") if isinstance(box.get("excludedCommands"), list) else []:
+        if _SANDBOX_ESCAPE_CMDS.match(str(c).strip()):
+            add("excludedCommands", "'%s' runs outside the Claude Code sandbox; it can run any other program "
+                                    "unsandboxed." % trim(str(c), 30))
+            break
+    fs = box.get("filesystem") if isinstance(box.get("filesystem"), dict) else {}
+    for p in fs.get("allowWrite") if isinstance(fs.get("allowWrite"), list) else []:
+        if _CRED_PATHS.match(str(p).strip().rstrip("/") or "/"):
+            add("allowWrite", "Sandboxed commands can write to %s (home, root, or credential paths)." % trim(str(p), 40))
+            break
+    if box.get("enableWeakerNestedSandbox") is True:
+        add("enableWeakerNestedSandbox", "The nested Linux sandbox shares the container's /proc; it is weaker by "
+                                         "design and relies on the outer container.", "minor")
+    return out[:10]
+
+
+def _openshell_docs(sf: SourceFile) -> List[Dict[str, Any]]:
+    try:
+        docs = jh_yaml.load_all(sf.text) if sf.lang == "yaml" else [jh_agent.loads_jsonc(sf.text)]
+    except (jh_yaml.YamlError, ValueError):
+        return []
+    return [d for d in docs if isinstance(d, dict)]
+
+
+def _endpoints(doc: Dict[str, Any]) -> Iterator[Tuple[str, Dict[str, Any], List[Any]]]:
+    pols = doc.get("network_policies") if isinstance(doc.get("network_policies"), dict) else {}
+    for name, pol in pols.items():
+        if not isinstance(pol, dict):
+            continue
+        bins = pol.get("binaries") if isinstance(pol.get("binaries"), list) else []
+        for ep in pol.get("endpoints") if isinstance(pol.get("endpoints"), list) else []:
+            if isinstance(ep, dict):
+                yield str(name), ep, bins
+
+
+@check("agent_sandbox_scope")
+def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
+    posix = "/" + sf.rel.lower()
+    if posix.endswith(".codex/config.toml"):
+        return _codex_sandbox(sf, rule)
+    if "/.claude/settings" in posix:
+        return _claude_sandbox(sf, rule)
+    if "sandbox_policy" not in sf.kinds:
+        return []
+    out: List[Finding] = []
+    for doc in _openshell_docs(sf):
+        seen_bins = set()
+        for name, ep, bins in _endpoints(doc):
+            for b in bins:
+                path = str(b.get("path") if isinstance(b, dict) else b).strip()
+                if path in ("/**", "/*", "**", "*", "/usr/**", "/usr/bin/*") and name not in seen_bins:
+                    seen_bins.add(name)
+                    out.append(make_finding(rule, sf, _line_matching(sf, re.escape(path)), message=(
+                        "Network rule '%s' applies to every executable (%s), not to the binaries that need it."
+                        % (trim(name, 40), path))))
+            host = str(ep.get("host") or "")
+            why = _wild_host(host) if host else None
+            if why:
+                out.append(make_finding(rule, sf, _line_matching(sf, re.escape(host)), message=(
+                    "Network rule '%s' allows %s (%s)." % (trim(name, 40), why, trim(host, 50)))))
+            for ip in ep.get("allowed_ips") if isinstance(ep.get("allowed_ips"), list) else []:
+                why_ip = _private_cidr(str(ip))
+                if why_ip:
+                    out.append(make_finding(rule, sf, _line_matching(sf, re.escape(str(ip))), message=(
+                        "Network rule '%s' lets the sandbox reach %s (%s)." % (trim(name, 40), why_ip, ip))))
+                    break
+            if ep.get("access") == "full" and (why or not host):
+                out.append(make_finding(rule, sf, _line_matching(sf, r"access\s*:\s*full"), message=(
+                    "Network rule '%s' gives full read-write access on a wildcard or hostless endpoint." % trim(name, 40))))
+    return out[:10]
+
+
+@check("agent_sandbox_enforcement")
+def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
+    out: List[Finding] = []
+    for doc in _openshell_docs(sf):
+        land = doc.get("landlock")
+        if isinstance(land, dict) and land.get("compatibility") == "best_effort":
+            out.append(make_finding(rule, sf, _line_matching(sf, r"compatibility\s*:\s*best_effort"), message=(
+                "Landlock is best_effort: if it cannot be applied, the sandbox runs without its filesystem rules.")))
+        elif doc.get("filesystem_policy") is not None and land is None:
+            out.append(make_finding(rule, sf, _line_matching(sf, r"^filesystem_policy\s*:"), severity="minor", message=(
+                "No landlock section: the default is best_effort, so the filesystem rules are skipped when Landlock "
+                "cannot be applied; set compatibility: hard_requirement.")))
+        implicit = []
+        for name, ep, _ in _endpoints(doc):
+            label = trim(name, 40)
+            if ep.get("enforcement") == "audit":
+                out.append(make_finding(rule, sf, _line_matching(sf, r"enforcement\s*:\s*audit"), message=(
+                    "Network rule '%s' is in audit mode: requests that break its rules are logged and allowed." % label)))
+            elif ep.get("protocol") not in (None, "tcp") and "enforcement" not in ep:
+                implicit.append(label)
+            if ep.get("tls") == "skip":
+                out.append(make_finding(rule, sf, _line_matching(sf, r"tls\s*:\s*skip"), message=(
+                    "Network rule '%s' relays TLS without inspection, so its request rules cannot apply." % label)))
+            if ep.get("allow_uninspected_credentials") is True:
+                out.append(make_finding(rule, sf, _line_matching(sf, r"allow_uninspected_credentials"), message=(
+                    "Network rule '%s' sends brokered credentials over a connection OpenShell does not inspect." % label)))
+        if implicit:
+            out.append(make_finding(rule, sf, _line_matching(sf, r"protocol\s*:"), severity="minor", message=(
+                "%d inspected endpoint(s) omit enforcement, which defaults to audit (log and allow): %s."
+                % (len(implicit), ", ".join(implicit[:3])))))
+        mws = doc.get("network_middlewares") if isinstance(doc.get("network_middlewares"), dict) else {}
+        for name, mw in mws.items():
+            if isinstance(mw, dict) and mw.get("on_error") == "fail_open":
+                out.append(make_finding(rule, sf, _line_matching(sf, r"on_error\s*:\s*fail_open"), severity="minor",
+                                        message="Middleware '%s' fails open: traffic passes uninspected when it errors."
+                                        % trim(str(name), 40)))
+    return out[:10]
+
+
+_DC_FLAGS = (
+    (re.compile(r"^--privileged(?:=true)?$"), "runs privileged, with every capability and host devices"),
+    (re.compile(r"^--(?:network|net)(?:=|\s+)host$"), "shares the host network"),
+    (re.compile(r"^--pid(?:=|\s+)host$"), "shares the host process namespace"),
+    (re.compile(r"^--cap-add(?:=|\s+)(?:SYS_ADMIN|ALL|SYS_PTRACE|NET_ADMIN)$", re.I), "adds a host-level capability"),
+    (re.compile(r"^--security-opt(?:=|\s+)(?:seccomp|apparmor)[=:]unconfined$"), "turns off seccomp or AppArmor"),
+)
+
+
+@check("devcontainer_isolation")
+def devcontainer_isolation(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if not sf.rel.lower().endswith("devcontainer.json"):
+        return []
+    data = _settings(sf)
+    if data is None:
+        return []
+    out: List[Finding] = []
+    args = [str(a) for a in data.get("runArgs") if isinstance(a, (str, int))] if isinstance(data.get("runArgs"), list) else []
+    joined = [" ".join(args[i:i + 2]) for i in range(len(args))] + args
+    reported = set()
+    for rx, why in _DC_FLAGS:
+        for a in joined:
+            if rx.match(a.strip()) and why not in reported:
+                reported.add(why)
+                out.append(make_finding(rule, sf, _line_matching(sf, re.escape(a.split()[0])), message=(
+                    "The dev container %s (%s)." % (why, trim(a, 40)))))
+    if data.get("privileged") is True and "runs privileged, with every capability and host devices" not in reported:
+        out.append(make_finding(rule, sf, _line_matching(sf, r'"privileged"'), message=(
+            "The dev container runs privileged, with every capability and host devices.")))
+    for cap in data.get("capAdd") if isinstance(data.get("capAdd"), list) else []:
+        if str(cap).upper() in ("SYS_ADMIN", "ALL", "SYS_PTRACE", "NET_ADMIN"):
+            out.append(make_finding(rule, sf, _line_matching(sf, r'"capAdd"'), message=(
+                "The dev container adds the %s capability." % str(cap).upper())))
+            break
+    mounts = " ".join(str(m) for m in data.get("mounts") if isinstance(m, (str, dict))) if isinstance(data.get("mounts"), list) else ""
+    if "docker.sock" in mounts + " ".join(args):
+        out.append(make_finding(rule, sf, _line_matching(sf, r"docker\.sock"), message=(
+            "The dev container mounts the host Docker socket: anything inside it can start a privileged container "
+            "on the host.")))
+    return out[:10]
+
+
 # Model API endpoints and code loaded into the agent are major; proxies and
 # extra CAs are common in managed networks, so they are flagged for review.
 _REROUTE_ENV = {"ANTHROPIC_BASE_URL": "major", "ANTHROPIC_BEDROCK_BASE_URL": "major",
@@ -1467,6 +1730,76 @@ def _grants_write(perms: Any) -> bool:
     if isinstance(perms, str):
         return perms == "write-all"
     return isinstance(perms, dict) and any(v == "write" for v in perms.values())
+
+
+def _grants_write_explicit(perms: Any) -> bool:
+    """Write access stated in the workflow (unset permissions are not visible here)."""
+    if isinstance(perms, str):
+        return perms == "write-all"
+    return isinstance(perms, dict) and any(v == "write" for v in perms.values())
+
+
+# branch prefixes AI coding agents push to (Claude, Copilot, Codex, Cursor, Devin, generic)
+_AGENT_BRANCH_RE = re.compile(r"^(?:claude|copilot|codex|cursor|devin|agent|agents|ai|bot|bots|jules|opencode)[/-]", re.I)
+_SCOPED_JOB_IF_RE = re.compile(r"refs/heads/|github\.ref_name\s*==|github\.ref\s*==|startsWith\(\s*github\.ref,\s*'refs/tags")
+
+
+def _push_any_branch(on: Any) -> Optional[str]:
+    """How a workflow's push trigger reaches unreviewed branches, or None."""
+    if isinstance(on, (str, list)):
+        return "push to any branch" if "push" in _events(on) else None
+    if not isinstance(on, dict) or "push" not in on:
+        return None
+    push = on.get("push")
+    if not isinstance(push, dict) or not push:
+        return "push to any branch"
+    branches = push.get("branches")
+    if branches is None:
+        if push.get("branches-ignore") is not None:
+            return "push to any branch not ignored"
+        return None if push.get("tags") is not None else "push to any branch"
+    for b in branches if isinstance(branches, list) else [branches]:
+        b = str(b).strip()
+        if b in ("*", "**", "**/*", "*/**") or b.startswith("*"):
+            return "push to any branch matching %s" % b
+        if _AGENT_BRANCH_RE.match(b):
+            return "push to agent branches %s" % b
+    return None
+
+
+@check("gh_branch_push_privileged")
+def gh_branch_push_privileged(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """Agent-branch CI: a push to any (or an agent's) branch runs a job holding
+    secrets or an explicitly write-scoped token. A job pinned to a branch with
+    `if:` or guarded by an environment is not flagged."""
+    if "push" not in sf.text:
+        return []
+    try:
+        docs = jh_yaml.load_all(sf.text)
+    except jh_yaml.YamlError:
+        return []
+    doc = docs[0] if docs and isinstance(docs[0], dict) else {}
+    how = _push_any_branch(doc.get("on", doc.get(True)))
+    if not how:
+        return []
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    for name, job in jobs.items():
+        if not isinstance(job, dict) or job.get("environment") or _SCOPED_JOB_IF_RE.search(str(job.get("if") or "")):
+            continue
+        perms = job.get("permissions", doc.get("permissions"))
+        body = str(job) + str(doc.get("env") or "")
+        secrets = sorted(set(re.findall(r"secrets\.(?!GITHUB_TOKEN\b)(\w+)", body)))
+        if job.get("secrets") == "inherit":
+            secrets = secrets or ["(all, inherited)"]
+        write = _grants_write_explicit(perms)
+        if not (secrets or write):
+            continue
+        power = ", ".join(filter(None, ["secrets %s" % ", ".join(secrets[:3]) if secrets else "",
+                                        "a write-scoped GITHUB_TOKEN" if write else ""]))
+        return [make_finding(rule, sf, _line_matching(sf, r"^\s*%s\s*:" % re.escape(str(name))), message=(
+            "Job '%s' runs on %s with %s; code on a branch nobody has reviewed runs with that power."
+            % (trim(str(name), 40), how, power)), extra={"trigger": how, "job": str(name)})]
+    return []
 
 
 @check("gh_agent_prompt")

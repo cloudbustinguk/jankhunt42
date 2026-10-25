@@ -277,6 +277,7 @@ class _Net:
                 resp = _open(urllib.request.Request(url, headers=headers), HTTP_TIMEOUT)
             except urllib.error.HTTPError as exc:
                 location = exc.headers.get("Location") if exc.headers else None
+                exc.close()                     # an HTTPError holds the open response
                 if exc.code in (301, 302, 303, 307, 308) and location:
                     url = urllib.parse.urljoin(url, location)
                     continue

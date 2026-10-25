@@ -145,7 +145,7 @@ svg{width:100%;height:100%;display:block}
 .inspector dl,.card dl{display:grid;grid-template-columns:110px 1fr;gap:3px 8px;margin:0}.inspector dt,.card dt{color:var(--muted)}.inspector dd,.card dd{margin:0;word-break:break-word}
 .ev{border-top:1px solid var(--line);padding:6px 0}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:0 7px;font-size:11.5px;margin-right:4px}
 .st-provider-verified,.st-verified{color:var(--green)}.st-observed,.st-supported{color:var(--cyan)}.st-declared{color:var(--violet)}
-.st-inferred{color:var(--yellow)}.st-unknown,.st-not-observed,.st-refuted{color:var(--grey)}
+.st-inferred{color:var(--yellow)}.st-unknown,.st-not-observed,.st-refuted{color:var(--grey)}.st-failed{color:var(--red)}
 table.grid{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden}
 .grid th,.grid td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}.grid th{color:var(--muted);font-weight:600}.grid td.mono{white-space:nowrap}
 .grid tr[tabindex]:hover{background:var(--panel2);cursor:pointer}
@@ -292,6 +292,10 @@ if(DATA.warnings.length){sc=section(cv,'warnings');ul=add(sc,el('ul'));DATA.warn
 sc=section(cv,'highest-impact paths');ul=add(sc,el('ul'));
 Object.keys(ass.blast_radius).forEach(p=>(ass.blast_radius[p].drivers||[]).slice(0,6).forEach(d=>{const li=add(ul,el('li'));add(li,el('b',{class:'lvl-'+d.level},d.level+' '));
   li.appendChild(document.createTextNode(d.impact+' ('+d.tier+') '+byId[p].display_label+' → '+(byId[d.node]?byId[d.node].display_label:d.node)+': '+d.why));}));
+const EG=DATA.egress||{};if(EG.state==='declared'&&Array.isArray(EG.boundaries)){sc=section(cv,'egress boundary (declared allowlists vs reached hosts)');
+  add(sc,el('p',{class:'muted'},EG.note||''));ul=add(sc,el('ul'));EG.boundaries.forEach(b=>add(ul,el('li',null,b.tool+' '+b.path+':'+b.line+': '+b.allow.length+' allowed, '+b.deny.length+' denied'+(b.note?' ('+b.note+')':''))));
+  EG.outside.forEach(o=>{const li=add(ul,el('li'));li.appendChild(badge('outside','st-failed'));li.appendChild(document.createTextNode(' '+o.host+' ('+o.tier+', reached by '+o.reached_by.join(', ')+'): '+o.why));});
+  if(EG.wildcards.length)add(ul,el('li',null,'wildcards: '+EG.wildcards.join(', ')));if(EG.unused.length)add(ul,el('li',null,'allowed but unused by the mapped code: '+EG.unused.join(', ')));}
 const CBR=((ass.credential_blast_radius||{}).identities||[]).filter(r=>r.mutating.length||r.flags.some(f=>f!=='holder-not-visible'));
 if(CBR.length){sc=section(cv,'credential blast radius (what each identity unlocks; informational)');ul=add(sc,el('ul'));
   const lbl=id=>byId[id]?byId[id].display_label:id;
@@ -356,6 +360,15 @@ s=sec('provenance');add(s,el('p',null,P.provenance.sboms+' SBOM(s), '+(P.provena
 ul=add(s,el('ul'));(P.subject.artifact_digests||[]).forEach(d=>add(ul,el('li',{class:'mono'},d.digest+' — '+d.verification)));
 s=sec('data sources ('+(P.data.sources||[]).length+')');const t3=add(s,el('table',{class:'grid'}));const h3=add(add(t3,el('thead')),el('tr'));['source','kind','sensitivity','criticality','environment','trust'].forEach(x=>add(h3,el('th',null,x)));
 const tb3=add(t3,el('tbody'));(P.data.sources||[]).forEach(d=>{const tr=add(tb3,el('tr'));[d.label,d.kind,d.sensitivity,d.criticality,d.environment,d.trust_domain].forEach(v=>add(tr,el('td',null,v)));});
+const CC=P.change_control;if(CC){s=sec('change control (default branch)');add(s,el('p',{class:'muted'},'evidence: '+CC.state+(CC.source&&CC.source.label?' ('+CC.source.label+')':'')+'. '+(CC.note||'')));
+  const tc=add(s,el('table',{class:'grid'}));const tbc=add(tc,el('tbody'));Object.keys(CC.checks).forEach(k=>{const tr=add(tbc,el('tr'));add(tr,el('td',null,k.replace(/_/g,' ')));
+   const td=add(tr,el('td'));td.appendChild(badge(CC.checks[k].state,'st-'+(CC.checks[k].state==='met'?'observed':CC.checks[k].state==='not-met'?'failed':'unknown')));add(tr,el('td',null,CC.checks[k].detail));});
+  (CC.notes||[]).forEach(n=>add(s,el('p',{class:'muted'},n)));}
+const PK=P.package_sources;if(PK&&Object.keys(PK.ecosystems||{}).length){s=sec('package sources');add(s,el('p',{class:'muted'},PK.note||''));
+  const tp=add(s,el('table',{class:'grid'}));const hp=add(add(tp,el('thead')),el('tr'));['ecosystem','state','sources'].forEach(x=>add(hp,el('th',null,x)));const tbp=add(tp,el('tbody'));
+  Object.keys(PK.ecosystems).forEach(k=>{const v=PK.ecosystems[k];const tr=add(tbp,el('tr'));add(tr,el('td',null,k));add(tr,el('td',null,v.state));
+   add(tr,el('td',null,(v.sources||[]).map(x=>x.url+' ('+x.kind+')').join(', ')||('not configured; default '+v.default_if_unconfigured)));});
+  const A=PK.assessment||{};if((A.allowed_registries||[]).length)add(s,el('p',null,'outside the allowed registries: '+(((A.disallowed||[]).map(x=>x.url)).join(', ')||'none')));}
 if((G.agent.servers||[]).length){s=sec('AI agent tooling ('+G.agent.servers.length+' MCP server(s))');add(s,el('p',{class:'muted'},'what an agent session in this repository is wired to; each server decides at runtime what its tools can do'));
   const t4=add(s,el('table',{class:'grid'}));const h4=add(add(t4,el('thead')),el('tr'));['server','transport','pinned','credentials','reaches'].forEach(x=>add(h4,el('th',null,x)));
   const tb4=add(t4,el('tbody'));G.agent.servers.forEach(v=>{const tr=add(tb4,el('tr'));[v.name,v.transport,v.pinned===null||v.pinned===undefined?'n/a':(v.pinned?'yes':'no'),(v.credentials||[]).join(', ')||'none',(v.reaches||[]).join(', ')||'-'].forEach(x=>add(tr,el('td',null,x)));});}

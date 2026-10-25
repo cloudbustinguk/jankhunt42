@@ -4,6 +4,111 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.6.0] — 2026-10-25
+
+Static containment evidence: who can merge, what an agent's sandbox can
+reach, and where packages come from.
+
+### Added
+
+- **Change control** (passport `change_control`, rule `P-CHG-001`): can code
+  reach the default branch without an independent human review?
+  - Evidence comes from `passport --branch-rules FILE`, the repository's
+    rulesets or branch protection exported from the GitHub REST API. It is
+    provider-verified only outside the repository.
+  - Terraform `github_repository_ruleset` and `github_branch_protection`
+    count as declared intent.
+  - The checks: a pull request with an approval, code-owner review,
+    last-push approval, required checks, deletion and force-push
+    protection, no GitHub App or deploy-key bypass, and CODEOWNERS
+    coverage.
+  - Under the citizen profile: block on no review or an app bypass;
+    insufficient-evidence when unknown or only declared in the repository.
+- **Package sources** (passport `package_sources`, rule `P-SUP-001`):
+  - Each package manager's registries, declared in npm, Yarn, Bun, pip,
+    Poetry, uv, PDM, Pipfile, Maven, Gradle, NuGet and Cargo config, or
+    observed in lockfiles.
+  - They are checked against an operator's `allowed_registries`.
+  - A manager with no committed config is unknown, not "public".
+- **Citizen pull-request gate:** `templates/citizen-gate.yml`, a required
+  workflow with a read-only token, no secrets and pinned checkouts. It
+  fails on `insufficient-evidence` as well as `block`, so a change that
+  cannot be judged does not merge. The shell selftest runs the template's
+  own command on a synthetic fixture.
+- **Agent sandbox and platform rules:**
+  - `JH709`: Codex network access and wildcard proxy domains; Claude Code
+    sandbox wildcards, sockets, escape-hatch commands and write paths;
+    OpenShell wildcard binaries and hosts, private `allowed_ips`, and
+    full access on wildcards.
+  - `JH710`: OpenShell audit mode, Landlock `best_effort`, `tls: skip`,
+    uninspected credentials, and fail-open middleware.
+  - `JH711`: dev containers that run privileged, share host networking,
+    or mount the Docker socket.
+- **Agent-branch CI** (`JH432`): a workflow on a push to any branch, or to
+  agent branches, whose jobs hold secrets or a write-scoped token.
+- **Egress boundary** (map and passport `egress`): declared agent-sandbox
+  allowlists (Codex, Claude Code, OpenShell) compared with the hosts the
+  map reaches. It reports hosts outside the boundary with their evidence
+  tier, allowed entries nothing uses, and wildcards. With no allowlist it
+  stays unknown.
+- Mutants `M21`-`M28`: bypass actors ignored, a branch-rules export inside
+  the repository trusted, every `yaml.load` treated as safe (`JH106` had
+  none), disallowed registries ignored, egress hosts outside the boundary
+  hidden, write tokens on any-branch workflows ignored, shared-tenant
+  sandbox wildcards ignored, and declared-only change control satisfying
+  the citizen profile.
+
+### Fixed
+
+From a soak trial on 106 more vibe-coded repositories (v0, Windsurf,
+Cursor, Claude Code, and "vibe coding" projects in JavaScript, C#, Java
+and PHP): critical findings fell from 84 to 10.
+
+- `JH111` skips curl-pipe-shell text that is only printed, and is minor
+  in test code. An official vendor installer over TLS is major, not
+  critical.
+- `JH101`:
+  - Not secrets: token-auth usernames (`x-oauth-basic`), `$VAR/path`
+    values, UPPER_SNAKE secret names, sentences, and `REPLACE_WITH_…`
+    placeholders.
+  - Minor: common default passwords, AWS key ids in presigned URLs, and
+    Firebase web config API keys.
+- From a third trial on 80 more (Copilot agent, Supabase/Next.js/Stripe,
+  Firebase/React, Power Apps, n8n, Blazor and Flask with OpenAI, Lovable,
+  bolt.new):
+  - `JH101`:
+    - Not secrets: regular expressions, CSS custom properties, error-message
+      sentences, and elided examples (`"sk-live-..."`).
+    - A value ends at its own closing quote, so an apostrophe inside it no
+      longer cuts it short.
+    - Keys in `google-services.json` and `GoogleService-Info.plist` are
+      Firebase client config (minor).
+  - `JH134` skips emulator and test rules files.
+  - `JH111` skips `curl … | sh` written as prose (no URL, variable or flag).
+  - `JH132` needs an environment read in code; a local constant named
+    `PUBLIC_SECRET` is not one.
+- `JH115` needs an assignment, keyword argument or default; an assertion on
+  `verify_signature()`'s result is not one. It also reads dict keys in
+  strings.
+- `JH419` no longer treats `pull_request.head.sha` (a commit hash) as
+  attacker-controlled.
+- `JH134` rates a public read rule as major; public writes stay critical.
+- Security leads inside a deliberately vulnerable example
+  (`examples/vulnerable-…/`) are minor.
+- `map --base`: a capability that becomes unknown is a possible escalation
+  (`possible: true`), never a reduction, and an unknown capability that
+  becomes known is marked `was_unknown`. Before, read to unknown counted as
+  less authority.
+- `passport --branch-rules` accepts JSON lists (a list of rulesets, or the
+  `rules/branches` export), as documented.
+- Online verification closes HTTP error responses instead of leaking them.
+- The executable-docs test also runs commands written inline in README.md
+  and SKILL.md, not only fenced blocks; the test suite no longer leaks file
+  handles.
+- The shareable passport (`--redact`) no longer carries custodian names in
+  the embedded effective policy. The new sections are redacted too:
+  registry URLs, egress hosts, ruleset notes and bypass actor ids.
+
 ## [2.5.0] — 2026-10-24
 
 ### Added

@@ -18,10 +18,12 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import jh_change
 import jh_graph as G
 import jh_map
 import jh_frameworks
 import jh_policy
+import jh_registry
 import jh_supply
 from jh_core import SEV_RANK, TOOL, VERSION, is_agent_context, is_mcp_config, is_test_path, safe_text
 
@@ -37,12 +39,13 @@ _CODEOWNERS = ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS", ".gitlab/C
 _OWNER_TOKEN = re.compile(r"^@[\w.\-]+(/[\w.\-]+)?$")
 
 AREAS = ("ownership", "provenance", "data_inventory", "ci", "tests", "observability",
-         "health_checks", "runbook", "security_policy")
+         "health_checks", "runbook", "security_policy", "change_control")
 
 # Scanner leads that put credentials or data in front of the public.
 EXPOSURE_RULES = {"JH132", "JH133", "JH134"}
 SECRET_RULES = {"JH101", "JH401", "JH415"}
-AGENT_RULES = {"JH70%d" % i for i in range(1, 9)}
+# agent guardrails, sandboxes and dev containers, and CI that runs agent branches with secrets
+AGENT_RULES = {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711", "JH432"}
 GOVERNANCE_RULES = EXPOSURE_RULES | SECRET_RULES | AGENT_RULES | {"JH131"}
 
 
@@ -60,7 +63,7 @@ def governance_leads(findings: Sequence[Any]) -> Tuple[List[Dict[str, Any]], Lis
     serious = [f for f in findings if SEV_RANK.get(f.severity, 99) <= SEV_RANK["major"]]
     exposure = {_lead_key(d): d for d in (_lead(f) for f in serious if f.rule in EXPOSURE_RULES
                 or (f.rule in SECRET_RULES and f.severity in ("blocker", "critical")))}
-    agent = {_lead_key(d): d for d in (_lead(f) for f in serious if f.category == "agent"
+    agent = {_lead_key(d): d for d in (_lead(f) for f in serious if f.category == "agent" or f.rule in AGENT_RULES
              or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path))))}
     return [exposure[k] for k in sorted(exposure)], [agent[k] for k in sorted(agent)]
 
@@ -158,6 +161,8 @@ _PLAIN = {
     "P-EVD-001": "Required build records are missing.",
     "P-JNK-001": "The code has serious quality or security problems.",
     "P-EXP-001": "It can reach more than this policy allows.",
+    "P-CHG-001": "Changes can reach the main branch without another person approving them.",
+    "P-SUP-001": "It may download packages from places your organization has not allowed.",
 }
 _VERDICT = {
     "block": "Not ready to ship. Fix every blocking item below; then an engineering custodian must review and sign off.",
@@ -397,6 +402,13 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
         elif rule == "P-DAT-003":
             steps.append("Declare the sensitivity of every data store in `passport.assets` "
                          "(public, internal, confidential, or restricted).")
+        elif rule == "P-CHG-001":
+            steps.append("Protect the default branch: require a pull request with at least one approval from someone "
+                         "other than the last pusher, code-owner review and status checks, and remove GitHub App and "
+                         "deploy-key bypasses; pass the exported rulesets with --branch-rules.")
+        elif rule == "P-SUP-001":
+            steps.append("Point every package manager at an allowed registry in committed config (.npmrc, pip.conf "
+                         "or index-url, Maven mirror, nuget.config) and regenerate lockfiles from it.")
     if owner_state == "unknown" and not any("owner" in s for s in steps):
         steps.append("Declare an accountable owner (CODEOWNERS or `passport.owners`).")
     for area in ("observability", "health_checks", "runbook"):
@@ -425,7 +437,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           warnings: Sequence[str] = (), extra_repo_policies: Sequence[Dict[str, Any]] = (),
           findings: Sequence[Any] = (), governance_findings: Optional[Sequence[Any]] = None,
           governance_tuned: Optional[Sequence[Any]] = None, governance_truncated: bool = False,
-          profile: Optional[str] = None) -> Dict[str, Any]:
+          profile: Optional[str] = None, change_control: Optional[Dict[str, Any]] = None,
+          package_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -461,6 +474,17 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         warns.extend(map_report.get("warnings", []))
     agent = agent_tooling(map_report)
     ai = ai_inventory(map_report, items, agent_leads, agent)
+    cc = change_control if change_control is not None else jh_change.build(items)
+    cc_ref = None
+    if cc["state"] != "unknown":
+        rec = (cc.get("source") or {}).get("receipts") or [{"path": (cc.get("source") or {}).get("label") or "branch rules",
+                                                            "line": 0}]
+        cc_ref = _ev(evidence, "change_control", "observed" if cc["state"] == "provider-verified" else "declared",
+                     rec[0]["path"], rec[0]["line"], "change control: %s" % ", ".join(
+                         "%s %s" % (k.replace("_", " "), v["state"]) for k, v in cc["checks"].items()))
+    severe, weak, unknown = jh_change.violations(cc)
+    pkg = package_sources if package_sources is not None else jh_registry.collect(items)
+    reg = jh_registry.assess(pkg, eff.get("allowed_registries") or [])
     facts = {
         "files_scanned": scan_files,
         "map_files_inspected": map_report["coverage"]["files_inspected"] if map_report else 0,
@@ -481,6 +505,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "agent_findings": agent_leads,
         "ai_sensitive_pairs": ai["sensitive_data_with_ai"],
         "operations": {k: v["state"] for k, v in ops.items()},
+        "change_control": {"state": cc["state"], "severe": severe, "weak": weak, "unknown": unknown,
+                           "details": [cc["checks"][c]["detail"] for c in severe]},
+        "registry": reg,
     }
     if governance_truncated:
         reason = "the governance scan (without repository ignore globs) reached --max-files; raise the limit"
@@ -497,10 +524,13 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         sources.append({"kind": "repository", "label": safe_text(p), "note": "tighten-only"})
     completeness = {}
     area_states = {"ownership": own["state"], "provenance": prov["state"], "data_inventory": data["state"],
+                   "change_control": {"provider-verified": "provider-verified", "declared": "declared"}.get(
+                       cc["state"], "not-observed"),
                    **{k: v["state"] for k, v in ops.items()}}
     for area in AREAS:
         completeness[area] = area_states.get(area, "not-observed")
-    present = sum(1 for v in completeness.values() if v in ("observed", "declared", "inferred", "assessed"))
+    present = sum(1 for v in completeness.values() if v in ("observed", "declared", "inferred", "assessed",
+                                                             "provider-verified"))
     lifecycle_state = "assessed" if decision["result"] != "insufficient-evidence" else "draft"
     graph_unknowns = map_report["unknowns"] if map_report else [{"id": "connectivity", "detail": "map not assessed"}]
     report: Dict[str, Any] = {
@@ -559,6 +589,11 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "provenance": prov,
         "data": data,
         "operations": ops,
+        "egress": (map_report or {}).get("egress") or {"state": "unknown", "note": "connectivity map not assessed"},
+        "change_control": dict(cc, evidence_refs=[cc_ref] if cc_ref else [],
+                               note="whether code can reach the default branch without an independent human review; "
+                                    "provider-verified only from an operator export outside the repository"),
+        "package_sources": dict(pkg, assessment=dict(reg, allowed_registries=eff.get("allowed_registries") or [])),
         "lifecycle": {"state": lifecycle_state, "acceptance": {"state": "not-supplied",
                       "note": "acceptance is a separate, externally authorized act; a passing assessment is not approval"}},
         "remediation": remediation(decision, ops, own["state"], prov, map_report),
@@ -576,7 +611,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     return jh_map.finalize_report(report)
 
 
-_DETAILED_RULES = ("P-COV-001", "P-CUS-001", "P-DAT-003", "P-SEC-001", "P-AGT-001", "P-AI-001")
+_DETAILED_RULES = ("P-COV-001", "P-CUS-001", "P-DAT-003", "P-SEC-001", "P-AGT-001", "P-AI-001", "P-CHG-001",
+                   "P-SUP-001")
 
 
 def redact(report: Dict[str, Any]) -> Dict[str, Any]:
@@ -590,6 +626,14 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     rep["ownership"]["declared_owners"] = ["owner-%d" % i for i, _ in enumerate(rep["ownership"]["declared_owners"], 1)]
     for ev in rep["evidence"]:
         ev["detail"] = ev["area"]
+        if ev["area"] == "change_control":
+            ev["path"] = "branch rules"         # an operator export's file name can name the organization
+    eff = rep["assessment"]["decision"].get("policy", {}).get("effective") or {}
+    # the embedded policy names people and internal registries (its hash still identifies it)
+    if eff.get("custodians"):
+        eff["custodians"] = ["custodian-%d" % i for i, _ in enumerate(eff["custodians"], 1)]
+    if eff.get("allowed_registries"):
+        eff["allowed_registries"] = ["allowed-%d" % i for i, _ in enumerate(eff["allowed_registries"], 1)]
     for r in rep["assessment"]["decision"]["rules"] + rep["assessment"]["decision"]["reasons"]:
         r["evidence_refs"] = ["ref-%d" % i for i, _ in enumerate(r["evidence_refs"], 1)]
         if r["rule"] in _DETAILED_RULES and ":" in r["message"]:
@@ -620,6 +664,36 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
                                          "reached_by": ["principal-%d" % j for j, _ in enumerate(p["reached_by"], 1)]}
                                         for i, p in enumerate(ai.get("sensitive_data_with_ai", []), 1)]
         ai["instruction_files"] = ["instruction-file-%d" % i for i, _ in enumerate(ai.get("instruction_files", []), 1)]
+    pkg = rep.get("package_sources")
+    if isinstance(pkg, dict):
+        # registry URLs, scopes and file paths reveal internal hosts and organization names
+        urls: Dict[str, str] = {}
+
+        def alias(url: str) -> str:
+            return urls.setdefault(url, "registry-%d" % (len(urls) + 1))
+        for eco in (pkg.get("ecosystems") or {}).values():
+            eco["manifests"] = ["manifest-%d" % i for i, _ in enumerate(eco.get("manifests", []), 1)]
+            eco["sources"] = [{"url": alias(s["url"]), "kind": s["kind"], "scope": "scope" if s.get("scope") else "",
+                               "path": "file", "line": 0} for s in eco.get("sources", [])]
+        a = pkg.get("assessment") or {}
+        a["disallowed"] = [{"ecosystem": d["ecosystem"], "url": alias(d["url"]), "path": "file", "line": 0, "kind": d["kind"]}
+                           for d in a.get("disallowed", [])]
+        a["allowed_registries"] = ["allowed-%d" % i for i, _ in enumerate(a.get("allowed_registries", []), 1)]
+    eg = rep.get("egress")
+    if isinstance(eg, dict) and eg.get("state") == "declared" and isinstance(eg.get("boundaries"), list):
+        rep["egress"] = {"state": "declared", "boundaries": len(eg["boundaries"]), "outside": len(eg["outside"]),
+                         "unused": len(eg["unused"]), "wildcards": len(eg["wildcards"]),
+                         "note": "counts only in the shareable copy"}
+    cc = rep.get("change_control")
+    if isinstance(cc, dict):
+        for name, chk in (cc.get("checks") or {}).items():
+            chk["detail"] = "%s: %s" % (name.replace("_", " "), chk["state"])
+        cc["bypass"] = [{"actor_type": b.get("actor_type", ""), "bypass_mode": b.get("bypass_mode", ""),
+                         "actor_id": "actor-%d" % i} for i, b in enumerate(cc.get("bypass", []), 1)]
+        cc["notes"] = ["note %d withheld" % i for i, _ in enumerate(cc.get("notes", []), 1)]
+        src = cc.get("source") or {}
+        cc["source"] = {"kind": src.get("kind", "none")}
+        cc["evidence_refs"] = ["ref-%d" % i for i, _ in enumerate(cc.get("evidence_refs", []), 1)]
     gov = rep.get("governance")
     if gov:
         gov["custodians"] = ["custodian-%d" % i for i, _ in enumerate(gov["custodians"], 1)]
@@ -680,6 +754,24 @@ def markdown(p: Dict[str, Any]) -> str:
     for r in (prov.get("verification") or {}).get("results", []):
         lines.append("  - verification `%s` (%s): **%s**: %s" % (r.get("subject"), r.get("verifier"), r.get("outcome"), r.get("reason")))
     lines.append("- Data sources: %d (%s)" % (len(p["data"].get("sources", [])), p["data"]["state"]))
+    cc = p.get("change_control") or {}
+    if cc:
+        lines += ["", "## Change control (default branch)", "", "- Evidence: %s%s" % (
+            cc["state"], " (%s)" % cc["source"].get("label") if (cc.get("source") or {}).get("label") else "")]
+        for name, chk in cc["checks"].items():
+            lines.append("- %s: **%s**: %s" % (name.replace("_", " "), chk["state"], chk["detail"]))
+        for n in cc.get("notes", [])[:3]:
+            lines.append("- _%s_" % n)
+    pkg = p.get("package_sources") or {}
+    if pkg.get("ecosystems"):
+        lines += ["", "## Package sources", ""]
+        for eco, info in pkg["ecosystems"].items():
+            urls = sorted({s["url"] for s in info["sources"]})
+            lines.append("- %s: %s%s" % (eco, info["state"], ": " + ", ".join(urls[:4]) if urls else
+                                          " (not configured in the repository; default %s)" % info["default_if_unconfigured"]))
+        bad = (pkg.get("assessment") or {}).get("disallowed") or []
+        if (pkg.get("assessment") or {}).get("allowed_registries"):
+            lines.append("- Outside the allowed registries: %s" % (", ".join(sorted({b["url"] for b in bad})[:5]) or "none"))
     ai = p.get("ai") or {}
     if ai.get("observed"):
         lines += ["", "## AI use", ""]

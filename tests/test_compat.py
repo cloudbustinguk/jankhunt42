@@ -18,7 +18,8 @@ PREVIOUS = os.environ.get("JH_PREVIOUS_TAG", "v1.1.0")
 # Rules added since 1.1.0 (documented in CHANGELOG 2.3.0). Every older rule
 # must stay identical; only these ids may be new.
 ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "JH430", "JH431",
-               "JH701", "JH702", "JH703", "JH704", "JH705", "JH706", "JH707", "JH708"}
+               "JH701", "JH702", "JH703", "JH704", "JH705", "JH706", "JH707", "JH708",
+               "JH432", "JH709", "JH710", "JH711"}
 
 
 def strip_volatile(obj):

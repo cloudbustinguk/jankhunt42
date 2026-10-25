@@ -189,6 +189,20 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
                 r["unlocks"], r["mutating"], ", ".join(r["targets"]) or "nothing mapped",
                 ", ".join(r["holders"]) or "no visible holder")
             out += [c.grey("    " + ln.strip()) for ln in _wrap(clean(body), t.width - 6, "    ")]
+    eg = report.get("egress") or {}
+    if eg.get("state") == "declared" and isinstance(eg.get("boundaries"), list):
+        out += ["", c.bold("egress boundary") + c.grey("  (declared allowlists vs hosts the map reaches)")]
+        out.append("  %d allowlist(s): %s" % (len(eg["boundaries"]), ", ".join(
+            "%s %s" % (b["tool"], clean(b["path"])) for b in eg["boundaries"][:3])))
+        for o in eg["outside"][:5]:
+            out.append("  %s %s %s %s" % (c.red("!"), c.bold(clean(o["host"])), t.label(o["tier"]),
+                                          c.grey("outside: " + clean(o["why"]))))
+        if len(eg["outside"]) > 5:
+            out.append(c.grey("    +%d more outside" % (len(eg["outside"]) - 5)))
+        if eg["wildcards"]:
+            out.append("  %s wildcards: %s" % (c.yellow("*"), clean(", ".join(eg["wildcards"][:4]))[: t.width - 16]))
+        if eg["unused"]:
+            out.append(c.grey("  unused by the mapped code: %s" % clean(", ".join(eg["unused"][:4]))[: t.width - 30]))
     out += ["", c.bold("unknowns") + c.grey("  (unknown is not safe, and not dangerous)")]
     for u in report["unknowns"]:
         for i, ln in enumerate(_wrap("%s: %s" % (u["id"], clean(u["detail"])), t.width - 6, "    ")):
@@ -258,6 +272,19 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
     out.append(line.rstrip())
     own = p["ownership"]
     out.append("  owners: " + (clean(", ".join(own["owners"] + own["declared_owners"])) or "unknown"))
+    cc = p.get("change_control") or {}
+    if cc:
+        chk = cc["checks"]
+        weak = [k.replace("_", " ") for k, v in chk.items() if v["state"] == "not-met"]
+        out.append("  change control: %s  review %s  app bypass %s%s" % (
+            t.label(cc["state"]), chk["pull_request_review"]["state"],
+            {"met": "none", "not-met": "present", "unknown": "unknown"}[chk["no_app_bypass"]["state"]],
+            c.grey("  gaps: " + ", ".join(weak[:3])) if weak and cc["state"] != "unknown" else ""))
+    pkg = (p.get("package_sources") or {}).get("ecosystems") or {}
+    if pkg:
+        bad = len(((p.get("package_sources") or {}).get("assessment") or {}).get("disallowed") or [])
+        out.append("  package sources: " + ", ".join("%s %s" % (e, v["state"]) for e, v in pkg.items())
+                   + (c.red("  %d not allowed" % bad) if bad else ""))
     ai = p.get("ai") or {}
     if ai.get("observed"):
         out += ["", c.bold("ai use") + c.grey("  (static inventory, not proof of use)")]

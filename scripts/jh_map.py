@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import jh_agent
+import jh_egress
 import jh_graph as G
 import jh_yaml
 from jh_core import (TOOL, VERSION, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
@@ -2400,6 +2401,7 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
         "evidence": g.evidence_list(),
         "graph": graph,
         "assessment": assessment,
+        "egress": jh_egress.compare(jh_egress.boundaries(col.items), {"graph": graph, "assessment": assessment}),
         "truncation": {"truncated": bool(g.truncated or assessment["truncated_reachability"]),
                        "reasons": list(g.truncated) + (["reachability depth limit %d reached" % max_depth]
                                                        if assessment["truncated_reachability"] else [])},
@@ -2607,6 +2609,19 @@ def markdown(report: Dict[str, Any]) -> str:
             lines.append("- **%s**%s: unlocks %d (%d mutating): %s; held by %s" % (
                 r["label"], " [%s]" % ", ".join(r["flags"]) if r["flags"] else "", r["unlocks"], r["mutating"],
                 ", ".join(r["targets"]) or "nothing mapped", ", ".join(r["holders"]) or "no visible holder"))
+    eg = report.get("egress") or {}
+    if eg.get("state") == "declared" and isinstance(eg.get("boundaries"), list):
+        lines += ["", "## Egress boundary", "", "Declared allowlists compared with the hosts the map reaches (%s)."
+                  % eg["note"], ""]
+        for b in eg["boundaries"]:
+            lines.append("- %s `%s:%s`: %d allowed, %d denied%s" % (b["tool"], b["path"], b["line"], len(b["allow"]),
+                                                                  len(b["deny"]), "; %s" % b["note"] if b["note"] else ""))
+        for o in eg["outside"]:
+            lines.append("- **outside**: %s (%s; reached by %s): %s" % (o["host"], o["tier"], ", ".join(o["reached_by"]), o["why"]))
+        if eg["wildcards"]:
+            lines.append("- wildcards: %s" % ", ".join(eg["wildcards"]))
+        if eg["unused"]:
+            lines.append("- allowed but unused by the mapped code: %s" % ", ".join(eg["unused"]))
     lines += ["", "## Unknowns", ""]
     for u in report["unknowns"]:
         lines.append("- %s: %s" % (u["id"], u["detail"]))

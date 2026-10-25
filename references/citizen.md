@@ -24,6 +24,9 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 | Agent tools that change under you | MCP servers started with `npx -y package` with no version | `JH705`: unpinned `npx`/`uvx`/`docker` launchers; `JH706`: credentials written into MCP config; `JH707`: plaintext remote MCP |
 | Instructions the reader cannot see | hidden instructions in agent skills and rules files (2026 skill-ecosystem studies) | `JH701`: hidden HTML comments with commands or credential references, instruction overrides, "do not tell the user", pipe-to-shell, credential exfiltration; `JH131`: Unicode tag characters (decoded for the reviewer), bidi controls, invisible characters |
 | Untrusted text steering a CI agent | PromptPwnd (December 2025): issue and PR text fed to AI steps that hold write tokens | `JH708`: AI agent steps that receive issue, PR, or comment fields under outsider-triggered events |
+| Agent code running with power before review | an agent pushes a branch, and a `push` workflow on every branch runs it with deploy secrets | `JH432`: workflows on a push to any branch (or to `claude/`, `copilot/`, `codex/`... branches) whose jobs hold secrets or a write-scoped token, unless the job is pinned to a branch or guarded by an environment |
+| A sandbox that does not contain | sandbox settings that allow every host, the Docker socket, credential paths, or log-only enforcement | `JH709`: [Codex](https://developers.openai.com/codex/config-reference) `network_access = true`, `mode = "full"`, wildcard proxy domains; [Claude Code](https://code.claude.com/docs/en/settings-reference) `allowedDomains` wildcards, `allowAllUnixSockets`, escape-hatch `excludedCommands`, `allowWrite` on home or credential paths; [OpenShell](https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema) `/**` binaries, wildcard hosts on shared cloud domains, private `allowed_ips`, `access: full` on wildcards. `JH710` (OpenShell): `enforcement: audit` (also the default), Landlock `best_effort`, `tls: skip`, `allow_uninspected_credentials`, fail-open middleware |
+| A dev container that owns the host | [dev container](https://containers.dev/implementors/json_reference/) `runArgs` with `--privileged`, host networking or PID, added capabilities, or a mounted Docker socket | `JH711` |
 
 Each rule's message names the exact line. A finding is a lead: confirm it
 in context, then fix it or suppress it with a reason.
@@ -83,6 +86,8 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-OPS-001` tests and CI | not required | must be **observed**; a declaration is not enough |
 | `P-JNK-001` Jank Score policy fail | review | **block** |
 | `P-EXP-001` exposure ceiling | none | above **Moderate** blocks |
+| `P-CHG-001` change control on the default branch | not required | **required**: block on no review or an app bypass; insufficient-evidence when unknown or only declared in the repository |
+| `P-SUP-001` package sources | only when `allowed_registries` is set | **block** on a source outside `allowed_registries`; insufficient-evidence when a package manager has no committed registry config |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
 usual meaning. The profile is applied after the operator's ordinary

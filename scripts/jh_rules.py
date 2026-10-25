@@ -64,7 +64,7 @@ RULES: List[Rule] = [
           r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b",
           r"https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}",
           r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
-          r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*['\"][^'\"\n]{8,}['\"]",
+          r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])(?:(?!\1)[^\n]){8,}\1",
       ),
       ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
     R("JH102", "Dynamic code execution", "major", "security",
@@ -182,9 +182,9 @@ RULES: List[Rule] = [
     R("JH115", "JWT verification disabled", "critical", "security",
       "Disabling signature verification or accepting 'none' makes forged tokens indistinguishable from real ones.",
       "Always verify the signature and allowlist the expected algorithms.",
-      confidence="high", langs=PY + JS + JVM + CLIKE + ("ruby", "php", "go"),
+      confidence="high", target="nocomment", langs=PY + JS + JVM + CLIKE + ("ruby", "php", "go"),
       patterns=(
-          r"verify_signature[^\n]{0,40}False",
+          r"verify_signatures?['\"]?\s*(?::\s*bool\s*)?[:=]\s*False\b",
           r"jwt\.decode\([^)\n]{0,200}verify\s*=\s*False",
           r"algorithms\s*=\s*\[\s*['\"]none['\"]",
       )),
@@ -504,6 +504,10 @@ RULES: List[Rule] = [
       "Remove the setting; vendor or pre-build whatever the manifest needs instead.",
       confidence="high", target="nocomment", kinds=("dependabot",),
       patterns=(r"(?i)^\s*insecure-external-code-execution\s*:\s*['\"]?allow\b",)),
+    R("JH432", "Any pushed branch runs a privileged workflow", "major", "security",
+      "A workflow runs on a push to any branch with secrets or a write-scoped token, so code on an unreviewed branch (an AI agent's, or a contributor's) runs with that power before anyone approves it.",
+      "Run branch builds on pull_request with permissions: contents: read and no secrets; keep secrets and write tokens for the default branch or a protected environment.",
+      confidence="medium", check="gh_branch_push_privileged", kinds=GH),
     R("JH431", "Dependency updates without cooldown", "info", "supply-chain",
       "Updates are proposed the moment a release appears; most malicious releases are caught and pulled within days.",
       "Add cooldown: (for example default-days: 7) to each update entry so new releases age before they are proposed.",
@@ -589,6 +593,18 @@ RULES: List[Rule] = [
       "Text that anyone can write (issue, PR, or comment fields) reaches an AI agent step; instructions hidden in it can steer the agent and its token.",
       "Do not feed untrusted event text to an agent that holds write permissions or secrets; triage with a read-only token, restrict who can trigger it, and treat agent output as untrusted.",
       confidence="medium", check="gh_agent_prompt", kinds=GH),
+    R("JH709", "Agent sandbox network or file access too broad", "major", "agent",
+      "A committed sandbox setting lets the agent's commands reach any host, a private network, the Docker socket, or credential paths, so a prompt injection can exfiltrate data or escape the sandbox.",
+      "Allow named hosts only, keep wildcards off shared cloud domains, keep the Docker socket and home directory out of the sandbox, and scope rules to the binaries that need them.",
+      confidence="high", check="agent_sandbox_scope", kinds=("agent_config", "sandbox_policy")),
+    R("JH710", "Agent sandbox not enforcing", "major", "agent",
+      "The sandbox policy only logs what it should block, skips TLS inspection, lets credentials pass uninspected, or runs without filesystem rules when Landlock is unavailable.",
+      "Set enforcement: enforce, landlock compatibility: hard_requirement, keep TLS inspection on, and leave allow_uninspected_credentials off.",
+      confidence="high", check="agent_sandbox_enforcement", kinds=("sandbox_policy",)),
+    R("JH711", "Dev container weakens isolation", "major", "agent",
+      "The dev container runs privileged, shares the host network or process namespace, or mounts the Docker socket; an agent or task inside it can take over the host.",
+      "Drop --privileged, host networking and extra capabilities; use docker-in-docker or a rootless builder instead of the host Docker socket.",
+      confidence="high", check="devcontainer_isolation", kinds=("agent_config",)),
 
     # ----------------------------------------------------------------- CVE (dynamic)
     R("JH901", "Known vulnerable dependency", "critical", "security",
@@ -637,9 +653,9 @@ _IGNORES: Dict[str, re.Pattern] = {}
 # where the value lives, generated runs, and descriptive fixture names
 # (`"test-token"`, `"managed-bedrock-api-key"`). Found by running the scanner
 # on public repositories, where these were nearly all of JH101's hits.
-_SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])([^\"'\n]+)\1")
-_SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+$|^<[^>]+>$")
-_SECRET_PREFIX_RE = re.compile(r"^(?:sk-(?:proj-|lf-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
+_SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])((?:(?!\1)[^\n])+)\1")
+_SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+(?:$|[/\\.:])|^<[^>]+>$")
+_SECRET_PREFIX_RE = re.compile(r"^(?:sk-ant-(?:api|admin)\d+-|sk-(?:proj-|lf-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
 # a UI label like "Bearer Token Env Var" (Title Case); lowercase word runs may be passphrases
 _SECRET_TEXT_RE = re.compile(r"^[A-Z][a-z]*(?: [A-Z][a-z]*)+$")
 _SECRET_RUN_RE = re.compile(r"abcdefgh|01234567|12345678|(.)\1{7,}", re.IGNORECASE)
@@ -651,7 +667,7 @@ _SECRET_CAMEL_RE = re.compile(r"^(?:[a-z]+[-_])*(?:[A-Z][a-z]+){3,}$")
 # people also put in real passwords ("Prod-Admin-Secret-91")
 _SECRET_FIXTURE_RE = re.compile(
     r"(?:^|[-_.])(?:test|testing|tests|mock|fake|dummy|fixture|stub|sample|example|placeholder|synthetic|"
-    r"redacted|changeme)(?=[-_.]|$)", re.IGNORECASE)
+    r"redacted|changeme|replace|insert|your|here|todo|fixme)(?=[-_.]|$)", re.IGNORECASE)
 _SECRET_DESCRIPTIVE_RE = re.compile(
     r"(?:^|[-_.])(?:test|testing|mock|fake|dummy|fixture|stub|static|sample|example|placeholder|local|dev|"
     r"synthetic|managed|token|secret|key|password|passwd|pass|credential|creds?|api|apikey|auth|issuer|client)(?=[-_.]|$)",
@@ -674,12 +690,39 @@ def _url_without_secret(value: str) -> bool:
     return not (re.search(r"[?&#][\w.\-]*=%s{10,}" % mixed, value) or re.search(r"/%s{20,}" % mixed, value))
 
 
+# usernames that services fix for token authentication (the token is the password)
+_TOKEN_USERNAMES = {"x-oauth-basic", "x-access-token", "oauth2", "oauth2accesstoken", "token", "__token__"}
+_STOPWORDS = {"the", "a", "an", "is", "are", "not", "on", "in", "to", "of", "for", "and", "or", "with", "this",
+              "that", "your", "you", "it", "be", "can", "from", "use", "create", "at", "by", "must", "should",
+              "will", "has", "have", "no", "if", "only", "all", "some", "least", "characters", "required",
+              "please", "enter", "invalid", "does", "do", "was", "were"}
+# the most common default passwords: a weak-credential lead, not secret material
+COMMON_PASSWORDS = {"password", "password1", "password123", "passw0rd", "admin", "admin123", "administrator",
+                    "123456", "12345678", "123456789", "qwerty", "letmein", "welcome", "secret", "test",
+                    "test123", "testing", "demo", "demo123", "root", "toor", "changeme", "default", "guest",
+                    "user", "user123", "pass", "pass123", "1234", "abc123", "postgres", "mysql", "sa",
+                    "hunter2", "hunter22"}
+
+
 def secret_placeholder(match_text: str) -> bool:
     """True when a secret-pattern match is a reference, a generated run, or a
     descriptive fixture value rather than credential material."""
     quoted = _SECRET_QUOTED_RE.search(match_text)
     value = quoted.group(2) if quoted else match_text
     if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
+        return True
+    if value.strip().lower() in _TOKEN_USERNAMES:
+        return True
+    # the name of a secret or setting, not its value ("DATA_BUCKET", "DN2CPP_FAULT_PROBE")
+    if re.fullmatch(r"[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+", value) and sum(1 for s in value.split("_") if re.search(r"[A-Z]{2}", s)) >= 2:
+        return True
+    # a sentence: five or more words, two of them common function words
+    words = value.lower().replace(";", " ").replace(",", " ").replace(".", " ").split()
+    if len(words) >= 5 and sum(1 for w in words if w in _STOPWORDS) >= 2:
+        return True
+    # a regular expression, a CSS custom property, or an elided example ("sk-live-...")
+    if re.search(r"\\[dwsSbB]|\[[^\]]*-[^\]]*\]|\{\d+(?:,\d*)?\}|\(\?[:!=]", value) or \
+            re.fullmatch(r"--[a-z0-9][a-z0-9-]*", value) or value.rstrip().endswith(("...", "\u2026")):
         return True
     if quoted:
         key = re.match(r"[\w-]*", match_text).group(0).lower()
@@ -689,8 +732,9 @@ def secret_placeholder(match_text: str) -> bool:
                 re.sub(r"[\W_]", "", value.lower()) == re.sub(r"[\W_]", "", key) or \
                 re.fullmatch(r"(?i)correct[ _-]?horse[ _-]?battery(?:[ _-]?staple)?", value) or re.match(r"\s+\+\s", value):
             return True
-        # the match ran across string boundaries into code: split('secret=')[1]
-        if re.match(r"[)\]]", value) and re.search(r"[.(]\w", value):
+        # the match ran across string boundaries into code: split('secret=')[1],
+        # '"' + crypto.randomBytes(32).toString('hex') + '"'
+        if re.match(r"[)\]]", value) and re.search(r"[.(]\w", value) or re.search(r"""["'`]\s*\+\s*\w|\w[\w)\]]*\s*\+\s*["'`]""", value):
             return True
         # a lowercase name ("identifier", "attribute.name") is not a credential,
         # unless the key says it may be a password
@@ -842,6 +886,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue
                 for f in found:
+                    _example_context(f)
                     if acceptor.accept(f):
                         result.findings.append(f)
                 continue
@@ -861,9 +906,36 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         continue
                     severity = confidence = message = None
                     ev = sf.raw[idx - 1].strip() if 0 < idx <= len(sf.raw) else line.strip()
+                    if rule.id == "JH111":
+                        sev = _pipe_to_shell_severity(line, m.group(0))
+                        if sev is None:
+                            continue
+                        if sev != rule.severity:
+                            severity = sev
+                            message = rule.message + " The script comes from an official installer over TLS: the " \
+                                                     "publisher is known, but the content is still unpinned and unverified."
+                    if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
+                        severity, confidence = "minor", "low"
+                        message = rule.message + " It is in test code, where it is usually test data."
                     if "secret" in rule.tags:
                         if secret_placeholder(m.group(0)):
                             continue
+                        provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
+                        if provider and re.search(r"(?:AWSAccessKeyId|X-Amz-Credential)=(?:\S*?%2F)?$|"
+                                                  r"(?:AWSAccessKeyId|X-Amz-Credential)=$", line[:m.start()]):
+                            severity, confidence = "minor", "low"
+                            message = ("An AWS access key id is embedded in a presigned URL. The id alone does not "
+                                       "grant access and presigned links expire, but it identifies the account; "
+                                       "prefer links without credentials.")
+                        elif provider and pat.pattern.startswith("AIza") and _firebase_web_config(sf, idx):
+                            severity, confidence = "minor", "low"
+                            message = ("A Firebase web API key: it identifies the project and is public by design. "
+                                       "Restrict the key in Google Cloud and rely on security rules, not on secrecy.")
+                        quoted = _SECRET_QUOTED_RE.search(m.group(0))
+                        if quoted and "[:=]" in pat.pattern and quoted.group(2).strip().lower() in COMMON_PASSWORDS:
+                            severity, confidence = "minor", "medium"
+                            message = ("A common default password is written into the code. It is not secret, but "
+                                       "anything still using it can be logged into by anyone; keep it to local test data.")
                         pem = "PRIVATE KEY" in pat.pattern
                         if pem and not pem_has_body(sf, idx, m.end()):
                             continue
@@ -885,6 +957,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                                          "example, not a real credential."
                     f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1, severity=severity,
                                      confidence=confidence, message=message)
+                    _example_context(f)
                     if acceptor.accept(f):
                         result.findings.append(f)
                     break
@@ -893,6 +966,58 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule
     return result
+
+
+# Pattern rules whose matches in test code are usually test data.
+_TEST_DATA_MINOR = {"JH111", "JH115"}
+# Installers published by the tool's own vendor, over TLS (JH111 major, not critical).
+_OFFICIAL_INSTALLERS = ("sh.rustup.rs", "astral.sh", "get.docker.com", "deb.nodesource.com", "rpm.nodesource.com",
+                        "ollama.com", "ollama.ai", "claude.ai", "bun.sh", "deno.land", "get.pnpm.io",
+                        "install.python-poetry.org", "sdk.cloud.google.com", "cli.github.com", "starship.rs",
+                        "tailscale.com", "fly.io", "get.helm.sh", "opencode.ai", "cursor.com", "install.determinate.systems",
+                        "nixos.org", "foundry.paradigm.xyz", "get.sdkman.io", "volta.sh", "pyenv.run", "get.rvm.io",
+                        "raw.githubusercontent.com/nvm-sh/nvm/", "raw.githubusercontent.com/Homebrew/install/")
+
+
+# a deliberately vulnerable example: examples/vulnerable-app/, fixtures/insecure_rules/
+_VULN_EXAMPLE_RE = re.compile(r"(?i)(?:^|/)(?:examples?|samples?|demos?|fixtures?|testdata|test-data|labs?|challenges?)/"
+                              r"(?:[^/]+/)*?[^/]*(?:vulnerable|insecure|vuln|exploit|unsafe|damn)[^/]*/")
+
+
+def _example_context(f: Finding) -> None:
+    """Security leads in a deliberately vulnerable example are minor: the
+    weakness is the point of the example."""
+    if f.category in ("security", "agent", "supply-chain") and f.severity in ("blocker", "critical", "major") \
+            and _VULN_EXAMPLE_RE.search(f.path):
+        f.severity, f.confidence = "minor", "low"
+        f.message = f.message + " It is in a deliberately vulnerable example."
+
+
+def _pipe_to_shell_severity(line: str, match: str) -> Optional[str]:
+    """None when the curl|sh text is printed, not run; major for an official
+    vendor installer over https; otherwise the rule's critical."""
+    if re.match(r"""^\s*(?:-\s+)?(?:echo|printf|print|puts|console\.log|log|info|warn|say)\b""", line) or \
+            re.search(r"""(?:echo|printf)\s+["'][^"']*$""", line[:line.find(match)] if match in line else ""):
+        return None
+    between = re.sub(r"^\W*(?:curl|wget)\b|\|.*$", "", match)
+    if not re.search(r"[-$/:]|http", between):
+        return None                     # no URL, variable, flag or path: a description of the pattern
+    url = re.search(r"https?://[^\s\"'|)]+", match)
+    if url and url.group(0).startswith("https://"):
+        target = url.group(0)[len("https://"):]
+        if any(target == h or target.startswith(h + "/") or target.startswith(h) and h.endswith("/")
+               for h in _OFFICIAL_INSTALLERS):
+            return "major"
+    return "critical"
+
+
+def _firebase_web_config(sf: SourceFile, idx: int) -> bool:
+    """An AIza key in a Firebase client config: a web config object
+    (authDomain, projectId...), google-services.json, or GoogleService-Info.plist."""
+    if sf.basename.lower() in ("google-services.json", "googleservice-info.plist"):
+        return True
+    window = "\n".join(sf.raw[max(0, idx - 6):idx + 6])
+    return bool(re.search(r"\b(?:authDomain|projectId|storageBucket|messagingSenderId|appId)\b|firebaseapp\.com", window))
 
 
 def rule_by_id(rid: str) -> Optional[Rule]:

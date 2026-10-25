@@ -1,0 +1,6 @@
+{
+  "schema_version": "jankhunt.policy.v1",
+  "profile": "citizen",
+  "custodians": ["Engineering custodian (example)"],
+  "allowed_registries": ["https://registry.internal.example/"]
+}

@@ -7,7 +7,7 @@
 │ RELEASE ASSESSMENT    REVIEW  advisory                                                         │
 │ technical jank score  67/100  grade E  policy fail                                             │
 │ exposure              High  separate from the Jank Score                                       │
-│ evidence coverage     4/9 areas observed, declared, or inferred                                │
+│ evidence coverage     4/10 areas observed, declared, or inferred                               │
 │ lifecycle             assessed  ·  acceptance [not-supplied]                                   │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
@@ -24,8 +24,10 @@ why  (rule outcomes, not a weighted score)
 evidence
   ownership [observed]   provenance [not-observed]   data inventory [observed]   ci [observed]
   tests [not-observed]   observability [not-observed]   health checks [observed]
-  runbook [not-observed]   security policy [not-observed]
+  runbook [not-observed]   security policy [not-observed]   change control [not-observed]
   owners: @demo-org/payments-team
+  change control: [unknown]  review unknown  app bypass unknown
+  package sources: npm unknown, pypi unknown
 
 ai use  (static inventory, not proof of use)
   services: openai api.openai.com [inferred]

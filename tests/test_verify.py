@@ -51,7 +51,8 @@ FAKE_TOOL = r'''#!{python}
 import hashlib, json, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
 name = os.path.basename(__file__)
-beh = json.load(open(os.path.join(here, "behavior.json")))
+with open(os.path.join(here, "behavior.json")) as fh:
+    beh = json.load(fh)
 args = sys.argv[1:]
 if args in (["--version"], ["version"]):
     print({{"gh": "gh version 2.99.0 (fake)", "jf": "jf version 2.99.0", "cosign": "GitVersion:    v3.0.0-fake"}}[name])
@@ -68,7 +69,10 @@ if b.get("stderr"):
     sys.stderr.write(b["stderr"])
 if name == "gh" and b.get("rc", 0) == 0:
     subject = args[2]
-    sha = b.get("sha") or hashlib.sha256(open(subject, "rb").read()).hexdigest()
+    if not b.get("sha"):
+        with open(subject, "rb") as fh:
+            b["sha"] = hashlib.sha256(fh.read()).hexdigest()
+    sha = b["sha"]
     ptype = args[args.index("--predicate-type") + 1]
     print(json.dumps([{{"verificationResult": {{
         "statement": {{"subject": [{{"digest": {{"sha256": sha}}}}], "predicateType": ptype}},
@@ -282,11 +286,21 @@ class FakeHTTP:
         raise AssertionError("unexpected URL %s" % req.full_url)
 
 
+_ERRORS = []
+
+
 def http_error(code, location=None):
     headers = Message()
     if location:
         headers["Location"] = location
-    return urllib.error.HTTPError("https://x", code, "status", headers, io.BytesIO(b""))
+    err = urllib.error.HTTPError("https://x", code, "status", headers, io.BytesIO(b""))
+    _ERRORS.append(err)               # closed at module teardown, raised or not
+    return err
+
+
+def tearDownModule():
+    for err in _ERRORS:
+        err.close()
 
 
 def raiser(exc):

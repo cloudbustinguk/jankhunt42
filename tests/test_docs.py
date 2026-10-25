@@ -1,7 +1,8 @@
 """Documentation is executable: the text samples in references/examples.md
 are generated from the synthetic fixture, and every jankhunt42 command
-shown in README.md and SKILL.md runs against the real CLI (or is skipped
-for a stated reason)."""
+shown in README.md and SKILL.md, in ```sh blocks or inline code, runs
+against the real CLI or is skipped for a stated reason. A bare command
+name in prose (`jankhunt42 merge`) is a mention, not an invocation."""
 import json
 import os
 import re
@@ -32,8 +33,12 @@ def read(name):
         return fh.read()
 
 
+MENTION = "a bare command name in prose: a mention, not an invocation"
+
+
 def commands(text):
-    """Yield documented jankhunt42 command lines from ```sh blocks."""
+    """Documented jankhunt42 command lines from ```sh blocks, then from
+    inline code spans outside fenced blocks."""
     out = []
     for block in re.findall(r"```sh\n(.*?)```", text, re.S):
         block = block.replace("\\\n", " ")
@@ -43,6 +48,10 @@ def commands(text):
                 line = "jankhunt42" + line[len('python3 "$SKILL_DIR/scripts/jankhunt42"'):]
             if line.startswith("jankhunt42 "):
                 out.append(re.sub(r"\s+#.*$", "", line))
+    prose = re.sub(r"```.*?```", "", text, flags=re.S)
+    for span in re.findall(r"`(jankhunt42 [^`]+)`", prose):
+        if span not in out:
+            out.append(span)
     return out
 
 
@@ -98,6 +107,9 @@ class DocumentedCommands(unittest.TestCase):
             json.dump({"schema_version": "jankhunt.inventory.v1", "assets": [{"match": "ledger-db", "environment": "production"}]}, fh)
         with open(os.path.join(cls.tmp, "scenario.json"), "w") as fh:
             json.dump({"name": "docs", "mutations": [{"op": "block-egress"}]}, fh)
+        os.makedirs(os.path.join(cls.tmp, "rules"))
+        shutil.copy(os.path.join(_util.ROOT, "tests", "fixtures", "citizen-gate", "gate", "rules", "app.json"),
+                    os.path.join(cls.tmp, "rules", "app.json"))
         env2 = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         for name, cmd in (("stored-map.json", "map"), ("old-passport.json", "passport")):
             out = subprocess.run([sys.executable, _util.CLI, cmd, cls.repo, "--json"], capture_output=True, text=True,
@@ -124,6 +136,8 @@ class DocumentedCommands(unittest.TestCase):
         ran, skipped = 0, []
         for cmd in commands(read(source)):
             reason = next((why for token, why in SKIP if re.search(r"(^|\s)%s(\s|$)" % re.escape(token), cmd)), None)
+            if not reason and len(cmd.split()) == 2 and cmd.split()[1] in ("map", "merge", "hunt", "review", "triage"):
+                reason = MENTION
             if reason:
                 skipped.append((cmd, reason))
                 continue
@@ -145,8 +159,13 @@ class DocumentedCommands(unittest.TestCase):
         self.assertTrue(all(r for _, r in skipped))
 
     def test_skill_commands_execute(self):
-        ran, _ = self.run_doc("SKILL.md")
-        self.assertGreater(ran, 15)
+        ran, skipped = self.run_doc("SKILL.md")
+        self.assertGreater(ran, 25)
+        self.assertTrue(all(r for _, r in skipped))
+
+    def test_inline_commands_are_collected(self):
+        cmds = commands("Run `jankhunt42 review . --base <ref> --brief` or `jankhunt42 merge`.\n```sh\njankhunt42 scan .\n```\n")
+        self.assertEqual(cmds, ["jankhunt42 scan .", "jankhunt42 review . --base <ref> --brief", "jankhunt42 merge"])
 
 
 class SkillContract(unittest.TestCase):

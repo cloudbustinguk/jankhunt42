@@ -7,6 +7,7 @@ import json
 import fnmatch
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -39,6 +40,8 @@ import jh_graph  # noqa: E402
 import jh_map  # noqa: E402
 import jh_policy  # noqa: E402
 import jh_passport  # noqa: E402
+import jh_change  # noqa: E402
+import jh_registry  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
 
@@ -772,6 +775,32 @@ def _load_doc(path: str, what: str) -> Dict[str, object]:
         raise ValueError("cannot read %s %s: %s" % (what, path, exc))
 
 
+def _load_branch_rules(path: str) -> object:
+    """A GitHub REST export: an object (ruleset, protection, wrapper) or a list
+    (rulesets, or the active rules for a branch)."""
+    try:
+        if os.path.getsize(path) > 20_000_000:
+            raise ValueError("larger than 20 MB")
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ValueError("cannot read branch rules %s: %s" % (path, exc))
+    if not isinstance(data, (dict, list)):
+        raise ValueError("cannot read branch rules %s: expected a JSON object or list" % path)
+    return data
+
+
+def _default_branch(root: str) -> str:
+    """The remote's default branch from git, else main."""
+    try:
+        proc = subprocess.run(["git", "-C", root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "main"
+    name = proc.stdout.strip().split("/", 1)[-1] if proc.returncode == 0 else ""
+    return name if re.fullmatch(r"[\w./\-]{1,100}", name or "") else "main"
+
+
 def cmd_passport(args: argparse.Namespace) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
@@ -854,6 +883,21 @@ def cmd_passport(args: argparse.Namespace) -> int:
             warnings.append("--policy file is inside the scanned repository: applied tighten-only, like repository config")
         else:
             operator, op_label = pol, os.path.basename(args.policy)
+    default_branch = args.default_branch or _default_branch(root)
+    export, export_trusted, export_label = None, False, ""
+    if args.branch_rules:
+        try:
+            export = _load_branch_rules(args.branch_rules)
+        except ValueError as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        export_trusted = not jh_map.inside(args.branch_rules, root)
+        export_label = os.path.basename(args.branch_rules)
+        if not export_trusted:
+            warnings.append("--branch-rules file is inside the scanned repository: counted as declared, not "
+                            "provider-verified")
+    change_control = jh_change.build(col.items, export, export_trusted, export_label, default_branch)
+    package_sources = jh_registry.collect(col.items, root)
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",
@@ -865,7 +909,8 @@ def cmd_passport(args: argparse.Namespace) -> int:
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
         findings=result.findings, governance_findings=raw, governance_tuned=tuned,
-        governance_truncated=raw_capped, profile=args.profile)
+        governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
+        package_sources=package_sources)
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")
@@ -1132,6 +1177,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--compare", metavar="OLD.json",
                     help="compare a previous passport with the current one (or with --against)")
     sp.add_argument("--against", metavar="NEW.json", help="with --compare: compare two stored passports, no scan")
+    sp.add_argument("--branch-rules", metavar="PATH",
+                    help="the repository's rulesets or branch protection as exported from the GitHub REST API; "
+                         "provider-verified only when the file is outside the repository")
+    sp.add_argument("--default-branch", metavar="NAME",
+                    help="the default branch the change-control checks apply to (default: from git, else main)")
     add_verify_inputs(sp)
     sp.set_defaults(func=cmd_passport)
 

@@ -480,6 +480,45 @@
         "exposure",
         "coverage"
       ]
+    },
+    "egress": {
+      "type": "object",
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "declared",
+            "unknown"
+          ]
+        },
+        "outside": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "unused": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "wildcards": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        },
+        "boundaries": {
+          "type": [
+            "array",
+            "integer"
+          ]
+        }
+      }
     }
   }
 }
