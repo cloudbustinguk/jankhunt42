@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.6.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.7.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -94,6 +94,7 @@ People who are not software engineers now build and ship software with AI coding
 jankhunt42 scan . --category agent          # what an agent would do when it opens or works in this repository
 jankhunt42 map .                            # what the software and its agent's MCP servers can reach
 jankhunt42 passport . --profile citizen     # a strict release decision, explained in plain terms
+jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell)
 ```
 
 - **Agent workspace checks** (`JH701`-`JH711`, `JH432`):

@@ -28,10 +28,26 @@ from jh_core import _looks_like_sandbox_policy as looks_like_sandbox_policy
 TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
 
 
+def _strip_toml_comment(line: str) -> str:
+    """The line without a `#` comment that is outside quotes."""
+    quote = None
+    for k, ch in enumerate(line):
+        if quote:
+            if ch == "\\" and quote == '"':
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#":
+            return line[:k]
+    return line
+
+
 def _toml_tables(text: str) -> List[Tuple[int, str, str, str]]:
     section, out = "", []
     for i, line in enumerate(text.split("\n"), 1):
-        line = line.split("#", 1)[0] if not re.search(r"""["'][^"']*#""", line) else line
+        line = _strip_toml_comment(line)
         m = re.match(r"^\s*\[\s*([^\]]+?)\s*\]\s*$", line)
         if m:
             section = m.group(1).replace('"', "").replace("'", "")

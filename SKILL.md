@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.6.2"
+  version: "2.7.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -32,6 +32,7 @@ jankhunt42 is a workflow plus a stdlib-only CLI (`scripts/jankhunt42`). The work
 | release readiness, ownership, a software passport, "can we ship this" | `jankhunt42 passport .` | `references/passport.md` |
 | someone who is not a software engineer building or shipping software (often with an AI agent), "is my app safe to share" | `jankhunt42 passport . --profile citizen`, `jankhunt42 scan . --category agent` | `references/citizen.md` |
 | an AI agent workspace reviewed: agent settings, MCP servers, instruction files, "is this repo safe to open with an agent" | `jankhunt42 scan . --category agent`, `jankhunt42 map .` | `references/citizen.md` |
+| a sandbox or network allowlist for an AI coding agent, "fence the agent", least privilege for Claude Code, Codex or OpenShell | `jankhunt42 passport . --emit-sandbox-policy claude-code` (or `codex`, `openshell`) | `references/citizen.md` |
 | AI governance: "which AI services does this use", an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
 | an adversarial multi-agent investigation, **only when the user says "deep hunt"** | `jankhunt42 hunt .` | `references/deep-hunt.md` |
 | copy-paste commands for native tools | | `references/toolbox.md` |

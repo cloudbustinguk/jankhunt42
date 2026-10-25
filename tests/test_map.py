@@ -41,6 +41,15 @@ class Adapters(unittest.TestCase):
         self.assertEqual((es[0]["verification"], es[0]["capability"], es[0]["confidence"]), ("inferred", "unknown", "low"))
         self.assertTrue(any("unresolved" in l for l in labels(rep)))
 
+    def test_merge_into_needs_using(self):
+        src = ('import psycopg\nconn = psycopg.connect("postgresql://pg.dev.internal/app")\n'
+               'conn.execute("MERGE INTO accounts AS a USING staging s ON a.id = s.id")\n'
+               'notes.append("merge into .claude/settings.json; a project file only pre-allows")\n')
+        rep = build({"svc.py": src})
+        writes = [e for e in rep["graph"]["edges"] if e["kind"] == "writes"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual([x["line"] for x in rep["evidence"] if x["id"] in writes[0]["evidence_refs"]], [3])
+
     def test_python_literal_endpoint_and_sql_ops(self):
         src = ('import psycopg\nconn = psycopg.connect("postgresql://u:%s@pg.prod.internal/ledger")\n'
                'conn.execute("DELETE FROM entries WHERE id = %%s")\nconn.execute("SELECT a FROM b")\n' % PW)  # jankhunt42: ignore JH104 (fixture text)

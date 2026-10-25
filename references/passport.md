@@ -29,6 +29,7 @@ jankhunt42 passport . --compare old-passport.json            # what changed sinc
 jankhunt42 passport --compare old.json --against new.json    # two stored passports, no scan
 jankhunt42 passport . --verify ../verify-plan.json           # run gh/cosign/jf on the provenance first
 jankhunt42 passport . --branch-rules ../rules/app.json       # the repository's rulesets, exported by an operator
+jankhunt42 passport . --emit-sandbox-policy claude-code       # an agent network fence instead of a passport (citizen.md)
 ```
 
 Advisory by default (exit `0` whatever the decision). `--fail-on review`,

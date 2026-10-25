@@ -515,7 +515,8 @@ _ENV_RES = [
 ]
 _SQL_SRC = [
     ("read", r"SELECT\b[^;]{0,200}?\bFROM\b"),
-    ("write", r"INSERT\s+INTO\b|UPDATE\s+[\w.\"`\[\]]+\s+SET\b|MERGE\s+INTO\b"),
+    # MERGE INTO needs its USING clause: "merge into .claude/settings.json" is prose
+    ("write", r"INSERT\s+INTO\b|UPDATE\s+[\w.\"`\[\]]+\s+SET\b|MERGE\s+INTO\s+[\w.\"`\[\]]+(?:\s+(?:AS\s+)?\w+)?\s+USING\b"),
     ("delete", r"DELETE\s+FROM\b|TRUNCATE\s+TABLE\b|DROP\s+(?:TABLE|DATABASE|SCHEMA)\b"),
     ("admin", r"GRANT\s+[\w ,]{1,60}?\s+ON\s|ALTER\s+(?:DATABASE|ROLE|USER)\b|CREATE\s+(?:USER|ROLE)\b"),
 ]

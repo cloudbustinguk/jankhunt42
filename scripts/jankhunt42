@@ -24,6 +24,7 @@ from jh_core import (  # noqa: E402
     make_finding, sev_at_least,
 )
 from jh_rules import RULES, ScanOptions, ScanResult, scan_sources, rule_by_id  # noqa: E402
+import jh_fence  # noqa: E402
 import jh_render  # noqa: E402
 import jh_doctor  # noqa: E402
 import jh_triage  # noqa: E402
@@ -804,6 +805,10 @@ def _default_branch(root: str) -> str:
 def cmd_passport(args: argparse.Namespace) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
+    if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
+        print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
+              "--json, --html, --md or --compare", file=sys.stderr)
+        return 2
     if args.against and not args.compare:
         print("jankhunt42: passport: --against needs --compare", file=sys.stderr)
         return 2
@@ -830,6 +835,17 @@ def cmd_passport(args: argparse.Namespace) -> int:
     except (OSError, ValueError, jh_map.GitError) as exc:
         print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
+    if args.emit_sandbox_policy:
+        pkg = jh_registry.collect(col.items, root, list(args.exclude or ()) + list(cfg.ignore_globs or []))
+        try:
+            text, notes = jh_fence.emit(args.emit_sandbox_policy, map_report, pkg, VERSION)
+        except ValueError as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        sys.stdout.write(text)
+        for note in notes:
+            print("jankhunt42: fence: %s" % jh_core_safe(note), file=sys.stderr)
+        return 0
     scan_args = argparse.Namespace(
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
         min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
@@ -1183,6 +1199,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "provider-verified only when the file is outside the repository")
     sp.add_argument("--default-branch", metavar="NAME",
                     help="the default branch the change-control checks apply to (default: from git, else main)")
+    sp.add_argument("--emit-sandbox-policy", metavar="FORMAT", choices=jh_fence.FORMATS,
+                    help="write a least-privilege network fence for an AI coding agent from what the code reaches "
+                         "(production assets excluded): claude-code, codex or openshell. A review artefact; "
+                         "jankhunt42 never applies it")
     add_verify_inputs(sp)
     sp.set_defaults(func=cmd_passport)
 

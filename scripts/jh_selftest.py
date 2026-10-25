@@ -106,6 +106,11 @@ MUTANTS = [
     ("M28-citizen-declared-change-control", "repository-declared change control satisfies P-CHG-001 under the "
      "citizen profile", "jh_policy.py", '    elif citizen and cc["state"] == "declared":', "    elif False:",
      "test_containment.py"),
+    ("M29-fence-host-unchecked", "a host name from the repository goes into an emitted sandbox policy unchecked",
+     "jh_fence.py", '    if _HOST_RE.match(h) and "." in h.lstrip("*.") or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", h):',
+     "    if True:", "test_fence.py"),
+    ("M30-fence-production-included", "a production asset goes into the agent's sandbox fence", "jh_fence.py",
+     '        if n.get("environment") == "production":', "        if False:", "test_fence.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

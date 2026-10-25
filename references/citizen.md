@@ -158,7 +158,50 @@ transports, pinning, credential names, what each server reaches).
 with ordinals, and strips the hostnames, paths, and names that rule
 messages quote.
 
-## Doctrine for agents working with citizen developers
+## Fence the agent (`passport --emit-sandbox-policy`)
+
+An AI coding agent runs commands with the developer's network and
+credentials. A fence limits that to what the work needs:
+
+```sh
+jankhunt42 passport . --emit-sandbox-policy claude-code   # settings JSON for .claude/settings.json
+jankhunt42 passport . --emit-sandbox-policy codex         # a config.toml permission profile
+jankhunt42 passport . --emit-sandbox-policy openshell     # an OpenShell policy (version 1)
+```
+
+**What goes in:**
+- the hosts the map shows the code reaching;
+- the public endpoints of services it uses without naming a host;
+- the package registries it installs from, or the ecosystem's default when
+  nothing is configured.
+
+**What stays out**, listed on stderr for a decision:
+- **Production assets.** An agent editing code should get a non-production
+  endpoint, not the production database.
+- **Endpoints the map could not resolve.** An environment variable or a
+  secret is never guessed.
+- **Local services.**
+- **Host names that are not plain DNS names.** A name read from the
+  repository can never become a rule.
+
+The policy is a review artefact. jankhunt42 never applies it, and checks its
+own output against the subset of each format it writes before printing it.
+The output is deterministic for a given repository and version.
+
+**What each tool enforces:**
+- **Claude Code.** A project file only pre-allows the hosts, and other hosts
+  still prompt. Hosts are denied only when
+  `sandbox.network.strictAllowlist` is `true` in user or managed settings,
+  which a project file cannot set. The policy also sets `failIfUnavailable`
+  and `allowUnsandboxedCommands: false`, and denies reads of common
+  credential stores.
+- **Codex.** Domain rules apply only with `features.network_proxy = true`,
+  which the profile sets. Permission profiles are a Codex beta feature.
+- **OpenShell.** A rule with no binaries matches nothing. The interpreter
+  paths are the usual Debian and Ubuntu locations; replace them with the
+  image's real paths, because OpenShell does not follow symlinks. Endpoints
+  without `access` or `rules` allow any request to that host and port.
+
 
 - Use the citizen profile when the person says they are not a software
   engineer, or asks you to build and ship software without engineering
@@ -170,6 +213,10 @@ messages quote.
   user or yourself, and never write an acceptance record.
 - Before opening or running an unfamiliar repository with an agent, run
   `jankhunt42 scan . --category agent` and read the findings first.
+- Run the agent inside a fence. Emit one with
+  `jankhunt42 passport . --emit-sandbox-policy <tool>`, review what it
+  excluded, and turn on the tool's strict mode. Never add production hosts
+  to it to make a task work.
 
 ## Limits
 

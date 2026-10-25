@@ -283,6 +283,34 @@ class Scanner(unittest.TestCase):
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
+        # soak batch b01 (2.7.0)
+        "web/markers.ts": ("/** +41 XX XXX XX XX for Swiss numbers */\n// Todo lo demás se queda igual\n"
+                           "// TODO: handle refunds\n// todo: lowercase marker\n// XXX: broken on Safari\n"),
+        "src/labels.ts": ("const l = { token: \"Escolha uma conta\" };\nconst c = { apiKey: 'Client ID' };\n"
+                          "const s = { password: \"#signin-form__password\" };\n"
+                          "const k = { apiKey: \"Zk82KdpQ1aVv93x7Kq2mZp9LwR4\" };\n"),
+        "web/print.ts": ("w.document.write(`\n  <html><title>Receipt</title></html>\n`);\n"
+                         "w.document.write(`\n  <h1>${order.name}</h1>\n`);\n"),
+        "web/safe.tsx": ("const A = () => <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(body) }} />;\n"
+                         "const B = () => <div dangerouslySetInnerHTML={{ __html: body }} />;\n"),
+        "tests/test_guard.py": ("class T(Base):\n    def test_closed(self):\n        self.rejected(X, 'change the title')\n"
+                                "    def test_nothing(self):\n        run()\n"),
+        "web/comments.ts": ("// extract the slug inside {}\n// Admin only. Body: { campaign_id: string }\n"
+                            "// x = compute(a);\n// doThing();\n// }\n"),
+        "tests/arrow.test.ts": ("it(\"keeps totals\", () =>\n  expect(total([1, 2])).toBe(3));\n"
+                                "it(\"does nothing\", () =>\n  run());\n"
+                                "expect(test(s, \"r\").decision).toBe(\"allow\");\n"),
+        # soak batch b02 (2.7.0)
+        "web/cdp.js": ("class Page {\n  async eval(expression) {\n    return this.send(\"Runtime.evaluate\", { expression });\n  }\n}\n"
+                       "setInterval(\"month\");\neval(userInput);\nsetTimeout(code, 10);\n"),
+        "fn/hook.ts": ("console.log(\"Webhook secret set:\", webhookSecret ? \"yes, configured\" : \"no\");\n"
+                       "const cfg = { secret: \"Wq7Lz2Xm9Rt4Nb8Vc3Kd\" };\n"),
+        "web/help.tsx": ("const H = () => <p dangerouslySetInnerHTML={{ __html: t(\"help.body\") }} />;\n"
+                         "const U = () => <p dangerouslySetInnerHTML={{ __html: t(userKey) }} />;\n"),
+        "app/ids.py": ("import hashlib\nrow_id = hashlib.md5(url.encode()).hexdigest()[:12]\n"
+                       "cache_key = hashlib.sha1(blob).hexdigest()\n"
+                       "h = hashlib.md5(data, usedforsecurity=False)\n"
+                       "pw_hash = hashlib.md5(password.encode()).hexdigest()\n"),
         "ops/run_box.sh": ("docker run --rm --cap-add SYS_ADMIN img true\n"
                            "FLAGS=\"--cap-add=SYS_ADMIN --pid=host\"\n"),
         ".claude/settings.json": ("{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": []}\n"
@@ -463,6 +491,24 @@ class Scanner(unittest.TestCase):
                          [(1, "minor"), (2, "critical")])
         self.assertEqual({f["severity"] for f in self.hits("JH106", "eval_corpus/projects/a/deser.py")}, {"minor"})
         self.assertEqual(self.lines("JH122", "ops/run_box.sh"), [1])
+
+    def test_soak_b01(self):
+        self.assertEqual(self.lines("JH203", "web/markers.ts"), [3, 4, 5])
+        self.assertEqual(self.lines("JH101", "src/labels.ts"), [4])
+        self.assertEqual(self.lines("JH124", "web/print.ts"), [4])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/safe.tsx")),
+                         [(1, "minor"), (2, "major")])
+        self.assertEqual(self.lines("JH502", "tests/test_guard.py"), [4])
+        self.assertEqual(self.lines("JH502", "tests/arrow.test.ts"), [3])
+        self.assertEqual(self.lines("JH205", "web/comments.ts"), [3, 4, 5])
+
+    def test_soak_b02(self):
+        self.assertEqual(self.lines("JH102", "web/cdp.js"), [7])         # setTimeout(fn) is not code in a string
+        self.assertEqual(self.lines("JH101", "fn/hook.ts"), [2])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/help.tsx")),
+                         [(1, "minor"), (2, "major")])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH107", "app/ids.py")),
+                         [(2, "minor"), (3, "minor"), (5, "major")])
 
     def test_review_of_262_exemptions_do_not_hide_leads(self):
         self.assertEqual(self.lines("JH122", "ops/continued.sh"), [2, 3, 4])

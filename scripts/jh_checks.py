@@ -1913,7 +1913,10 @@ def gh_agent_prompt(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 
 _PY_ASSERT_RE = re.compile(r"\b(?:assert\w*|pytest\.(?:raises|warns|deprecated_call|fail)|self\.(?:assert\w*|fail\w*)|"
-                           r"unittest|np\.testing|assert_that)\b")
+                           r"unittest|np\.testing|assert_that)\b|"
+                           # helpers named for checking, possibly defined in a shared base class elsewhere
+                           r"\bself\.(?:check|verify|ensure|expect|require|must|should)\w*\s*\(|"
+                           r"\bself\.\w*(?:rejected|refused|denied|forbidden|raises|fails|blocked)\s*\(")
 
 
 def _helper_call_re(names: set) -> Optional[re.Pattern]:
@@ -1983,8 +1986,17 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
             if opened and not _JS_ASSERT_RE.search(body):
                 out.append(make_finding(rule, sf, i + 1, end_line=end + 1,
                                         message="Test block contains no assertion."))
-        elif not _JS_ASSERT_RE.search(line):
-            out.append(make_finding(rule, sf, i + 1, message="Test contains no assertion on this line."))
+        else:
+            # an arrow body on the next lines: read until the test call's parenthesis closes
+            span, depth = [], 0
+            for k in range(i, min(i + 20, len(lines))):
+                span.append(lines[k])               # the whole line: expect(test(...)) asserts
+                part = lines[k][_JS_TEST_CALL_RE.search(lines[k]).start():] if k == i else lines[k]
+                depth += part.count("(") - part.count(")")
+                if depth <= 0:
+                    break
+            if not _JS_ASSERT_RE.search("\n".join(span)):
+                out.append(make_finding(rule, sf, i + 1, message="Test contains no assertion on this line."))
         if len(out) >= 10:
             break
     return out
@@ -1998,6 +2010,7 @@ _JS_TEST_CALL_RE = re.compile(r"(?<![\w.$:#])(?:it|test)(?:\.(?:only|concurrent|
 # expect/assert/should, helpers named for them (verifyInput, assertVisible),
 # chai/should chains, ava's t.is/t.true, snapshots
 _JS_ASSERT_RE = re.compile(r"\b(?:expect|assert|should)\b|\b(?:expect|assert|verify|check|should)[A-Z_]\w*\s*\(|"
+                           r"\b(?:rejected|refused|denied|blocked|forbidden)\s*\(|"
                            r"\.should\b|\bt\.(?:is|not|true|false|deepEqual|throws|snapshot|assert)\b|"
                            r"\.toMatch(?:Inline)?Snapshot\b")
 _RUST_TEST_ATTR_RE = re.compile(r"^\s*#\[(?:[\w:]+::)?test\b")
@@ -2160,7 +2173,7 @@ def _enclosing_callee(lines: Sequence[str], i: int, col: int) -> Optional[str]:
     return None
 
 
-_EXEC_LITERAL_RE = re.compile(r"(?:eval|exec)\s*\(\s*[rbu]?([\"'])([^\"'\n]*)\1\s*[,)]")
+_EXEC_LITERAL_RE = re.compile(r"(?:eval|exec|setTimeout|setInterval)\s*\(\s*[rbu]?([\"'])([^\"'\n]*)\1\s*[,)]")
 _EXEC_PATTERNS: Dict[str, List[re.Pattern]] = {}
 
 
@@ -2223,8 +2236,10 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
             if "exec" in pat.pattern and sf.lang != "python":
                 continue                    # JS/PHP/Ruby exec() runs a command, not code (JH103's job)
             for m in pat.finditer(line):
-                if re.search(r"\bdef\s+$", line[:m.start()]):
-                    continue                # `def exec(self, ...)` defines a method
+                if re.search(r"\bdef\s+$", line[:m.start()]) or (
+                        re.match(r"^\s*(?:(?:async|static|public|private|protected)\s+)*$", line[:m.start()])
+                        and re.match(r"\w+\s*\([^)]*\)\s*(?::\s*[\w<>\[\], |]+)?\s*\{", line[m.start():])):
+                    continue                # `def exec(self, ...)` or `async eval(expr) {` defines a method
                 lit = _EXEC_LITERAL_RE.match(raw, m.start())
                 if lit and not re.search(r"[$%{}`]|#\{", lit.group(2)):
                     continue

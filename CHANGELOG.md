@@ -4,6 +4,66 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.7.0] — 2026-10-25
+
+Fence the agent. An AI coding agent runs commands with the developer's
+network; jankhunt42 now writes the least-privilege fence from what the code
+actually reaches.
+
+### Added
+
+- **`passport --emit-sandbox-policy {claude-code,codex,openshell}`:** a
+  default-deny network allowlist for an AI coding agent in the tool's native
+  format: Claude Code settings JSON, a Codex permission profile, or an
+  OpenShell policy.
+  - **In:** the hosts the code reaches, the public endpoints of services it
+    names without a host, and its package registries.
+  - **Out**, listed for a decision: production assets (give the agent a
+    non-production endpoint), unresolved endpoints, local services, and
+    host names that are not plain DNS names (a hostile name cannot become a
+    rule).
+  - Each tool's enforcement limits are stated with the policy. For example,
+    a Claude Code project file only pre-allows hosts until
+    `strictAllowlist` is set in user or managed settings.
+  - The output is deterministic, checked against the documented subset
+    before it is printed, and reads back through jankhunt42's own boundary
+    readers as the same allowlist. It is a review artefact that is never
+    applied. Mutants `M29` (unchecked host) and `M30` (production in the
+    fence) are killed.
+
+### Fixed
+
+- The egress boundary reader dropped Codex domain rules with a trailing
+  comment (`"api.example.com" = "allow"  # why`), so a commented boundary
+  read as missing.
+- The map read prose starting with "merge into ..." as an SQL write; `MERGE
+  INTO` now needs its `USING` clause.
+- From the first two mass-test batches of vibe-coded repositories (80
+  repositories, findings verified):
+  - **`JH101`:** a CSS selector (`password: "#login-password"`) or a
+    capitalised label (`apiKey: 'Client ID'`) is not a secret. Password
+    keys keep the stricter reading.
+  - **`JH203`:** markers are case-sensitive words, so Spanish *todo* and a
+    phone format (`XX XXX XX`) no longer count.
+  - **`JH205`:** a trailing brace in prose ("the slug inside {}") is not
+    commented-out code.
+  - **`JH124`:** joins the constant-HTML check (a print template with no
+    interpolation).
+  - **`JH124` to `JH126`:** a value passed through a sanitizer is minor, and
+    so is the shadcn/ui chart theme block.
+  - **`JH502`:** recognises assertion helpers by name (`self.rejected(...)`)
+    and an arrow-function body on the next line.
+  - **`JH102`:** a JS method named `eval` (`async eval(expr) {`) is a
+    definition, and a constant string passed to `setTimeout` or
+    `setInterval` is constant code.
+  - **`JH101`:** a match that runs from one string argument into the next
+    (`log("secret:", token ? "yes" : "no")`) is not a literal.
+  - **`JH125`:** a translation looked up by a constant key (`t("help.body")`)
+    is minor.
+  - **`JH107`:** MD5 or SHA-1 for an identifier, cache key or checksum is
+    minor; `usedforsecurity=False` is skipped. A digest near passwords,
+    tokens, signatures or sessions stays major.
+
 ## [2.6.2] — 2026-10-25
 
 Precision for what a user sees. A second labelled sample took every critical

@@ -290,7 +290,8 @@ RULES: List[Rule] = [
     R("JH203", "TODO/FIXME marker", "info", "maintainability",
       "An unresolved marker records known debt or a known defect.",
       "Link it to an issue or resolve it; do not let it become permanent.",
-      confidence="high", target="comments", patterns=(r"(?i)\b(?:TODO|FIXME|HACK|XXX|BUG)\b",)),
+      confidence="high", target="comments",
+      patterns=(r"\b(?:TODO|FIXME|HACK|BUG)\b|\bXXX\b(?=\s*[:(\-])|(?i:\b(?:todo|fixme|hack)\s*[:(])",)),
     R("JH204", "Debug leftover", "minor", "reliability",
       "Debug output or a debugger hook is still in the code path.",
       "Remove it or route it through the project logger at an appropriate level.",
@@ -299,7 +300,9 @@ RULES: List[Rule] = [
       "Commented code rots, confuses readers, and hides intent; version control already remembers it.",
       "Delete it or restore it with a test; keep comments for why, not what used to be.",
       confidence="low", target="comments",
-      patterns=(r"(?i)^\s*(?:if|for|while|switch|return|def|class|function|const|let|var|import|from|public|private|protected|try|catch|#include)\b", r"[;{}]\s*$")),
+      patterns=(r"(?i)^\s*(?:if|for|while|switch|return|def|class|function|const|let|var|import|from|public|private|protected|try|catch|#include)\b",
+                # a trailing ; { } counts only with something code-shaped: an assignment, a call, an arrow, or braces alone
+                r"^(?=.*(?:[^=!<>]=[^=]|\w\(|=>)).*[;{}]\s*$|^\s*(?://+|#+|--|/?\*+)?\s*[{}]+\s*;?\s*$")),
     R("JH206", "Mutable default argument", "major", "reliability",
       "A list/dict default is created once and shared across calls, so state leaks between invocations.",
       "Use None as the default and create a fresh container inside the function.",
@@ -741,6 +744,15 @@ def secret_placeholder(match_text: str) -> bool:
         # '"' + crypto.randomBytes(32).toString('hex') + '"'
         if re.match(r"[)\]]", value) and re.search(r"[.(]\w", value) or re.search(r"""["'`]\s*\+\s*\w|\w[\w)\]]*\s*\+\s*["'`]""", value):
             return True
+        # log("secret:", token ? "yes" : "no"): the "value" is the code between two string arguments
+        if re.match(r"\s*,\s*[\w$.]+", value) or re.search(r"\s\?\s*$", value):
+            return True
+        # a CSS selector (Playwright and portal scrapers: password: "#login-password")
+        if re.fullmatch(r"[#.][A-Za-z_][\w\-]*", value.strip()) or re.search(r":has(?:-text)?\(|\[name[*^$|~]?=", value):
+            return True
+        # a capitalised label of words ("Client ID", "Escolha uma conta"), unless the key may be a password
+        if "pass" not in key and re.fullmatch(r"[^\W\d_a-z][^\W\d_]*(?:[ \t]+[^\W\d_]+){1,6}(?:\s*\([^)]*\))?", value.strip()):
+            return True
         # a lowercase name ("identifier", "attribute.name") is not a credential,
         # unless the key says it may be a password
         if re.fullmatch(r"[a-z]+(?:[._-][a-z]+)*", value) and "pass" not in key:
@@ -930,12 +942,36 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         message = ("A wildcard origin lets any site call this endpoint, but browsers send no cookies or "
                                    "credentials to a wildcard origin; it matters when the endpoint trusts network "
                                    "position (an intranet or localhost service) rather than a token.")
+                    if rule.id == "JH107" and m.group(0).startswith(("hashlib", "createHash", "MessageDigest")):
+                        if "usedforsecurity=False" in line:
+                            continue        # Python says so explicitly
+                        near = " ".join(sf.nocomment[max(0, idx - 2):idx + 1]).lower()
+                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp", near) and \
+                                re.search(r"cache|etag|dedup|fingerprint|checksum|\b\w*_?ids?\b|uuid|slug|bucket|shard|"
+                                          r"fold|colou?r|avatar|filename|hexdigest\(\)\s*\[|digest\(\)\s*\[", near):
+                            severity, confidence = "minor", "medium"
+                            message = ("MD5/SHA-1 as an identifier, cache key or checksum is fine; it matters only for "
+                                       "signatures, passwords or tokens.")
                     if rule.id == "JH108" and m.group(0).startswith("debug") and not _web_debug(sf, idx, m.start()):
                         continue            # a library's verbosity flag, not a web debug server
                     if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
-                    if rule.id in ("JH125", "JH126") and _constant_html(sf, idx, m.end()):
+                    if rule.id in ("JH124", "JH125", "JH126") and _constant_html(sf, idx, m.end()):
                         continue
+                    if rule.id in ("JH124", "JH125", "JH126"):
+                        window = " ".join([sf.nocomment[idx - 1][m.end():]] + sf.nocomment[idx:idx + 2])
+                        if re.match(r"\s*=\s*\{\{\s*__html\s*:\s*Object\.entries\(\s*THEMES\s*\)", window):
+                            severity, confidence = "minor", "low"
+                            message = ("The shadcn/ui chart component writes CSS variables from its config into a "
+                                       "style tag; it matters only if chart colours come from user input.")
+                        elif re.match(r"\s*=\s*\{\{\s*__html\s*:\s*(?:i18n\.|intl\.)?t\(\s*[\"'][\w.\-:]+[\"']\s*[,)]", window):
+                            severity, confidence = "minor", "low"
+                            message = (rule.message + " The value is a translation string looked up by a constant "
+                                       "key; it matters only if translations are user-contributed.")
+                        elif _SANITIZER_RE.search(window[:240]):
+                            severity, confidence = "minor", "low"
+                            message = (rule.message + " The value passes through a sanitizer: check that it allows "
+                                       "no script, event handlers or javascript: URLs.")
                     if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
@@ -1077,6 +1113,11 @@ _SQL_CONTEXT_RE = re.compile(r"(?i)\b(?:select|insert|update|delete|where|from|j
 _SQL_TAG_RE = re.compile(r"(?:\b(?:sql|SQL|Prisma\.sql|db\.sql|tx\.sql)|\$(?:queryRaw|executeRaw))\s*$")
 
 
+# a value passed through an HTML sanitizer or escaper before it reaches the sink
+_SANITIZER_RE = re.compile(r"\b(?:DOMPurify\.sanitize|sanitize\w*|purify\w*|escapeHtml|escape_html|htmlEscape|"
+                           r"he\.encode|xss|filterXSS|sanitizeHtml)\s*\(")
+
+
 def _container_command(sf: SourceFile, idx: int) -> bool:
     """The line is part of a container command (docker/podman/nerdctl run or
     create, docker compose run, also continued with backslashes) or of
@@ -1172,13 +1213,13 @@ def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
             if "`" in n:
                 tail = n.split("`", 1)[1]
                 text = "\n".join(body)[:-len(tail) - 1] if tail else "\n".join(body)[:-1]
-                if re.search(r"\$\{(?![A-Z][A-Z0-9_]*\})", text) or not re.match(r"\s*;?\s*$", tail):
+                if re.search(r"\$\{(?![A-Z][A-Z0-9_]*\})", text) or not re.match(r"\s*\)?\s*;?\s*$", tail):
                     return False
                 k = idx + len(body) - 1             # index of the line after the closing backtick
                 nxt = next((x for x in sf.nocomment[k:k + 3] if x.strip()), "")
-                return tail.strip() == ";" or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
+                return tail.strip().endswith(";") or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
         return False
-    if re.match(r"\s*%s\s*;?\s*$" % lit, rest):
+    if re.match(r"\s*%s\s*\)?\s*;?\s*$" % lit, rest):
         # unless the statement goes on: `= '<div>'` then `+ message` on the next line
         nxt = next((n for n in sf.nocomment[idx:idx + 3] if n.strip()), "")
         return line.rstrip().endswith(";") or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
