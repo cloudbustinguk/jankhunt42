@@ -210,11 +210,27 @@ class Scanner(unittest.TestCase):
         "web/server.py": "from flask import Flask\napp = Flask(__name__)\napp.run(\n    debug=True)\n",
         "tests/fit.test.ts": ("describe(\"no questions -> never possible fit (fallback)\", () => {\n"
                               "  const f = fit(ols(y, rows));\n  model.fit(\"data.csv\");\n"
-                              "  fit(\"focused\", () => {});\n});\n"),
+                              "  fit(\"focused\", () => {});\n});\n"
+                              "fit(`renders ${n}`, () => {});\nfdescribe(`group`, () => {});\n"),
         "sdk/unpack.py": "def unpack_archive(data, target):\n    pass\n\n\nunpack_archive(blob, dest)\n",
-        "ci/test.sh": "for a in \"--privileged\" \"--pid=host\"; do\n  run \"$a\"\ndone\n",
+        "tests/policy_test.sh": "for a in \"--privileged\" \"--pid=host\"; do\n  run \"$a\"\ndone\n",
         # an AIza-shaped placeholder must not come back through the generic `apiKey: "..."` pattern
-        "web/firebase.js": "const c = {\n  apiKey: \"AIza" + "SyDEMO-public-firebase-web-key-12345\",\n};\n",
+        "web/firebase.js": ("const c = {\n  apiKey: \"AIza" + "SyDEMO-public-firebase-web-key-12345\",\n};\n"
+                            "const d = { apiKey: \"AIza" + "SyDEMO-public-firebase-web-key-12345\", pass" + "word: "
+                            "\"Vq8#zLm2!Tr6wPq\" };\n"),
+        # review of 2.6.1: a skip must not hide the real lead beside it
+        "android/Run.java": ("class Run {\n  void go() throws Exception {\n    Runtime.getRuntime().exec(cmd);\n"
+                             "    new ProcessBuilder(\"git\", \"status\").start();\n"
+                             "    Runtime.getRuntime().exec(new String[]{\"/system/bin/sh\", \"-c\", cmd});\n"
+                             "    Runtime.getRuntime().exec(new String[]{\"su\", \"-c\", cmd});\n"
+                             "    new ProcessBuilder(\"/usr/bin/env\", \"bash\", \"-c\", cmd).start();\n  }\n}\n"),
+        "web/Mixed.jsx": ("const A = ({ h }) => <div dangerouslySetInnerHTML={h} />;\n"
+                          "const B = () => <style dangerouslySetInnerHTML={{ __html: \"\" }} />;\n"),
+        "tools/alias_unpack.py": "import shutil as sh\nsh.unpack_archive(f, d)\n",
+        "tools/multi_import.py": "from shutil import (\n    copy,\n    unpack_archive,\n)\nunpack_archive(f, d)\n",
+        "web/run.py": "from app import app\napp.run(host=\"0.0.0.0\",\n        debug=True)\n",
+        "lib/agent2.py": "runner.run(x)\ngraph = Lib(debug=True)\n",
+        "ci/run_tests.sh": "curl -sSL https://get.tool.example/install.sh | bash\n",
         ".claude/settings.json": ("{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": []}\n"
                                   "    ]\n  },\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n"),
     }
@@ -369,11 +385,20 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH125", "web/Theme.jsx"), [4])
         self.assertEqual(self.hits("JH108", "lib/agent.py"), [])
         self.assertEqual(self.lines("JH108", "web/server.py"), [4])
-        self.assertEqual(self.lines("JH505", "tests/fit.test.ts"), [4])
+        self.assertEqual(self.lines("JH505", "tests/fit.test.ts"), [4, 6, 7])
         self.assertEqual(self.hits("JH120", "sdk/unpack.py"), [])
-        self.assertEqual({f["severity"] for f in self.hits("JH122", "ci/test.sh")}, {"minor"})
+        self.assertEqual({f["severity"] for f in self.hits("JH122", "tests/policy_test.sh")}, {"minor"})
         self.assertEqual(self.lines("JH703", ".claude/settings.json"), [9])
-        self.assertEqual(self.hits("JH101", "web/firebase.js"), [])
+        self.assertEqual([(f["line"], f["severity"]) for f in self.hits("JH101", "web/firebase.js")], [(4, "critical")])
+
+    def test_review_of_261_skips_do_not_hide_leads(self):
+        self.assertEqual(self.lines("JH103", "android/Run.java"), [3, 5, 6, 7])
+        self.assertEqual(self.lines("JH125", "web/Mixed.jsx"), [1])
+        self.assertEqual(self.lines("JH120", "tools/alias_unpack.py"), [2])
+        self.assertEqual(self.lines("JH120", "tools/multi_import.py"), [5])
+        self.assertEqual(self.lines("JH108", "web/run.py"), [3])
+        self.assertEqual(self.hits("JH108", "lib/agent2.py"), [])
+        self.assertEqual({f["severity"] for f in self.hits("JH111", "ci/run_tests.sh")}, {"critical"})
 
     def test_debug_output(self):
         for path in ("scripts/report.mjs", "lib/db/migrate.ts", "core/e2e.rs", "tests/logging.test.ts"):
@@ -392,6 +417,12 @@ class MissingPath(unittest.TestCase):
             write(root, "app.py", "x = 1\n")
             self.assertEqual(run_cli("scan", os.path.join(root, "app.py"), gone, "--json").returncode, 2)
             self.assertEqual(run_cli("scan", root, "--json").returncode, 0)
+            if hasattr(os, "symlink"):
+                link = os.path.join(root, "dangling")
+                os.symlink(gone, link)
+                p = run_cli("scan", link)
+                self.assertEqual(p.returncode, 2)
+                self.assertIn("broken symbolic link", p.stderr)
 
 
 class YamlReader(unittest.TestCase):

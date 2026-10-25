@@ -1205,15 +1205,27 @@ def build_parser() -> argparse.ArgumentParser:
 _PATH_COMMANDS = ("scan", "score", "supply-chain", "hunt", "report", "doctor", "map", "passport")
 
 
+def _unreadable(path: str) -> str:
+    """Why a path argument cannot be read, or "" when it can."""
+    path = os.path.expanduser(path)
+    try:
+        os.stat(path)
+    except OSError as exc:
+        return "broken symbolic link" if os.path.islink(path) else (exc.strerror or "cannot be read").lower()
+    if not os.access(path, os.R_OK | (os.X_OK if os.path.isdir(path) else 0)):
+        return "permission denied"
+    return ""
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command in _PATH_COMMANDS:
-        # a mistyped path must not become a clean scan of the working directory
+        # a mistyped or unreadable path must not become a clean scan of the working directory
         given = getattr(args, "paths", None) or [getattr(args, "path", None) or "."]
-        missing = [p for p in given if not os.path.exists(os.path.expanduser(p))]
-        if missing:
-            print("jankhunt42: no such file or directory: %s" % ", ".join(missing), file=sys.stderr)
+        unreadable = [p + ": " + why for p, why in ((p, _unreadable(p)) for p in given) if why]
+        if unreadable:
+            print("jankhunt42: cannot read %s" % "; ".join(unreadable), file=sys.stderr)
             return 2
     try:
         return int(args.func(args))

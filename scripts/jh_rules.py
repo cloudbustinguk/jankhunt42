@@ -537,7 +537,7 @@ RULES: List[Rule] = [
       "A focused test (.only/fit/fdescribe) silently skips the rest of the suite in many runners.",
       "Remove the focus marker before merging.",
       confidence="high", target="code", kinds=TEST + ("test",),
-      patterns=(r"\.only\s*\(", r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`]")),
+      patterns=(r"\.only\s*\(", r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`,]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`,]")),
 
     # ---------------------------------------------------------------------- docs
     R("JH601", "Broken relative link", "minor", "docs",
@@ -900,7 +900,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     continue
                 if ignore and ignore.search(line):
                     continue
-                placeholder = None
+                placeholders: List[str] = []
                 for pat in pats:
                     m = pat.search(line)
                     if not m:
@@ -915,9 +915,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity = sev
                             message = rule.message + " The script comes from an official installer over TLS: the " \
                                                      "publisher is known, but the content is still unpinned and unverified."
-                    if rule.id == "JH108" and m.group(0).startswith("debug") and not _WEB_FRAMEWORK_RE.search(sf.text):
+                    if rule.id == "JH108" and m.group(0).startswith("debug") and not _web_debug(sf, idx, m.start()):
                         continue            # a library's verbosity flag, not a web debug server
-                    if rule.id == "JH103" and _argv_without_shell(sf, idx, pat.pattern):
+                    if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
                     if rule.id in ("JH125", "JH126") and _constant_html(sf, idx, m.end()):
                         continue
@@ -925,11 +925,13 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
                     if "secret" in rule.tags:
-                        if secret_placeholder(m.group(0)):
-                            placeholder = m.group(0)
+                        # the first match that is neither a placeholder nor the assignment pattern
+                        # re-matching one (apiKey: "AIza<words>"); a real secret later on the line counts
+                        while m and (secret_placeholder(m.group(0)) or any(p in m.group(0) for p in placeholders)):
+                            placeholders.append(m.group(0))
+                            m = pat.search(line, m.end())
+                        if not m:
                             continue
-                        if placeholder and placeholder in m.group(0):
-                            continue        # the assignment pattern re-matching a token already judged a placeholder
                         provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
                         if provider and re.search(r"(?:AWSAccessKeyId|X-Amz-Credential)=(?:\S*?%2F)?$|"
                                                   r"(?:AWSAccessKeyId|X-Amz-Credential)=$", line[:m.start()]):
@@ -1025,20 +1027,44 @@ def _pipe_to_shell_severity(line: str, match: str) -> Optional[str]:
     return "critical"
 
 
-_WEB_FRAMEWORK_RE = re.compile(r"^\s*(?:from|import)\s+(?:flask|quart|django|fastapi|starlette|sanic|litestar|"
+_WEB_FRAMEWORK_RE = re.compile(r"^\s*(?:from|import)\s+(?:flask\w*|quart|django|fastapi|starlette|sanic|litestar|"
                                r"aiohttp|tornado|bottle|werkzeug|uvicorn|dash)\b", re.M)
-_SHELL_PROGRAM_RE = re.compile(r"(?i)(?:/(?:usr/)?bin/)?(?:ba|z|da|k|c|tc)?sh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh")
 
 
-def _argv_without_shell(sf: SourceFile, idx: int, pattern: str) -> bool:
+def _web_debug(sf: SourceFile, idx: int, col: int) -> bool:
+    """debug=True in a file that imports a web framework, or as an argument
+    of a .run(...) call still open from up to five lines before (an app
+    imported from a local module)."""
+    if _WEB_FRAMEWORK_RE.search(sf.text):
+        return True
+    before = "\n".join(sf.code[max(0, idx - 6):idx - 1] + [sf.code[idx - 1][:col]])
+    calls = list(re.finditer(r"\.run(?:_server)?\s*\(", before))
+    if not calls:
+        return False
+    depth = 1
+    for ch in before[calls[-1].end():]:
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0:
+            return False
+    return True
+# shells, and programs that hand their arguments to one or run another program
+_SHELL_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash", "fish", "busybox", "cmd", "powershell",
+                   "pwsh", "su", "sudo", "doas", "env", "nohup", "xargs", "ssh", "script"}
+
+
+def _argv_without_shell(sf: SourceFile, idx: int, col: int, pattern: str) -> bool:
     """Runtime.exec(new String[]{"prog", ...}) and new ProcessBuilder("prog", ...)
-    name the program as a literal: unless it is a shell, nothing parses the arguments."""
+    name the program as a literal: unless it is a shell or runs commands
+    (su, env, ssh...), nothing parses the arguments. Read from the match on."""
     if "Runtime" not in pattern and "ProcessBuilder" not in pattern:
         return False
-    call = " ".join(sf.nocomment[idx - 1:idx + 2])
-    m = re.search(r"(?:\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{|ProcessBuilder\s*\(\s*"
-                  r"(?:(?:List\.of|Arrays\.asList)\s*\()?)\s*\"([^\"\\]*)\"", call)
-    return bool(m) and not _SHELL_PROGRAM_RE.fullmatch(m.group(1).strip())
+    call = " ".join([sf.nocomment[idx - 1][col:]] + sf.nocomment[idx:idx + 2])
+    m = re.match(r"(?:Runtime\.getRuntime\(\)\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{|ProcessBuilder\s*\(\s*"
+                 r"(?:(?:List\.of|Arrays\.asList)\s*\()?)\s*\"([^\"\\]*)\"", call)
+    if not m:
+        return False
+    program = re.split(r"[\\/]", m.group(1).strip())[-1].lower()
+    return bool(program) and re.sub(r"\.exe$", "", program) not in _SHELL_PROGRAMS
 
 
 def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
@@ -1051,8 +1077,9 @@ def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
         # unless the statement goes on: `= '<div>'` then `+ message` on the next line
         nxt = next((n for n in sf.nocomment[idx:idx + 3] if n.strip()), "")
         return line.rstrip().endswith(";") or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
-    window = " ".join(sf.nocomment[idx - 1:idx + 3])
-    m = re.search(r"__html\s*:\s*", window)
+    # dangerouslySetInnerHTML={{ __html: "..." }}, read from this attribute on
+    window = " ".join([line[col:]] + sf.nocomment[idx:idx + 3])
+    m = re.match(r"\s*=\s*\{\{\s*__html\s*:\s*", window)
     return bool(m and re.match(r"%s\s*,?\s*\}" % lit, window[m.end():]))
 
 

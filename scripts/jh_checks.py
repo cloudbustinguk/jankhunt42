@@ -2018,6 +2018,24 @@ def lockfile_missing(sf: SourceFile, rule: Rule) -> List[Finding]:
                          message="No lockfile in this package or its repo root; dependency resolution is not reproducible.")]
 
 
+def _shutil_unpack_call(text: str) -> "re.Pattern[str]":
+    """Calls of shutil.unpack_archive under the names this file gives it: the
+    module or an alias of it, or a name imported from it (on one line or in
+    parentheses, with `as`, or *), unless the file defines its own."""
+    modules = ["shutil"] + re.findall(r"^\s*import\s+shutil\s+as\s+(\w+)", text, re.M)
+    names: List[str] = []
+    for imp in re.finditer(r"^\s*from\s+shutil\s+import\s+(\([^)]*\)|[^\n]*)", text, re.M):
+        if "*" in imp.group(1):
+            names.append("unpack_archive")
+        names += [a.group(1) or "unpack_archive" for a in re.finditer(r"\bunpack_archive\b(?:\s+as\s+(\w+))?",
+                                                                      imp.group(1))]
+    names = [n for n in names if not re.search(r"\bdef\s+%s\b" % n, text)]
+    calls = [r"\b(?:%s)\.unpack_archive\s*\(" % "|".join(modules)]
+    if names:
+        calls.append(r"(?<![\w.])(?:%s)\s*\(" % "|".join(names))
+    return re.compile("|".join(calls))
+
+
 @check("unsafe_extract")
 def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
@@ -2028,6 +2046,7 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
         return []
     if rule.id == "JH120" and not (has_zip or has_unpack):
         return []
+    unpack_call = _shutil_unpack_call(sf.text) if rule.id == "JH120" else None
     for i, line in enumerate(sf.code):
         if rule.id == "JH119":
             # tarfile's "data"/"tar" extraction filters (Python 3.12+, backported)
@@ -2047,10 +2066,7 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
         else:
             # zipfile strips absolute paths and ".." components itself, so only
             # unpack_archive (which can hand tar files to tarfile) is a lead
-            hit = bool(re.search(r"\bshutil\.unpack_archive\s*\(", line) or (
-                re.search(r"(?<![\w.])unpack_archive\s*\(", line) and not re.search(r"\bdef\s+unpack_archive\b", line)
-                and re.search(r"from\s+shutil\s+import\s+[^\n]*\bunpack_archive\b", sf.text)
-                and not re.search(r"\bdef\s+unpack_archive\b", sf.text)))
+            hit = bool(unpack_call and unpack_call.search(line))
         if hit:
             out.append(make_finding(rule, sf, i + 1,
                                     message="Archive extraction without path validation enables zip-slip/path traversal."))
