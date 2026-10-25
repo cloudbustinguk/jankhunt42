@@ -1008,8 +1008,11 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                 # a bare identifier is a local name unless the line reads the environment
                 env_line = re.search(r"process\.env|import\.meta\.env|\$env/|\benv\b", line) or \
                     re.search(r"\$env/(?:static|dynamic)/public", sf.text)   # SvelteKit imports the names
-                interpolated = re.search(r"\$\{[^}`]*$", line[:m.start()])
-                if read and not (in_code or interpolated or key):
+                before = line[:m.start()]
+                interpolated = re.search(r"\$\{[^}`]*$|\{[^}\"'`]*$", before)
+                q = re.search(r"([\"'])[^\"'\n]*$", before)
+                quoted = q and q.group(1) in line[m.end():] and before.count(q.group(1)) % 2 == 1
+                if read and quoted and not (in_code or interpolated or key):
                     continue                # "...process.env.NEXT_PUBLIC_X..." inside a string is an example
                 if not (read or key or (in_code and (env_line or sf.lang in ("html", "docker")))):
                     continue
@@ -1208,8 +1211,10 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
             message = ("Bidirectional control characters make this line display differently from how it is "
                        "parsed or read (Trojan Source, CVE-2021-42574).")
             # a detector's own character class (BIDI_OVERRIDE = /[...]/): still reported, at minor
+            outside = re.sub(r"\[[^\]\n]*\]", "", line)
             if not agent and re.search(r"(?i)bidi|invisible|zero.?width|trojan|homoglyph|confusable", line) and \
-                    re.search(r"\[[^\]\n]*[\u202a-\u202e\u2066-\u2069][^\]\n]*\]", line):
+                    re.search(r"\[[^\]\n]*[\u202a-\u202e\u2066-\u2069][^\]\n]*\]", line) and \
+                    not re.search(r"[\u202a-\u202e\u2066-\u2069]", outside):
                 severity = "minor"
                 message += (" The characters sit in a regex character class of what looks like a detector; "
                             "confirm nothing else on the line hides code.")
@@ -1260,7 +1265,8 @@ _CREDENTIAL_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/cre
 # merely mentioning an API key next to a curl example is not.
 _CREDENTIAL_FILE_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/credentials|\.npmrc\b|\.pypirc\b|"
                                  r"\.netrc\b|\.git-credentials\b|(?:^|[\s/'\"`@=(<])\.env\b|\.docker/config\.json|\.kube/config)")
-_PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b(?=[^\n|]*(?:https?://|\s-{1,2}\w|\$\{?\w))[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
+_PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b(?=[^\n|]*(?:https?://|\s-{1,2}\w|\$\{?\w|\s[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/:]|\s|$)))"
+                            r"[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
                             r"|\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|\s*(?:iex|invoke-expression)\b")
 _NET_SEND_RE = re.compile(r"(?i)\b(?:curl|wget|ncat|invoke-webrequest|invoke-restmethod)\b|\bnc\s+-|\bfetch\s*\(")
 # Syntax that actually ships data: an upload flag, a pipe into a network
@@ -1999,7 +2005,17 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
         d = re.match(r"\s*(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=\s*"
                      r"(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>)", line)
         if d and (d.group(1) or d.group(2)) not in ("test", "it", "describe"):
-            span = "\n".join(lines[k:k + 12])
+            if "{" in line[d.end():] or (k + 1 < len(lines) and lines[k + 1].strip().startswith("{")):
+                end, _opened = _brace_blocks(sf, k, max_lines=200)
+                span = "\n".join(lines[k:end + 1])
+            else:
+                # an arrow with an expression body: this line, or the next ones when it ends in `=>`
+                body, depth, j = [line], 0, k
+                while j + 1 < len(lines) and len(body) < 12 and (j == k and line.rstrip().endswith("=>") or depth > 0):
+                    j += 1
+                    body.append(lines[j])
+                    depth += lines[j].count("(") - lines[j].count(")")
+                span = "\n".join(body)
             if _JS_ASSERT_RE.search(span) or re.search(r"\bthrow\b|\bassert\.\w+\(|\.ok\(", span):
                 names.append(d.group(1) or d.group(2))
     helper_re = re.compile(r"(?<![\w.$])(?:%s)\s*\(" % "|".join(map(re.escape, names))) if names else None
@@ -2043,6 +2059,7 @@ _JS_TEST_CALL_RE = re.compile(r"(?<![\w.$:#])(?:it|test)(?:\.(?:only|concurrent|
 _JS_ASSERT_RE = re.compile(r"\b(?:expect|assert|should)\b|\b(?:expect|assert|verify|check|should)[A-Z_]\w*\s*\(|"
                            r"\b(?:rejected|refused|denied|blocked|forbidden)\s*\(|"
                            r"\.should\b|\bt\.(?:is|not|true|false|deepEqual|throws|snapshot|assert)\b|"
+                           r"\b(?:get|getAll|find|findAll)By[A-Z]\w*\s*\(|"     # Testing Library queries throw
                            r"\.toMatch(?:Inline)?Snapshot\b")
 _RUST_TEST_ATTR_RE = re.compile(r"^\s*#\[(?:[\w:]+::)?test\b")
 # assert macros, helpers named for them, and failing on error: unwrap/expect
@@ -2089,7 +2106,11 @@ def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             # a doc macro (:git:repo:path), a placeholder with no Latin letters or digits ("链接", "..."),
             # or any link in a template, whose targets resolve in the generated output
-            if target.startswith(":") or not re.search(r"[A-Za-z0-9]", target) or "template" in sf.basename.lower():
+            template = (re.search(r"(?i)[_.-]template\.(?:md|markdown)$", sf.basename) and
+                        not re.match(r"(?i)(?:pull_request|issue)_template", sf.basename)) or \
+                re.search(r"(?i)(?:^|/)templates?/", sf.rel)
+            placeholder = not re.search(r"[A-Za-z0-9]", target) and not re.fullmatch(r"(?:\.{1,2}/)*\.{1,2}/?", target)
+            if target.startswith(":") or placeholder or template:
                 continue
             clean = target.split("#", 1)[0].split("?", 1)[0]
             if not clean:

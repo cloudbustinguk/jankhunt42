@@ -298,6 +298,12 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
     if meta.get("config"):
         out.append("")
         out.append("_Config: `%s`_" % meta["config"])
+    minified = meta.get("minified") or []
+    if minified:
+        names = ", ".join("`%s`" % safe_text(p).replace("`", "\\`") for p in minified[:5])
+        out.append("")
+        out.append("_Minified bundles, read for secrets, hidden Unicode and agent hazards only (%d): %s%s_"
+                   % (len(minified), names, ", …" if len(minified) > 5 else ""))
     dupes = meta.get("cross_file_duplicates") or []
     if dupes:
         out.append("")
@@ -463,6 +469,11 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         out.append("  " + color.magenta("CVE") + "  " + color.grey(note))
     if meta.get("config"):
         out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
+    minified = meta.get("minified") or []
+    if minified:
+        out.append("  " + color.cyan("MINIFIED") + "  " + color.grey(
+            "%d bundle(s) read for secrets, hidden Unicode and agent hazards only: %s%s"
+            % (len(minified), safe_text(minified[0]), " …" if len(minified) > 1 else "")))
     dupes = meta.get("cross_file_duplicates") or []
     if dupes:
         sites = sum(d["count"] for d in dupes)

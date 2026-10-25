@@ -101,7 +101,9 @@ or CI; gitignore it for a purely local signal. Both config and calibration
 apply to `scan`, `score`, and `hunt`; `review`'s receipt pipeline does not
 consult them yet. Cross-file duplicate clusters ("same bug, N sites") are
 always computed on `scan`/`score`/`hunt` and need no flag — see the
-`cross_file_duplicates` key in `--json` output.
+`cross_file_duplicates` key in `--json` output. Files treated as minified
+bundles (read only by secret, hidden-Unicode and agent rules) are listed
+under `minified`.
 
 ## Logs and evidence
 

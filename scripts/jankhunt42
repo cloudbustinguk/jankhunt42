@@ -176,6 +176,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     if cfg.source:
         meta["config"] = cfg.source
     meta["cross_file_duplicates"] = [c.to_dict() for c in jh_dedup.find_cross_file_duplicates(result.findings)]
+    meta["minified"] = sorted(sf.rel for sf in sources if "minified" in sf.kinds)
     if getattr(args, "calibrate", False):
         ledger = jh_calibrate.load_ledger(str(root))
         notes = jh_calibrate.apply_calibration(result.findings, ledger, SEVERITIES)
@@ -239,6 +240,7 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
         "warnings": meta.get("cve_warnings", []),
         "config": meta.get("config"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
+        "minified": meta.get("minified", []),
         "calibration": meta.get("calibration"),
         "findings": [asdict(f) for f in result.findings],
     }

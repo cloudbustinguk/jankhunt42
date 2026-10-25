@@ -15,47 +15,60 @@ claims verified by the maintainer).
   (`/^https:\/\//i`) was read as the start of a line comment. The rest of
   the line went missing from the code view, which every pattern rule reads,
   and turned up as "commented-out code". Regex literals are now skipped
-  whole; division is still division. A regex holding a quote or backtick
+  whole; division is still division, and so is a slash after a JSX closing
+  tag (`</div>`) or a postfix `i++`. A regex holding a quote or backtick
   (``/[`'"]/``) could also open a phantom string that hid many lines, so
   real `innerHTML` and `dangerouslySetInnerHTML` sinks after one now show.
-- **Minified bundles** (Vite's `index-<hash>.js` and the like) are recognised
-  by their shape, whatever their name. Only secret rules read them: a
-  committed bundle is where inlined keys leak, while code-style findings
-  there are noise.
+- **Minified bundles** are recognised by a build-output name or path
+  (`.min.js`, `dist/`, `assets/`, `vendor/`, hashed chunk names) together
+  with their shape, so one long string cannot turn a hand-written file into
+  a "bundle". Secret, hidden-Unicode and agent rules still read them; other
+  code rules do not, because findings there are noise. Every such file is
+  listed (`minified` in `--json`, a line in the report), so the skip is
+  never silent.
 - `JH101` and other rules with ignore words: on a long line, an ignore word
   counts only near the match. A single `<b>` in a one-line bundle no longer
-  hides every key in it. A generic `password = '...'` inside a long row of a data
-  file (`.jsonl`, `.json`, `.csv`) is minor, because it is usually sample
-  text; provider-shaped keys stay critical everywhere.
+  hides every key in it. A generic `password = '...'` inside a long row of a
+  dataset (`.jsonl`, `.ndjson`, `.csv`, `.tsv`) is minor, because it is
+  usually sample text. A single-line JSON config stays critical, and so do
+  provider-shaped keys everywhere.
 - `JH132`: a public-prefix name inside a plain string (a rule's
   documentation example) is text, not an environment read. A read inside a
   template literal's `${...}` still counts, and so does a CI workflow that
   binds a secret into a `NEXT_PUBLIC_` variable for the build, which bakes
-  the secret into the public bundle.
+  the secret into the public bundle. A Svelte or Vue `{...}` attribute is
+  code.
 - `JH502`: a test runner's own definition (`async function test(name, fn)`)
   is not a test, and calls to assertion helpers defined in the same file
-  (`near(a, b)`, `close(x, y)`) count as assertions.
+  (`near(a, b)`, `close(x, y)`) count as assertions when the helper's own
+  body asserts. Testing Library queries (`getBy*`, `findBy*`) throw when
+  nothing matches, so they count too.
 - `JH601`: documentation macros (`:git:repo:path`), placeholder targets with
-  no Latin letters or digits (`链接`), and links inside template files are
-  not broken links.
+  no Latin letters, digits, dots or slashes (`链接`), and links in template
+  files (`page_template.md`, `templates/`) are not broken links. GitHub's
+  pull request and issue templates are still checked.
 - `JH203`: a lowercase `todo:` counts only right after a comment marker, so
   "para todo: un enlace" in a Spanish comment is prose.
-- `JH107`: identifier and cache-key context can come from a docstring a few
-  lines up or a use on the next line. Security words still keep it major
-  when they are in the statement itself.
+- `JH107`: a hash assigned to an identifier-like name (`cache_key`, `etag`,
+  `user_id`), with a cache or checksum comment just above, or used as a
+  cache key on the next line is minor. Security words in the statement
+  (`password`, `token`, `api_key`) keep it major.
 - `JH109`: FastAPI/Starlette `allow_origins=["*"]` without
   `allow_credentials` is minor; Starlette then sends a literal `*`.
 - `JH210` uses the innermost enclosing function. A blocking call inside a
   sync helper nested in an `async def` is not on the event loop, and a
   nested async function reports its own lines once. It is minor in tests.
 - `JH701` needs a real pipeline (a URL, a flag or a variable after `curl` or
-  `wget`). A table cell describing "curl|bash of unpinned URL" is prose.
+  `wget`, or a bare host such as `curl get.example.dev/i.sh | sh`). A table
+  cell describing "curl|bash of unpinned URL" is prose.
 - `JH702` is minor in test code, where the flag is usually fixture text.
 - `JH124` to `JH126`: a value sanitized a few lines up (`const html =
-  useMemo(() => DOMPurify.sanitize(md))`) is minor.
+  useMemo(() => DOMPurify.sanitize(md))`) is minor, only when the sanitizer
+  is that assignment's whole right-hand side.
 - `JH131`: bidi characters inside a detector's own regex character class
-  (`BIDI_OVERRIDE = /[...]/`) are minor. They are still reported, and stay
-  critical in agent files.
+  (`BIDI_OVERRIDE = /[...]/`) are minor when every bidi character on the
+  line sits inside a class. They are still reported, and stay critical in
+  agent files.
 
 ## [2.7.0] — 2026-10-25
 

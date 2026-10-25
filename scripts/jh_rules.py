@@ -893,8 +893,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue
             if "test-exclude" in rule.tags and "test" in sf.kinds:
                 continue
-            if "minified" in sf.kinds and "secret" not in rule.tags:
-                continue                # a build bundle: only a leaked key is a finding there
+            if "minified" in sf.kinds and "secret" not in rule.tags and rule.category != "agent" and rule.id != "JH131":
+                continue                # a build bundle: a leaked key, hidden Unicode or agent hazard still counts
             if opts.rule_ids and rule.id not in opts.rule_ids:
                 continue
             if rule.check:
@@ -953,11 +953,17 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "usedforsecurity=False" in line:
                             continue        # Python says so explicitly
                         own = " ".join(sf.nocomment[max(0, idx - 2):idx]).lower()   # this statement and the one before
-                        near = " ".join(sf.raw[max(0, idx - 5):idx + 2]).lower()    # a docstring above, a use below
-                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp", own) and \
-                                re.search(r"cache|etag|dedup|fingerprint|checksum|\b(?:\w+_)?ids?\b|\buuid\b|\bslug\b|"
-                                          r"\bbucket|\bshard|\bfolds?\b|\bcolou?r\b|\bavatar|\bfilename|"
-                                          r"hexdigest\(\)\s*\[|digest\(\)\s*\[", near):
+                        target = re.match(r"\s*(?:self\.)?(\w+)\s*=", sf.nocomment[idx - 1])
+                        above = " ".join(l for l in sf.raw[max(0, idx - 5):idx - 1]
+                                         if re.match(r"\s*(?:#|//|/?\*|\"{3}|'{3})", l)).lower()
+                        below = sf.nocomment[idx].lower() if idx < len(sf.nocomment) else ""
+                        purpose = (target and re.search(r"(?i)(?:^|_)(?:ids?|keys?|cache\w*|etags?|checksum|"
+                                                        r"fingerprint|slug|bucket|shard|folds?|colou?r|avatar|filename)$",
+                                                        target.group(1))) or \
+                            re.search(r"cache|etag|dedup|fingerprint|checksum|identifier|缓存", above) or \
+                            re.search(r"cache|etag|dedup", below) or \
+                            re.search(r"hexdigest\(\)\s*\[|digest\(\)\s*\[", sf.nocomment[idx - 1])
+                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp|api_?key", own) and purpose:
                             severity, confidence = "minor", "medium"
                             message = ("MD5/SHA-1 as an identifier, cache key or checksum is fine; it matters only for "
                                        "signatures, passwords or tokens.")
@@ -1029,7 +1035,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "[:=]" in pat.pattern:
                             if _I18N_PATH_RE.search(sf.rel):
                                 continue
-                            if len(line) > 400 and sf.rel.lower().endswith((".jsonl", ".ndjson", ".json", ".csv", ".tsv")):
+                            if len(line) > 400 and sf.rel.lower().endswith((".jsonl", ".ndjson", ".csv", ".tsv")):
                                 severity, confidence = "minor", "low"
                                 message = (rule.message + " It is inside a long data row (a dataset or export), which "
                                            "usually holds sample text: confirm it is not a real credential.")
@@ -1159,7 +1165,11 @@ def _sanitized_earlier(sf: SourceFile, idx: int, rest: str) -> bool:
     name = re.escape(m.group(1))
     window = "\n".join(sf.nocomment[max(0, idx - 16):idx - 1])
     a = list(re.finditer(r"\b(?:const|let|var)?\s*%s\s*=(?!=)" % name, window))
-    return bool(a) and bool(_SANITIZER_RE.search(window[a[-1].end():a[-1].end() + 200]))
+    if not a:
+        return False
+    rhs = window[a[-1].end():]
+    return bool(re.match(r"\s*(?:await\s+)?(?:(?:React\.)?useMemo\s*\(\s*\(\s*\)\s*=>\s*)?", rhs) and
+                _SANITIZER_RE.match(rhs, re.match(r"\s*(?:await\s+)?(?:(?:React\.)?useMemo\s*\(\s*\(\s*\)\s*=>\s*)?", rhs).end()))
 
 
 def _container_command(sf: SourceFile, idx: int) -> bool:

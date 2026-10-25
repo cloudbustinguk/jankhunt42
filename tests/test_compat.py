@@ -20,6 +20,8 @@ PREVIOUS = os.environ.get("JH_PREVIOUS_TAG", "v1.1.0")
 ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "JH430", "JH431",
                "JH701", "JH702", "JH703", "JH704", "JH705", "JH706", "JH707", "JH708",
                "JH432", "JH709", "JH710", "JH711"}
+# Top-level JSON keys added since 1.1.0 (additive; 2.7.1 lists minified bundles).
+ADDED_KEYS = {"minified"}
 
 
 def strip_volatile(obj):
@@ -115,6 +117,8 @@ class CrossVersion(unittest.TestCase):
             if args == ("rules", "--json"):
                 self.assertEqual({r["id"] for r in new} - {r["id"] for r in old}, ADDED_RULES)
                 new = [r for r in new if r["id"] not in ADDED_RULES]
+            if isinstance(new, dict):
+                new = {k: v for k, v in new.items() if k not in ADDED_KEYS - set(old)}
             self.assertEqual(strip_volatile(old), strip_volatile(new), args)
 
     def test_markdown_scan_identical_modulo_version(self):
@@ -122,7 +126,8 @@ class CrossVersion(unittest.TestCase):
         # written in lowercase (documented in CHANGELOG and README migration notes).
         old = self.run_old("scan", self.root, "--md").stdout.replace("Jank" + "Hunt42", "jankhunt42")
         new = run_cli("scan", self.root, "--md").stdout
-        drop = lambda t: [l for l in t.splitlines() if "elapsed" not in l and " in " not in l and "v1." not in l and "v2." not in l]
+        drop = lambda t: [l for l in t.splitlines() if "elapsed" not in l and " in " not in l and "v1." not in l
+                          and "v2." not in l and "Scan time" not in l and "Minified bundles" not in l]
         self.assertEqual(drop(old), drop(new))
 
 

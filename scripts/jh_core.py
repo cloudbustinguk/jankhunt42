@@ -207,6 +207,13 @@ def _looks_like_sandbox_policy(text: str) -> bool:
                 and re.search(r"(?m)^(?:network_policies|filesystem_policy|landlock)\s*:", head))
 
 
+# build output: dist/, build/, assets/, public/, static/, vendor/, .next/, bundles and hashed chunk names
+_MINIFIED_PATH_RE = re.compile(r"(?i)(?:^|/)(?:dist|build|out|assets|static|public|vendors?|bundles?|_next|\.next|\.nuxt|"
+                               r"wwwroot/lib|wwwroot/_framework|third[_-]?party)/|\.min\.(?:js|mjs|cjs|css)$|"
+                               r"(?:bundle|chunk|vendor)[\w.-]*\.(?:js|mjs|css)$|"
+                               r"[-.](?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{8,}\.(?:js|mjs|css)$")
+
+
 def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
     """Classify a file for infrastructure-specific rules."""
     kinds: Set[str] = set()
@@ -269,9 +276,10 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("test")
     if "github_actions" in kinds or "gitlab_ci" in kinds:
         kinds.add("ci")
-    # a minified bundle (index-<hash>.js) by shape, whatever its name: secret rules still read it,
-    # code-shape rules do not
-    if lang in ("js", "ts", "css", "html"):
+    # a minified bundle needs a build-output name or path AND the shape, so one long string cannot
+    # turn a hand-written file into a "bundle"; secret, hidden-Unicode and agent rules still read it,
+    # and the scan lists every such file
+    if lang in ("js", "ts", "css", "html") and _MINIFIED_PATH_RE.search(posix):
         head = text[:400000].split("\n")
         if head and max(len(x) for x in head) > 3000 and sum(len(x) for x in head) / len(head) > 300:
             kinds.add("minified")
@@ -373,15 +381,16 @@ def _blank(chars: List[str], start: int, end: int) -> None:
         chars[k] = " "
 
 
-_REGEX_PREV_RE = re.compile(r"(?:^|[(,=:\[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|in|of|void|delete|throw|new|yield|await))\s*$")
+_REGEX_PREV_RE = re.compile(r"(?:^|=>|[(,=:\[!&|?{;+\-*%~^]|\b(?:return|typeof|case|in|of|void|delete|throw|new|yield|await))\s*$")
 
 
 def _regex_literal_end(line: str, i: int) -> Optional[int]:
     """The index after a JS regex literal starting at line[i] == "/", or None
     when the slash is division (after a name, a number or a closing bracket)
     or the literal does not close on this line."""
-    if not _REGEX_PREV_RE.search(line[:i]):
-        return None
+    before = line[:i].rstrip()
+    if not _REGEX_PREV_RE.search(line[:i]) or before.endswith(("++", "--")):
+        return None                     # i++ / 2, </div>: division or a closing tag, not a regex
     k, in_class, n = i + 1, False, len(line)
     while k < n:
         c = line[k]
