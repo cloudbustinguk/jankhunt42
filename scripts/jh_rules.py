@@ -71,6 +71,13 @@ RULES: List[Rule] = [
           r"https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}",
           r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
           r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])(?:(?!\1)[^\n]){8,}\1",
+          # a quoted key ("db_password": "...") or a prefixed name (DB_PASSWORD = "..."): the value must look
+          # like a credential (no spaces, a letter and a digit), so UI text ("password": "Mot de passe") is not
+          r"(?i)(?:\b[a-z0-9]+[_-](?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b[\"']?|"
+          r"[\"'](?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)[\"'])\s*[:=]\s*"
+          r"([\"'])(?=[^\s\"']*\d)(?=[^\s\"']*[A-Za-z])"
+          r"(?![^\s\"']*(?:test|e2e|mock|stub|fake|dummy|demo|never|secret|passw|example|sample|changeme|redact))"
+          r"[^\s\"']{8,}\1",
       ),
       ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
     R("JH102", "Dynamic code execution", "major", "security",
@@ -539,12 +546,18 @@ RULES: List[Rule] = [
       "The assertion is always true, so the test cannot detect a regression.",
       "Assert a specific value or behavior that would change if the code broke.",
       confidence="high", target="nocomment", kinds=TEST + ("test",),
-      patterns=(r"\bassert\s+True\b", r"\bexpect\s*\(\s*true\s*\)", r"\bassertEqual\s*\(\s*True\s*,\s*True")),
+      patterns=(r"\bassert\s+True\b",
+                r"\bexpect\s*\(\s*true\s*\)\s*(?:;|\)|$|\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*true\s*\)|"
+                r"\.(?:toBeTruthy|toBeTrue|toBeDefined)\s*\(\s*\)|\.not\.(?:toBeFalsy|toBeNull|toBeUndefined)\s*\(\s*\)|"
+                r"\.not\.toBe\s*\(\s*false\s*\)|\.to\.(?:be\.)?(?:true|ok)\b|\.to\.(?:equal|eql)\s*\(\s*true\s*\))",
+                r"\bassertEqual\s*\(\s*True\s*,\s*True")),
     R("JH505", "Focused test", "major", "tests",
       "A focused test (.only/fit/fdescribe) silently skips the rest of the suite in many runners.",
       "Remove the focus marker before merging.",
       confidence="high", target="code", kinds=TEST + ("test",),
-      patterns=(r"\.only\s*\(", r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`,]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`,]")),
+      patterns=(r"(?<![\w$.])(?:describe|it|test|context|suite|specify|fixture|scenario|feature|QUnit|tap|t|bench)"
+                r"(?:\.(?:describe|serial|parallel|concurrent|sequential|skipIf\([^)]*\)|runIf\([^)]*\)))*\.only\s*\(",
+                r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`,]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`,]")),
 
     # ---------------------------------------------------------------------- docs
     R("JH601", "Broken relative link", "minor", "docs",
@@ -939,6 +952,14 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity = sev
                             message = rule.message + " The script comes from an official installer over TLS: the " \
                                                      "publisher is known, but the content is still unpinned and unverified."
+                        hint = _quoted_hint(sf, line, m)
+                        if hint:
+                            severity, confidence = "minor", "low"
+                            message = (rule.message + " Here it is text inside a quoted argument of `%s`, which looks "
+                                       "like an install hint; confirm that command does not run it." % hint)
+                    if rule.id == "JH101" and re.match(r"\s*(?:>>>|\.\.\.)\s", line) and "(?i)" in pat.pattern[:4]:
+                        severity, confidence = "minor", "low"
+                        message = rule.message + " It is a doctest example."
                     if rule.id == "JH122" and "docker" not in pat.pattern and not _container_command(sf, idx):
                         continue            # a flag in a list of strings, not in a container command
                     if rule.id == "JH104" and not _dynamic_sql(sf, idx, line, m, pat.pattern):
@@ -1184,12 +1205,47 @@ def _container_command(sf: SourceFile, idx: int) -> bool:
                 or re.match(r"""\s*["']?(?:options|runArgs)["']?\s*:""", sf.nocomment[idx - 1]))
 
 
+_EXECUTOR_WORDS = {"sh", "bash", "zsh", "ksh", "dash", "eval", "exec", "ssh", "su", "sudo", "doas", "env", "nohup",
+                   "time", "timeout", "command", "xargs", "watch", "docker", "podman", "kubectl", "nsenter", "chroot",
+                   "script", "parallel", "tmux", "screen", "flock", "nice", "ionice", "stdbuf", "busybox"}
+
+
+def _quoted_hint(sf: SourceFile, line: str, m: "re.Match[str]") -> Optional[str]:
+    """The command word when a shell script's curl|sh sits inside a quoted
+    argument of a command that does not run it (`require_tool zz "... (curl ... | sh)"`,
+    `echo "..."`); None when it may run (sh -c, ssh host, eval, docker exec)."""
+    if sf.lang != "shell":
+        return None
+    before = line[:m.start()]
+    for q in ('"', "'"):
+        if before.count(q) % 2 == 1 and q in line[m.end():]:
+            head = before[:before.rfind(q)]
+            if re.search(r"(?:^|\s)-\w*c\s*$|\$\(|`|\|\s*$|[;&]", head):
+                return None
+            words = head.split()
+            if not words or re.match(r"\w+=", words[0]) or words[0] in _EXECUTOR_WORDS or \
+                    any(w in _EXECUTOR_WORDS for w in words[:3]):
+                return None
+            return words[0]
+    return None
+
+
 def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", pattern: str) -> bool:
     """False for what looks like dynamic SQL but is not: a query()/exec()
     built by concatenation with nothing database- or SQL-shaped on the line
     (a regex exec(), a spatial index query()), a sql`...` tagged template
     (the tag binds every interpolation as a parameter), and interpolation of
     CONSTANT_NAMES only."""
+    if pattern.startswith(r"(?i)\b(?:select"):
+        # SQL text in a "..." or '...' literal that closes before the ${...}: the interpolation is a later
+        # argument (.run(`repo:${id}`)), a bound value, not part of the SQL
+        before = line[:m.start()]
+        q = re.search(r"([\"'])[^\"'\n]*$", before)
+        if q and before.count(q.group(1)) % 2 == 1:
+            close = line.find(q.group(1), m.start())
+            interp = [k for k in (line.find("${", m.start()), line.find("#{", m.start())) if k >= 0]
+            if close >= 0 and interp and close < min(interp):
+                return False
     if pattern == _SQL_CALL_PATTERN:
         # the receiver, the first argument and the rest of the line, but not the method name itself
         arg = re.sub(r"(?i)^(?:execute|executemany|query|exec|raw)\s*\(", "", m.group(0))

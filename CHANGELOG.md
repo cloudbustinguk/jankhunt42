@@ -4,6 +4,40 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.7.2] — 2026-10-25
+
+From the fifth mass-test batch (40 vibe-coded repositories, claims verified
+by the maintainer), and one gap it pointed to.
+
+### Added
+
+- `JH101` reads credentials written as a quoted key (`"db_password": "..."`
+  in JSON or a Python dict) or a prefixed name (`DB_PASSWORD = "..."`,
+  `POLYGON_API_KEY: '...'`). Neither form matched before. The value must
+  look like a credential: no spaces, a letter and a digit, and no words
+  such as "test", "fake", "e2e" or "secret". UI text such as
+  `"password": "Mot de passe"` therefore stays out. A doctest example
+  (`>>> scrub({"password": ...})`) is minor.
+
+### Fixed
+
+- `JH505` needs a test runner before `.only(` (`describe`, `it`, `test`,
+  `context`, `suite`, `test.describe.serial`, `QUnit`, `tap` and so on). A
+  builder method such as Go's `picker.only(t)` is not a focused test.
+- `JH504`: `expect(true)` counts only with a matcher that passes
+  (`toBe(true)`, `toBeTruthy()`, chai `.to.be.true`).
+  `expect(true).toBe(false)` is an always-failing guard, not a tautology.
+- `JH104`: SQL in a quoted literal that closes before a `${...}` is
+  parameterized. The interpolation is a later bound argument
+  (`.query("... ?2").run(id, \`repo:${id}\`)`).
+- `JH111`: in a shell script, a pipeline inside a quoted argument of a
+  command that does not run it (`require_tool zz "... (curl ... | sh)"`, `echo`)
+  is minor, with an install-hint note. It stays critical after `sh -c`,
+  `ssh`, `eval` or `docker exec`, and in CI YAML.
+- Test-path detection also covers test-support folders (`testutil/`,
+  `test_support/`, `apitest/`, `mocks/`, `stubs/`, `test-vectors/`) and
+  `test-*.js`/`.ts` scripts.
+
 ## [2.7.1] — 2026-10-25
 
 From the third and fourth mass-test batches (160 vibe-coded repositories,

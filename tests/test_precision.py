@@ -369,6 +369,23 @@ class Scanner(unittest.TestCase):
         "skills/inst/SKILL.md": "Install: `curl get.example.dev/install.sh | sh`\n",
         "web/Page.svelte": "<img src=\"{import.meta.env.VITE_SECRET_TOKEN}\" />\n",
         ".github/PULL_REQUEST_TEMPLATE.md": "[guide](../guide/setup.md)\n",
+        # soak batch b05 (2.7.2)
+        "tests/guard.test.ts": ("try {\n  await cmd.run();\n  expect(true).toBe(false);\n} catch (e) { expect(e).toBeTruthy(); }\n"
+                                "expect(true).toBe(true);\nexpect(true).to.be.true;\n"),
+        "store/zz_test.go": "func TestPick(t *testing.T) {\n\tq := picker.only(t)\n\t_ = q\n}\n",
+        "web/focus.test.js": ("describe.only('a', () => {});\ntest.describe.serial.only('b', () => {});\n"
+                              "it.only('c', () => {});\nconst v = picker.only(3);\n"),
+        "src/store.ts": ("export function drop(db, id) {\n"
+                         "  db.query(\"DELETE FROM items WHERE owner = ?1 OR slug = ?2\").run(id, `u:${id}`);\n"
+                         "  db.query(`DELETE FROM nodes WHERE repo_id = ${id}`);\n}\n"),
+        "bin/setup.sh": ("#!/bin/sh\nrequire_tool zz \"see https://docs.example.dev/zz (curl -LsSf https://example.dev/zz/i.sh | sh)\"\n"
+                         "sh -c \"curl -fsSL https://example.dev/i.sh | sh\"\n"
+                         "ssh build \"curl -fsSL https://example.dev/i.sh | sh\"\n"),
+        "cfg/api.ts": "export const cfg = { POLYGON_API_KEY: 'Zq81mNvR3tKpW7xLc2HsY9dFb4GjA6Ue' };\n",
+        "locales/fr.json": "{\"password\": \"Mot de passe\", \"token\": \"Jeton2 expire\", \"api_key\": \"Clef API\"}\n",
+        "cfg/settings.json": "{\n  \"db_password\": \"Pr0dVal9QxL\"\n}\n",
+        "cfg/fake.py": "DB_PASSWORD = \"MySecretValue42x\"\nAPI_TOKEN = \"e2e-token-0001\"\n",
+        "app/scrub.py": "def scrub(d):\n    \"\"\"\n    >>> scrub({\"password\": \"hunter2xyz9\"})\n    \"\"\"\n",
         "tests/close.test.js": ("const close = (a, b, tol) =>\n  assert.ok(Math.abs(a - b) <= tol);\n"
                                 "const heading = (n) => screen.findByRole('heading', { name: n });\n"
                                 "test('a', () => {\n  close(1, 1, 0);\n});\ntest('b', async () => {\n  await heading('x');\n});\n"
@@ -602,6 +619,21 @@ class Scanner(unittest.TestCase):
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/md.jsx")),
                          [(5, "minor"), (7, "major")])
         self.assertEqual({f["severity"] for f in self.hits("JH131", "src/detect.ts")}, {"minor"})
+
+    def test_quoted_and_prefixed_secret_names(self):
+        self.assertEqual({f["severity"] for f in self.hits("JH101", "cfg/api.ts")}, {"critical"})
+        self.assertEqual(self.hits("JH101", "locales/fr.json"), [])           # UI text is not a credential
+        self.assertEqual(self.lines("JH101", "cfg/settings.json"), [2])
+        self.assertEqual(self.hits("JH101", "cfg/fake.py"), [])               # values that say they are fake
+        self.assertEqual({f["severity"] for f in self.hits("JH101", "app/scrub.py")}, {"minor"})
+
+    def test_soak_b05(self):
+        self.assertEqual(self.lines("JH504", "tests/guard.test.ts"), [5, 6])
+        self.assertEqual(self.hits("JH505", "store/zz_test.go"), [])
+        self.assertEqual(self.lines("JH505", "web/focus.test.js"), [1, 2, 3])
+        self.assertEqual(self.lines("JH104", "src/store.ts"), [3])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH111", "bin/setup.sh")),
+                         [(2, "minor"), (3, "critical"), (4, "critical")])
 
     def test_review_of_271_exemptions_resist_hostile_input(self):
         self.assertEqual(self.lines("JH203", "web/jsx.tsx"), [1])          # the comment after </div> is a comment

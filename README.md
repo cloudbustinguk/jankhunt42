@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.7.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.7.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
