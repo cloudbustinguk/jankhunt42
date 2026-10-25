@@ -4,6 +4,51 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.6.2] — 2026-10-25
+
+Precision for what a user sees. A second labelled sample took every critical
+finding and 120 random majors from three corpora of public repositories, so
+rules appear as often as they fire. On that sample, 2.6.1's majors were a
+true lead only 12% of the time; most were best-effort error handling,
+bearer-token CORS and SQL that is already parameterised. With 2.6.2, 78% of
+the criticals and 30% of the majors that remain are true leads, and no true
+lead in the sample changed.
+
+### Changed
+
+- `JH201` (empty error handler) is minor unless the swallowed call decides an
+  outcome (verify, authenticate, save, commit, pay, publish, deploy...) or the
+  code goes on to claim success. Then it stays major and says which call. A
+  handler followed by `raise` or `throw` is cleanup on an error path. The
+  rule catalog keeps major as the rule's ceiling.
+- `JH109` is minor for a wildcard origin without credentials: browsers send
+  no cookies to a wildcard origin. With `Allow-Credentials` (or a framework's
+  credentials option) it stays major.
+- `JH104` and `JH122` are minor in test code, like `JH111` and `JH115`.
+- Deliberately vulnerable evaluation corpora (`eval_corpus/`,
+  `vuln-corpus/`, ...) count as examples, like `examples/vulnerable-app/`.
+
+### Fixed
+
+- `JH104` needs SQL near a concatenated `query()` or `exec()` call: a
+  regular expression's `exec()` or a spatial index's `query()` is not SQL.
+  `sql\`...\`` tagged templates (postgres.js, Drizzle, Prisma `$queryRaw`)
+  bind their interpolations as parameters and are skipped;
+  `$queryRawUnsafe` and `sql.raw` still fire. Interpolating only
+  `CONSTANT_NAMES` is not dynamic SQL.
+- `JH126` skips a multi-line template with no interpolation, and a constant
+  string on the line after `innerHTML =`.
+- `JH106` accepts a `Loader` class the file defines as a `SafeLoader`
+  subclass.
+- `JH701` no longer reads "do not ... without asking the user first", a
+  request for consent, as an instruction to hide from the user.
+- `JH702` ignores the flag inside a detection regex (`re.compile(...)`).
+- `JH122` needs `--cap-add SYS_ADMIN` or `--pid host` to belong to a
+  `docker`/`podman run`, not to a list of strings a test expects rejected.
+- `JH101`: a provider-shaped key inside a code sample that is itself a
+  string (`check('API_KEY = "sk-..."')`) in a test or document is minor; a
+  key assigned directly in a test stays critical.
+
 ## [2.6.1] — 2026-10-25
 
 Precision fixes found by labelling a stratified sample of 96 findings from

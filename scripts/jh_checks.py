@@ -125,9 +125,55 @@ def _explains(text: str, marker: str) -> bool:
     return bool(comment.strip()) and not _PRAGMA_RE.match(comment)
 
 
+# calls whose failure decides an outcome: swallowing one turns a failure into a silent success
+_CONSEQUENTIAL_RE = re.compile(r"(?i)\b(?:\w*verif\w*|\w*authenticat\w*|\w*authori[sz]\w*|log_?in|sign_?in|"
+                               r"\w*payment\w*|charge\w*|refund\w*|checkout|commit|transaction|"
+                               r"save\w*|insert\w*|upsert\w*|transfer\w*|withdraw\w*|grant\w*|revoke\w*|"
+                               r"publish\w*|deploy\w*|migrat\w*|send(?:Mail|Email|Message)?\w*)\s*\(")
+_SUCCESS_AFTER_RE = re.compile(r"(?i)\b(?:toast\.success|success(?:fully)?\b|verified\b|saved\b|return\s+true\b|"
+                               r"ok\s*:\s*true)")
+
+
+def _handler_severity(sf: SourceFile, try_line: int, handler_line: int, end_line: int) -> Tuple[str, str]:
+    """("major", why) when the try body calls something whose failure decides
+    an outcome (verify, save, pay, commit...) or the code goes on to claim
+    success; ("minor", "") otherwise: best-effort cleanup, a fallback, a
+    handler followed by raise/throw on an error path."""
+    after = [sf.code[k] for k in range(end_line, min(end_line + 4, len(sf.code))) if sf.code[k].strip()]
+    if after and re.match(r"^\s*(?:raise|throw)\b", after[0]):
+        return "minor", ""
+    body = "\n".join(sf.code[try_line:handler_line + 1])
+    m = _CONSEQUENTIAL_RE.search(body)
+    if m:
+        return "major", ("The handler swallows a failure of `%s(...)` and carries on as if it succeeded."
+                         % m.group(0).rstrip("( "))
+    if any(_SUCCESS_AFTER_RE.search(line) for line in after[:3]):
+        return "major", "The handler swallows the error, and the code right after reports success."
+    return "minor", ""
+
+
+def _try_start(sf: SourceFile, i: int, python: bool) -> int:
+    """The line of the try that this handler closes (searching up to 15 lines back)."""
+    base = indent_of(sf.code[i])
+    for k in range(i, max(-1, i - 16), -1):
+        line = sf.code[k]
+        if python and re.match(r"^\s*try\s*:", line) and indent_of(line) == base:
+            return k
+        if not python and re.search(r"\btry\b", line):
+            return k
+    return i
+
+
 @check("empty_handler")
 def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
+
+    def add(line: int, end: int, message: Optional[str] = None) -> None:
+        severity, why = _handler_severity(sf, _try_start(sf, line, sf.lang == "python"), line, end + 1)
+        out.append(make_finding(rule, sf, line + 1, end_line=end + 1 if end != line else None, severity=severity,
+                                confidence="medium" if severity == "minor" else None,
+                                message=(message + " " + why).strip() if message and why else (why or message)))
+
     if sf.lang == "python":
         for i, line in enumerate(sf.code):
             m = re.match(r"^(\s*)except\b[^:]*:\s*(pass|\.\.\.)?\s*$", line)
@@ -137,15 +183,14 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
             same = m.group(2)
             if same:
                 if not _explains(sf.raw[i], "#"):          # a comment saying why makes it deliberate
-                    out.append(make_finding(rule, sf, i + 1, message="The except block contains only '%s'." % same))
+                    add(i, i, "The except block contains only '%s'." % same)
                 continue
             j = i + 1
             while j < len(sf.code) and not sf.code[j].strip():
                 j += 1
             if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]) \
                     and not any(_explains(sf.raw[k], "#") for k in range(i, j + 1)):
-                out.append(make_finding(rule, sf, i + 1, end_line=j + 1,
-                                        message="The except block contains only '%s'." % sf.code[j].strip()))
+                add(i, j, "The except block contains only '%s'." % sf.code[j].strip())
     else:
         for i, line in enumerate(sf.code):
             if not re.search(r"\bcatch\b", line):
@@ -153,7 +198,7 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
             # a block holding only a comment is deliberate (as ESLint's no-empty treats it)
             if re.search(r"\bcatch\b[^{]*\{\s*\}\s*;?\s*$", line):
                 if not _explains(sf.raw[i].split("catch", 1)[-1], "//"):
-                    out.append(make_finding(rule, sf, i + 1))
+                    add(i, i)
                 continue
             if re.search(r"\bcatch\b[^{]*\{\s*$", line):
                 j = i + 1
@@ -162,7 +207,7 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
                 if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]) \
                         and not _explains(sf.raw[i].split("catch", 1)[-1], "//") \
                         and not any(_explains(sf.raw[k], "//") for k in range(i + 1, j)):
-                    out.append(make_finding(rule, sf, i + 1, end_line=j + 1))
+                    add(i, j)
     return out
 
 
@@ -1169,7 +1214,10 @@ _OVERRIDE_RES = (
                r"(?:previous|prior|above|earlier|preceding|other|system)\s+(?:instructions|rules|directions|prompts?)\b"),
     re.compile(r"(?i)\b(?:do\s+not|don'?t|never)\s+(?:tell|inform|notify|alert|warn)\s+(?:the\s+)?user\b"),
     re.compile(r"(?i)\b(?:do\s+not|don'?t|never)\s+(?:mention|reveal|disclose|show|report)\b[^.\n]{0,40}\bto\s+the\s+user\b"),
-    re.compile(r"(?i)\bwithout\s+(?:telling|informing|asking|notifying|alerting)\s+(?:the\s+)?user\b"),
+    # unless the sentence forbids it: "do not create containers without asking the user first"
+    re.compile(r"(?i)(?:^|[.!?])(?:(?!\b(?:do\s+not|don'?t|never|must\s+not|mustn'?t|should\s+not|shouldn'?t|"
+               r"cannot|can'?t|no)\b)[^.!?\n])*\bwithout\s+(?:telling|informing|asking|notifying|alerting)\s+"
+               r"(?:the\s+)?user\b", re.M),
     re.compile(r"(?i)\b(?:silently|secretly|covertly)\s+(?:run|execute|send|upload|post|copy|forward|install|"
                r"download|exfiltrate)\b"),
 )
@@ -2140,7 +2188,8 @@ def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
                 text = "\n".join(call)
                 alias = re.search(r"\bLoader\s*=\s*(\w+)\s*[,)]", text)
                 if re.search(r"\b(?:Safe|CSafe|Base)Loader\b", text) or (alias and re.search(
-                        r"\b(?:C?SafeLoader|BaseLoader)\s+as\s+%s\b" % re.escape(alias.group(1)), sf.text)):
+                        r"\b(?:C?SafeLoader|BaseLoader)\s+as\s+%s\b|\bclass\s+%s\s*\(\s*(?:yaml\.)?(?:C?SafeLoader|BaseLoader)\s*\)"
+                        % (re.escape(alias.group(1)), re.escape(alias.group(1))), sf.text)):
                     continue
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
             break

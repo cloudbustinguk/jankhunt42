@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.6.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.6.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -317,6 +317,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, and the NIST AI RMF / AIGP crosswalk |
 | [`references/supply-chain.md`](references/supply-chain.md) | SBOMs and their minimum elements, attestations, JFrog evidence, `--verify` |
 | [`references/scoring.md`](references/scoring.md) | Jank Score 2.0 formula, weights, and limits |
+| [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/deep-hunt.md`](references/deep-hunt.md) | The opt-in adversarial panel |
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
