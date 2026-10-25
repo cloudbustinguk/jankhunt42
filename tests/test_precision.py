@@ -311,6 +311,15 @@ class Scanner(unittest.TestCase):
                        "cache_key = hashlib.sha1(blob).hexdigest()\n"
                        "h = hashlib.md5(data, usedforsecurity=False)\n"
                        "pw_hash = hashlib.md5(password.encode()).hexdigest()\n"),
+        # review of 2.7.0
+        "tests/test_helpers.py": ("class T(Base):\n    def test_setup_only(self):\n        self.ensure_dir(tmp)\n        run()\n"
+                                  "    def test_branch(self):\n        self.checkout_branch()\n"
+                                  "    def test_checked(self):\n        self.check_rejected(X)\n"),
+        "web/sinks.tsx": ("const A = () => <div dangerouslySetInnerHTML={{ __html: sanitize(a) + userHtml }} />;\n"
+                          "const B = () => <div dangerouslySetInnerHTML={{ __html: userHtml }} />;\n"
+                          "const clean = sanitize(other);\n"),
+        "app/login.ts": ("const a = { password: \"#Xk9vQ2mLp7\" };\nconst b = { password: \"#signin-form__password\" };\n"),
+        "app/check.py": "import hashlib\nif not valid:\n    digest = hashlib.md5(api_key).hexdigest()\n",
         "ops/run_box.sh": ("docker run --rm --cap-add SYS_ADMIN img true\n"
                            "FLAGS=\"--cap-add=SYS_ADMIN --pid=host\"\n"),
         ".claude/settings.json": ("{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": []}\n"
@@ -509,6 +518,13 @@ class Scanner(unittest.TestCase):
                          [(1, "minor"), (2, "major")])
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH107", "app/ids.py")),
                          [(2, "minor"), (3, "minor"), (5, "major")])
+
+    def test_review_of_270(self):
+        self.assertEqual(self.lines("JH502", "tests/test_helpers.py"), [2, 5])
+        self.assertEqual({(f["line"], f["severity"]) for f in self.hits("JH125", "web/sinks.tsx")},
+                         {(1, "major"), (2, "major")})
+        self.assertEqual(self.lines("JH101", "app/login.ts"), [1])
+        self.assertEqual({f["severity"] for f in self.hits("JH107", "app/check.py")}, {"major"})
 
     def test_review_of_262_exemptions_do_not_hide_leads(self):
         self.assertEqual(self.lines("JH122", "ops/continued.sh"), [2, 3, 4])

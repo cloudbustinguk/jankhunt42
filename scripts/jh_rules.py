@@ -748,7 +748,9 @@ def secret_placeholder(match_text: str) -> bool:
         if re.match(r"\s*,\s*[\w$.]+", value) or re.search(r"\s\?\s*$", value):
             return True
         # a CSS selector (Playwright and portal scrapers: password: "#login-password")
-        if re.fullmatch(r"[#.][A-Za-z_][\w\-]*", value.strip()) or re.search(r":has(?:-text)?\(|\[name[*^$|~]?=", value):
+        if ("pass" not in key and re.fullmatch(r"[#.][A-Za-z_][\w\-]*", value.strip())) or \
+                re.fullmatch(r"[#.][a-z]+(?:(?:-|__?)[a-z]+)+", value.strip()) or \
+                re.search(r":has(?:-text)?\(|\[name[*^$|~]?=", value):
             return True
         # a capitalised label of words ("Client ID", "Escolha uma conta"), unless the key may be a password
         if "pass" not in key and re.fullmatch(r"[^\W\d_a-z][^\W\d_]*(?:[ \t]+[^\W\d_]+){1,6}(?:\s*\([^)]*\))?", value.strip()):
@@ -947,8 +949,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             continue        # Python says so explicitly
                         near = " ".join(sf.nocomment[max(0, idx - 2):idx + 1]).lower()
                         if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp", near) and \
-                                re.search(r"cache|etag|dedup|fingerprint|checksum|\b\w*_?ids?\b|uuid|slug|bucket|shard|"
-                                          r"fold|colou?r|avatar|filename|hexdigest\(\)\s*\[|digest\(\)\s*\[", near):
+                                re.search(r"cache|etag|dedup|fingerprint|checksum|\b(?:\w+_)?ids?\b|\buuid\b|\bslug\b|"
+                                          r"\bbucket|\bshard|\bfolds?\b|\bcolou?r\b|\bavatar|\bfilename|"
+                                          r"hexdigest\(\)\s*\[|digest\(\)\s*\[", near):
                             severity, confidence = "minor", "medium"
                             message = ("MD5/SHA-1 as an identifier, cache key or checksum is fine; it matters only for "
                                        "signatures, passwords or tokens.")
@@ -968,7 +971,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity, confidence = "minor", "low"
                             message = (rule.message + " The value is a translation string looked up by a constant "
                                        "key; it matters only if translations are user-contributed.")
-                        elif _SANITIZER_RE.search(window[:240]):
+                        elif _sanitized_value(sf.nocomment[idx - 1][m.end():]):
                             severity, confidence = "minor", "low"
                             message = (rule.message + " The value passes through a sanitizer: check that it allows "
                                        "no script, event handlers or javascript: URLs.")
@@ -1116,6 +1119,23 @@ _SQL_TAG_RE = re.compile(r"(?:\b(?:sql|SQL|Prisma\.sql|db\.sql|tx\.sql)|\$(?:que
 # a value passed through an HTML sanitizer or escaper before it reaches the sink
 _SANITIZER_RE = re.compile(r"\b(?:DOMPurify\.sanitize|sanitize\w*|purify\w*|escapeHtml|escape_html|htmlEscape|"
                            r"he\.encode|xss|filterXSS|sanitizeHtml)\s*\(")
+
+
+def _sanitized_value(rest: str) -> bool:
+    """The whole value is one sanitizer call: `= DOMPurify.sanitize(x);`,
+    `__html: sanitize(x) }}`, `document.write(escapeHtml(x))`; not
+    `sanitize(a) + userHtml`, and not a sanitizer elsewhere nearby."""
+    m = re.match(r"\s*(?:=\s*\{\{\s*__html\s*:\s*|=\s*|\(\s*)", rest)
+    if not m:
+        return False
+    call = _SANITIZER_RE.match(rest, m.end())
+    if not call:
+        return False
+    depth, k = 1, call.end()
+    while k < len(rest) and depth:
+        depth += (rest[k] == "(") - (rest[k] == ")")
+        k += 1
+    return depth == 0 and re.match(r"\s*(?:\}\s*\}|\)|;|$)", rest[k:]) is not None
 
 
 def _container_command(sf: SourceFile, idx: int) -> bool:

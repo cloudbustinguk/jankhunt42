@@ -48,6 +48,9 @@ class Adapters(unittest.TestCase):
         rep = build({"svc.py": src})
         writes = [e for e in rep["graph"]["edges"] if e["kind"] == "writes"]
         self.assertEqual(len(writes), 1)
+        multi = ('import psycopg\nconn = psycopg.connect("postgresql://pg.dev.internal/app")\nconn.execute("""\n'
+                 '    MERGE INTO accounts WITH (HOLDLOCK) AS a\n    USING staging s ON a.id = s.id""")\n')
+        self.assertEqual(len([e for e in build({"svc.py": multi})["graph"]["edges"] if e["kind"] == "writes"]), 1)
         self.assertEqual([x["line"] for x in rep["evidence"] if x["id"] in writes[0]["evidence_refs"]], [3])
 
     def test_python_literal_endpoint_and_sql_ops(self):

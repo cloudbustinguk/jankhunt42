@@ -30,10 +30,12 @@ TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
 
 def _strip_toml_comment(line: str) -> str:
     """The line without a `#` comment that is outside quotes."""
-    quote = None
-    for k, ch in enumerate(line):
+    quote, k = None, 0
+    while k < len(line):
+        ch = line[k]
         if quote:
             if ch == "\\" and quote == '"':
+                k += 2                      # the escaped character cannot close the string
                 continue
             if ch == quote:
                 quote = None
@@ -41,6 +43,7 @@ def _strip_toml_comment(line: str) -> str:
             quote = ch
         elif ch == "#":
             return line[:k]
+        k += 1
     return line
 
 

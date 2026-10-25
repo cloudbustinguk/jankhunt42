@@ -72,7 +72,7 @@ class Emit(unittest.TestCase):
 
 
 class Hostile(unittest.TestCase):
-    BAD = ['evil.com"\n"*" = "allow', "x.com\n      - host: '*'", "*", "*.com", "a b.com", "..", "999.1.1.1",
+    BAD = ["*.herokuapp.com", 'evil.com"\n"*" = "allow', "x.com\n      - host: '*'", "*", "*.com", "a b.com", "..", "999.1.1.1",
            "evil.com\"]}", "-lead.example.com", "x" * 300 + ".com"]
 
     def report(self, hosts):
@@ -95,11 +95,49 @@ class Hostile(unittest.TestCase):
     def test_clean_host(self):
         self.assertEqual(jh_fence.clean_host("https://API.Example.com:8443/v1?x=1"), "api.example.com")
         self.assertEqual(jh_fence.clean_host("user@db.example.com"), "db.example.com")
-        self.assertEqual(jh_fence.clean_host("*.example.com"), "*.example.com")
+        self.assertIsNone(jh_fence.clean_host("*.example.com"))               # a repository name never widens
+        self.assertEqual(jh_fence.clean_host("*.example.com", wildcard=True), "*.example.com")
         self.assertEqual(jh_fence.clean_host("10.0.0.7"), "10.0.0.7")
         self.assertEqual(jh_fence.clean_host("cache"), "cache")
         for bad in self.BAD:
             self.assertIsNone(jh_fence.clean_host(bad), bad)
+
+
+class Review270(unittest.TestCase):
+    def node(self, i, host, engine="https", port=None):
+        attrs = {"engine": engine, "host": host}
+        if port:
+            attrs["port"] = port
+        return {"id": "n%d" % i, "kind": "external", "display_label": "n%d" % i, "trust_domain": "external",
+                "environment": "unknown", "attributes": attrs}
+
+    def test_ports_come_from_the_code(self):
+        rep = {"graph": {"nodes": [self.node(0, "db.dev.example.com", "postgresql", 6543),
+                                   self.node(1, "api.staging.example.com", "http"),
+                                   self.node(2, "svc.example.com", "https", 8443),
+                                   self.node(3, "svc.example.com", "https")], "edges": []}}
+        got = {(r["host"], r["port"]) for r in jh_fence.plan(rep)["allow"]}
+        self.assertEqual(got, {("db.dev.example.com", 6543), ("api.staging.example.com", 80),
+                               ("svc.example.com", 8443), ("svc.example.com", 443)})
+        text, _ = jh_fence.emit("openshell", rep, None, "t")
+        self.assertIn("port: 6543", text)
+
+    def test_app_runtimes_reach_source_control(self):
+        rep = {"graph": {"nodes": [self.node(0, "api.github.com", "github")], "edges": []}}
+        pkg = {"ecosystems": {"npm": {"in_use": True, "sources": [], "default_if_unconfigured": "https://registry.npmjs.org/"}}}
+        text, _ = jh_fence.emit("openshell", rep, pkg, "t")
+        block = text.split("source_control:", 1)[1]
+        self.assertIn("/usr/bin/git", block)
+        self.assertIn("/usr/bin/node", block)
+
+    def test_yaml_keywords_stay_host_names(self):
+        rep = {"graph": {"nodes": [self.node(0, "true", "postgresql"), self.node(1, "null")], "edges": []}}
+        text, _ = jh_fence.emit("openshell", rep, None, "t")
+        self.assertIn("host: 'true'", text)
+        self.assertEqual(jh_fence.validate("openshell", text), [])
+
+    def test_toml_escaped_quote_does_not_end_the_string(self):
+        self.assertEqual(jh_egress._strip_toml_comment('"a\\"b # c" = "allow"  # x'), '"a\\"b # c" = "allow"  ')
 
 
 if __name__ == "__main__":

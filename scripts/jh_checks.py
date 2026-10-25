@@ -1915,7 +1915,7 @@ def gh_agent_prompt(sf: SourceFile, rule: Rule) -> List[Finding]:
 _PY_ASSERT_RE = re.compile(r"\b(?:assert\w*|pytest\.(?:raises|warns|deprecated_call|fail)|self\.(?:assert\w*|fail\w*)|"
                            r"unittest|np\.testing|assert_that)\b|"
                            # helpers named for checking, possibly defined in a shared base class elsewhere
-                           r"\bself\.(?:check|verify|ensure|expect|require|must|should)\w*\s*\(|"
+                           r"\bself\.(?:check|verify|expect|must|should)_\w+\s*\(|"
                            r"\bself\.\w*(?:rejected|refused|denied|forbidden|raises|fails|blocked)\s*\(")
 
 

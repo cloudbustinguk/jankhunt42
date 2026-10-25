@@ -253,6 +253,8 @@ class Ctx:
             attrs: Dict[str, Any] = {"engine": engine}
             if host:
                 attrs["host"] = host
+            if str(ep.get("port") or "").isdigit() and 0 < int(ep["port"]) < 65536:
+                attrs["port"] = int(ep["port"])
             if ep.get("path"):
                 attrs["databases" if kind == "database" else "paths"] = [ep["path"]]
             label = G.endpoint_label({**ep, "path": ""}) if kind == "database" else G.endpoint_label(ep)
@@ -516,7 +518,8 @@ _ENV_RES = [
 _SQL_SRC = [
     ("read", r"SELECT\b[^;]{0,200}?\bFROM\b"),
     # MERGE INTO needs its USING clause: "merge into .claude/settings.json" is prose
-    ("write", r"INSERT\s+INTO\b|UPDATE\s+[\w.\"`\[\]]+\s+SET\b|MERGE\s+INTO\s+[\w.\"`\[\]]+(?:\s+(?:AS\s+)?\w+)?\s+USING\b"),
+    ("write", r"INSERT\s+INTO\b|UPDATE\s+[\w.\"`\[\]]+\s+SET\b|MERGE\s+INTO\s+[\w.\"`\[\]]+"
+              r"(?:\s+WITH\s*\([^)]*\))?(?:\s+(?:AS\s+)?\w+)?\s*(?:USING\b|$)"),
     ("delete", r"DELETE\s+FROM\b|TRUNCATE\s+TABLE\b|DROP\s+(?:TABLE|DATABASE|SCHEMA)\b"),
     ("admin", r"GRANT\s+[\w ,]{1,60}?\s+ON\s|ALTER\s+(?:DATABASE|ROLE|USER)\b|CREATE\s+(?:USER|ROLE)\b"),
 ]

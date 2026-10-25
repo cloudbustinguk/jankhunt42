@@ -53,7 +53,7 @@ ENGINE_HOSTS = {
     "slack": ["slack.com", "hooks.slack.com"],
     "azure": ["management.azure.com", "login.microsoftonline.com"],
 }
-DEFAULT_PORTS = {"postgresql": 5432, "mysql": 3306, "mariadb": 3306, "redis": 6379, "mongodb": 27017,
+DEFAULT_PORTS = {"http": 80, "postgresql": 5432, "mysql": 3306, "mariadb": 3306, "redis": 6379, "mongodb": 27017,
                  "mssql": 1433, "cassandra": 9042, "elasticsearch": 9200, "rabbitmq": 5672, "kafka": 9092,
                  "nats": 4222}
 # hosts a registry needs besides its index
@@ -73,12 +73,15 @@ CREDENTIAL_PATHS = ["~/.aws", "~/.azure", "~/.config/gcloud", "~/.docker/config.
                     "~/.kube", "~/.netrc", "~/.npmrc", "~/.pypirc", "~/.ssh"]
 
 
-def clean_host(value: Any) -> Optional[str]:
+def clean_host(value: Any, wildcard: bool = False) -> Optional[str]:
     """A host name usable as a rule, or None: lowercase, no scheme, path or
-    port, and only DNS characters (or an IPv4 address)."""
+    port, and only DNS characters (or an IPv4 address). A leading `*.` only
+    with wildcard=True: names read from a repository never widen the fence."""
     h = str(value or "").strip().lower()
     h = re.sub(r"^[a-z][a-z0-9+.-]*://", "", h).split("/", 1)[0].split("@")[-1]
     h = re.sub(r":\d{1,5}$", "", h).rstrip(".")
+    if h.startswith("*") and not wildcard:
+        return None
     if re.fullmatch(r"[\d.]+", h):                  # all digits: a valid IPv4 address or nothing
         return h if _IPV4_RE.match(h) and all(int(p) < 256 for p in h.split(".")) else None
     if _HOST_RE.match(h) and "." in h.lstrip("*.") or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", h):
@@ -111,7 +114,8 @@ def plan(report: Dict[str, Any], package_sources: Optional[Dict[str, Any]] = Non
             host = clean_host(raw)
             if host:
                 group = "source_control" if engine in ("github", "gitlab") else "app_egress"
-                add(host, DEFAULT_PORTS.get(engine, 443), group, "the code reaches it (%s)" % (engine or kind))
+                port = attrs.get("port") if isinstance(attrs.get("port"), int) else DEFAULT_PORTS.get(engine, 443)
+                add(host, port, group, "the code reaches it (%s)" % (engine or kind))
             else:
                 excluded.append({"what": label, "why": "not a plain host name; a fence rule needs one"})
         elif engine in ENGINE_HOSTS:
@@ -184,7 +188,8 @@ def render(fmt: str, p: Dict[str, Any], version: str) -> Tuple[str, List[str]]:
         for r in p["allow"]:
             groups.setdefault(r["group"], []).append(r)
         app_bins = sorted({b for eco in p["runtimes"] for b in RUNTIME_BINARIES.get(eco, [])})
-        bins = {"app_egress": app_bins, "package_registries": app_bins, "source_control": ["/usr/bin/git"]}
+        bins = {"app_egress": app_bins, "package_registries": app_bins,
+                "source_control": sorted({"/usr/bin/git"} | set(app_bins))}
         for group in sorted(groups):
             out += ["  %s:" % group, "    endpoints:"]
             for r in groups[group]:
@@ -200,7 +205,7 @@ def render(fmt: str, p: Dict[str, Any], version: str) -> Tuple[str, List[str]]:
 
 
 def _yaml_scalar(s: str) -> str:
-    return "'%s'" % s if s.startswith("*") or ":" in s else s
+    return "'%s'" % s                   # always quoted: a host named `true` or `null` is still a string
 
 
 def _dedupe_domain_lines(lines: List[str]) -> List[str]:
@@ -228,7 +233,7 @@ def validate(fmt: str, text: str) -> List[str]:
         if box.get("enabled") is not True:
             problems.append("sandbox.enabled is not true")
         hosts = box.get("network", {}).get("allowedDomains", [])
-        problems += ["bad host %r" % h for h in hosts if clean_host(h) != h]
+        problems += ["bad host %r" % h for h in hosts if clean_host(h, wildcard=True) != h]
     elif fmt == "codex":
         table, domains, required = "", {}, set()
         for raw in text.split("\n"):
@@ -249,7 +254,7 @@ def validate(fmt: str, text: str) -> List[str]:
                      ("permissions.%s.network" % PROFILE, "enabled", "true")):
             if need not in required:
                 problems.append("missing %s.%s = %s" % need)
-        problems += ["bad host %r" % h for h in domains if clean_host(h) != h]
+        problems += ["bad host %r" % h for h in domains if clean_host(h, wildcard=True) != h]
         problems += ["domain %r is not allow" % h for h, v in domains.items() if v != '"allow"']
     elif fmt == "openshell":
         docs = jh_yaml.load_all(text)
@@ -261,7 +266,7 @@ def validate(fmt: str, text: str) -> List[str]:
                 problems.append("reserved rule name %s" % name)
             for ep in pol.get("endpoints") or []:
                 h = str(ep.get("host", ""))
-                if clean_host(h) != h:
+                if clean_host(h, wildcard=True) != h:
                     problems.append("bad host %r" % h)
                 if h.startswith("*") and h.count(".") < 2:
                     problems.append("wildcard host %r needs at least three labels" % h)

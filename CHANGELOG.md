@@ -25,6 +25,11 @@ actually reaches.
   - Each tool's enforcement limits are stated with the policy. For example,
     a Claude Code project file only pre-allows hosts until
     `strictAllowlist` is set in user or managed settings.
+  - Ports come from the code. Map nodes now carry the `port` they were
+    parsed with, an additive attribute; plain `http` defaults to 80.
+  - Only jankhunt42's own table of well-known services adds wildcard hosts;
+    a wildcard read from the repository is excluded.
+  - Every YAML scalar is quoted, so a host named `true` stays a host.
   - The output is deterministic, checked against the documented subset
     before it is printed, and reads back through jankhunt42's own boundary
     readers as the same allowlist. It is a review artefact that is never
@@ -37,7 +42,9 @@ actually reaches.
   comment (`"api.example.com" = "allow"  # why`), so a commented boundary
   read as missing.
 - The map read prose starting with "merge into ..." as an SQL write; `MERGE
-  INTO` now needs its `USING` clause.
+  INTO` now needs its `USING` clause, on the same line or the next (T-SQL
+  table hints allowed).
+- The TOML comment stripper let an escaped `\"` end a quoted string.
 - From the first two mass-test batches of vibe-coded repositories (80
   repositories, findings verified):
   - **`JH101`:** a CSS selector (`password: "#login-password"`) or a
