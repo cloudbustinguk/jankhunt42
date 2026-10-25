@@ -291,7 +291,7 @@ RULES: List[Rule] = [
       "An unresolved marker records known debt or a known defect.",
       "Link it to an issue or resolve it; do not let it become permanent.",
       confidence="high", target="comments",
-      patterns=(r"\b(?:TODO|FIXME|HACK|BUG)\b|\bXXX\b(?=\s*[:(\-])|(?i:\b(?:todo|fixme|hack)\s*[:(])",)),
+      patterns=(r"\b(?:TODO|FIXME|HACK|BUG)\b|\bXXX\b(?=\s*[:(\-])|(?:^|[#/*;\-]|<!--)\s*(?i:(?:todo|fixme|hack)\s*[:(])",)),
     R("JH204", "Debug leftover", "minor", "reliability",
       "Debug output or a debugger hook is still in the code path.",
       "Remove it or route it through the project logger at an appropriate level.",
@@ -893,6 +893,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue
             if "test-exclude" in rule.tags and "test" in sf.kinds:
                 continue
+            if "minified" in sf.kinds and "secret" not in rule.tags:
+                continue                # a build bundle: only a leaked key is a finding there
             if opts.rule_ids and rule.id not in opts.rule_ids:
                 continue
             if rule.check:
@@ -917,12 +919,15 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             for idx, line in enumerate(lines, 1):
                 if not line or not line.strip():
                     continue
-                if ignore and ignore.search(line):
+                # on a long (minified) line, an ignore word elsewhere on it must not hide a match
+                if ignore and len(line) <= 400 and ignore.search(line):
                     continue
                 placeholders: List[str] = []
                 for pat in pats:
                     m = pat.search(line)
                     if not m:
+                        continue
+                    if ignore and len(line) > 400 and ignore.search(line[max(0, m.start() - 80):m.end() + 80]):
                         continue
                     severity = confidence = message = None
                     ev = sf.raw[idx - 1].strip() if 0 < idx <= len(sf.raw) else line.strip()
@@ -939,7 +944,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if rule.id == "JH104" and not _dynamic_sql(sf, idx, line, m, pat.pattern):
                         continue
                     if rule.id == "JH109" and "CORS_ORIGIN_ALLOW_ALL" not in pat.pattern and \
-                            "allow_origins" not in pat.pattern and not _CORS_CREDENTIALS_RE.search(sf.text):
+                            not _CORS_CREDENTIALS_RE.search(sf.text):
                         severity, confidence = "minor", "medium"
                         message = ("A wildcard origin lets any site call this endpoint, but browsers send no cookies or "
                                    "credentials to a wildcard origin; it matters when the endpoint trusts network "
@@ -947,8 +952,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if rule.id == "JH107" and m.group(0).startswith(("hashlib", "createHash", "MessageDigest")):
                         if "usedforsecurity=False" in line:
                             continue        # Python says so explicitly
-                        near = " ".join(sf.nocomment[max(0, idx - 2):idx + 1]).lower()
-                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp", near) and \
+                        own = " ".join(sf.nocomment[max(0, idx - 2):idx]).lower()   # this statement and the one before
+                        near = " ".join(sf.raw[max(0, idx - 5):idx + 2]).lower()    # a docstring above, a use below
+                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp", own) and \
                                 re.search(r"cache|etag|dedup|fingerprint|checksum|\b(?:\w+_)?ids?\b|\buuid\b|\bslug\b|"
                                           r"\bbucket|\bshard|\bfolds?\b|\bcolou?r\b|\bavatar|\bfilename|"
                                           r"hexdigest\(\)\s*\[|digest\(\)\s*\[", near):
@@ -971,7 +977,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity, confidence = "minor", "low"
                             message = (rule.message + " The value is a translation string looked up by a constant "
                                        "key; it matters only if translations are user-contributed.")
-                        elif _sanitized_value(sf.nocomment[idx - 1][m.end():]):
+                        elif _sanitized_value(sf.nocomment[idx - 1][m.end():]) or \
+                                _sanitized_earlier(sf, idx, sf.nocomment[idx - 1][m.end():]):
                             severity, confidence = "minor", "low"
                             message = (rule.message + " The value passes through a sanitizer: check that it allows "
                                        "no script, event handlers or javascript: URLs.")
@@ -1022,6 +1029,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "[:=]" in pat.pattern:
                             if _I18N_PATH_RE.search(sf.rel):
                                 continue
+                            if len(line) > 400 and sf.rel.lower().endswith((".jsonl", ".ndjson", ".json", ".csv", ".tsv")):
+                                severity, confidence = "minor", "low"
+                                message = (rule.message + " It is inside a long data row (a dataset or export), which "
+                                           "usually holds sample text: confirm it is not a real credential.")
                             if "test" in sf.kinds or is_test_path(sf.rel) or sf.lang == "markdown" or \
                                     sf.rel.lower().endswith(".txt"):
                                 severity, confidence = "minor", "low"
@@ -1041,7 +1052,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
 
 
 # Pattern rules whose matches in test code are usually test data.
-_TEST_DATA_MINOR = {"JH104", "JH111", "JH115", "JH122"}
+_TEST_DATA_MINOR = {"JH104", "JH111", "JH115", "JH122", "JH702"}
 # Installers published by the tool's own vendor, over TLS (JH111 major, not critical).
 _OFFICIAL_INSTALLERS = ("sh.rustup.rs", "astral.sh", "get.docker.com", "deb.nodesource.com", "rpm.nodesource.com",
                         "ollama.com", "ollama.ai", "claude.ai", "bun.sh", "deno.land", "get.pnpm.io",
@@ -1136,6 +1147,19 @@ def _sanitized_value(rest: str) -> bool:
         depth += (rest[k] == "(") - (rest[k] == ")")
         k += 1
     return depth == 0 and re.match(r"\s*(?:\}\s*\}|\)|;|$)", rest[k:]) is not None
+
+
+def _sanitized_earlier(sf: SourceFile, idx: int, rest: str) -> bool:
+    """The value is one variable whose assignment, up to 15 lines above, goes
+    through a sanitizer: `const html = DOMPurify.sanitize(x)` or
+    `useMemo(() => DOMPurify.sanitize(x), [x])`."""
+    m = re.match(r"\s*(?:=\s*\{\{\s*__html\s*:\s*|=\s*|\(\s*)([A-Za-z_$][\w$]*)\s*(?:\}\s*\}|\)|;|$)", rest)
+    if not m:
+        return False
+    name = re.escape(m.group(1))
+    window = "\n".join(sf.nocomment[max(0, idx - 16):idx - 1])
+    a = list(re.finditer(r"\b(?:const|let|var)?\s*%s\s*=(?!=)" % name, window))
+    return bool(a) and bool(_SANITIZER_RE.search(window[a[-1].end():a[-1].end() + 200]))
 
 
 def _container_command(sf: SourceFile, idx: int) -> bool:

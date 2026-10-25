@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.7.0"
+VERSION = "2.7.1"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -269,6 +269,12 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("test")
     if "github_actions" in kinds or "gitlab_ci" in kinds:
         kinds.add("ci")
+    # a minified bundle (index-<hash>.js) by shape, whatever its name: secret rules still read it,
+    # code-shape rules do not
+    if lang in ("js", "ts", "css", "html"):
+        head = text[:400000].split("\n")
+        if head and max(len(x) for x in head) > 3000 and sum(len(x) for x in head) / len(head) > 300:
+            kinds.add("minified")
     return tuple(sorted(kinds))
 
 
@@ -367,6 +373,34 @@ def _blank(chars: List[str], start: int, end: int) -> None:
         chars[k] = " "
 
 
+_REGEX_PREV_RE = re.compile(r"(?:^|[(,=:\[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|in|of|void|delete|throw|new|yield|await))\s*$")
+
+
+def _regex_literal_end(line: str, i: int) -> Optional[int]:
+    """The index after a JS regex literal starting at line[i] == "/", or None
+    when the slash is division (after a name, a number or a closing bracket)
+    or the literal does not close on this line."""
+    if not _REGEX_PREV_RE.search(line[:i]):
+        return None
+    k, in_class, n = i + 1, False, len(line)
+    while k < n:
+        c = line[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            k += 1
+            while k < n and line[k].isalpha():
+                k += 1
+            return k
+        k += 1
+    return None
+
+
 class _Sanitizer:
     """Line-oriented comment/string masking with cross-line state."""
 
@@ -376,6 +410,7 @@ class _Sanitizer:
         self.quotes = _QUOTES.get(lang, ("'", '"'))
         self.triple = lang == "python"
         self.backtick = "`" in self.quotes and lang in ("js", "ts", "vue", "svelte")
+        self.regex = lang in ("js", "ts", "vue", "svelte")
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
 
@@ -466,6 +501,11 @@ class _Sanitizer:
             if block_i is not None:
                 i = block_i
                 continue
+            if self.regex and line[i] == "/" and not line.startswith(("//", "/*"), i):
+                end = _regex_literal_end(line, i)
+                if end:
+                    i = end                 # /^https:\/\//i: the // inside is not a comment
+                    continue
             if _comment_token(line, i, self.lang):
                 _blank(code, i, n)
                 _blank(nc, i, n)

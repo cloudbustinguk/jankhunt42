@@ -318,7 +318,9 @@ _BLOCKING = re.compile(
 @check("blocking_in_async")
 def blocking_in_async(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
-    for start, end, name, is_async in python_functions(sf):
+    funcs = list(python_functions(sf))
+    test = "test" in sf.kinds or is_test_path(sf.rel)
+    for start, end, name, is_async in funcs:
         if not is_async:
             continue
         for j in range(start + 1, end + 1):
@@ -327,8 +329,15 @@ def blocking_in_async(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             if "await " in line or "to_thread" in line or "run_in_executor" in line:
                 continue
-            out.append(make_finding(rule, sf, j + 1,
-                                    message="Blocking call in async function '%s' stalls the event loop." % name))
+            # the innermost function holding the line decides: a nested sync def is not the event loop,
+            # and a nested async def reports the line itself
+            inner = [f for f in funcs if start < f[0] < j <= f[1]]
+            if inner:
+                continue
+            out.append(make_finding(rule, sf, j + 1, severity="minor" if test else None,
+                                    confidence="low" if test else None,
+                                    message="Blocking call in async function '%s' stalls the event loop.%s"
+                                            % (name, " It is in test code." if test else "")))
     return out
 
 
@@ -999,6 +1008,9 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                 # a bare identifier is a local name unless the line reads the environment
                 env_line = re.search(r"process\.env|import\.meta\.env|\$env/|\benv\b", line) or \
                     re.search(r"\$env/(?:static|dynamic)/public", sf.text)   # SvelteKit imports the names
+                interpolated = re.search(r"\$\{[^}`]*$", line[:m.start()])
+                if read and not (in_code or interpolated or key):
+                    continue                # "...process.env.NEXT_PUBLIC_X..." inside a string is an example
                 if not (read or key or (in_code and (env_line or sf.lang in ("html", "docker")))):
                     continue
                 if not _PUBLIC_BY_DESIGN.search(m.group(1)):
@@ -1195,6 +1207,12 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
             severity = "critical" if agent else "major"
             message = ("Bidirectional control characters make this line display differently from how it is "
                        "parsed or read (Trojan Source, CVE-2021-42574).")
+            # a detector's own character class (BIDI_OVERRIDE = /[...]/): still reported, at minor
+            if not agent and re.search(r"(?i)bidi|invisible|zero.?width|trojan|homoglyph|confusable", line) and \
+                    re.search(r"\[[^\]\n]*[\u202a-\u202e\u2066-\u2069][^\]\n]*\]", line):
+                severity = "minor"
+                message += (" The characters sit in a regex character class of what looks like a detector; "
+                            "confirm nothing else on the line hides code.")
         elif worst == "selectors":
             severity = "major"
             message = ("A run of %d variation selectors can smuggle hidden data; real text never stacks "
@@ -1242,7 +1260,7 @@ _CREDENTIAL_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/cre
 # merely mentioning an API key next to a curl example is not.
 _CREDENTIAL_FILE_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/credentials|\.npmrc\b|\.pypirc\b|"
                                  r"\.netrc\b|\.git-credentials\b|(?:^|[\s/'\"`@=(<])\.env\b|\.docker/config\.json|\.kube/config)")
-_PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
+_PIPE_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b(?=[^\n|]*(?:https?://|\s-{1,2}\w|\$\{?\w))[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b"
                             r"|\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|\s*(?:iex|invoke-expression)\b")
 _NET_SEND_RE = re.compile(r"(?i)\b(?:curl|wget|ncat|invoke-webrequest|invoke-restmethod)\b|\bnc\s+-|\bfetch\s*\(")
 # Syntax that actually ships data: an upload flag, a pipe into a network
@@ -1975,15 +1993,28 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
     if sf.lang in _NOT_CODE:
         return out
     lines = sf.code
+    # project-local helpers that assert: near(a, b), close(x, y, eps)
+    names = []
+    for k, line in enumerate(lines):
+        d = re.match(r"\s*(?:export\s+)?(?:async\s+)?(?:function\s+(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=\s*"
+                     r"(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>)", line)
+        if d and (d.group(1) or d.group(2)) not in ("test", "it", "describe"):
+            span = "\n".join(lines[k:k + 12])
+            if _JS_ASSERT_RE.search(span) or re.search(r"\bthrow\b|\bassert\.\w+\(|\.ok\(", span):
+                names.append(d.group(1) or d.group(2))
+    helper_re = re.compile(r"(?<![\w.$])(?:%s)\s*\(" % "|".join(map(re.escape, names))) if names else None
     for i, line in enumerate(lines):
         # a test call with a title: test("...", ...) / it('...') / test.only(`...`);
         # not regex.test(x), a Rust #[tokio::test(...)] attribute, or prose
-        if not _JS_TEST_CALL_RE.search(line):
+        call = _JS_TEST_CALL_RE.search(line)
+        if not call:
             continue
+        if re.search(r"\bfunction\s*\*?\s*$|\b(?:const|let|var)\s+$", line[:call.start()]):
+            continue                    # function test(name, fn) {...}: a runner, not a test
         if "{" in line or (i + 1 < len(lines) and lines[i + 1].strip().startswith("{")):
             end, opened = _brace_blocks(sf, i, max_lines=300)
             body = "\n".join(lines[i:end + 1])
-            if opened and not _JS_ASSERT_RE.search(body):
+            if opened and not _JS_ASSERT_RE.search(body) and not (helper_re and helper_re.search(body)):
                 out.append(make_finding(rule, sf, i + 1, end_line=end + 1,
                                         message="Test block contains no assertion."))
         else:
@@ -1995,7 +2026,7 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
                 depth += part.count("(") - part.count(")")
                 if depth <= 0:
                     break
-            if not _JS_ASSERT_RE.search("\n".join(span)):
+            if not _JS_ASSERT_RE.search("\n".join(span)) and not (helper_re and helper_re.search("\n".join(span))):
                 out.append(make_finding(rule, sf, i + 1, message="Test contains no assertion on this line."))
         if len(out) >= 10:
             break
@@ -2055,6 +2086,10 @@ def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
             if target.startswith(("http://", "https://", "mailto:", "tel:", "#", "/", "<")):
                 continue
             if "{{" in target or "{%" in target:
+                continue
+            # a doc macro (:git:repo:path), a placeholder with no Latin letters or digits ("链接", "..."),
+            # or any link in a template, whose targets resolve in the generated output
+            if target.startswith(":") or not re.search(r"[A-Za-z0-9]", target) or "template" in sf.basename.lower():
                 continue
             clean = target.split("#", 1)[0].split("?", 1)[0]
             if not clean:

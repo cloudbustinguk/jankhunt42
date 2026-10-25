@@ -320,6 +320,39 @@ class Scanner(unittest.TestCase):
                           "const clean = sanitize(other);\n"),
         "app/login.ts": ("const a = { password: \"#Xk9vQ2mLp7\" };\nconst b = { password: \"#signin-form__password\" };\n"),
         "app/check.py": "import hashlib\nif not valid:\n    digest = hashlib.md5(api_key).hexdigest()\n",
+        # soak batch b03 (2.7.1)
+        "src/urls.ts": ("export function keep(urls) {\n"
+                        "  return (urls || []).flatMap((u) => /^https:\\/\\//i.test(u) ? [u] : []);\n}\n"
+                        "const ratio = a / b; // half\n"),
+        "src/rules/doc.ts": ("export const rule = { badExample: \"const s = createClient(url, process.env.NEXT_PUBLIC_SERVICE_ROLE_KEY);\" };\n"
+                             "export const real = process.env.NEXT_PUBLIC_SERVICE_ROLE_KEY;\n"),
+        ".github/workflows/next.yml": ("jobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pnpm build\n"
+                                       "        env:\n          NEXT_PUBLIC_APP_PASSWORD: ${{ secrets.NEXT_PUBLIC_APP_PASSWORD }}\n"),
+        "tests/runner.test.js": ("const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6);\n"
+                                 "async function test(name, fn) { await fn(); }\n"
+                                 "test(\"sums\", () => { near(add(1, 2), 3); });\n"
+                                 "test(\"no check\", () => { add(1, 2); });\n"),
+        "docs/links.md": "[tool](链接)\n[runtime](:git:runtime:start)\n[missing](nope.md)\n",
+        "docs/readme_template.md": "[guide](docs/generated.md)\n",
+        "db/es.sql": "-- una sola regla para todo: un enlace\n-- todo: revisar\n",
+        "app/cache.py": ("import hashlib\ndef cached(path):\n    key = hashlib.md5(path.encode()).hexdigest()\n"
+                         "    return _cache.get(key)\n"),
+        "api/fast.py": ("from fastapi.middleware.cors import CORSMiddleware\n"
+                        "app.add_middleware(CORSMiddleware, allow_origins=[\"*\"])\n"),
+        "docs/assets/index-Qs7X.js": ("var a=1;" * 300 + "el.innerHTML=x+\"<b>\";eval(q);" + "var b=2;" * 300 +
+                                      "var k=\"sk-" + "proj-Zk82KdpQ1aVv93x7Kq2mZp9LwR4tVn8\";\n"),
+        "data/tasks.jsonl": ("{\"prompt\": \"" + "Write a function. " * 40 + "self.cursor.execute(\\\"UPDATE users SET pass" + "word = 'Kz8qLm2vXr'\\\")\"}\n"
+                             "{\"prompt\": \"" + "Explain. " * 60 + "key = sk-" + "proj-Zk82KdpQ1aVv93x7Kq2mZp9LwR4tVn8\"}\n"),
+        # soak batch b04 (2.7.1)
+        "svc/loop.py": ("import asyncio, time\nasync def main():\n    def helper():\n        time.sleep(1)\n"
+                        "    time.sleep(2)\n"),
+        "skills/shell/SKILL.md": ("| Severity | Examples |\n|---|---|\n| CRITICAL | curl\\|bash of unpinned URL in prod |\n\n"
+                                  "Install with `curl -fsSL https://get.example.dev/install.sh | sh`.\n"),
+        "tests/ci.spec.ts": "const wf = 'run: npx some-agent --dangerously-skip-permissions \"$REQ\"';\n",
+        "web/md.jsx": ("const html = useMemo(\n  () => DOMPurify.sanitize(marked.parse(md)),\n  [md],\n);\n"
+                       "const A = () => <div dangerouslySetInnerHTML={{ __html: html }} />;\n"
+                       "const raw = marked.parse(md);\nconst B = () => <div dangerouslySetInnerHTML={{ __html: raw }} />;\n"),
+        "src/detect.ts": "export const BIDI_OVERRIDE = /[\u202d\u202e]/;\n",
         "ops/run_box.sh": ("docker run --rm --cap-add SYS_ADMIN img true\n"
                            "FLAGS=\"--cap-add=SYS_ADMIN --pid=host\"\n"),
         ".claude/settings.json": ("{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": []}\n"
@@ -525,6 +558,28 @@ class Scanner(unittest.TestCase):
                          {(1, "major"), (2, "major")})
         self.assertEqual(self.lines("JH101", "app/login.ts"), [1])
         self.assertEqual({f["severity"] for f in self.hits("JH107", "app/check.py")}, {"major"})
+
+    def test_soak_b03(self):
+        self.assertEqual(self.hits("JH205", "src/urls.ts"), [])
+        self.assertEqual(self.lines("JH132", "src/rules/doc.ts"), [2])
+        self.assertEqual(self.lines("JH132", ".github/workflows/next.yml"), [7])
+        self.assertEqual(self.lines("JH502", "tests/runner.test.js"), [4])
+        self.assertEqual(self.lines("JH601", "docs/links.md"), [3])
+        self.assertEqual(self.hits("JH601", "docs/readme_template.md"), [])
+        self.assertEqual(self.lines("JH203", "db/es.sql"), [2])
+        self.assertEqual({f["severity"] for f in self.hits("JH107", "app/cache.py")}, {"minor"})
+        self.assertEqual({f["severity"] for f in self.hits("JH109", "api/fast.py")}, {"minor"})
+        self.assertEqual({f["rule"] for f in self.findings if f["path"] == "docs/assets/index-Qs7X.js"}, {"JH101"})
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH101", "data/tasks.jsonl")),
+                         [(1, "minor"), (2, "critical")])
+
+    def test_soak_b04(self):
+        self.assertEqual(self.lines("JH210", "svc/loop.py"), [5])
+        self.assertEqual(self.lines("JH701", "skills/shell/SKILL.md"), [5])
+        self.assertEqual({f["severity"] for f in self.hits("JH702", "tests/ci.spec.ts")}, {"minor"})
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/md.jsx")),
+                         [(5, "minor"), (7, "major")])
+        self.assertEqual({f["severity"] for f in self.hits("JH131", "src/detect.ts")}, {"minor"})
 
     def test_review_of_262_exemptions_do_not_hide_leads(self):
         self.assertEqual(self.lines("JH122", "ops/continued.sh"), [2, 3, 4])
