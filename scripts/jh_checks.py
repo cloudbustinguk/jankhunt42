@@ -129,12 +129,15 @@ def _explains(text: str, marker: str) -> bool:
 _CONSEQUENTIAL_RE = re.compile(r"(?i)\b(?:\w*verif\w*|\w*authenticat\w*|\w*authori[sz]\w*|log_?in|sign_?in|"
                                r"\w*payment\w*|charge\w*|refund\w*|checkout|commit|transaction|"
                                r"save\w*|insert\w*|upsert\w*|transfer\w*|withdraw\w*|grant\w*|revoke\w*|"
-                               r"publish\w*|deploy\w*|migrat\w*|send(?:Mail|Email|Message)?\w*)\s*\(")
+                               r"publish\w*|deploy\w*|migrat\w*|send(?:Mail|Email|Message)?\w*|pay\w*)\s*\(|"
+                               r"\.(?:update|delete|insert|upsert|destroy|remove)\w*\s*\(|"
+                               r"\b(?:db|repo\w*|api|client|http|axios|supabase|prisma|knex|store|service|model)\."
+                               r"(?:\w+\.)*(?:create|put|post|patch|write|save)\w*\s*\(")
 _SUCCESS_AFTER_RE = re.compile(r"(?i)\b(?:toast\.success|success(?:fully)?\b|verified\b|saved\b|return\s+true\b|"
                                r"ok\s*:\s*true)")
 
 
-def _handler_severity(sf: SourceFile, try_line: int, handler_line: int, end_line: int) -> Tuple[str, str]:
+def _handler_severity(sf: SourceFile, body: str, end_line: int) -> Tuple[str, str]:
     """("major", why) when the try body calls something whose failure decides
     an outcome (verify, save, pay, commit...) or the code goes on to claim
     success; ("minor", "") otherwise: best-effort cleanup, a fallback, a
@@ -142,7 +145,6 @@ def _handler_severity(sf: SourceFile, try_line: int, handler_line: int, end_line
     after = [sf.code[k] for k in range(end_line, min(end_line + 4, len(sf.code))) if sf.code[k].strip()]
     if after and re.match(r"^\s*(?:raise|throw)\b", after[0]):
         return "minor", ""
-    body = "\n".join(sf.code[try_line:handler_line + 1])
     m = _CONSEQUENTIAL_RE.search(body)
     if m:
         return "major", ("The handler swallows a failure of `%s(...)` and carries on as if it succeeded."
@@ -152,16 +154,25 @@ def _handler_severity(sf: SourceFile, try_line: int, handler_line: int, end_line
     return "minor", ""
 
 
-def _try_start(sf: SourceFile, i: int, python: bool) -> int:
-    """The line of the try that this handler closes (searching up to 15 lines back)."""
-    base = indent_of(sf.code[i])
-    for k in range(i, max(-1, i - 16), -1):
-        line = sf.code[k]
-        if python and re.match(r"^\s*try\s*:", line) and indent_of(line) == base:
-            return k
-        if not python and re.search(r"\btry\b", line):
-            return k
-    return i
+def _try_body(sf: SourceFile, i: int, python: bool) -> str:
+    """The code of the try block this handler closes: by indentation in
+    Python, by matching braces elsewhere (up to 300 lines back)."""
+    lo = max(0, i - 300)
+    if python:
+        base = indent_of(sf.code[i])
+        for k in range(i - 1, lo - 1, -1):
+            if re.match(r"^\s*try\s*:", sf.code[k]) and indent_of(sf.code[k]) == base:
+                return "\n".join(sf.code[k:i])
+        return "\n".join(sf.code[lo:i])
+    text = "\n".join(sf.code[lo:i] + [sf.code[i]])
+    at = text.rfind("catch")
+    close = text.rfind("}", 0, at)
+    depth = 0
+    for k in range(close, -1, -1):
+        depth += (text[k] == "}") - (text[k] == "{")
+        if depth == 0:
+            return text[k + 1:close] if re.search(r"\btry\s*$", text[:k]) else text[:close]
+    return text[:close]
 
 
 @check("empty_handler")
@@ -169,7 +180,7 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
 
     def add(line: int, end: int, message: Optional[str] = None) -> None:
-        severity, why = _handler_severity(sf, _try_start(sf, line, sf.lang == "python"), line, end + 1)
+        severity, why = _handler_severity(sf, _try_body(sf, line, sf.lang == "python"), end + 1)
         out.append(make_finding(rule, sf, line + 1, end_line=end + 1 if end != line else None, severity=severity,
                                 confidence="medium" if severity == "minor" else None,
                                 message=(message + " " + why).strip() if message and why else (why or message)))
@@ -1215,8 +1226,9 @@ _OVERRIDE_RES = (
     re.compile(r"(?i)\b(?:do\s+not|don'?t|never)\s+(?:tell|inform|notify|alert|warn)\s+(?:the\s+)?user\b"),
     re.compile(r"(?i)\b(?:do\s+not|don'?t|never)\s+(?:mention|reveal|disclose|show|report)\b[^.\n]{0,40}\bto\s+the\s+user\b"),
     # unless the sentence forbids it: "do not create containers without asking the user first"
-    re.compile(r"(?i)(?:^|[.!?])(?:(?!\b(?:do\s+not|don'?t|never|must\s+not|mustn'?t|should\s+not|shouldn'?t|"
-               r"cannot|can'?t|no)\b)[^.!?\n])*\bwithout\s+(?:telling|informing|asking|notifying|alerting)\s+"
+    # the negation must govern this clause: "if there are no errors, push without telling the user" still counts
+    re.compile(r"(?i)(?:^|[.!?;,])(?:(?!\b(?:do\s+not|don'?t|never|must\s+not|mustn'?t|should\s+not|"
+               r"shouldn'?t)\b)[^.!?;,\n])*\bwithout\s+(?:telling|informing|asking|notifying|alerting)\s+"
                r"(?:the\s+)?user\b", re.M),
     re.compile(r"(?i)\b(?:silently|secretly|covertly)\s+(?:run|execute|send|upload|post|copy|forward|install|"
                r"download|exfiltrate)\b"),

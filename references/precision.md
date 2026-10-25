@@ -52,7 +52,7 @@ between the two versions.
 | 2.6.1 | critical | 54 | 0.86 (0.69-0.95) | 0.46 |
 | 2.6.2 | critical | 32 | 0.89 (0.73-0.96) | 0.78 |
 | 2.6.1 | major | 120 | 0.37 (0.23-0.53) | 0.12 |
-| 2.6.2 | major | 46 | 0.48 (0.31-0.66) | 0.30 |
+| 2.6.2 | major | 48 | 0.48 (0.31-0.66) | 0.29 |
 
 What changed in 2.6.2:
 - Most of the non-actionable criticals were provider-shaped keys inside other
@@ -68,7 +68,7 @@ Sample A found the rules that misfired in 2.6.1: `JH102`, `JH103`, `JH108`,
 
 ## Limits
 
-- **Interval width.** 46 majors give a wide interval.
+- **Interval width.** 48 majors give a wide interval.
 - **Clustering.** Findings cluster by repository: one repository can supply
   many findings, so the intervals understate the real uncertainty.
 - **Agent labels.** They are consistent, but they are one reviewer's

@@ -39,6 +39,12 @@ CI = ("ci",)
 TEST = ("test",)
 
 
+# JH104: a query call built by concatenation; not `"query("` inside a string
+# (GraphQL builders) or a name like appendRawQuery(. _dynamic_sql() asks this
+# pattern for SQL or a database nearby, so a regex's exec() does not count.
+_SQL_CALL_PATTERN = (r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*\(\s*"
+                     r"(?:f['\"]|\$\{|(?:[^)\n\"'+,]|\"[^\"\n]*\"|'[^'\n]*')*\+)")      # in the first argument
+
 RULES: List[Rule] = [
     # ------------------------------------------------------------------ security
     R("JH101", "Hardcoded secret", "critical", "security",
@@ -109,10 +115,7 @@ RULES: List[Rule] = [
           r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\$\{|#\{)",
           # an f-string that interpolates into SQL-shaped text
           r"(?i)\bf([\"'])(?=[^\"']*\{)[^\"']*\b(?:select\b[^\"']{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
-          # a query call built by concatenation; not `"query("` inside a
-          # string (GraphQL builders) or a name like appendRawQuery(
-          r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*\(\s*"
-          r"(?:f['\"]|\$\{|(?:[^)\n\"'+,]|\"[^\"\n]*\"|'[^'\n]*')*\+)",       # in the first argument
+          _SQL_CALL_PATTERN,
       )),
     R("JH105", "TLS verification disabled", "major", "security",
       "Certificate validation is turned off, so any network attacker can impersonate the peer.",
@@ -154,6 +157,7 @@ RULES: List[Rule] = [
       confidence="medium", target="nocomment", langs=PY + JS + JVM + CLIKE + ("ruby", "php", "go"),
       patterns=(
           r"(?i)Access-Control-Allow-Origin['\"]?\s*[:=]\s*['\"]\*",
+          r"(?i)Access-Control-Allow-Origin['\"]\s*,\s*['\"]\*['\"]",        # setHeader("...", "*")
           r"(?i)origin\s*:\s*['\"]\*['\"]",
           r"(?i)allow_origins\s*=\s*\[\s*['\"]\*['\"]",
           r"(?i)CORS_ORIGIN_ALLOW_ALL\s*=\s*True",
@@ -220,9 +224,7 @@ RULES: List[Rule] = [
       "Privileged containers have host-level capabilities and weaken isolation.",
       "Drop capabilities, use a non-root user, and grant only the specific capability required.",
       confidence="high", target="nocomment", langs=SCRIPT + DOCKER + ("yaml",),
-      patterns=(r"\bdocker\s+run\b[^\n]*--privileged\b",
-                r"\b(?:docker|podman|nerdctl)\s+(?:container\s+)?(?:run|create)\b[^\n]*--cap-add(?:=|\s+)SYS_ADMIN\b",
-                r"\b(?:docker|podman|nerdctl)\s+(?:container\s+)?(?:run|create)\b[^\n]*--pid(?:=|\s+)host\b")),
+      patterns=(r"\bdocker\s+run\b[^\n]*--privileged\b", r"--cap-add(?:=|\s+)SYS_ADMIN\b", r"--pid(?:=|\s+)host\b")),
     R("JH124", "document.write sink", "major", "security",
       "document.write with dynamic content is an HTML injection sink.",
       "Build DOM nodes with textContent or sanitize with a maintained HTML sanitizer.",
@@ -918,9 +920,12 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity = sev
                             message = rule.message + " The script comes from an official installer over TLS: the " \
                                                      "publisher is known, but the content is still unpinned and unverified."
+                    if rule.id == "JH122" and "docker" not in pat.pattern and not _container_command(sf, idx):
+                        continue            # a flag in a list of strings, not in a container command
                     if rule.id == "JH104" and not _dynamic_sql(sf, idx, line, m, pat.pattern):
                         continue
-                    if rule.id == "JH109" and not _CORS_CREDENTIALS_RE.search(sf.text):
+                    if rule.id == "JH109" and "CORS_ORIGIN_ALLOW_ALL" not in pat.pattern and \
+                            "allow_origins" not in pat.pattern and not _CORS_CREDENTIALS_RE.search(sf.text):
                         severity, confidence = "minor", "medium"
                         message = ("A wildcard origin lets any site call this endpoint, but browsers send no cookies or "
                                    "credentials to a wildcard origin; it matters when the endpoint trusts network "
@@ -949,7 +954,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             message = ("An AWS access key id is embedded in a presigned URL. The id alone does not "
                                        "grant access and presigned links expire, but it identifies the account; "
                                        "prefer links without credentials.")
-                        elif provider and _CODE_SAMPLE_SECRET_RE.search(line[:m.end()]) and (
+                        elif provider and _code_sample_secret(line, m.end()) and (
                                 "test" in sf.kinds or is_test_path(sf.rel) or sf.lang == "markdown"):
                             severity, confidence = "minor", "low"
                             message = ("A provider-shaped key inside a code sample that is itself a string, in a test "
@@ -1052,10 +1057,18 @@ _WEB_FRAMEWORK_RE = re.compile(r"^\s*(?:from|import)\s+(?:flask\w*|quart|django|
 _CORS_CREDENTIALS_RE = re.compile(r"(?i)Access-Control-Allow-Credentials['\"]?\s*[:=,]\s*['\"]?true|"
                                   r"\bcredentials\s*:\s*true\b|\b(?:supports|allow)_credentials\s*=\s*True\b|"
                                   r"\bCORS_ALLOW_CREDENTIALS\s*=\s*True\b|\bAllowCredentials\s*\(\s*\)|"
-                                  r"\ballowCredentials\s*[:=(]\s*true\b")
+                                  r"allowCredentials\s*[:=(]\s*['\"]?true\b|\bAllowAnyOrigin\(\)\.AllowCredentials")
 # a key inside a code sample that is itself a string: 'API_KEY = "sk-..."', '{"key":"sk-..."}'
-_CODE_SAMPLE_SECRET_RE = re.compile(r"""(["'])(?:(?!\1)[^\n])*?\b[A-Za-z_][\w.]*(?:(?!\1)["'])?\s*[:=]\s*"""
+_CODE_SAMPLE_SECRET_RE = re.compile(r"""(?<![\w\\])(["'])(?:(?!\1)[^\n])*?\b[A-Za-z_][\w.]*(?:(?!\1)["'])?\s*[:=]\s*"""
                                     r"""(?:(?!\1)["'])?(?:Bearer\s+)?[\w\-]+$""")
+
+
+def _code_sample_secret(line: str, end: int) -> bool:
+    """The key at line[:end] sits inside a string that is itself code: the
+    opening quote starts a string (not a word's apostrophe or a closing
+    quote) and the same quote closes it after the key."""
+    m = _CODE_SAMPLE_SECRET_RE.search(line[:end])
+    return bool(m and m.group(1) in line[end:])
 # a database call: what a concatenated query() or execute() must be near to count as SQL
 _SQL_CONTEXT_RE = re.compile(r"(?i)\b(?:select|insert|update|delete|where|from|join|values|explain|alter|create|drop|"
                              r"grant|truncate|merge|upsert|cursor|cur|conn\w*|db|database|client|pool|knex|sequelize|"
@@ -1064,17 +1077,30 @@ _SQL_CONTEXT_RE = re.compile(r"(?i)\b(?:select|insert|update|delete|where|from|j
 _SQL_TAG_RE = re.compile(r"(?:\b(?:sql|SQL|Prisma\.sql|db\.sql|tx\.sql)|\$(?:queryRaw|executeRaw))\s*$")
 
 
+def _container_command(sf: SourceFile, idx: int) -> bool:
+    """The line is part of a container command (docker/podman/nerdctl run or
+    create, docker compose run, also continued with backslashes) or of
+    container options (GitHub Actions `options:`, dev container runArgs)."""
+    k, text = idx - 1, sf.nocomment[idx - 1]
+    while k > 0 and k > idx - 8 and sf.nocomment[k - 1].rstrip().endswith("\\"):
+        k -= 1
+        text = sf.nocomment[k] + " " + text
+    return bool(re.search(r"\b(?:docker|podman|nerdctl)(?:\s+compose|-compose)?\s+(?:[\w-]+\s+)?(?:run|create)\b", text)
+                or re.match(r"""\s*["']?(?:options|runArgs)["']?\s*:""", sf.nocomment[idx - 1]))
+
+
 def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", pattern: str) -> bool:
     """False for what looks like dynamic SQL but is not: a query()/exec()
     built by concatenation with nothing database- or SQL-shaped on the line
     (a regex exec(), a spatial index query()), a sql`...` tagged template
     (the tag binds every interpolation as a parameter), and interpolation of
     CONSTANT_NAMES only."""
-    if "(?:execute|executemany|query|exec|raw)" in pattern and not (
-            _SQL_CONTEXT_RE.search(line[:m.start()] + line[m.end():]) or
-            re.search(r"(?i)\b(?:select|insert|update|delete|where|from)\b", m.group(0))):
-        return False
-    raw = sf.nocomment[idx - 1]
+    if pattern == _SQL_CALL_PATTERN:
+        # the receiver, the first argument and the rest of the line, but not the method name itself
+        arg = re.sub(r"(?i)^(?:execute|executemany|query|exec|raw)\s*\(", "", m.group(0))
+        if not _SQL_CONTEXT_RE.search(line[:m.start()] + " " + arg + " " + line[m.end():]):
+            return False
+    raw = line
     if "${" in raw or "#{" in raw:
         # find the backtick that opens the template holding the match, up to 30 lines back
         text = "\n".join(sf.nocomment[max(0, idx - 31):idx - 1] + [raw[:m.end()]])
@@ -1086,7 +1112,7 @@ def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", patter
     if not names and re.search(r"(?i)\bf[\"']", raw):
         names = re.findall(r"(?<!\{)\{([^{}]*)\}(?!\})", raw)
     if names and all(re.fullmatch(r"\s*(?:self\.|cls\.)?_*[A-Z][A-Z0-9_]*\s*", n) for n in names) and \
-            not re.search(r"[\"'`]\s*\+|\+\s*[\"'`]", raw):
+            not re.search(r"[\"'`]\s*(?:\+|%|\.format\b)|\+\s*[\"'`]", raw):
         return False
     return True
 
@@ -1146,7 +1172,11 @@ def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
             if "`" in n:
                 tail = n.split("`", 1)[1]
                 text = "\n".join(body)[:-len(tail) - 1] if tail else "\n".join(body)[:-1]
-                return not re.search(r"\$\{(?![A-Z][A-Z0-9_]*\})", text) and re.match(r"\s*;?\s*$", tail) is not None
+                if re.search(r"\$\{(?![A-Z][A-Z0-9_]*\})", text) or not re.match(r"\s*;?\s*$", tail):
+                    return False
+                k = idx + len(body) - 1             # index of the line after the closing backtick
+                nxt = next((x for x in sf.nocomment[k:k + 3] if x.strip()), "")
+                return tail.strip() == ";" or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
         return False
     if re.match(r"\s*%s\s*;?\s*$" % lit, rest):
         # unless the statement goes on: `= '<div>'` then `+ message` on the next line
