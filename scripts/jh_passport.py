@@ -166,7 +166,8 @@ _PLAIN = {
 }
 _VERDICT = {
     "block": "Not ready to ship. Fix every blocking item below; then an engineering custodian must review and sign off.",
-    "insufficient-evidence": "Cannot be judged yet: evidence is missing. Supply what is listed below and re-run.",
+    "insufficient-evidence": "Cannot be judged yet: evidence is missing. Supply what is listed below and re-run. "
+                             "The citizen pull-request gate stops the merge until then.",
     "review": "Needs an engineer's review before it ships.",
     "pass": "No blocking issue found. This is an automated check, not approval: the custodian still signs off.",
 }

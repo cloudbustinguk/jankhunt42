@@ -984,11 +984,15 @@ _VULN_EXAMPLE_RE = re.compile(r"(?i)(?:^|/)(?:examples?|samples?|demos?|fixtures
                               r"(?:[^/]+/)*?[^/]*(?:vulnerable|insecure|vuln|exploit|unsafe|damn)[^/]*/")
 
 
+# a committed credential is real wherever it sits, examples included
+_SECRET_RULE_IDS = {"JH101", "JH401", "JH415", "JH706"}
+
+
 def _example_context(f: Finding) -> None:
     """Security leads in a deliberately vulnerable example are minor: the
     weakness is the point of the example."""
     if f.category in ("security", "agent", "supply-chain") and f.severity in ("blocker", "critical", "major") \
-            and _VULN_EXAMPLE_RE.search(f.path):
+            and f.rule not in _SECRET_RULE_IDS and _VULN_EXAMPLE_RE.search(f.path):
         f.severity, f.confidence = "minor", "low"
         f.message = f.message + " It is in a deliberately vulnerable example."
 

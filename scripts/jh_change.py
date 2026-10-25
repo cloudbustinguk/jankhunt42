@@ -97,10 +97,13 @@ def _ruleset_rules(gate: _Gate, rules: Sequence[Any]) -> None:
             gate.force_push = True
 
 
-def from_export(data: Any, default_branch: str = "main") -> Tuple[_Gate, List[str]]:
+def from_export(data: Any, default_branch: str = "main") -> Tuple[Optional[_Gate], List[str]]:
     """Read a GitHub REST API export: a ruleset object, a list of rulesets, the
     `rules/branches/{branch}` list, classic branch protection, or a wrapper
-    {"default_branch", "rulesets", "branch_protection", "branch_rules"}."""
+    {"default_branch", "rulesets", "branch_protection", "branch_rules"}.
+    Returns no gate when nothing in the export can be read as branch rules
+    (a `GET /rulesets` summary list carries no rules): that is unknown, not
+    evidence of an unprotected branch. An empty list is evidence of none."""
     notes: List[str] = []
     gate = _Gate()
     if isinstance(data, dict) and any(k in data for k in ("rulesets", "branch_protection", "branch_rules")):
@@ -112,32 +115,42 @@ def from_export(data: Any, default_branch: str = "main") -> Tuple[_Gate, List[st
             parts.append(list(data["branch_rules"]))
     else:
         parts = data if isinstance(data, list) and all(isinstance(x, dict) and "rules" in x for x in data) else [data]
-    bypass_known = False
+    # Bypass actors are visible part by part: one part that hides them makes the
+    # bypass unknown, however many other parts show theirs.
+    bypass_seen, bypass_hidden, recognized = False, False, data == [] or data == {"rulesets": []}
     for part in parts:
-        if isinstance(part, list):                      # rules/branches: flat rules, no bypass actors
-            _ruleset_rules(gate, part)
+        if isinstance(part, list) and part and all(isinstance(r, dict) and "type" in r for r in part):
+            _ruleset_rules(gate, part)                  # rules/branches: flat rules, no bypass actors
+            recognized = bypass_hidden = True
             notes.append("branch rules list: bypass actors are not included in this export")
+        elif isinstance(part, list):
+            notes.append("a list without rule types (a GET /rulesets summary?) was ignored; export each ruleset "
+                         "with GET /repos/{owner}/{repo}/rulesets/{id}")
         elif isinstance(part, dict) and "rules" in part:   # a ruleset
+            recognized = True               # a ruleset that is not enforced is evidence too
             if part.get("enforcement", "active") != "active":
                 notes.append("ruleset %r is %s, not enforced" % (str(part.get("name", "?"))[:40], part.get("enforcement")))
                 continue
+            recognized = True
             if part.get("target", "branch") != "branch" or not _targets_default(part.get("conditions"), default_branch):
                 continue
             _ruleset_rules(gate, part.get("rules") or [])
             if "bypass_actors" in part:
-                bypass_known = True
+                bypass_seen = True
                 gate.add_bypass(part.get("bypass_actors") or [])
             else:
+                bypass_hidden = True
                 notes.append("ruleset %r: bypass actors not included (they need admin read access)"
                              % str(part.get("name", "?"))[:40])
         elif isinstance(part, dict) and ("required_pull_request_reviews" in part or "required_status_checks" in part
                                          or "allow_force_pushes" in part):   # classic protection
+            recognized = True
             rpr = part.get("required_pull_request_reviews")
             if isinstance(rpr, dict):
                 gate.pr(int(rpr.get("required_approving_review_count") or 0), bool(rpr.get("require_code_owner_reviews")),
                         bool(rpr.get("require_last_push_approval")))
                 allow = rpr.get("bypass_pull_request_allowances") or {}
-                bypass_known = True
+                bypass_seen = True
                 gate.add_bypass([{"actor_type": "Integration", "bypass_mode": "pull_request", "actor_id": str(a.get("slug", a.get("id", "")))}
                                  for a in allow.get("apps") or [] if isinstance(a, dict)])
             else:
@@ -148,7 +161,14 @@ def from_export(data: Any, default_branch: str = "main") -> Tuple[_Gate, List[st
                 gate.checks = sorted(set((gate.checks or []) + [str(c) for c in ctx if c]))
             gate.deletion = gate.deletion or not _enabled(part.get("allow_deletions"))
             gate.force_push = gate.force_push or not _enabled(part.get("allow_force_pushes"))
-    if bypass_known and gate.bypass is None:
+        else:
+            notes.append("an export part was not recognised as a ruleset, branch rules, or branch protection")
+    if not recognized:
+        return None, notes
+    apps_seen = any(b["actor_type"] in APP_ACTORS for b in gate.bypass or [])
+    if bypass_hidden and not apps_seen:
+        gate.bypass = None              # not every part shows its bypass actors
+    elif bypass_seen and gate.bypass is None:
         gate.bypass = []
     return gate, notes
 
@@ -157,8 +177,12 @@ def _enabled(value: Any) -> bool:
     return bool(value.get("enabled")) if isinstance(value, dict) else bool(value)
 
 
-def from_iac(items: Sequence[Any], default_branch: str = "main") -> Tuple[Optional[_Gate], List[Tuple[str, int]]]:
-    """Terraform GitHub provider declarations; (gate or None, receipts)."""
+def from_iac(items: Sequence[Any], default_branch: str = "main",
+             repository: str = "") -> Tuple[Optional[_Gate], List[Tuple[str, int]]]:
+    """Terraform GitHub provider declarations; (gate or None, receipts).
+    A resource whose literal `repository` names another repository is
+    skipped; a reference (github_repository.x.name) cannot be resolved
+    statically and is kept."""
     gate = _Gate()
     receipts: List[Tuple[str, int]] = []
     for item in items:
@@ -166,6 +190,9 @@ def from_iac(items: Sequence[Any], default_branch: str = "main") -> Tuple[Option
             continue
         for r in jh_hcl.resources(item.text, "github_"):
             b = r["body"]
+            named = jh_hcl.as_str(b.get("repository"))
+            if repository and named and named.lower() != repository.lower():
+                continue                # declared for a different repository
             if r["type"] == "github_repository_ruleset":
                 if jh_hcl.as_str(b.get("enforcement")) not in ("active", "") or jh_hcl.as_str(b.get("target")) not in ("branch", ""):
                     continue
@@ -292,15 +319,15 @@ def violations(cc: Dict[str, Any]) -> Tuple[List[str], List[str], List[str]]:
 
 
 def build(items: Sequence[Any], export: Any = None, export_trusted: bool = False, export_label: str = "",
-          default_branch: str = "main") -> Dict[str, Any]:
+          default_branch: str = "main", repository: str = "") -> Dict[str, Any]:
     owners = codeowners(items)
     if export is not None:
         gate, notes = from_export(export, default_branch)
         source = "provider-verified" if export_trusted else "declared"
-        cc = assess(gate, source, owners, notes)
+        cc = assess(gate, source if gate is not None else "unknown", owners, notes)
         cc["source"] = {"kind": "operator export" if export_trusted else "repository file", "label": export_label}
         return cc
-    gate, receipts = from_iac(items, default_branch)
+    gate, receipts = from_iac(items, default_branch, repository)
     cc = assess(gate, "declared" if gate else "unknown", owners)
     cc["source"] = ({"kind": "terraform", "receipts": [{"path": p, "line": l} for p, l in receipts[:10]]}
                     if gate else {"kind": "none"})

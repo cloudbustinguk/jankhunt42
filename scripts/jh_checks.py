@@ -941,7 +941,8 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                 read = re.search(r"(?:\benv\.|\benv\s*\[\s*[\"'`])$", line[:m.start()])
                 key = sf.lang in ("json", "yaml", "toml", "docker") and re.match(r"""\s*["']?\s*[:=]""", line[m.end():])
                 # a bare identifier is a local name unless the line reads the environment
-                env_line = re.search(r"process\.env|import\.meta\.env|\$env/|\benv\b", line)
+                env_line = re.search(r"process\.env|import\.meta\.env|\$env/|\benv\b", line) or \
+                    re.search(r"\$env/(?:static|dynamic)/public", sf.text)   # SvelteKit imports the names
                 if not (read or key or (in_code and (env_line or sf.lang in ("html", "docker")))):
                     continue
                 if not _PUBLIC_BY_DESIGN.search(m.group(1)):
@@ -1734,14 +1735,14 @@ def _grants_write(perms: Any) -> bool:
 
 def _grants_write_explicit(perms: Any) -> bool:
     """Write access stated in the workflow (unset permissions are not visible here)."""
-    if isinstance(perms, str):
-        return perms == "write-all"
-    return isinstance(perms, dict) and any(v == "write" for v in perms.values())
+    return perms is not None and _grants_write(perms)
 
 
 # branch prefixes AI coding agents push to (Claude, Copilot, Codex, Cursor, Devin, generic)
 _AGENT_BRANCH_RE = re.compile(r"^(?:claude|copilot|codex|cursor|devin|agent|agents|ai|bot|bots|jules|opencode)[/-]", re.I)
-_SCOPED_JOB_IF_RE = re.compile(r"refs/heads/|github\.ref_name\s*==|github\.ref\s*==|startsWith\(\s*github\.ref,\s*'refs/tags")
+# a job pinned to one exact branch or to tags; `!=` or a branch prefix (claude/) is not pinned
+_SCOPED_JOB_IF_RE = re.compile(r"""^\s*(?:\$\{\{\s*)?(?:github\.ref\s*==\s*['"]refs/heads/[^'"*]+['"]|"""
+                               r"""github\.ref_name\s*==\s*['"][^'"*]+['"]|startsWith\(\s*github\.ref\s*,\s*['"]refs/tags/)""")
 
 
 def _push_any_branch(on: Any) -> Optional[str]:
@@ -1784,7 +1785,8 @@ def gh_branch_push_privileged(sf: SourceFile, rule: Rule) -> List[Finding]:
         return []
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
     for name, job in jobs.items():
-        if not isinstance(job, dict) or job.get("environment") or _SCOPED_JOB_IF_RE.search(str(job.get("if") or "")):
+        cond = str(job.get("if") or "") if isinstance(job, dict) else ""
+        if not isinstance(job, dict) or job.get("environment") or ("||" not in cond and _SCOPED_JOB_IF_RE.search(cond)):
             continue
         perms = job.get("permissions", doc.get("permissions"))
         body = str(job) + str(doc.get("env") or "")

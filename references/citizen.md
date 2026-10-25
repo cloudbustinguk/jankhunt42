@@ -90,7 +90,14 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-SUP-001` package sources | only when `allowed_registries` is set | **block** on a source outside `allowed_registries`; insufficient-evidence when a package manager has no committed registry config |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
-usual meaning. The profile is applied after the operator's ordinary
+usual meaning.
+
+`insufficient-evidence` and `block` mean different things: missing evidence
+is not proven harm, so the passport keeps them apart. The citizen
+pull-request gate (`templates/citizen-gate.yml`) fails on both, so an
+unclassified data store, unknown change control, or an unconfigured registry
+stops the merge until the evidence is supplied. Under the citizen profile
+every `insufficient-evidence` reason says so in its message. The profile is applied after the operator's ordinary
 settings (`actions`, `require`, `max_exposure`, `static_leads`), so a
 baseline organization policy cannot silently weaken it; a warning names
 every operator setting the profile overrode. To relax the profile

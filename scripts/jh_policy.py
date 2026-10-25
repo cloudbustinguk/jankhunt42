@@ -499,7 +499,9 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     # P-SUP-001: package sources against the operator's allowed registries
     reg = facts.get("registry") or {}
     allowed = policy.get("allowed_registries") or []
-    if not allowed:
+    if acts["P-SUP-001"] == "off":
+        add("P-SUP-001", "pass", "package-source rule turned off by the operator policy")
+    elif not allowed:
         add("P-SUP-001", "pass", "no allowed registries configured by the operator")
     elif reg.get("disallowed"):
         bad = reg["disallowed"]
@@ -512,6 +514,12 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         add("P-SUP-001", "pass", "every declared or recorded package source is allowed%s" % (
             "; not configured in the repository: %s" % ", ".join(reg["unconfigured"]) if reg.get("unconfigured") else ""))
 
+    if policy.get("profile") == "citizen":
+        # Missing evidence is not proven harm, but the citizen gate (--fail-on
+        # insufficient-evidence) stops the merge on it: say so where it shows.
+        for r in results:
+            if r["outcome"] == "insufficient-evidence":
+                r["message"] += "; the citizen pull-request gate stops the merge until this evidence is supplied"
     result = "pass"
     for r in results:
         if OUTCOME_RANK[r["outcome"]] > OUTCOME_RANK[result]:

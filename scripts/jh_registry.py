@@ -16,6 +16,8 @@ import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from jh_core import is_test_path
+
 ECOSYSTEMS = ("npm", "pypi", "maven", "nuget", "cargo")
 # What each manager uses when nothing is configured.
 PUBLIC_DEFAULT = {"npm": "https://registry.npmjs.org/", "pypi": "https://pypi.org/simple/",
@@ -33,8 +35,10 @@ MAX_LOCK_BYTES = 8_000_000
 
 
 def normalize(url: str) -> str:
-    """Lowercase scheme and host; one trailing slash on the path."""
-    m = re.match(r"(?i)^(https?)://([^/\s]+)(/[^\s?#]*)?", url.strip())
+    """Lowercase scheme and host, credentials removed, one trailing slash on
+    the path. A token in a registry URL must never reach a report or a CI log."""
+    url = re.sub(r"(?i)^(https?://)[^/@\s]*@", r"\1", url.strip())
+    m = re.match(r"(?i)^(https?)://([^/\s]+)(/[^\s?#]*)?", url)
     if not m:
         return url.strip()
     path = (m.group(3) or "/").rstrip("/") + "/"
@@ -128,16 +132,20 @@ def _declared(rel: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
             if m and section == "source":
                 out.append(("pypi", _source(m.group(1), "index", rel, i)))
     elif base == "pom.xml" or base == "settings.xml" and (".mvn/" in low or ".m2/" in low or base == low):
-        block = ""
+        block, publishing = "", False   # distributionManagement holds publish targets, not sources
         for i, ln in enumerate(lines, 1):
-            mb = re.search(r"<(repository|pluginRepository|mirror|distributionManagement|snapshotRepository)\b", ln)
+            if re.search(r"<distributionManagement\b", ln):
+                publishing = True
+            mb = re.search(r"<(repository|pluginRepository|mirror|snapshotRepository)\b", ln)
             if mb:
                 block = mb.group(1)
-            if re.search(r"</(?:distributionManagement)>", ln):
-                block = ""
             m = re.search(r"<url>\s*(https?://[^<\s]+)\s*</url>", ln)
-            if m and block in ("repository", "pluginRepository", "mirror"):
+            if m and not publishing and block in ("repository", "pluginRepository", "mirror"):
                 out.append(("maven", _source(m.group(1), "mirror" if block == "mirror" else "repository", rel, i)))
+            if re.search(r"</(?:repository|pluginRepository|mirror|snapshotRepository)>", ln):
+                block = ""
+            if re.search(r"</distributionManagement>", ln):
+                publishing = False
     elif base in ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"):
         depth, publishing_at = 0, None    # publishing targets are not package sources
         for i, ln in enumerate(lines, 1):
@@ -169,9 +177,12 @@ def _declared(rel: str, text: str) -> List[Tuple[str, Dict[str, Any]]]:
     return out
 
 
-def _lockfile_sources(root: str, max_files: int = 40) -> List[Tuple[str, Dict[str, Any]]]:
+def _lockfile_sources(root: str, max_files: int = 40, excludes: Sequence[str] = ()) -> List[Tuple[str, Dict[str, Any]]]:
     """Registries recorded in lockfiles (observed): one entry per registry
-    origin and lockfile, with the first line it appears on."""
+    origin and lockfile, with the first line it appears on. Lockfiles in test,
+    fixture and example trees, or under an excluded path, are not the
+    project's own."""
+    import fnmatch
     out: List[Tuple[str, Dict[str, Any]]] = []
     seen = 0
     for dirpath, dirnames, filenames in os.walk(root):
@@ -185,7 +196,10 @@ def _lockfile_sources(root: str, max_files: int = 40) -> List[Tuple[str, Dict[st
             if not eco:
                 continue
             path = os.path.join(dirpath, name)
-            if os.path.islink(path) or os.path.getsize(path) > MAX_LOCK_BYTES:
+            rel_path = os.path.relpath(path, root).replace(os.sep, "/")
+            if os.path.islink(path) or os.path.getsize(path) > MAX_LOCK_BYTES or is_test_path(rel_path) or \
+                    re.search(r"(?:^|/)(?:fixtures?|testdata|test-data|examples?|samples?|demos?)/", rel_path) or \
+                    any(fnmatch.fnmatch(rel_path, g) or fnmatch.fnmatch(rel_path, g.rstrip("/") + "/*") for g in excludes):
                 continue
             seen += 1
             if seen > max_files:
@@ -223,12 +237,12 @@ def _registry_origin(eco: str, url: str) -> str:
         if m:
             return m.group(1)
         if "files.pythonhosted.org" in u:
-            return "https://files.pythonhosted.org/"
+            return PUBLIC_DEFAULT["pypi"]       # PyPI's file host: the same registry as pypi.org/simple
         return re.sub(r"^(https?://[^/]+/).*$", r"\1", u)
     return re.sub(r"^(https?://[^/]+/).*$", r"\1", u)
 
 
-def collect(items: Iterable[Any], root: Optional[str] = None) -> Dict[str, Any]:
+def collect(items: Iterable[Any], root: Optional[str] = None, excludes: Sequence[str] = ()) -> Dict[str, Any]:
     """Package sources per ecosystem from committed files (`items` with .rel
     and .text) and, when `root` is given, lockfiles under it."""
     eco: Dict[str, Dict[str, Any]] = {e: {"in_use": False, "manifests": [], "sources": []} for e in ECOSYSTEMS}
@@ -242,7 +256,7 @@ def collect(items: Iterable[Any], root: Optional[str] = None) -> Dict[str, Any]:
             eco[used]["manifests"].append(rel)
         for e, src in _declared(rel, item.text):
             eco[e]["sources"].append(src)
-    for e, src in _lockfile_sources(root) if root else []:
+    for e, src in _lockfile_sources(root, excludes=excludes) if root else []:
         eco[e]["in_use"] = True
         eco[e]["sources"].append(src)
     out: Dict[str, Any] = {}

@@ -896,8 +896,9 @@ def cmd_passport(args: argparse.Namespace) -> int:
         if not export_trusted:
             warnings.append("--branch-rules file is inside the scanned repository: counted as declared, not "
                             "provider-verified")
-    change_control = jh_change.build(col.items, export, export_trusted, export_label, default_branch)
-    package_sources = jh_registry.collect(col.items, root)
+    repo_name = os.path.basename(jh_map.git_toplevel(root) or root)
+    change_control = jh_change.build(col.items, export, export_trusted, export_label, default_branch, repo_name)
+    package_sources = jh_registry.collect(col.items, root, operator_excludes + list(scan_cfg.ignore_globs or []))
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",

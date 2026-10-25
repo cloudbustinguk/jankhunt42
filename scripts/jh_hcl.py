@@ -16,6 +16,8 @@ MAX_DEPTH = 32
 MAX_TOKENS = 2_000_000
 
 Token = Tuple[str, str, int]          # (kind, text, line)
+_HEREDOC_RE = re.compile(r"<<-?([A-Za-z_]\w*)")
+_WORD_RE = re.compile(r"[^\s{}\[\]()=,\"#]+")
 
 
 def _tokens(text: str) -> Iterator[Token]:
@@ -40,10 +42,10 @@ def _tokens(text: str) -> Iterator[Token]:
             j = n if j < 0 else j + 2
             line += text.count("\n", i, j)
             i = j
-        elif text.startswith("<<", i) and re.match(r"<<-?([A-Za-z_]\w*)", text[i:i + 40]):
-            m = re.match(r"<<-?([A-Za-z_]\w*)", text[i:])
+        elif text.startswith("<<", i) and _HEREDOC_RE.match(text, i):
+            m = _HEREDOC_RE.match(text, i)
             end = re.compile(r"^\s*%s\s*$" % re.escape(m.group(1)), re.M)
-            em = end.search(text, i + m.end())
+            em = end.search(text, m.end())
             j = n if not em else em.end()
             yield ("str", text[i:j], line)
             line += text.count("\n", i, j)
@@ -72,7 +74,7 @@ def _tokens(text: str) -> Iterator[Token]:
             yield (c, c, line)
             i += 1
         else:
-            m = re.match(r"[^\s{}\[\]()=,\"#]+", text[i:])
+            m = _WORD_RE.match(text, i)
             word = m.group(0) if m else c
             yield ("word", word, line)
             i += len(word)

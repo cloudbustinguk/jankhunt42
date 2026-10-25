@@ -409,10 +409,13 @@ class DiffUnknownCapability(unittest.TestCase):
     def changes(self, before, after):
         d = jh_graph.diff(_graph(before), _graph(after))
         return ([(e["before"], e["after"], e.get("possible", False), e.get("was_unknown", False))
-                 for e in d["permission_escalations"]], [(e["before"], e["after"]) for e in d["permission_reductions"]])
+                 for e in d["permission_escalations"] + d["authority_became_unknown"]],
+                [(e["before"], e["after"]) for e in d["permission_reductions"]])
 
-    def test_known_to_unknown_is_a_possible_escalation_not_a_reduction(self):
+    def test_known_to_unknown_is_its_own_list_never_a_reduction(self):
         self.assertEqual(self.changes(["read"], ["unknown"]), ([(["read"], ["unknown"], True, False)], []))
+        d = jh_graph.diff(_graph(["read"]), _graph(["unknown"]))
+        self.assertEqual((len(d["permission_escalations"]), len(d["authority_became_unknown"])), (0, 1))
 
     def test_unknown_to_known_is_marked(self):
         self.assertEqual(self.changes(["unknown"], ["write"]), ([(["unknown"], ["write"], False, True)], []))
@@ -422,6 +425,98 @@ class DiffUnknownCapability(unittest.TestCase):
         self.assertEqual(self.changes(["write"], ["read"]), ([], [(["write"], ["read"])]))
         self.assertEqual(self.changes(["unknown"], ["unknown"]), ([], []))
         self.assertEqual(self.changes(["admin"], ["unknown"]), ([], []))     # nothing exceeds admin
+
+
+class ReviewOf260(unittest.TestCase):
+    def test_maven_publish_targets_are_not_sources(self):
+        pom = ("<project>\n<repositories>\n<repository>\n<url>https://repo.example/m</url>\n</repository>\n"
+               "</repositories>\n<distributionManagement>\n<repository>\n<url>https://nexus.example/releases</url>\n"
+               "</repository>\n</distributionManagement>\n</project>\n")
+        eco = jh_registry.collect([Item("pom.xml", pom)])["ecosystems"]
+        self.assertEqual([s["url"] for s in eco["maven"]["sources"]], ["https://repo.example/m/"])
+
+    def test_secrets_keep_their_severity_in_vulnerable_examples(self):
+        files = {"examples/insecure-demo/config.js": "const t = 'ghp_" + "Wq7Lz2Xm9Rt4Nb8Vc3Kd6Hj1Fs5Gp0Ya2Ue4Ti'\n"}
+        self.assertEqual(hits(files, "JH101"), [("examples/insecure-demo/config.js", 1, "critical")])
+
+    def test_branch_prefix_and_negated_conditions_are_not_pinned(self):
+        base = ("on: push\njobs:\n  d:\n    if: %s\n    runs-on: x\n    steps:\n      - run: ./d\n        env:\n"
+                "          K: ${{ secrets.DEPLOY_KEY }}\n")
+        files = {".github/workflows/a.yml": base % "startsWith(github.ref, 'refs/heads/claude/')",
+                 ".github/workflows/b.yml": base % "github.ref != 'refs/heads/main'",
+                 ".github/workflows/c.yml": base % "github.ref == 'refs/heads/main' || github.event_name == 'push'",
+                 ".github/workflows/d.yml": base % "github.ref == 'refs/heads/main'"}
+        self.assertEqual([h[0] for h in hits(files, "JH432")],
+                         [".github/workflows/a.yml", ".github/workflows/b.yml", ".github/workflows/c.yml"])
+
+    def test_gate_template_passes_the_default_branch(self):
+        with open(os.path.join(REPO, "templates", "citizen-gate.yml"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn('--default-branch "$DEFAULT_BRANCH"', text)
+        self.assertIn("github.event.repository.default_branch", text)
+
+    def test_bypass_visibility_is_per_part(self):
+        hidden = {k: v for k, v in RULESET.items() if k != "bypass_actors"}
+        wrapper = {"rulesets": [hidden], "branch_protection": {"required_pull_request_reviews": {
+            "required_approving_review_count": 1, "bypass_pull_request_allowances": {"apps": []}}}}
+        cc = jh_change.build(OWNERS, wrapper, True)
+        self.assertEqual(cc["checks"]["no_app_bypass"]["state"], "unknown")
+        app = dict(RULESET, bypass_actors=[{"actor_id": 1, "actor_type": "Integration", "bypass_mode": "always"}])
+        cc = jh_change.build(OWNERS, {"rulesets": [hidden, app]}, True)
+        self.assertEqual(cc["checks"]["no_app_bypass"]["state"], "not-met")   # a visible app bypass still counts
+
+    def test_ruleset_summaries_are_unknown_not_unprotected(self):
+        summary = [{"id": 1, "name": "main", "target": "branch", "enforcement": "active", "source_type": "Repository"}]
+        cc = jh_change.build(OWNERS, summary, True)
+        self.assertEqual(cc["state"], "unknown")
+        self.assertEqual(jh_change.build(OWNERS, [], True)["checks"]["pull_request_review"]["state"], "not-met")
+
+    def test_terraform_for_another_repository_does_not_count(self):
+        tf = Item("infra/gh.tf", 'resource "github_repository_ruleset" "p" {\n  repository = "payments"\n'
+                                  '  target = "branch"\n  enforcement = "active"\n  rules {\n    pull_request {\n'
+                                  '      required_approving_review_count = 1\n    }\n  }\n}\n')
+        self.assertEqual(jh_change.build(OWNERS + [tf], repository="web")["state"], "unknown")
+        self.assertEqual(jh_change.build(OWNERS + [tf], repository="payments")["state"], "declared")
+
+    def test_sup_off_passes_and_pypi_files_and_credentials(self):
+        cit = jh_policy.merge({"allowed_registries": ["https://pypi.org/simple/"], "custodians": ["x"],
+                               "profile_exceptions": {"P-SUP-001": "off"}}, None, [], "citizen")
+        facts = dict(cc_facts("provider-verified"), registry={"disallowed": [], "unconfigured": ["npm"]})
+        out = {r["rule"]: r["outcome"] for r in jh_policy.evaluate(cit, facts, {"nodes": [], "edges": []})["rules"]}
+        self.assertEqual(out["P-SUP-001"], "pass")
+        self.assertEqual(jh_registry._registry_origin("pypi", "https://files.pythonhosted.org/packages/a/b/x.whl"),
+                         "https://pypi.org/simple/")
+        self.assertEqual(jh_registry.normalize("https://__token__:glpat-" + "SECRET@gitlab.example.com/api/pypi/simple"),
+                         "https://gitlab.example.com/api/pypi/simple/")
+
+    def test_lockfiles_in_fixtures_or_excluded_paths_are_skipped(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            for rel in ("tests/fixtures/old/package-lock.json", "vendored/package-lock.json", "package-lock.json"):
+                os.makedirs(os.path.dirname(os.path.join(tmp, rel)) or tmp, exist_ok=True)
+                with open(os.path.join(tmp, rel), "w") as fh:
+                    host = "registry.npmjs.org" if rel == "package-lock.json" else "registry.yarnpkg.com"
+                    json.dump({"packages": {"node_modules/a": {"resolved": "https://%s/a/-/a-1.tgz" % host}}}, fh, indent=1)
+            eco = jh_registry.collect([Item("package.json", "{}")], tmp, ["vendored"])["ecosystems"]
+            self.assertEqual([s["url"] for s in eco["npm"]["sources"]], ["https://registry.npmjs.org/"])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_json_sandbox_policies_and_sveltekit_imports(self):
+        policy = json.dumps({"version": 1, "network_policies": {"all": {"endpoints": [{"host": "**.amazonaws.com", "port": 443}],
+                                                                         "binaries": [{"path": "/**"}]}}})
+        sf = jh_core.source_from_text("sandbox/policy.json", "/x/sandbox/policy.json", policy)
+        self.assertIn("sandbox_policy", sf.kinds)
+        self.assertTrue(hits({"sandbox/policy.json": policy}, "JH709"))
+        svelte = ("import {\n  PUBLIC_STRIPE_" + "SECRET_KEY\n} from '$env/static/public';\n"
+                  "const k = PUBLIC_STRIPE_" + "SECRET_KEY;\n")
+        self.assertTrue(hits({"src/routes/+page.ts": svelte}, "JH132"))
+
+    def test_citizen_insufficient_evidence_says_it_stops_the_gate(self):
+        cit = jh_policy.merge({"custodians": ["x"]}, None, [], "citizen")
+        out = jh_policy.evaluate(cit, cc_facts("unknown", unknown=["pull_request_review"]), {"nodes": [], "edges": []})
+        chg = [r for r in out["rules"] if r["rule"] == "P-CHG-001"][0]
+        self.assertIn("citizen pull-request gate stops the merge", chg["message"])
 
 
 class ThirdSoakPrecision(unittest.TestCase):

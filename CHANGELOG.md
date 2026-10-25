@@ -95,12 +95,29 @@ and PHP): critical findings fell from 84 to 10.
 - `JH134` rates a public read rule as major; public writes stay critical.
 - Security leads inside a deliberately vulnerable example
   (`examples/vulnerable-…/`) are minor.
-- `map --base`: a capability that becomes unknown is a possible escalation
-  (`possible: true`), never a reduction, and an unknown capability that
-  becomes known is marked `was_unknown`. Before, read to unknown counted as
-  less authority.
+- `map --base`: a capability that becomes unknown goes in its own list,
+  `authority_became_unknown` (possibly read, write or destroy), never among
+  reductions. An unknown capability that becomes known is an escalation
+  marked `was_unknown`. Before, read to unknown counted as less authority.
 - `passport --branch-rules` accepts JSON lists (a list of rulesets, or the
   `rules/branches` export), as documented.
+- Change control and package sources, from a review of the first 2.6.0
+  commit:
+  - Bypass visibility is judged per ruleset, and a `GET /rulesets`
+    summary list is unknown, not an unprotected branch.
+  - Terraform declared for another repository does not count.
+  - The gate template passes the repository's default branch.
+  - Maven `distributionManagement` targets are not package sources, and
+    PyPI's file host counts as PyPI.
+  - Credentials in registry URLs never reach a report.
+  - Lockfiles in test, fixture and excluded paths are skipped.
+  - `P-SUP-001` honours `off`.
+- Under the citizen profile, every `insufficient-evidence` reason says that
+  the citizen pull-request gate stops the merge until the evidence is
+  supplied.
+- Committed secrets keep their severity inside deliberately vulnerable
+  examples. `JH432` treats only one exact-branch `if:` as pinned
+  (`startsWith(github.ref, 'refs/heads/claude/')` is not).
 - Online verification closes HTTP error responses instead of leaking them.
 - The executable-docs test also runs commands written inline in README.md
   and SKILL.md, not only fenced blocks; the test suite no longer leaks file

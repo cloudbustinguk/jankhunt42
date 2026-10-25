@@ -200,6 +200,9 @@ def _looks_like_sandbox_policy(text: str) -> bool:
     """An OpenShell sandbox policy: schema version 1 with network_policies or
     filesystem/landlock sections at the top level."""
     head = text[:200000]
+    if head.lstrip().startswith("{"):
+        return bool(re.search(r'"version"\s*:\s*1\b', head)
+                    and re.search(r'"(?:network_policies|filesystem_policy|landlock)"\s*:', head))
     return bool(re.search(r"(?m)^version\s*:\s*1\s*$", head)
                 and re.search(r"(?m)^(?:network_policies|filesystem_policy|landlock)\s*:", head))
 

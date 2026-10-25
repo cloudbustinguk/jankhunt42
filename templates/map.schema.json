@@ -479,7 +479,12 @@
         "trust_boundaries",
         "exposure",
         "coverage"
-      ]
+      ],
+      "properties": {
+        "authority_became_unknown": {
+          "type": "array"
+        }
+      }
     },
     "egress": {
       "type": "object",

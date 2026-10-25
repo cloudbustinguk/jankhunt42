@@ -2646,13 +2646,18 @@ def delta_markdown(delta: Dict[str, Any], report: Dict[str, Any]) -> str:
     out.append("- Nodes: +%d / -%d; edges: +%d / -%d" % (len(delta["nodes"]["added"]), len(delta["nodes"]["removed"]),
                                                       len(delta["edges"]["added"]), len(delta["edges"]["removed"])))
     out.append("- Exposure: %s -> %s" % (delta["exposure"]["base"], delta["exposure"]["head"]))
-    out.append("- Permission escalations: %d; newly reachable sensitive assets: %d" % (
-        len(delta["permission_escalations"]), len(delta["newly_reachable_sensitive"])))
+    out.append("- Permission escalations: %d; authority became unknown: %d; newly reachable sensitive assets: %d" % (
+        len(delta["permission_escalations"]), len(delta.get("authority_became_unknown", [])),
+        len(delta["newly_reachable_sensitive"])))
     out.append("- Trust boundaries added: %s; removed: %s" % (", ".join(delta["trust_boundaries"]["added"]) or "none",
                                                            ", ".join(delta["trust_boundaries"]["removed"]) or "none"))
     for esc in delta["permission_escalations"][:10]:
         out.append("  - escalation: %s -> %s: %s => %s" % (_node_label(report, esc["source"]), _node_label(report, esc["target"]),
                                                           "/".join(esc["before"]), "/".join(esc["after"])))
+    for unk in delta.get("authority_became_unknown", [])[:10]:
+        out.append("  - authority became unknown (possibly read, write or destroy): %s -> %s: %s => %s" % (
+            _node_label(report, unk["source"]), _node_label(report, unk["target"]), "/".join(unk["before"]),
+            "/".join(unk["after"])))
     for n in delta["newly_reachable"][:10]:
         out.append("  - newly reachable (%s, %s): %s" % (n["impact"], n["tier"], _node_label(report, n["node"])))
     if delta["coverage"]["regressed"]:

@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_agent
 import jh_yaml
+from jh_core import _looks_like_sandbox_policy as looks_like_sandbox_policy
 
 TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
 
@@ -85,8 +86,8 @@ def _claude(rel: str, text: str) -> List[Dict[str, Any]]:
 
 def _openshell(rel: str, text: str) -> List[Dict[str, Any]]:
     try:
-        docs = jh_yaml.load_all(text)
-    except jh_yaml.YamlError:
+        docs = [jh_agent.loads_jsonc(text)] if text.lstrip().startswith("{") else jh_yaml.load_all(text)
+    except (jh_yaml.YamlError, ValueError):
         return []
     out = []
     for doc in docs:
@@ -99,7 +100,7 @@ def _openshell(rel: str, text: str) -> List[Dict[str, Any]]:
                         allow.append(str(ep["host"]))
                     for ip in ep.get("allowed_ips") or []:
                         allow.append(str(ip))
-        line = next((i for i, ln in enumerate(text.split("\n"), 1) if ln.startswith("network_policies")), 1)
+        line = next((i for i, ln in enumerate(text.split("\n"), 1) if "network_policies" in ln), 1)
         out.append({"tool": "openshell", "path": rel, "line": line, "allow": sorted(set(allow)), "deny": [],
                     "open": False, "note": "default deny: only the listed endpoints are reachable"})
     return out
@@ -114,8 +115,7 @@ def boundaries(items: Sequence[Any]) -> List[Dict[str, Any]]:
                 out += _codex(item.rel, item.text)
             elif "/.claude/settings" in posix and posix.endswith(".json"):
                 out += _claude(item.rel, item.text)
-            elif posix.endswith((".yaml", ".yml", ".json")) and re.search(r"(?m)^network_policies\s*:", item.text[:200000]) \
-                    and re.search(r"(?m)^version\s*:\s*1\s*$", item.text[:200000]):
+            elif posix.endswith((".yaml", ".yml", ".json")) and looks_like_sandbox_policy(item.text):
                 out += _openshell(item.rel, item.text)
         except (RecursionError, ValueError, TypeError, AttributeError):
             continue                    # a malformed or hostile file is not a boundary

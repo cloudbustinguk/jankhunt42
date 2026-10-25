@@ -1008,6 +1008,7 @@ def diff(base: Dict[str, Any], head: Dict[str, Any]) -> Dict[str, Any]:
     bc, hc = caps(be), caps(he)
     escalations = []
     reductions = []
+    became_unknown = []                 # possibly anything now: its own list, not hidden among escalations
     for key in sorted(set(bc) | set(hc)):
         before = bc.get(key, {})
         after = hc.get(key, {})
@@ -1018,13 +1019,13 @@ def diff(base: Dict[str, Any], head: Dict[str, Any]) -> Dict[str, Any]:
         # capability becoming known is compared with what was known before.
         bmax = max((CAP_RANK[c] for c in before if c != "unknown"), default=-2)
         amax = max((CAP_RANK[c] for c in after if c != "unknown"), default=-2)
-        became_unknown = "unknown" in after and "unknown" not in before and bmax < CAP_RANK["admin"]
+        to_unknown = "unknown" in after and "unknown" not in before and bmax < CAP_RANK["admin"]
         entry = {"source": key[0], "target": key[1], "identity_ref": key[2] or None,
                  "before": sorted(before), "after": sorted(after)}
         if amax > bmax:
             escalations.append(dict(entry, was_unknown=True) if "unknown" in before and bmax < 0 else entry)
-        elif became_unknown:
-            escalations.append(dict(entry, possible=True))
+        elif to_unknown:
+            became_unknown.append(dict(entry, possible=True))
         elif after and amax < bmax and "unknown" not in after:
             reductions.append(entry)
     # Newly reachable assets per principal and impact.
@@ -1068,6 +1069,7 @@ def diff(base: Dict[str, Any], head: Dict[str, Any]) -> Dict[str, Any]:
         "nodes": {"added": added_nodes, "removed": removed_nodes},
         "edges": {"added": added_edges, "removed": removed_edges},
         "permission_escalations": escalations,
+        "authority_became_unknown": became_unknown,
         "permission_reductions": reductions,
         "newly_reachable": newly,
         "newly_reachable_sensitive": [n for n in newly if n["sensitive"]],
