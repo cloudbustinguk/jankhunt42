@@ -1262,8 +1262,8 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
     out: List[Finding] = []
 
-    def add(pattern: str, severity: str, message: str) -> None:
-        line_no = _line_matching(sf, pattern)
+    def add(pattern: str, severity: str, message: str, start: int = 0) -> None:
+        line_no = _line_matching(sf, pattern, start)
         out.append(make_finding(rule, sf, line_no, severity=severity, message=message))
 
     if posix.endswith(".codex/config.toml"):
@@ -1293,8 +1293,9 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
         allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
         for entry in allow:
             if isinstance(entry, str) and entry.strip() in _SHELL_ALLOW_ALL:
-                add(re.escape('"%s"' % entry), "major", (
-                    "Unrestricted shell access is pre-approved for every session that trusts this repository."))
+                add(re.escape('"%s"' % entry), "major",
+                    "Unrestricted shell access is pre-approved for every session that trusts this repository.",
+                    start=_line_matching(sf, r'"allow"\s*:') - 1)
                 break
         if data.get("enableAllProjectMcpServers") is True:
             add(r'"enableAllProjectMcpServers"', "major", (
@@ -2046,7 +2047,10 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
         else:
             # zipfile strips absolute paths and ".." components itself, so only
             # unpack_archive (which can hand tar files to tarfile) is a lead
-            hit = "unpack_archive(" in line
+            hit = bool(re.search(r"\bshutil\.unpack_archive\s*\(", line) or (
+                re.search(r"(?<![\w.])unpack_archive\s*\(", line) and not re.search(r"\bdef\s+unpack_archive\b", line)
+                and re.search(r"from\s+shutil\s+import\s+[^\n]*\bunpack_archive\b", sf.text)
+                and not re.search(r"\bdef\s+unpack_archive\b", sf.text)))
         if hit:
             out.append(make_finding(rule, sf, i + 1,
                                     message="Archive extraction without path validation enables zip-slip/path traversal."))
@@ -2142,6 +2146,8 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
             if "exec" in pat.pattern and sf.lang != "python":
                 continue                    # JS/PHP/Ruby exec() runs a command, not code (JH103's job)
             for m in pat.finditer(line):
+                if re.search(r"\bdef\s+$", line[:m.start()]):
+                    continue                # `def exec(self, ...)` defines a method
                 lit = _EXEC_LITERAL_RE.match(raw, m.start())
                 if lit and not re.search(r"[$%{}`]|#\{", lit.group(2)):
                     continue

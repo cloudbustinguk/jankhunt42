@@ -191,6 +191,32 @@ class Scanner(unittest.TestCase):
         "lib/db/migrate.ts": "console.log(\"Running migrations...\")\n",
         "src/app.ts": "export function handler() {\n  console.log(\"debug\", state)\n}\n",
         "core/e2e.rs": "let script = r#\"console.log(fib(10));\"#;\n",
+        # labelled sample A (2.6.1): each false positive beside the true lead it resembles
+        "app/runner.py": ("class Box:\n    async def exec(self, command):\n        return command\n\n"
+                          "def run(code):\n    exec(code)\n"),
+        "android/Tap.java": ("class Tap {\n  void tap() throws Exception {\n"
+                             "    Runtime.getRuntime().exec(new String[]{\"/system/bin/input\", \"tap\", x});\n"
+                             "    Runtime.getRuntime().exec(new String[]{\"sh\", \"-c\", cmd});\n"
+                             "    new ProcessBuilder(\"git\", \"status\").start();\n"
+                             "    new ProcessBuilder(\"/bin/bash\", \"-c\", cmd).start();\n"
+                             "    Runtime.getRuntime().exec(cmd);\n  }\n}\n"),
+        "web/render.js": ("el.innerHTML = \"\";\nel.innerHTML = `<style>${BASE_CSS}</style>`;\n"
+                          "el.innerHTML = `<p>${name}</p>`;\nel.innerHTML = \"<b>\" + name;\n"
+                          "el.innerHTML = \"<p>\"\n  + name;\n"),
+        "web/Theme.jsx": ("const T = () => <script dangerouslySetInnerHTML={{\n"
+                          "  __html: `try{document.body.className='x'}catch(e){}`,\n}} />;\n"
+                          "const O = ({ out }) => <span dangerouslySetInnerHTML={{ __html: toHtml(out) }} />;\n"),
+        "lib/agent.py": "graph = TradingGraph(debug=True)\n",
+        "web/server.py": "from flask import Flask\napp = Flask(__name__)\napp.run(\n    debug=True)\n",
+        "tests/fit.test.ts": ("describe(\"no questions -> never possible fit (fallback)\", () => {\n"
+                              "  const f = fit(ols(y, rows));\n  model.fit(\"data.csv\");\n"
+                              "  fit(\"focused\", () => {});\n});\n"),
+        "sdk/unpack.py": "def unpack_archive(data, target):\n    pass\n\n\nunpack_archive(blob, dest)\n",
+        "ci/test.sh": "for a in \"--privileged\" \"--pid=host\"; do\n  run \"$a\"\ndone\n",
+        # an AIza-shaped placeholder must not come back through the generic `apiKey: "..."` pattern
+        "web/firebase.js": "const c = {\n  apiKey: \"AIza" + "SyDEMO-public-firebase-web-key-12345\",\n};\n",
+        ".claude/settings.json": ("{\n  \"hooks\": {\n    \"PreToolUse\": [\n      {\"matcher\": \"Bash\", \"hooks\": []}\n"
+                                  "    ]\n  },\n  \"permissions\": {\n    \"allow\": [\n      \"Bash\"\n    ]\n  }\n}\n"),
     }
 
     @classmethod
@@ -336,10 +362,36 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.hits("JH102", "tests/test_api.py"), [])
         self.assertEqual(self.lines("JH102", "app/plugin.py"), [2])
 
+    def test_labelled_sample_a(self):
+        self.assertEqual(self.lines("JH102", "app/runner.py"), [6])
+        self.assertEqual(self.lines("JH103", "android/Tap.java"), [4, 6, 7])
+        self.assertEqual(self.lines("JH126", "web/render.js"), [3, 4, 5])
+        self.assertEqual(self.lines("JH125", "web/Theme.jsx"), [4])
+        self.assertEqual(self.hits("JH108", "lib/agent.py"), [])
+        self.assertEqual(self.lines("JH108", "web/server.py"), [4])
+        self.assertEqual(self.lines("JH505", "tests/fit.test.ts"), [4])
+        self.assertEqual(self.hits("JH120", "sdk/unpack.py"), [])
+        self.assertEqual({f["severity"] for f in self.hits("JH122", "ci/test.sh")}, {"minor"})
+        self.assertEqual(self.lines("JH703", ".claude/settings.json"), [9])
+        self.assertEqual(self.hits("JH101", "web/firebase.js"), [])
+
     def test_debug_output(self):
         for path in ("scripts/report.mjs", "lib/db/migrate.ts", "core/e2e.rs", "tests/logging.test.ts"):
             self.assertEqual(self.hits("JH204", path), [], path)
         self.assertEqual(self.lines("JH204", "src/app.ts"), [2])
+
+
+class MissingPath(unittest.TestCase):
+    def test_a_missing_path_is_an_error_not_a_clean_scan(self):
+        with tempfile.TemporaryDirectory() as root:
+            gone = os.path.join(root, "does-not-exist")
+            for command in ("scan", "score", "supply-chain", "hunt", "report", "doctor", "map", "passport"):
+                p = run_cli(command, gone)
+                self.assertEqual(p.returncode, 2, command)
+                self.assertIn("no such file or directory", p.stderr, command)
+            write(root, "app.py", "x = 1\n")
+            self.assertEqual(run_cli("scan", os.path.join(root, "app.py"), gone, "--json").returncode, 2)
+            self.assertEqual(run_cli("scan", root, "--json").returncode, 0)
 
 
 class YamlReader(unittest.TestCase):

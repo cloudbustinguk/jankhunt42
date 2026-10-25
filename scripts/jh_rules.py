@@ -536,8 +536,8 @@ RULES: List[Rule] = [
     R("JH505", "Focused test", "major", "tests",
       "A focused test (.only/fit/fdescribe) silently skips the rest of the suite in many runners.",
       "Remove the focus marker before merging.",
-      confidence="high", target="nocomment", kinds=TEST + ("test",),
-      patterns=(r"\.only\s*\(", r"@pytest\.mark\.focus\b", r"\bfit\s*\(", r"\bfdescribe\s*\(")),
+      confidence="high", target="code", kinds=TEST + ("test",),
+      patterns=(r"\.only\s*\(", r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`]")),
 
     # ---------------------------------------------------------------------- docs
     R("JH601", "Broken relative link", "minor", "docs",
@@ -900,6 +900,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     continue
                 if ignore and ignore.search(line):
                     continue
+                placeholder = None
                 for pat in pats:
                     m = pat.search(line)
                     if not m:
@@ -914,12 +915,21 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             severity = sev
                             message = rule.message + " The script comes from an official installer over TLS: the " \
                                                      "publisher is known, but the content is still unpinned and unverified."
+                    if rule.id == "JH108" and m.group(0).startswith("debug") and not _WEB_FRAMEWORK_RE.search(sf.text):
+                        continue            # a library's verbosity flag, not a web debug server
+                    if rule.id == "JH103" and _argv_without_shell(sf, idx, pat.pattern):
+                        continue
+                    if rule.id in ("JH125", "JH126") and _constant_html(sf, idx, m.end()):
+                        continue
                     if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
                     if "secret" in rule.tags:
                         if secret_placeholder(m.group(0)):
+                            placeholder = m.group(0)
                             continue
+                        if placeholder and placeholder in m.group(0):
+                            continue        # the assignment pattern re-matching a token already judged a placeholder
                         provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
                         if provider and re.search(r"(?:AWSAccessKeyId|X-Amz-Credential)=(?:\S*?%2F)?$|"
                                                   r"(?:AWSAccessKeyId|X-Amz-Credential)=$", line[:m.start()]):
@@ -969,7 +979,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
 
 
 # Pattern rules whose matches in test code are usually test data.
-_TEST_DATA_MINOR = {"JH111", "JH115"}
+_TEST_DATA_MINOR = {"JH111", "JH115", "JH122"}
 # Installers published by the tool's own vendor, over TLS (JH111 major, not critical).
 _OFFICIAL_INSTALLERS = ("sh.rustup.rs", "astral.sh", "get.docker.com", "deb.nodesource.com", "rpm.nodesource.com",
                         "ollama.com", "ollama.ai", "claude.ai", "bun.sh", "deno.land", "get.pnpm.io",
@@ -1013,6 +1023,37 @@ def _pipe_to_shell_severity(line: str, match: str) -> Optional[str]:
                for h in _OFFICIAL_INSTALLERS):
             return "major"
     return "critical"
+
+
+_WEB_FRAMEWORK_RE = re.compile(r"^\s*(?:from|import)\s+(?:flask|quart|django|fastapi|starlette|sanic|litestar|"
+                               r"aiohttp|tornado|bottle|werkzeug|uvicorn|dash)\b", re.M)
+_SHELL_PROGRAM_RE = re.compile(r"(?i)(?:/(?:usr/)?bin/)?(?:ba|z|da|k|c|tc)?sh|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh")
+
+
+def _argv_without_shell(sf: SourceFile, idx: int, pattern: str) -> bool:
+    """Runtime.exec(new String[]{"prog", ...}) and new ProcessBuilder("prog", ...)
+    name the program as a literal: unless it is a shell, nothing parses the arguments."""
+    if "Runtime" not in pattern and "ProcessBuilder" not in pattern:
+        return False
+    call = " ".join(sf.nocomment[idx - 1:idx + 2])
+    m = re.search(r"(?:\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{|ProcessBuilder\s*\(\s*"
+                  r"(?:(?:List\.of|Arrays\.asList)\s*\()?)\s*\"([^\"\\]*)\"", call)
+    return bool(m) and not _SHELL_PROGRAM_RE.fullmatch(m.group(1).strip())
+
+
+def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
+    """innerHTML = "" / "<p>fixed</p>", or __html: a literal with no
+    interpolation (or only CONSTANT_NAME interpolation), is not a sink.
+    Read with strings intact: the code view blanks template literals whole."""
+    lit = r"""(?:(["'])(?:(?!\1)[^\\\n])*\1|`(?:[^`$\\]|\$\{[A-Z][A-Z0-9_]*\})*`)"""
+    line = sf.nocomment[idx - 1]
+    if re.match(r"\s*%s\s*;?\s*$" % lit, line[col:]):
+        # unless the statement goes on: `= '<div>'` then `+ message` on the next line
+        nxt = next((n for n in sf.nocomment[idx:idx + 3] if n.strip()), "")
+        return line.rstrip().endswith(";") or not re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
+    window = " ".join(sf.nocomment[idx - 1:idx + 3])
+    m = re.search(r"__html\s*:\s*", window)
+    return bool(m and re.match(r"%s\s*,?\s*\}" % lit, window[m.end():]))
 
 
 def _firebase_web_config(sf: SourceFile, idx: int) -> bool:

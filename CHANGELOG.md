@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.6.1] — 2026-10-25
+
+Precision fixes found by labelling a stratified sample of 96 findings from
+three corpora of public repositories. 15 of the sample's 22 false positives
+no longer fire and 2 more are downgraded to minor. Every true lead in the
+sample still fires; one moves to its correct line.
+
+### Fixed
+
+- **A path that does not exist is an error (exit 2), not a clean scan.**
+  `scan`, `score`, `supply-chain`, `hunt`, `report`, `doctor`, `map` and
+  `passport` used to skip a missing path silently and report on the working
+  directory instead, so a mistyped path in CI passed with no findings.
+- `JH101` judges a value once per line. A provider-shaped token judged a
+  placeholder (an AIza key spelled out of words) no longer comes back as a
+  critical through the generic `apiKey: "..."` pattern.
+- `JH102` no longer reads a method definition named `exec`
+  (`async def exec(self, ...)`) as a call to the builtin.
+- `JH103` no longer flags `Runtime.exec(new String[]{"prog", ...})` or
+  `new ProcessBuilder("prog", ...)` when the program is a literal that is
+  not a shell: no shell parses those arguments. `sh -c`, `cmd /c` and a
+  single command string still fire.
+- `JH108` counts `debug=True` only in files that import a web framework;
+  elsewhere it is usually a library's verbosity flag. `DEBUG = True` and
+  multi-line `app.run(debug=True)` still fire.
+- `JH120` flags `shutil.unpack_archive` only, not a project's own function of
+  the same name or its definition.
+- `JH125` and `JH126` skip constant HTML: an empty string, a literal with no
+  interpolation, or a template that interpolates only `CONSTANT_NAMES`. A
+  statement that goes on to the next line (`+ message`) is not constant.
+  Files that used to reach the per-file limit of five now show leads it hid.
+- `JH505` needs a title string after `fit(` or `fdescribe(`, reads the code
+  view so text inside a test title is not a call, and ignores `model.fit(...)`.
+- `JH703` reports the `"Bash"` entry of the allow list, not an earlier hook
+  matcher with the same text.
+- `JH122` is downgraded in test code like `JH111` and `JH115`, and run-test
+  scripts (`test.sh`, `tests.sh`, `run_tests.sh`) count as test code.
+
 ## [2.6.0] — 2026-10-25
 
 Static containment evidence: who can merge, what an agent's sandbox can

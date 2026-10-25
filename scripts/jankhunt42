@@ -1200,9 +1200,21 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+# commands whose positional arguments are files or directories to read
+# (review's are path filters, which may name a deleted file)
+_PATH_COMMANDS = ("scan", "score", "supply-chain", "hunt", "report", "doctor", "map", "passport")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command in _PATH_COMMANDS:
+        # a mistyped path must not become a clean scan of the working directory
+        given = getattr(args, "paths", None) or [getattr(args, "path", None) or "."]
+        missing = [p for p in given if not os.path.exists(os.path.expanduser(p))]
+        if missing:
+            print("jankhunt42: no such file or directory: %s" % ", ".join(missing), file=sys.stderr)
+            return 2
     try:
         return int(args.func(args))
     except KeyboardInterrupt:

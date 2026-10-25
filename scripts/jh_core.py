@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.6.0"
+VERSION = "2.6.1"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -117,7 +117,7 @@ EXT_LANG = {
 
 TEST_PATH_RE = re.compile(
     r"(^|/)(tests?|testing|specs?|__tests__|testdata|fixtures?|e2e|integration-tests?)(/|$)"
-    r"|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$"
+    r"|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$|(^|/)(run[_-]?)?tests?\.(sh|bash|ps1)$"
     r"|(_test\.|\.test\.|\.spec\.|_spec\.|Test\.java$|Tests?\.cs$|_test\.go$|_tests\.rs$|(^|/)tests\.rs$)",
     re.IGNORECASE,
 )
