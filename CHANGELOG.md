@@ -27,7 +27,12 @@ maintainer.
   - It adds `--no-ext-diff --no-textconv` to diffs.
   - It never writes the index (`GIT_OPTIONAL_LOCKS=0`), so index hooks
     cannot fire.
-  - It drops inherited `GIT_*` variables.
+  - It drops inherited variables that name a program (`GIT_EXTERNAL_DIFF`,
+    `GIT_SSH_COMMAND`, `GIT_PAGER`, editors). `GIT_DIR`, `GIT_WORK_TREE` and
+    `GIT_INDEX_FILE` are kept, so `review --staged` in a pre-commit hook
+    still reads the commit's own index.
+  - A blanked filter is marked `required=false`, so a Git LFS repository
+    (whose filter is required) still diffs.
   - `tests/test_git_safety.py` proves that seven such paths run under
     plain Git and that none of them runs under `scan`, `map`, `map --base`,
     `passport`, `review`, `review --base`, `doctor` or `score --since`.

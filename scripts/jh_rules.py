@@ -1044,8 +1044,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "minor hygiene note, not a shell-injection.")
                     if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
-                    if rule.id == "JH103" and "ProcessBuilder" in pat.pattern and \
-                            _processbuilder_shell(sf.nocomment[idx - 1][m.start():]) == "minor":
+                    shell = _processbuilder_shell(" ".join([sf.nocomment[idx - 1][m.start():]] + sf.nocomment[idx:idx + 2])) \
+                        if rule.id == "JH103" and "ProcessBuilder" in pat.pattern else "major"
+                    if shell is None:
+                        continue                # separate arguments naming a program: no shell runs
+                    if shell == "minor":
                         severity, confidence = "minor", "low"
                         message = (rule.message + " ProcessBuilder runs no shell itself; its single argument hides "
                                    "what runs, so check that it never starts a shell with -c.")
@@ -1368,12 +1371,26 @@ _SHELL_ARGV_RE = re.compile(
 
 def _processbuilder_shell(tail: str) -> Optional[str]:
     """ProcessBuilder runs no shell of its own. "major" when its arguments hand a
-    shell a -c command; None when they are separate arguments naming the program
-    (ProcessBuilder(node, "--version")); "minor" when a single list or spread
-    argument (ProcessBuilder(cmd), ProcessBuilder(*command)) hides what runs."""
-    m = re.match(r"ProcessBuilder\s*\((.*)", tail)
-    args = m.group(1) if m else ""
-    if _SHELL_ARGV_RE.search(tail) or re.search(r"[\"']-c[\"']", args):
+    shell a -c command, or the program named first is a shell or a command runner
+    (bash -lc, cmd /c, powershell -Command, ssh, sudo, env); None when they are
+    separate arguments naming another program (ProcessBuilder(node, "--version"));
+    "minor" when a single list or spread argument (ProcessBuilder(cmd),
+    ProcessBuilder(*command)) hides what runs. `tail` is the call from the match,
+    over up to three lines, so split arguments count."""
+    m = re.match(r"ProcessBuilder\s*\((.*)", tail, re.S)
+    rest, depth, end = (m.group(1) if m else ""), 0, None
+    for k, ch in enumerate(rest):                       # this call's own arguments, up to its ")"
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                end = k
+                break
+            depth -= 1
+    args = rest[:end] if end is not None else rest
+    first = re.search(r"[\"']([^\"'\n]+)[\"']", args)
+    program = re.sub(r"\.exe$", "", re.split(r"[\\/]", first.group(1).strip())[-1].lower()) if first else ""
+    if _SHELL_ARGV_RE.search(args) or re.search(r"[\"']-c[\"']", args) or program in _SHELL_PROGRAMS:
         return "major"
     depth, buf, parts = 0, "", []
     for ch in args:
@@ -1405,7 +1422,7 @@ def _argv_without_shell(sf: SourceFile, idx: int, col: int, pattern: str) -> boo
     Read from the match on."""
     tail = sf.nocomment[idx - 1][col:]
     if "ProcessBuilder" in pattern:
-        return _processbuilder_shell(tail) is None
+        return False                    # decided by _processbuilder_shell in scan_sources
     call = tail + " " + " ".join(sf.nocomment[idx:idx + 2])
     m = re.match(r"Runtime\.getRuntime\(\)\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{\s*\"([^\"\\]*)\"", call)
     if not m:
@@ -1417,15 +1434,27 @@ def _argv_without_shell(sf: SourceFile, idx: int, col: int, pattern: str) -> boo
 # the command is the call's first argument and a plain literal (r/b/u prefixes, never f), followed
 # directly by , or ): "ls %s" % x, "ls {}".format(x), "git diff " + arg and a variable all fail to match
 _SHELL_CALL_LITERAL_RE = re.compile(
-    r"\b(?:subprocess\.)?(?:run|call|Popen|check_output|check_call)\s*\(\s*[rRbBuU]{0,2}"
+    r"\b(?:subprocess\.)?(?:run|call|Popen|check_output|check_call)\s*(?P<open>\()\s*[rRbBuU]{0,2}"
     r"(?P<q>['\"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)\s*[,)]")
 
 
 def _shell_true_constant(sf: SourceFile, idx: int, col: int) -> bool:
     """`shell=True` on a call whose command is a fixed literal: nothing attacker-
     controlled reaches the shell, so it is minor. An f-string, % or .format()
-    formatting, concatenation, or a variable command stays major."""
-    return bool(_SHELL_CALL_LITERAL_RE.search(sf.nocomment[idx - 1][:col]))
+    formatting, concatenation, or a variable command stays major. The literal must
+    open the call that holds this shell=True, not an earlier call on the line."""
+    code, text = sf.code[idx - 1][:col], sf.nocomment[idx - 1][:col]
+    depth = 0
+    for k in range(len(code) - 1, -1, -1):             # the unclosed "(" of the enclosing call
+        if code[k] == ")":
+            depth += 1
+        elif code[k] == "(":
+            if depth:
+                depth -= 1
+                continue
+            m = _SHELL_CALL_LITERAL_RE.search(text[max(0, k - 40):])
+            return bool(m) and max(0, k - 40) + m.end("open") == k + 1
+    return False
 
 
 def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:

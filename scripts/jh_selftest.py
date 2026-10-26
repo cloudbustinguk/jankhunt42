@@ -115,9 +115,10 @@ MUTANTS = [
      "jh_core.py", '    opts = [a for kv in _GIT_SAFE_CONFIG for a in ("-c", kv)]', "    opts = []",
      "test_git_safety.py"),
     ("M32-git-filters-not-blanked", "git runs a filter program named by the repository", "jh_core.py",
-     "    filters = _git_filter_overrides(root)", "    filters = []", "test_git_safety.py"),
+     "    filters = [] if command in _GIT_NO_FILTER_COMMANDS else _git_filter_overrides(root)", "    filters = []",
+     "test_git_safety.py"),
     ("M33-git-textconv-allowed", "git diff runs a text converter named by the repository", "jh_core.py",
-     '        rest = [rest[0], "--no-ext-diff", "--no-textconv"] + rest[1:]', "        rest = rest",
+     '        rest = rest[:pos + 1] + flags + rest[pos + 1:]', "        rest = rest",
      "test_git_safety.py"),
 ]
 

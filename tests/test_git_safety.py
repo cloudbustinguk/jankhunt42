@@ -118,6 +118,33 @@ class HostileGitConfig(unittest.TestCase):
         self.git("diff", env=env)
         self.assertEqual(self.fired(), sorted(MECHANISMS))
 
+    def test_3_a_required_filter_does_not_break_review(self):
+        """git-lfs marks its filter required; a blanked required filter must not make git fail."""
+        self.git("config", "filter.req.clean", self.hooks["clean"])
+        self.git("config", "filter.req.required", "true")
+        with open(os.path.join(self.repo, ".gitattributes"), "a") as fh:
+            fh.write("big.bin filter=req\n")
+        self.write("big.bin", "x\n")
+        self.clear()
+        proc = run_cli("review", self.repo, "--json")
+        self.assertEqual(proc.returncode in (0, 1), True, proc.stderr[-300:])
+        self.assertNotIn("filter", proc.stderr)
+        self.assertEqual(self.fired(), [])
+
+    def test_4_the_callers_own_git_settings_are_kept(self):
+        import jh_core
+        old = dict(os.environ)
+        try:
+            os.environ.update(GIT_INDEX_FILE="/tmp/x-index", GIT_DIR="/tmp/x.git", GIT_EXTERNAL_DIFF="/bin/false",
+                              GIT_SSH_COMMAND="/bin/false", GIT_CONFIG_KEY_0="core.pager", GIT_CONFIG_COUNT="1")
+            env = jh_core.git_env()
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        self.assertEqual((env.get("GIT_INDEX_FILE"), env.get("GIT_DIR")), ("/tmp/x-index", "/tmp/x.git"))
+        for name in ("GIT_EXTERNAL_DIFF", "GIT_SSH_COMMAND", "GIT_CONFIG_KEY_0", "GIT_CONFIG_COUNT"):
+            self.assertNotIn(name, env)
+
     def test_2_static_commands_run_none_of_them(self):
         self.clear()
         self.dirty()

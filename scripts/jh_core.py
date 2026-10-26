@@ -577,19 +577,30 @@ def _is_skipped_file(path: Path) -> bool:
 # settings on the command line (it outranks the repository's config), runs no hooks, never writes
 # the index, never uses the network, and drops inherited GIT_* variables.
 _GIT_SAFE_CONFIG = (
-    "core.fsmonitor=false", "core.hooksPath=/dev/null", "core.untrackedCache=false",
-    "diff.external=", "core.pager=cat", "log.showSignature=false", "gpg.program=false",
+    # empty values: git before 2.36 reads core.fsmonitor as a hook command, so "false" would run a program
+    "core.fsmonitor=", "core.hooksPath=/dev/null", "core.untrackedCache=false",
+    "diff.external=", "core.pager=cat", "log.showSignature=false", "gpg.program=",
     "credential.helper=", "core.askPass=", "protocol.allow=never",
     "submodule.recurse=false", "diff.ignoreSubmodules=all", "status.submoduleSummary=false",
 )
-_GIT_DIFF_COMMANDS = ("diff", "log", "show")
+# commands that run diff drivers; an empty diff.<driver>.textconv makes git fail, so they get flags instead
+_GIT_DIFF_COMMANDS = {"diff": True, "log": True, "show": True, "whatchanged": True, "format-patch": True,
+                      "blame": False, "grep": False}       # value: also takes --no-ext-diff
+# commands that never apply filters, so they need no per-repository config lookup
+_GIT_NO_FILTER_COMMANDS = {"rev-parse", "symbolic-ref", "rev-list", "ls-tree", "cat-file", "config", "branch",
+                           "ls-files", "stash"}
+# inherited variables that name a program; the caller's other GIT_* settings (GIT_DIR, GIT_WORK_TREE,
+# GIT_INDEX_FILE in a hook) are their own and are kept
+_GIT_PROGRAM_ENV = {"GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "GIT_EDITOR",
+                    "GIT_SEQUENCE_EDITOR", "GIT_PROXY_COMMAND", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}
 _git_filter_cache: Dict[str, List[Tuple[str, str]]] = {}
 
 
 def git_env(extra: Sequence[Tuple[str, str]] = ()) -> Dict[str, str]:
-    """The caller's environment without GIT_* variables (GIT_DIR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND,
-    GIT_CONFIG_*), plus no optional index writes, no prompts, and `extra` as command-line config."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    """The caller's environment without the GIT_* variables that name programs (_GIT_PROGRAM_ENV and
+    GIT_CONFIG_KEY_n/VALUE_n), plus no optional index writes, no prompts, and `extra` as command-line config."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in _GIT_PROGRAM_ENV and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
     env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", GIT_PAGER="cat")
     if extra:
         # GIT_CONFIG_KEY_n/VALUE_n keep key and value apart, so a filter named "a=b" is still overridden
@@ -600,7 +611,8 @@ def git_env(extra: Sequence[Tuple[str, str]] = ()) -> Dict[str, str]:
 
 
 def _git_filter_overrides(root: str) -> List[Tuple[str, str]]:
-    """Every configured filter driver, blanked: a clean, smudge or process command of "" runs nothing."""
+    """Every configured filter driver, blanked: a clean, smudge or process command of "" runs nothing,
+    and required=false lets git carry on without it (git-lfs marks its filter required)."""
     if root not in _git_filter_cache:
         names: Set[str] = set()
         try:
@@ -613,8 +625,9 @@ def _git_filter_overrides(root: str) -> List[Tuple[str, str]]:
                     names.add(key[len("filter."):key.rfind(".")])
         except (OSError, subprocess.SubprocessError):
             pass
-        _git_filter_cache[root] = [("filter.%s.%s" % (n, part), "") for n in sorted(names)
-                                   for part in ("clean", "smudge", "process")]
+        _git_filter_cache[root] = [("filter.%s.%s" % (n, part), value) for n in sorted(names)
+                                   for part, value in (("clean", ""), ("smudge", ""), ("process", ""),
+                                                       ("required", "false"))]
     return _git_filter_cache[root]
 
 
@@ -624,12 +637,17 @@ def run_git(argv: Sequence[str], **kwargs: object) -> "subprocess.CompletedProce
     if argv[:2] != ["git", "-C"] or len(argv) < 4:
         raise ValueError("run_git expects ['git', '-C', root, command, ...]")
     root, rest = argv[2], argv[3:]
-    if rest[0] in _GIT_DIFF_COMMANDS:
-        rest = [rest[0], "--no-ext-diff", "--no-textconv"] + rest[1:]
+    # the subcommand is the first argument that is not an option (or an option's value)
+    pos = next((i for i, a in enumerate(rest) if not a.startswith("-") and (i == 0 or rest[i - 1] not in ("-c", "-C"))),
+               len(rest))
+    command = rest[pos] if pos < len(rest) else ""
+    if command in _GIT_DIFF_COMMANDS:
+        flags = ["--no-ext-diff", "--no-textconv"] if _GIT_DIFF_COMMANDS[command] else ["--no-textconv"]
+        rest = rest[:pos + 1] + flags + rest[pos + 1:]
     if "input" not in kwargs and "stdin" not in kwargs:
         kwargs["stdin"] = subprocess.DEVNULL
     opts = [a for kv in _GIT_SAFE_CONFIG for a in ("-c", kv)]
-    filters = _git_filter_overrides(root)
+    filters = [] if command in _GIT_NO_FILTER_COMMANDS else _git_filter_overrides(root)
     # the environment carries every filter override (git 2.31+); -c repeats those whose names can be
     # written as key=value, for older git
     opts += [a for key, value in filters if "=" not in key and "\n" not in key for a in ("-c", key + "=" + value)]

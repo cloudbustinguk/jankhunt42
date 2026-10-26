@@ -614,6 +614,14 @@ class Scanner(unittest.TestCase):
                                   "    subprocess.run(cmd, cwd='/tmp', shell=True)\n"
                                   "    subprocess.run('ls %s' % name, shell=True)\n"
                                   "    subprocess.run('ls {}'.format(name), shell=True)\n"),
+        # review of 2.7.4: shell and runner programs, split arguments, and the call that holds shell=True
+        "java/Runners.java": ('new ProcessBuilder("bash", "-lc", u).start();\n'
+                              'new ProcessBuilder("cmd.exe", "/c", u).start();\n'
+                              'new ProcessBuilder("powershell", "-Command", u).start();\n'
+                              'new ProcessBuilder("ssh", host, u).start();\n'),
+        "java/Split.java": 'Process p = new ProcessBuilder(\n    "sh", "-c", u).start();\n',
+        "shell/two_calls.py": ("import subprocess\ndef f(user_cmd):\n"
+                               "    subprocess.call(\"sync\"); subprocess.call(user_cmd, shell=True)\n"),
         "kotlin/b08_007_008_processbuilder.kt": ("fun probe(node: String, command: Array<String>) {\n"
                                                   "    val spread = ProcessBuilder(*command).redirectErrorStream(true).start()\n"
                                                   "    val fixed = ProcessBuilder(node, \"--version\").redirectErrorStream(true).start()\n"
@@ -1035,6 +1043,12 @@ class Scanner(unittest.TestCase):
         kt = "kotlin/b08_007_008_processbuilder.kt"
         self.assertEqual({f["line"]: f["severity"] for f in self.hits("JH103", kt)},
                          {2: "minor", 4: "major", 5: "major"})        # spread hides what runs; -c is a shell
+
+    def test_review_of_274_jh103(self):
+        self.assertEqual({f["line"]: f["severity"] for f in self.hits("JH103", "java/Runners.java")},
+                         {1: "major", 2: "major", 3: "major", 4: "major"})
+        self.assertEqual({f["severity"] for f in self.hits("JH103", "java/Split.java")}, {"major"})
+        self.assertEqual({f["severity"] for f in self.hits("JH103", "shell/two_calls.py")}, {"major"})
 
     def test_review_of_jh103_proposal(self):
         # the command is the FIRST argument: a later literal (cwd='/tmp'), % and .format() are not constants
