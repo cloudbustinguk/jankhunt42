@@ -533,7 +533,13 @@ RULES: List[Rule] = [
       "A skipped test provides no protection and can hide a regression for a long time.",
       "Fix and re-enable it, or delete it with a linked issue explaining the gap.",
       confidence="high", target="nocomment", kinds=TEST + ("test",),
-      patterns=(r"@pytest\.mark\.skip\b", r"@unittest\.skip", r"\.skip\s*\(", r"\bxit\s*\(", r"\bxdescribe\s*\(", r"\bt\.Skip\s*\(", r"@Disabled\b")),
+      patterns=(r"@pytest\.mark\.skip\b", r"@unittest\.skip",
+                # `.skip(` is a skipped test only on a runner (describe/test/context/...); on another receiver
+                # it is a library call such as Rust's Iterator::skip(n). `it` and `t` are also common iterator
+                # names, so for them the first argument must be a title string: it.skip('...', fn)
+                r"\b(?:describe|test|context|suite|specify|feature|module|QUnit|tap|fixture|scenario|bench)\.skip\s*\(",
+                r"(?<![\w$.])(?:it|t)\.skip\s*\(\s*[\"'`]",
+                r"\bxit\s*\(", r"\bxdescribe\s*\(", r"\bt\.Skip\s*\(", r"@Disabled\b")),
     R("JH502", "Test without assertions", "minor", "tests",
       "This test executes code but never checks a result, so it cannot fail meaningfully.",
       "Assert the observable behavior, or remove the test if it only checks 'no exception'.",
@@ -561,7 +567,10 @@ RULES: List[Rule] = [
       patterns=(r"(?<![\w$])(?:describe|it|test|context|suite|specify|fixture|scenario|feature|module|QUnit|tap|t|bench)"
                 r"(?:\.(?:describe|test|module|serial|parallel|concurrent|sequential|"
                 r"(?:skipIf|runIf)\((?:[^()]|\([^()]*\))*\)))*\.only(?:\.each)?\s*\(",
-                r"@pytest\.mark\.focus\b", r"(?<![\w.$])fit\s*\(\s*[\"'`,]", r"(?<![\w.$])fdescribe\s*\(\s*[\"'`,]")),
+                r"@pytest\.mark\.focus\b",
+                # fit(title, fn) / fdescribe(title, fn): the second argument is a function; in the code view a
+                # string title is masked, so fit('modelFit', 10) and expect(fit('abc', 2)) do not match
+                r"(?<![\w.$])f(?:it|describe)\s*\(\s*[^,(]*\s*,\s*(?:async\s+)?(?:\([^()]*\)\s*=>|\w+\s*=>|function\b)")),
 
     # ---------------------------------------------------------------------- docs
     R("JH601", "Broken relative link", "minor", "docs",
@@ -798,6 +807,34 @@ _PEM_BODY_RE = re.compile(r"[A-Za-z0-9+/=]{40,}")
 _I18N_PATH_RE = re.compile(r"(?i)(^|/)(i18n|l10n|locales?|lang|langs|translations?)/|(^|/)i18n\.[jt]sx?$|\.po$")
 
 
+# A translation/locale file holds UI text an i18n library renders; the text is
+# never executed, so an agent-launch flag written in it starts nothing (JH702).
+# Match (1) any translation-format file under an i18n directory, except a
+# manifest such as package.json whose scripts DO run agents, and (2) a file
+# named like a locale (`es.json`, `pt-BR.json`, `zh_Hans.json`) anywhere: a two-letter
+# language code, not any short name (`mcp.json`, `app.json` and `cdk.json` launch things).
+# Agent and MCP configs are never locale files. CI workflow YAML stays at full severity.
+_I18N_DIR_RE = re.compile(r"(?i)(^|/)(i18n|l10n|locales?|lang|langs|translations?)/")
+_LOCALE_NAME_RE = re.compile(r"[a-z]{2}(?:[-_](?:[A-Z]{2}|[A-Z][a-z]{3}|\d{3}))?\.(?:json|po)$")
+_MANIFEST_NAME_RE = re.compile(r"(?i)(?:package|tsconfig|jsconfig|composer|bower)\.json$")
+
+
+def is_locale_text(sf: SourceFile) -> bool:
+    """True when the file is a translation file, where a `--dangerously-
+    skip-permissions`-style flag is UI copy rather than a command."""
+    if {"agent_config", "mcp_config", "agent_context", "ci"} & set(sf.kinds):
+        return False
+    rel = sf.rel
+    base = rel.replace("\\", "/").rsplit("/", 1)[-1]
+    if _LOCALE_NAME_RE.match(base):
+        return True
+    if _I18N_DIR_RE.search(rel) and rel.lower().endswith(
+            (".json", ".yml", ".yaml", ".po", ".properties")) \
+            and not _MANIFEST_NAME_RE.search(base):
+        return True
+    return False
+
+
 def pem_has_body(sf: SourceFile, idx: int, end: int) -> bool:
     """A PEM header is a key only when key material follows it, on the same
     line (after a literal \\n) or on the next line; `...` or NOTAREALKEY is not."""
@@ -1013,6 +1050,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
+                    if rule.id == "JH702" and is_locale_text(sf):
+                        severity, confidence = "minor", "medium"
+                        message = rule.message + " It is in a translation file: UI text that an i18n " \
+                                                   "library renders, not a command, so it launches no agent."
                     if "secret" in rule.tags:
                         # the first match that is neither a placeholder nor the assignment pattern
                         # re-matching one (apiKey: "AIza<words>"); a real secret later on the line counts

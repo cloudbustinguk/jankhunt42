@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import unicodedata
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import jh_agent
 import jh_yaml
@@ -310,9 +310,15 @@ def return_in_finally(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 _BLOCKING = re.compile(
     r"\b(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|"
-    r"urllib\.request\.|subprocess\.(?:run|call|check_output|check_call|Popen)|"
+    r"urllib\.request\.|subprocess\.(?:run|call|check_output|check_call)|"
     r"os\.system|os\.popen|socket\.(?:create_connection|socket))\s*\("
 )
+# subprocess.Popen(...) returns a handle and does not stall the loop; waiting on it does: a trailing
+# .wait()/.communicate(), the same call on the handle later (proc.communicate()), or leaving a
+# `with subprocess.Popen(...) as p:` block, whose exit waits for the process
+_POPEN_BLOCK = re.compile(r"\bsubprocess\.Popen\s*\(.*?\)\s*\.(?:wait|communicate)\s*\(|"
+                          r"^\s*with\s+subprocess\.Popen\s*\(")
+_POPEN_HANDLE = re.compile(r"^\s*(\w+)\s*=\s*subprocess\.Popen\s*\(")
 
 
 @check("blocking_in_async")
@@ -325,7 +331,9 @@ def blocking_in_async(sf: SourceFile, rule: Rule) -> List[Finding]:
             continue
         for j in range(start + 1, end + 1):
             line = sf.code[j]
-            if not _BLOCKING.search(line):
+            handles = {h.group(1) for k in range(start + 1, j) for h in [_POPEN_HANDLE.match(sf.code[k])] if h}
+            waits = handles and re.search(r"\b(?:%s)\.(?:wait|communicate)\s*\(" % "|".join(map(re.escape, handles)), line)
+            if not (_BLOCKING.search(line) or _POPEN_BLOCK.search(line) or waits):
                 continue
             if "await " in line or "to_thread" in line or "run_in_executor" in line:
                 continue
@@ -359,6 +367,45 @@ def _statement(lines: Sequence[str], start: int, max_lines: int = 25) -> str:
 _HTTP_RE = re.compile(r"\b(?:requests|httpx)\.(?:get|post|put|patch|delete|head|request|stream)\s*\(")
 _URLOPEN_RE = re.compile(r"\b(?:urlopen|urlretrieve)\s*\(")
 _SUBPROC_RE = re.compile(r"\bsubprocess\.(?:run|call|check_output|check_call)\s*\(")
+# asyncio.wait_for(call, N) wraps a call in a deadline and asyncio.timeout(N) opens a
+# timed block; either contradicts "the HTTP call has no timeout" (but None means no deadline)
+_WAIT_FOR = re.compile(r"\basyncio\.(?:wait_for|timeout)\s*\(")
+_NO_DEADLINE = re.compile(r"(?:,\s*|\btimeout\s*=\s*|\btimeout\s*\(\s*)None\s*\)")
+_TIMEOUT_BLOCK = re.compile(r"^(\s*)async\s+with\s+(?:asyncio\.timeout(?:_at)?|async_timeout\.timeout|"
+                            r"anyio\.(?:fail_after|move_on_after))\s*\((?!\s*None\s*\))")
+
+
+def _in_timeout_block(lines, start, max_lines=40):
+    """The call on line `start` is inside an `async with asyncio.timeout(N):` block above it."""
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    for j in range(start - 1, max(-1, start - max_lines), -1):
+        line = lines[j]
+        if not line.strip():
+            continue
+        lead = len(line) - len(line.lstrip())
+        if lead < indent:
+            if _TIMEOUT_BLOCK.match(line):
+                return True
+            indent = lead               # an enclosing block that is not a timeout: keep looking outward
+            if lead == 0:
+                return False
+    return False
+
+
+def _enclosing_wait_for(lines, start, max_lines=25):
+    # True when the call on line `start` sits inside an open asyncio.wait_for(...)/
+    # asyncio.timeout(...) whose "(" is on an earlier line. A closed one above (depth
+    # back to 0) does not count, so it cannot exempt a real call that follows it.
+    depth = 0
+    for j in range(start - 1, max(-1, start - max_lines), -1):
+        line = lines[j]
+        depth += line.count(")") - line.count("(")
+        if depth > 0:
+            break
+        if depth < 0 and _WAIT_FOR.search(line):
+            # the deadline argument follows the call, on the next few lines
+            return not _NO_DEADLINE.search("\n".join(lines[j:start + 6]))
+    return False
 
 
 @check("missing_timeout")
@@ -368,7 +415,12 @@ def missing_timeout(sf: SourceFile, rule: Rule) -> List[Finding]:
         if not (_HTTP_RE.search(line) or _URLOPEN_RE.search(line)):
             continue
         stmt = _statement(sf.code, i)
-        if re.search(r"\btimeout\s*=", stmt):
+        if re.search(r"\btimeout\s*=\s*(?!None\b)", stmt):
+            continue                    # timeout=None is explicitly no timeout
+        call = (_HTTP_RE.search(line) or _URLOPEN_RE.search(line)).start()
+        wrapper = _WAIT_FOR.search(line[:call])
+        if wrapper and not _NO_DEADLINE.search(stmt) or _enclosing_wait_for(sf.code, i) or \
+                _in_timeout_block(sf.code, i):
             continue
         out.append(make_finding(rule, sf, i + 1,
                                 message="HTTP call has no timeout; a stalled peer can hang this worker."))
@@ -382,7 +434,7 @@ def subprocess_timeout(sf: SourceFile, rule: Rule) -> List[Finding]:
         if not _SUBPROC_RE.search(line):
             continue
         stmt = _statement(sf.code, i)
-        if re.search(r"\btimeout\s*=", stmt):
+        if re.search(r"\btimeout\s*=\s*(?!None\b)", stmt):
             continue
         out.append(make_finding(rule, sf, i + 1,
                                 message="Subprocess call has no timeout; a hung child can pin the parent."))
@@ -592,7 +644,12 @@ def secret_file(sf: SourceFile, rule: Rule) -> List[Finding]:
     evidence_line = 1
     # .npmrc/.pypirc: only auth settings carry credentials, not registry URLs
     auth_only = base in (".npmrc", ".pypirc")
+    strong_test_only = False
     if not strong:
+        # Prefer a real (non-test) strong value as the evidence line: a test_ key placed
+        # early must not mask a live key later in the same file (hostile ordering).
+        test_line = 0
+        found_real = False
         for i, line in enumerate(sf.nocomment):
             m = re.match(r"^\s*([@A-Za-z_/][\w.:/@-]*)\s*[=:]\s*(.+?)\s*$", line)
             if not m:
@@ -602,8 +659,17 @@ def secret_file(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             if _looks_secret_value(m.group(2), key):
                 strong = True
+                v = m.group(2).strip().strip("'\"")
+                if v.startswith(("test_", "pk_test_", "sk_test_")):
+                    if test_line == 0:          # remember the first test key only
+                        test_line = i + 1
+                    continue                    # keep scanning for a real value
                 evidence_line = i + 1
+                found_real = True
                 break
+        if strong and not found_real and test_line:
+            evidence_line = test_line           # only test keys were found
+            strong_test_only = True
     if not strong and not is_key:
         return []
 
@@ -614,6 +680,9 @@ def secret_file(sf: SourceFile, rule: Rule) -> List[Finding]:
             sev = "major" if not is_env else "minor"
         elif tracked is None:
             sev = "major"
+    if strong_test_only:
+        # the only strong values are test keys (test_/pk_test_/sk_test_): not a real leak
+        sev = "minor"
     if "test" in sf.kinds:
         sev = "minor"
     ev = sf.raw[evidence_line - 1].strip() if 0 < evidence_line <= len(sf.raw) else ""
@@ -657,16 +726,26 @@ def dockerfile_user(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 @check("dockerfile_base")
 def dockerfile_base(sf: SourceFile, rule: Rule) -> List[Finding]:
+    # a multi-stage build names earlier stages (`FROM python:3.12 AS compiler`, then `FROM compiler`);
+    # Docker resolves a FROM name against stages defined ABOVE it, case-insensitively, so only those
+    # count: a stage named later (`AS node`) cannot hide an earlier `FROM node` registry pull
+    aliases: Set[str] = set()
     out: List[Finding] = []
     for i, line in enumerate(sf.nocomment):
         m = re.match(r"^\s*FROM\s+(.+)$", line, re.IGNORECASE)
         if not m:
             continue
+        defined = re.search(r"\bAS\s+([A-Za-z0-9_.\-]+)\s*$", m.group(1), re.IGNORECASE)
+        earlier = set(aliases)
+        if defined:
+            aliases.add(defined.group(1).lower())
         parts = [p for p in m.group(1).split() if not p.startswith("--")]
         if not parts:
             continue
         image = parts[0]
         if image.lower() == "scratch":
+            continue
+        if image.lower() in earlier:
             continue
         if "@sha256:" in image:
             continue
@@ -1280,6 +1359,21 @@ _SEND_DATA_RE = re.compile(r"(?i)(?:\s-d\s*['\"]?@|--data(?:-[a-z]+)?[\s=]+['\"]
                            r"open\([^)]*\)\.read\s*\()")
 
 
+# one quoted segment: "...", '...' (not an apostrophe inside a word: don't, it's), `...`, or curly quotes
+_CITED_RES = (re.compile(r'(?<!\w)"([^"\n]{1,200})"'), re.compile(r"(?<!\w)'([^'\n]{1,200})'(?!\w)"),
+              re.compile(r"`([^`\n]{1,200})`"), re.compile("\u201c([^\u201d\n]{1,200})\u201d"),
+              re.compile("\u2018([^\u2019\n]{1,200})\u2019"))
+
+
+def _is_cited(sf: SourceFile, text: str, start: int, end: int) -> bool:
+    """The matched span lies inside one quoted segment of prose, so the line
+    cites the phrase (an example to refuse) rather than issuing it. Never in
+    JSON, YAML or TOML, where every value is quoted."""
+    if sf.lang in ("json", "yaml", "toml"):
+        return False
+    return any(q.start(1) <= start and end <= q.end(1) for pat in _CITED_RES for q in pat.finditer(text))
+
+
 @check("agent_instruction")
 def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
     found: Dict[int, Tuple[str, str]] = {}
@@ -1303,14 +1397,24 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
             add(line_no, "major", "A hidden HTML comment (invisible when rendered, read by the agent) contains %s."
                 % " and ".join(what))
     for i, line in enumerate(sf.raw):
-        if any(p.search(line) for p in _OVERRIDE_RES):
-            add(i + 1, "major", "The file asks the agent to override its instructions or to act without the "
-                                "user's knowledge.")
+        # Record the stronger signals first so a downgraded (cited) override below
+        # can never mask a real pipe-shell or credential-exfil lead on the same line.
         if _PIPE_SHELL_RE.search(line):
             add(i + 1, "major", "The file tells the agent to pipe a remote script into a shell, which runs "
                                 "unverified code.")
         if _CREDENTIAL_FILE_RE.search(line) and _NET_SEND_RE.search(line) and _SEND_DATA_RE.search(line):
             add(i + 1, "critical", "The file tells the agent to read a credential file and send it over the network.")
+        ov = None
+        for p in _OVERRIDE_RES:                     # first pattern that actually matches
+            m = p.search(line)
+            if m:
+                ov = m
+                break
+        if ov:
+            # a quoted phrase cites an example to refuse (minor); a bare imperative stays major
+            add(i + 1, "minor" if _is_cited(sf, line, ov.start(), ov.end()) else "major",
+                "The file asks the agent to override its instructions or to act without the "
+                "user's knowledge.")
     out = []
     for line_no in sorted(found)[:10]:
         severity, message = found[line_no]
@@ -2097,7 +2201,22 @@ def _rust_assertion_free(sf: SourceFile, rule: Rule) -> List[Finding]:
 def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
     base = os.path.dirname(sf.abspath)
+    fence: Optional[Tuple[str, int]] = None
     for i, line in enumerate(sf.raw):
+        # inside a code fence a link-shaped span is example code (Python `fn[key](**kw)`), not navigation.
+        # CommonMark: the fence closes only on the same character, at least as long, with no info string,
+        # so a ````markdown example holding an inner ``` block stays one fence
+        f = re.match(r"\s{0,3}(`{3,}|~{3,})(.*)$", line)
+        if f:
+            run, rest = f.group(1), f.group(2).strip()
+            if fence is None:
+                fence = (run[0], len(run))
+                continue
+            if run[0] == fence[0] and len(run) >= fence[1] and not rest:
+                fence = None
+                continue
+        if fence:
+            continue
         for m in re.finditer(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", line):
             target = m.group(1).strip()
             if target.startswith(("http://", "https://", "mailto:", "tel:", "#", "/", "<")):
