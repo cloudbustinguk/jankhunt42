@@ -4,6 +4,20 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.9.1] — 2026-10-26
+
+From mass-test batches b14 to b16 and the mass tester's verification pass.
+The maintainer narrowed the tester's proposal before applying it.
+
+### Fixed
+
+- `JH702`: the approval-bypass flag inside a descriptive JSON field
+  (`"description"`, `"title"`, `"summary"`, `"help"` and similar) is minor:
+  a project catalogue that mentions the flag launches nothing. Only those
+  keys are downgraded. The flag under any other key stays major, because a
+  devcontainer's `postCreateCommand`, a task's `args` or an unknown key may
+  be what a tool runs. New mutant M55.
+
 ## [2.9.0] — 2026-10-26
 
 From the third agent's proposals A4 and A6, reviewed by the maintainer.

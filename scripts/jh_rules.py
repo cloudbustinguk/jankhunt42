@@ -1079,6 +1079,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
+                    if rule.id == "JH702" and sf.lang == "json" and _descriptive_json_value(line, m.start()):
+                        severity, confidence = "minor", "medium"
+                        message = rule.message + " It is the text of a descriptive JSON field (a description, " \
+                                                   "title or help text), which launches nothing."
                     if rule.id == "JH702" and is_locale_text(sf):
                         severity, confidence = "minor", "medium"
                         message = rule.message + " It is in a translation file: UI text that an i18n " \
@@ -1314,6 +1318,21 @@ def _quoted_hint(sf: SourceFile, line: str, m: "re.Match[str]") -> Optional[str]
 
 _PLAIN_LIT = r"""(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')"""
 _CONST_CONCAT_RE = re.compile(r"\s*(?:%s\s*\+\s*)*%s\s*[),;]" % (_PLAIN_LIT, _PLAIN_LIT))
+
+
+# JSON keys whose string value describes something rather than configuring it. Only these are downgraded:
+# any other key ("postCreateCommand", "args", "run", an unknown one) may be what a tool executes.
+_DESCRIPTIVE_KEY_RE = re.compile(r"(?i)^(?:description|desc|summary|title|subtitle|label|help|hint|tooltip|caption|"
+                                 r"note|notes|comment|about|details|tagline|excerpt|\w*[_-]?description)$")
+_JSON_PAIR_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"\s*:\s*"((?:[^"\\\n]|\\.)*)"')
+
+
+def _descriptive_json_value(line: str, pos: int) -> bool:
+    """The match sits inside the string value of a descriptive key on this line ("description": "...")."""
+    for m in _JSON_PAIR_RE.finditer(line):
+        if m.start(2) <= pos < m.end(2):
+            return bool(_DESCRIPTIVE_KEY_RE.match(m.group(1)))
+    return False
 
 
 def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", pattern: str) -> bool:

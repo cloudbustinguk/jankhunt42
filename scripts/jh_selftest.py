@@ -180,6 +180,9 @@ MUTANTS = [
      'for r in p["allow"]}) if port_qualified else _hosts(p)',
      'for r in p["allow"]}) if True else _hosts(p)', "test_claude_ports.py"),
 
+    ("M55-jh702-any-json-key-descriptive", "the bypass flag under any JSON key (a devcontainer's postCreateCommand) "
+     "drops to minor", "jh_rules.py", "            return bool(_DESCRIPTIVE_KEY_RE.match(m.group(1)))",
+     "            return True", "test_precision.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

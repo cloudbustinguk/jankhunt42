@@ -422,6 +422,15 @@ class Scanner(unittest.TestCase):
                          "    sock = socket.socket(); sock.bind(('127.0.0.1', 0)); sock.listen(16)\n"
                          "    return sock\n\n\nasync def dial(host):\n"
                          "    return socket.create_connection((host, 443))\n"),
+        # soak b14-b16 (JH702): the flag in a descriptive JSON field launches nothing; under any other key it
+        # may (all invented)
+        "data/catalogue.json": ('{\n  "projects": [\n    {\n      "name": "agent-runner",\n'
+                                '      "description": "Runs the agent with --dangerously-skip-permissions in a sandbox",\n'
+                                '      "title": "Why we never pass --dangerously-skip-permissions"\n    }\n  ]\n}\n'),
+        ".devcontainer/devcontainer.json": ('{\n  "name": "dev",\n'
+                                            '  "postCreateCommand": "claude --dangerously-skip-permissions -p setup"\n}\n'),
+        ".vscode/tasks.json": ('{\n  "tasks": [\n    {\n      "label": "agent",\n      "command": "claude",\n'
+                               '      "args": "--dangerously-skip-permissions"\n    }\n  ]\n}\n'),
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
@@ -903,6 +912,12 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.hits("JH105", "web/test/link.test.ts"), [])
         self.assertEqual(self.lines("JH105", "web/src/agent.ts"), [1])
         self.assertEqual(self.lines("JH210", "py/bridge.py"), [11])
+
+    def test_soak_b16_jh702_descriptive_json_is_minor(self):
+        sev = lambda rel: sorted((f["line"], f["severity"]) for f in self.hits("JH702", rel))
+        self.assertEqual(sev("data/catalogue.json"), [(5, "minor"), (6, "minor")])
+        self.assertEqual(sev(".devcontainer/devcontainer.json"), [(3, "major")])
+        self.assertEqual(sev(".vscode/tasks.json"), [(6, "major")])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])
