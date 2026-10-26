@@ -538,7 +538,7 @@ RULES: List[Rule] = [
                 # it is a library call such as Rust's Iterator::skip(n). `it` and `t` are also common iterator
                 # names, so for them the first argument must be a title string: it.skip('...', fn)
                 r"\b(?:describe|test|context|suite|specify|feature|module|QUnit|tap|fixture|scenario|bench)\.skip\s*\(",
-                r"(?<![\w$.])(?:it|t)\.skip\s*\(\s*[\"'`]",
+                r"(?<![\w$.])(?:it|t)\.skip\s*\(\s*[\"'`]", r"\bpytest\.skip\s*\(", r"\bthis\.skip\s*\(\s*\)",
                 r"\bxit\s*\(", r"\bxdescribe\s*\(", r"\bt\.Skip\s*\(", r"@Disabled\b")),
     R("JH502", "Test without assertions", "minor", "tests",
       "This test executes code but never checks a result, so it cannot fail meaningfully.",
@@ -570,7 +570,8 @@ RULES: List[Rule] = [
                 r"@pytest\.mark\.focus\b",
                 # fit(title, fn) / fdescribe(title, fn): the second argument is a function; in the code view a
                 # string title is masked, so fit('modelFit', 10) and expect(fit('abc', 2)) do not match
-                r"(?<![\w.$])f(?:it|describe)\s*\(\s*[^,(]*\s*,\s*(?:async\s+)?(?:\([^()]*\)\s*=>|\w+\s*=>|function\b)")),
+                r"(?<![\w.$])f(?:it|describe)\s*\(\s*[^,(]*\s*,\s*(?:(?:async\s+)?(?:\([^()]*\)\s*=>|\w+\s*=>|function\b)|"
+                r"(?:fakeAsync|waitForAsync|async|inject|waitsForAsync)\s*\()")),
 
     # ---------------------------------------------------------------------- docs
     R("JH601", "Broken relative link", "minor", "docs",
@@ -815,7 +816,13 @@ _I18N_PATH_RE = re.compile(r"(?i)(^|/)(i18n|l10n|locales?|lang|langs|translation
 # language code, not any short name (`mcp.json`, `app.json` and `cdk.json` launch things).
 # Agent and MCP configs are never locale files. CI workflow YAML stays at full severity.
 _I18N_DIR_RE = re.compile(r"(?i)(^|/)(i18n|l10n|locales?|lang|langs|translations?)/")
-_LOCALE_NAME_RE = re.compile(r"[a-z]{2}(?:[-_](?:[A-Z]{2}|[A-Z][a-z]{3}|\d{3}))?\.(?:json|po)$")
+_ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy da de "
+                 "dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy hz ia id ie ig "
+                 "ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li ln lo lt lu lv mg mh mi "
+                 "mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa pi pl ps pt qu rm rn ro ru rw sa "
+                 "sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th ti tk tl tn to tr ts tt tw ty ug uk ur uz "
+                 "ve vi vo wa wo xh yi yo za zh zu".split())
+_LOCALE_NAME_RE = re.compile(r"([a-z]{2})(?:[-_](?:[A-Z]{2}|[A-Z][a-z]{3}|\d{3}))?\.(?:json|po)$")
 _MANIFEST_NAME_RE = re.compile(r"(?i)(?:package|tsconfig|jsconfig|composer|bower)\.json$")
 
 
@@ -826,7 +833,8 @@ def is_locale_text(sf: SourceFile) -> bool:
         return False
     rel = sf.rel
     base = rel.replace("\\", "/").rsplit("/", 1)[-1]
-    if _LOCALE_NAME_RE.match(base):
+    loc = _LOCALE_NAME_RE.match(base)
+    if loc and loc.group(1) in _ISO_639_1:
         return True
     if _I18N_DIR_RE.search(rel) and rel.lower().endswith(
             (".json", ".yml", ".yaml", ".po", ".properties")) \

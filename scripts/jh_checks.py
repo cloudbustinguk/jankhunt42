@@ -318,7 +318,7 @@ _BLOCKING = re.compile(
 # `with subprocess.Popen(...) as p:` block, whose exit waits for the process
 _POPEN_BLOCK = re.compile(r"\bsubprocess\.Popen\s*\(.*?\)\s*\.(?:wait|communicate)\s*\(|"
                           r"^\s*with\s+subprocess\.Popen\s*\(")
-_POPEN_HANDLE = re.compile(r"^\s*(\w+)\s*=\s*subprocess\.Popen\s*\(")
+_POPEN_HANDLE = re.compile(r"^\s*((?:self\.)?\w+)\s*=\s*subprocess\.Popen\s*\(")
 
 
 @check("blocking_in_async")
@@ -332,7 +332,9 @@ def blocking_in_async(sf: SourceFile, rule: Rule) -> List[Finding]:
         for j in range(start + 1, end + 1):
             line = sf.code[j]
             handles = {h.group(1) for k in range(start + 1, j) for h in [_POPEN_HANDLE.match(sf.code[k])] if h}
-            waits = handles and re.search(r"\b(?:%s)\.(?:wait|communicate)\s*\(" % "|".join(map(re.escape, handles)), line)
+            names = "|".join(map(re.escape, handles))
+            waits = handles and re.search(r"\b(?:%s)\.(?:(?:wait|communicate)\s*\(|std(?:out|err)\.read(?:line|lines)?\s*\()|"
+                                          r"\bfor\s+\w+\s+in\s+(?:%s)\.std(?:out|err)\b" % (names, names), line)
             if not (_BLOCKING.search(line) or _POPEN_BLOCK.search(line) or waits):
                 continue
             if "await " in line or "to_thread" in line or "run_in_executor" in line:
@@ -399,12 +401,15 @@ def _enclosing_wait_for(lines, start, max_lines=25):
     depth = 0
     for j in range(start - 1, max(-1, start - max_lines), -1):
         line = lines[j]
-        depth += line.count(")") - line.count("(")
-        if depth > 0:
-            break
-        if depth < 0 and _WAIT_FOR.search(line):
-            # the deadline argument follows the call, on the next few lines
-            return not _NO_DEADLINE.search("\n".join(lines[j:start + 6]))
+        for k in range(len(line) - 1, -1, -1):     # right to left: the first unmatched "(" encloses the call
+            if line[k] == ")":
+                depth += 1
+            elif line[k] == "(":
+                depth -= 1
+                if depth < 0:
+                    if not re.search(r"\basyncio\.(?:wait_for|timeout)\s*\($", line[:k + 1]):
+                        return False
+                    return not _NO_DEADLINE.search(_statement(lines, j))
     return False
 
 
@@ -415,12 +420,17 @@ def missing_timeout(sf: SourceFile, rule: Rule) -> List[Finding]:
         if not (_HTTP_RE.search(line) or _URLOPEN_RE.search(line)):
             continue
         stmt = _statement(sf.code, i)
-        if re.search(r"\btimeout\s*=\s*(?!None\b)", stmt):
+        if re.search(r"\btimeout\s*=(?!\s*None\b)", stmt):
             continue                    # timeout=None is explicitly no timeout
         call = (_HTTP_RE.search(line) or _URLOPEN_RE.search(line)).start()
         wrapper = _WAIT_FOR.search(line[:call])
-        if wrapper and not _NO_DEADLINE.search(stmt) or _enclosing_wait_for(sf.code, i) or \
-                _in_timeout_block(sf.code, i):
+        # an asyncio deadline cancels only at an await: it covers an async client's call
+        # (await client.requests.get(...)), never the synchronous requests/httpx/urlopen functions,
+        # which run to completion before wait_for is entered or inside a timeout block
+        on_object = call > 0 and line[call - 1] == "."
+        awaited = bool(re.search(r"\bawait\b", line[:call]))
+        if on_object and (wrapper and not _NO_DEADLINE.search(stmt) or _enclosing_wait_for(sf.code, i) or
+                          awaited and _in_timeout_block(sf.code, i)):
             continue
         out.append(make_finding(rule, sf, i + 1,
                                 message="HTTP call has no timeout; a stalled peer can hang this worker."))
@@ -434,7 +444,7 @@ def subprocess_timeout(sf: SourceFile, rule: Rule) -> List[Finding]:
         if not _SUBPROC_RE.search(line):
             continue
         stmt = _statement(sf.code, i)
-        if re.search(r"\btimeout\s*=\s*(?!None\b)", stmt):
+        if re.search(r"\btimeout\s*=(?!\s*None\b)", stmt):
             continue
         out.append(make_finding(rule, sf, i + 1,
                                 message="Subprocess call has no timeout; a hung child can pin the parent."))
@@ -1365,13 +1375,23 @@ _CITED_RES = (re.compile(r'(?<!\w)"([^"\n]{1,200})"'), re.compile(r"(?<!\w)'([^'
               re.compile("\u2018([^\u2019\n]{1,200})\u2019"))
 
 
+_CITE_FRAME_RE = re.compile(r"(?i)\b(?:refuse[sd]?|reject|never|do\s+not|don't|such\s+as|like|e\.g\.|for\s+example|example|"
+                            r"attempts?|tries|try\s+to|says?|asks?|phrases?|prompts?|injections?|warn\w*|flag|"
+                            r"report|treat|watch\s+for)\b")
+
+
 def _is_cited(sf: SourceFile, text: str, start: int, end: int) -> bool:
     """The matched span lies inside one quoted segment of prose, so the line
     cites the phrase (an example to refuse) rather than issuing it. Never in
     JSON, YAML or TOML, where every value is quoted."""
     if sf.lang in ("json", "yaml", "toml"):
         return False
-    return any(q.start(1) <= start and end <= q.end(1) for pat in _CITED_RES for q in pat.finditer(text))
+    for pat in _CITED_RES:
+        for q in pat.finditer(text):
+            if q.start(1) <= start and end <= q.end(1):
+                # a bare quoted command (IMPORTANT: "Ignore all previous instructions ...") is not a citation
+                return bool(_CITE_FRAME_RE.search(text[:q.start()] + " " + text[q.end():]))
+    return False
 
 
 @check("agent_instruction")
@@ -2209,6 +2229,9 @@ def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
         f = re.match(r"\s{0,3}(`{3,}|~{3,})(.*)$", line)
         if f:
             run, rest = f.group(1), f.group(2).strip()
+            if fence is None and run[0] == "`" and "`" in rest:
+                f = None                    # inline code on one line, not a fence
+        if f:
             if fence is None:
                 fence = (run[0], len(run))
                 continue
