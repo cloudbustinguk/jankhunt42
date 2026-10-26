@@ -190,13 +190,18 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
                 ", ".join(r["holders"]) or "no visible holder")
             out += [c.grey("    " + ln.strip()) for ln in _wrap(clean(body), t.width - 6, "    ")]
     eg = report.get("egress") or {}
-    if eg.get("state") == "declared" and isinstance(eg.get("boundaries"), list):
+    if isinstance(eg.get("boundaries"), list) and eg["boundaries"]:
         out += ["", c.bold("egress boundary") + c.grey("  (declared allowlists vs hosts the map reaches)")]
         out.append("  %d allowlist(s): %s" % (len(eg["boundaries"]), ", ".join(
-            "%s %s" % (b["tool"], clean(b["path"])) for b in eg["boundaries"][:3])))
+            "%s%s %s" % (b["tool"], clean(" [%s]" % b["profile"]) if b.get("profile") else "",
+                          clean(b["path"])) for b in eg["boundaries"][:3])))
+        if eg.get("state") == "unknown":
+            out.append(c.yellow("  coverage unknown: %d reached endpoint(s) unassessed" % len(eg.get("unassessed", []))))
+            out.append(c.grey("  " + clean(eg.get("note", ""))))
         for o in eg["outside"][:5]:
             out.append("  %s %s %s %s" % (c.red("!"), c.bold(clean(o["host"])), t.label(o["tier"]),
-                                          c.grey("outside: " + clean(o["why"]))))
+                                          c.grey("outside: " + clean(o["why"])
+                                                 + (" [%s]" % ", ".join(o["contexts"]) if len(eg.get("contexts", [])) > 1 else ""))))
         if len(eg["outside"]) > 5:
             out.append(c.grey("    +%d more outside" % (len(eg["outside"]) - 5)))
         if eg["wildcards"]:

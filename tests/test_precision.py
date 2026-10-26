@@ -384,6 +384,26 @@ class Scanner(unittest.TestCase):
             "def sign_challenge(passphrase, nonce_bytes):\n    return hashlib.sha1(passphrase + nonce_bytes).hexdigest()\n\n\n"
             "def one_time_code(secret, counter):\n    otp = int(hashlib.md5(secret + counter).hexdigest(), 16) % 1000000\n"
             "    return otp\n"),
+        # soak b15: a fixed command string for os.system / os.popen / execSync is minor, like shell=True with
+        # a literal; anything interpolated, concatenated or formatted stays major
+        "python/b15_fixed_cmd.py": (
+            "import os\n\n\n"
+            "def head():\n    return os.popen(\"git rev-parse HEAD\").read().strip()\n\n\n"
+            "def clean():\n    os.system('make clean')\n\n\n"
+            "def show(path_str):\n    os.system(f'xdg-open \"{path_str}\"')\n\n\n"
+            "def tag(name):\n    return os.popen(\"git tag \" + name).read()\n\n\n"
+            "def log(n):\n    return os.popen(\"git log -%d\" % n).read()\n"),
+        "web/b15_fixed_cmd.js": ("const { execSync, exec } = require('child_process');\n"
+                                 "const rev = execSync('git rev-parse HEAD').toString();\n"
+                                 "exec(\"npm --version\", (err, out) => console.log(out));\n"
+                                 "const tagged = execSync(`git tag ${process.argv[2]}`);\n"
+                                 "const plain = execSync(`git status`);\n"),
+        "app/b15_fixed_cmd.rb": "IO.popen(\"ls\")\nIO.popen(\"ls #{dir}\")\n",
+        # soak b15: a translated label under an api_key: field is text, not a credential; an ASCII key stays
+        "bin/gen-locales.mjs": ("export const ja = {\n  timeout: \"HTTPリクエストタイムアウト（ミリ秒）\",\n"
+                                "  api_key: \"OmniサーバーのAPIキーを指定\",\n};\n"
+                                "export const hi = {\n  api_key: \"सर्वर की API कुंजी दर्ज करें\",\n};\n"
+                                "export const cfg = {\n  api_key: \"Q7vX2mK9pL4wR8tZ3nB6\",\n};\n"),
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
@@ -847,6 +867,17 @@ class Scanner(unittest.TestCase):
     def test_jh212_test_double_definition_is_not_a_call(self):
         self.assertEqual(self.hits("JH212", "web/mock_urlopen.py"), [])
         self.assertEqual(self.lines("JH212", "web/plain_get.py"), [5])
+
+    def test_soak_b15_fixed_shell_command_is_minor(self):
+        sev = lambda rel: sorted((f["line"], f["severity"]) for f in self.hits("JH103", rel))
+        self.assertEqual(sev("python/b15_fixed_cmd.py"),
+                         [(5, "minor"), (9, "minor"), (13, "major"), (17, "major"), (21, "major")])
+        # line 3: a bare exec( could be RegExp.exec, so only child_process.exec and execSync are matched
+        self.assertEqual(sev("web/b15_fixed_cmd.js"), [(2, "minor"), (4, "major"), (5, "minor")])
+        self.assertEqual(sev("app/b15_fixed_cmd.rb"), [(1, "minor"), (2, "major")])
+
+    def test_soak_b15_translated_label_is_not_a_secret(self):
+        self.assertEqual(self.lines("JH101", "bin/gen-locales.mjs"), [9])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])

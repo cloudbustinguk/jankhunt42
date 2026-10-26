@@ -250,11 +250,13 @@ A committed, structured network allowlist for an AI agent's sandbox is read
 as a **declared boundary**:
 
 - Codex `config.toml`: `features.network_proxy.domains` and
-  `permissions.<name>.network.domains` (`allow` / `deny`), with a note when
-  `features.network_proxy.enabled` is not `true`; `network_access = true`
-  in `[sandbox_workspace_write]` or `mode = "full"` is an open network.
+  `permissions.<name>.network.domains` (`allow` / `deny`), with typed proxy
+  activation and declared profile selection. Both the Boolean feature switch
+  and nested `enabled` form are recognized. A legacy `sandbox_mode` selector
+  makes applicability unknown because effective precedence is not resolved.
 - Claude Code `.claude/settings*.json`: `sandbox.network.allowedDomains` and
-  `deniedDomains`.
+  `deniedDomains`. Custom proxy ports make built-in domain-filter applicability
+  unknown; the external proxy's policy is not inspected.
 - OpenShell policies: every `network_policies` endpoint `host` and
   `allowed_ips` (default deny).
 
@@ -263,10 +265,31 @@ including AI agents and MCP servers), in both directions, with the evidence
 tier of the best path: **outside** (a reached host no allowlist admits, or
 one a deny list names), **unused** (an allowed entry nothing mapped reaches;
 tooling such as package registries may still need it), and **wildcards**.
-With no allowlist committed, `egress.state` is `unknown`: the reachable
-network is not known, which is not the same as open. Whether a sandbox
-enforces its allowlist at runtime is not verified; `--redact` keeps only the
-counts.
+Permission profiles are inventoried separately. Only the repository's declared
+selection counts; inactive profiles add no permissions, and disabled or
+unresolved activation is not credited.
+
+Each tool is assessed on its own (`egress.contexts`), and one tool's allowlist
+never covers another tool's reach. When every tool's selected declaration is
+resolved, `egress.state` is `declared` and `egress.outside` lists each reached
+host that at least one of them does not admit, with `contexts` naming which.
+So a repository that commits the Claude Code, Codex and OpenShell policies from
+`--emit-sandbox-policy` gets one answer for all three. Two settings scopes of
+the same tool (for example `.claude/settings.json` and
+`.claude/settings.local.json`) merge in ways this does not model, so they make
+coverage unknown.
+
+If selection, activation, inheritance or syntax is unresolved for any tool,
+`egress.state` is `unknown` and `egress.unassessed` records the reached
+endpoints whose coverage is unknown. An empty `outside` list in that state is
+not evidence of containment. With no allowlist committed, reach is also unknown
+rather than open or closed.
+
+The boundary fields `profile`, `selected` and `enabled` describe declaration
+applicability, not runtime verification. Policies without activation switches
+are assessed as declarations when selected alone. Endpoint inventory does not
+model every process, port or request constraint. Effective settings and runtime
+enforcement are not verified; `--redact` keeps counts and preserves unknown state.
 
 ## Redaction and safety
 

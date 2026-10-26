@@ -4,6 +4,55 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.8.0] — 2026-10-26
+
+From the third agent's adversarial review (finding A2), revised by the
+maintainer.
+
+### Changed
+
+- **Egress coverage no longer credits a declaration that does not apply.**
+  The map and passport compare the hosts an app reaches with the network
+  allowlists the repository commits. Until now every allowlist in the
+  repository counted, even an inactive Codex permission profile, a disabled
+  sandbox or proxy, or another tool's file.
+  - Codex permission profiles are read separately, and only the one that
+    `default_permissions` selects counts. A disabled proxy or profile
+    network, a string such as `"true"` where a Boolean belongs, a legacy
+    `sandbox_mode` selector, unmodeled inheritance, or syntax this reader
+    does not fully understand makes coverage `unknown` rather than guessing.
+  - A Claude Code allowlist counts only when `sandbox.enabled` is `true`
+    and no custom proxy port replaces the built-in filtering.
+  - Each tool is assessed on its own. When every tool's selected
+    declaration resolves, the result is `declared`, and a host is outside
+    when any one tool does not admit it; each outside host names those
+    tools. The three policies `--emit-sandbox-policy` writes therefore
+    still read back as `declared` when committed together. Two settings
+    scopes of one tool make coverage `unknown`, because their merge is not
+    modeled.
+  - When coverage is `unknown`, `egress.unassessed` lists the reached hosts
+    whose coverage could not be decided, and the Markdown, terminal and
+    HTML views say so instead of leaving the section out.
+  - New fields: `egress.contexts`, `egress.unassessed`, boundary
+    `profile`, `selected` and `enabled`, and `contexts` on each outside
+    host. `--redact` keeps counts only. New mutants M35 to M38.
+
+### Fixed
+
+- `JH103` now covers JavaScript and TypeScript. Its Node patterns
+  (`child_process.exec`, `execSync`) existed since 0.2.0 but never ran,
+  because the rule's language list left those languages out. A command
+  built with a template literal (`execSync(\`git tag ${name}\`)`) or passed
+  in a variable is major. Found while checking mass-test batch b15.
+- `JH103`: a fixed command string for `os.system`, `os.popen`,
+  `commands.getoutput`, `execSync`, `child_process.exec` or `IO.popen`
+  (`os.popen("git rev-parse HEAD")`) is minor, as `shell=True` with a fixed
+  literal has been since 2.7.4. An f-string, a `${...}` template, Ruby's
+  `#{...}`, `%` or `.format()` formatting, concatenation or a variable stays
+  major.
+- `JH101`: a value written in a non-Latin script, such as a translated
+  label under `api_key:` in a locale file, is text, not a credential.
+
 ## [2.7.5] — 2026-10-26
 
 From mass-test batches b08 to b13 and the third agent's adversarial

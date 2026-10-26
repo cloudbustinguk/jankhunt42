@@ -681,9 +681,10 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
                            for d in a.get("disallowed", [])]
         a["allowed_registries"] = ["allowed-%d" % i for i, _ in enumerate(a.get("allowed_registries", []), 1)]
     eg = rep.get("egress")
-    if isinstance(eg, dict) and eg.get("state") == "declared" and isinstance(eg.get("boundaries"), list):
-        rep["egress"] = {"state": "declared", "boundaries": len(eg["boundaries"]), "outside": len(eg["outside"]),
+    if isinstance(eg, dict) and isinstance(eg.get("boundaries"), list):
+        rep["egress"] = {"state": eg.get("state", "unknown"), "boundaries": len(eg["boundaries"]), "outside": len(eg["outside"]),
                          "unused": len(eg["unused"]), "wildcards": len(eg["wildcards"]),
+                         "contexts": len(eg.get("contexts", [])), "unassessed": len(eg.get("unassessed", [])),
                          "note": "counts only in the shareable copy"}
     cc = rep.get("change_control")
     if isinstance(cc, dict):

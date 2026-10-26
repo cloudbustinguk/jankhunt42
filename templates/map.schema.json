@@ -503,7 +503,17 @@
           "type": [
             "array",
             "integer"
-          ]
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "contexts": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "the tools (and Codex profiles) whose selected declaration does not admit this host"
+              }
+            }
+          }
         },
         "unused": {
           "type": [
@@ -517,11 +527,39 @@
             "integer"
           ]
         },
+        "contexts": {
+          "type": ["array", "integer"],
+          "items": {
+            "type": "object",
+            "required": ["tool", "path", "state"],
+            "properties": {
+              "state": {"enum": ["declared", "unknown"]},
+              "profile": {"type": ["string", "null"]},
+              "selected": {"type": ["boolean", "null"]},
+              "enabled": {"type": ["boolean", "null"]},
+              "outside": {"type": "array"},
+              "unused": {"type": "array"},
+              "wildcards": {"type": "array"},
+              "unassessed": {"type": "array"}
+            }
+          }
+        },
+        "unassessed": {
+          "type": ["array", "integer"]
+        },
         "boundaries": {
           "type": [
             "array",
             "integer"
-          ]
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "profile": {"type": ["string", "null"]},
+              "selected": {"type": ["boolean", "null"]},
+              "enabled": {"type": ["boolean", "null"]}
+            }
+          }
         }
       }
     }

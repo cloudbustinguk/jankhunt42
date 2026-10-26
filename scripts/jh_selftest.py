@@ -98,7 +98,7 @@ MUTANTS = [
     ("M24-disallowed-registries-ignored", "a package source outside allowed_registries passes P-SUP-001",
      "jh_policy.py", '    elif reg.get("disallowed"):', "    elif False:", "test_containment.py"),
     ("M25-egress-outside-hidden", "a host reached outside the declared egress boundary is not reported",
-     "jh_egress.py", "        if denied or (not allowed and not any_open):", "        if False:", "test_containment.py"),
+     "jh_egress.py", '            if denied or (not allowed and not boundary["open"]):', "            if False:", "test_containment.py"),
     ("M26-branch-ci-write-ignored", "a write-scoped token on an any-branch push workflow is ignored",
      "jh_checks.py", "        write = _grants_write_explicit(perms)", "        write = False", "test_containment.py"),
     ("M27-shared-tenant-wildcards", "a sandbox wildcard on a shared cloud domain is not reported", "jh_checks.py",
@@ -123,6 +123,18 @@ MUTANTS = [
     ("M34-fence-credential-deny-unchecked", "a sandbox policy missing a credential read-deny passes its own gate",
      "jh_fence.py", "        elif not set(CREDENTIAL_PATHS).issubset(read_denies):", "        elif False:",
      "test_fence.py"),
+    ("M35-egress-disabled-credited", "disabled declarations contribute coverage", "jh_egress.py",
+     '        if boundary.get("selected") is not True or boundary.get("enabled") is not True:',
+     '        if boundary.get("selected") is not True:', "test_egress_context.py"),
+    ("M36-egress-scopes-merged", "two settings scopes of one tool are assessed as if their merge were known",
+     "jh_egress.py", "    one_each = len(tools) == len(set(tools))", "    one_each = True", "test_egress_context.py"),
+    ("M37-egress-unknown-not-redacted", "unknown egress retains topology in a shareable map", "jh_graph.py",
+     '    if isinstance(eg, dict) and isinstance(eg.get("boundaries"), list):',
+     '    if isinstance(eg, dict) and eg.get("state") == "declared":', "test_egress_context.py"),
+    ("M38-egress-control-decoys", "unmodeled declaration syntax can establish coverage", "jh_egress.py",
+     '        if not supported or inherited or global_rules and len(records) > 1:',
+     '        if inherited or global_rules and len(records) > 1:', "test_egress_context.py"),
+
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

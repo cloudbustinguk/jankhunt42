@@ -91,7 +91,7 @@ RULES: List[Rule] = [
     R("JH103", "Shell command construction", "major", "security",
       "A shell is invoked with a string, so metacharacters in any interpolated value become commands.",
       "Use an argument array with shell disabled, then validate/allowlist values.",
-      confidence="medium", langs=SCRIPT + CLIKE,
+      confidence="medium", langs=SCRIPT + CLIKE + JS,          # JS/TS: child_process exec/execSync (missing until 2.8.1)
       patterns=(
           r"\bshell\s*=\s*True\b",
           r"\bos\.(?:system|popen)\s*\(",
@@ -750,6 +750,9 @@ def secret_placeholder(match_text: str) -> bool:
     # the name of a secret or setting, not its value ("DATA_BUCKET", "DN2CPP_FAULT_PROBE")
     if re.fullmatch(r"[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+", value) and sum(1 for s in value.split("_") if re.search(r"[A-Z]{2}", s)) >= 2:
         return True
+    # text in a non-Latin script, such as a translated label for "API key": credentials are ASCII
+    if any(ch.isalpha() and ord(ch) > 0x24F for ch in value):
+        return True
     # a sentence: five or more words, two of them common function words
     words = value.lower().replace(";", " ").replace(",", " ").replace(".", " ").split()
     if len(words) >= 5 and sum(1 for w in words if w in _STOPWORDS) >= 2:
@@ -1039,8 +1042,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                        "signatures, passwords or tokens.")
                     if rule.id == "JH108" and m.group(0).startswith("debug") and not _web_debug(sf, idx, m.start()):
                         continue            # a library's verbosity flag, not a web debug server
-                    if (rule.id == "JH103" and pat.pattern == r"\bshell\s*=\s*True\b"
-                            and _shell_true_constant(sf, idx, m.start())):
+                    if rule.id == "JH103" and (
+                            pat.pattern == r"\bshell\s*=\s*True\b" and _shell_true_constant(sf, idx, m.start())
+                            or pat.pattern in _SHELL_STRING_CALLS and _fixed_command(sf.nocomment[idx - 1], m.end())):
                         severity, confidence = "minor", "medium"
                         message = (rule.message + " The command is a fixed literal with no interpolated or "
                                    "concatenated value, so nothing attacker-controlled reaches the shell; a "
@@ -1444,6 +1448,19 @@ def _argv_without_shell(sf: SourceFile, idx: int, col: int, pattern: str) -> boo
 _SHELL_CALL_LITERAL_RE = re.compile(
     r"\b(?:subprocess\.)?(?:run|call|Popen|check_output|check_call)\s*(?P<open>\()\s*[rRbBuU]{0,2}"
     r"(?P<q>['\"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)\s*[,)]")
+
+
+# calls that hand their first argument to a shell as one string (os.system, os.popen, exec/execSync, IO.popen)
+_SHELL_STRING_CALLS = {r"\bos\.(?:system|popen)\s*\(", r"\bchild_process\.(?:exec|execSync)\s*\(",
+                       r"\bexecSync\s*\(", r"\bIO\.popen\s*\(", r"\bcommands\.getoutput\s*\("}
+_FIXED_COMMAND_RE = re.compile(r"""\s*[rRbBuU]{0,2}(?P<lit>(?P<q>['"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)|`[^`$\\\n]*`)\s*[,)]""")
+
+
+def _fixed_command(text: str, start: int) -> bool:
+    """The call's first argument is one fixed string literal ("git rev-parse HEAD"): nothing is interpolated
+    or concatenated. An f-string, a template with ${...}, Ruby's #{...}, % or .format(), + or a variable is not."""
+    m = _FIXED_COMMAND_RE.match(text, start)
+    return bool(m) and "#{" not in m.group("lit")
 
 
 def _shell_true_constant(sf: SourceFile, idx: int, col: int) -> bool:

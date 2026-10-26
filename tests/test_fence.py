@@ -51,10 +51,20 @@ class Emit(unittest.TestCase):
         for rel, fmt in SAVED.items():
             bounds = jh_egress.boundaries([Item(rel, self.out[fmt])])
             self.assertEqual(len(bounds), 1, fmt)
+            self.assertEqual(jh_egress.compare(bounds, self.map)["state"], "declared", fmt)
             self.assertLessEqual(want, set(bounds[0]["allow"]), fmt)
             # everything the map reaches outside the fence is something the fence excluded on purpose
             outside = {o["host"] for o in jh_egress.compare(bounds, self.map)["outside"]}
             self.assertEqual(outside, {"ledger-db.prod.internal"}, fmt)
+
+    def test_all_three_policies_committed_together_are_declared(self):
+        # the citizen-developer case: a repository commits the Claude Code, Codex and OpenShell policies we
+        # emit; each tool is assessed on its own, and only the excluded production host is outside
+        bounds = jh_egress.boundaries([Item(rel, self.out[fmt]) for rel, fmt in SAVED.items()])
+        result = jh_egress.compare(bounds, self.map)
+        self.assertEqual((result["state"], len(result["contexts"])), ("declared", 3))
+        self.assertEqual([(o["host"], len(o["contexts"])) for o in result["outside"]],
+                         [("ledger-db.prod.internal", 3)])
 
     def test_codex_boundary_with_trailing_comments(self):
         text = ('[features]\nnetwork_proxy = true  # on\n[permissions.p.network.domains]\n'

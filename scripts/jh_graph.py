@@ -1123,11 +1123,12 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
         ev["hash"] = ""
     rep = sub(rep)
     eg = rep.get("egress")
-    if isinstance(eg, dict) and eg.get("state") == "declared":
+    if isinstance(eg, dict) and isinstance(eg.get("boundaries"), list):
         # hostnames and allowlist entries are topology: keep only the counts
-        rep["egress"] = {"state": "declared", "boundaries": len(eg.get("boundaries", [])),
+        rep["egress"] = {"state": eg.get("state", "unknown"), "boundaries": len(eg.get("boundaries", [])),
                          "outside": len(eg.get("outside", [])), "unused": len(eg.get("unused", [])),
-                         "wildcards": len(eg.get("wildcards", [])), "note": "counts only in the shareable copy"}
+                         "wildcards": len(eg.get("wildcards", [])), "contexts": len(eg.get("contexts", [])),
+                         "unassessed": len(eg.get("unassessed", [])), "note": "counts only in the shareable copy"}
     labels = {n["id"]: n["display_label"] for n in rep["graph"]["nodes"]}
     for r in (rep.get("assessment", {}).get("credential_blast_radius") or {}).get("identities", []):
         r["label"] = labels.get(r["identity"], r["identity"])

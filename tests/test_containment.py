@@ -365,7 +365,9 @@ class EgressBoundary(unittest.TestCase):
     def test_redacted_copy_keeps_counts_only(self):
         files = dict(self.CODE, **{".claude/settings.json": '{"sandbox": {"network": {"allowedDomains": ["api.github.com"]}}}'})
         shared = jh_graph.pseudonymize(self.build(files))
-        self.assertEqual(shared["egress"]["outside"], 2)
+        self.assertEqual(shared["egress"]["state"], "unknown")
+        self.assertEqual(shared["egress"]["outside"], 0)
+        self.assertEqual(shared["egress"]["unassessed"], 3)
         self.assertNotIn("hooks.chat.example.com", json.dumps(shared))
 
 
