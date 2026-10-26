@@ -81,6 +81,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 2.9.3 changes no options or fields. `JH701` is minor for an override phrase handed to code; the skill description leads with citizen developers.
 - 2.9.4 changes no options or fields. `JH101` narrows; `JH124`-`JH126` are minor for HTML from a CONSTANT_NAME.
 - 3.0.0 adds the opt-in command `detonate` (schema `jankhunt.detonate.v1`) and `templates/detonate.Containerfile`. No existing command, option or field changes. Exit codes for `detonate`: 0 no ALERT, 1 at least one ALERT, 2 the sandbox could not run.
+- 3.1.0 adds `passport --base REF` and the passport field `capability_delta` (schema `jankhunt.capability-delta.v1`; `not-requested` without `--base`), the policy rule `P-CAP-001`, and `references/capability-delta.md`. Without `--base`, passports are unchanged apart from the additive field.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

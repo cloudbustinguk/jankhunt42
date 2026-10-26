@@ -41,6 +41,7 @@ ACTIONS = ("off", "review", "insufficient-evidence", "block")
 ACTION_RANK = {a: i for i, a in enumerate(ACTIONS)}
 
 RULES = {
+    "P-CAP-001": "new, expanded or unresolved requested access needs review",
     "P-COV-001": "assessment coverage is missing, partial, or truncated (hard floor)",
     "P-OWN-001": "accountable owner not established",
     "P-CUS-001": "no engineering custodian named for the software",
@@ -68,7 +69,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
-                "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review"},
+                "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review"},
     # Registry URL prefixes or host names packages may come from (operator policy only).
     "allowed_registries": [],
     "max_exposure": None,
@@ -295,6 +296,9 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
 
     # P-COV-001 (floor)
     cov_reasons = []
+    delta = facts.get("capability_delta") or {}
+    if delta.get("state") == "incomplete":
+        cov_reasons.append("access comparison incomplete")
     if facts.get("files_scanned", 0) <= 0:
         cov_reasons.append("no files were scanned")
     if graph is None:
@@ -307,6 +311,10 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         cov_reasons.append("connectivity coverage partial: %s" % "; ".join(facts.get("map_partial_reasons") or []))
     add("P-COV-001", "insufficient-evidence" if cov_reasons else "pass",
         "; ".join(cov_reasons) or "scan and map coverage present", floor=True)
+    needs_review = bool((delta.get("counts") or {}).get("total") or (delta.get("counts") or {}).get("unknown"))
+    add("P-CAP-001", max("review", _outcome_for(acts["P-CAP-001"]), key=OUTCOME_RANK.get) if needs_review else "pass",
+        "new or unresolved requested access: review the committed comparison" if needs_review else
+        "access comparison " + delta.get("state", "not-requested"), floor=needs_review)
 
     exposure = facts.get("exposure", "Unknown")
     # P-OWN-001

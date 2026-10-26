@@ -99,7 +99,7 @@ def find_config(start_dir: str) -> Optional[str]:
     return None
 
 
-def _parse_raw(path: str) -> Tuple[Optional[dict], Optional[str]]:
+def _parse_raw(path: str, contents: Optional[str] = None) -> Tuple[Optional[dict], Optional[str]]:
     if path.endswith(".toml"):
         if tomllib is None:
             return None, (
@@ -107,24 +107,31 @@ def _parse_raw(path: str) -> Tuple[Optional[dict], Optional[str]]:
                 "skipping. Use .jankhunt42.json for compatibility with older interpreters." % path
             )
         try:
+            if contents is not None:
+                return tomllib.loads(contents), None
             with open(path, "rb") as fh:
                 return tomllib.load(fh), None
         except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[attr-defined]
             return None, "could not parse %s: %s" % (path, exc)
     try:
+        if contents is not None:
+            return json.loads(contents), None
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh), None
     except (OSError, ValueError) as exc:
         return None, "could not parse %s: %s" % (path, exc)
 
 
-def load_config(path: Optional[str]) -> Config:
+def load_config(path: Optional[str], contents: Optional[str] = None) -> Config:
     cfg = Config()
     if not path:
         return cfg
-    raw, warning = _parse_raw(path)
+    raw, warning = _parse_raw(path, contents)
     if warning:
         cfg.warnings.append(warning)
+    if raw is not None and not isinstance(raw, dict):
+        cfg.warnings.append("config must be an object")
+        return cfg
     if not raw:
         return cfg
     cfg.source = path

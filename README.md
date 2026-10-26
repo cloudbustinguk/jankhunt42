@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 3.0.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 3.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -58,6 +58,7 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell)
 jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceiling /etc/it/approved.json   # capped by IT's approved list
 jankhunt42 detonate .                    # opt-in: run the install hooks in a sandbox and log what they try
+jankhunt42 passport . --base <ref> --md   # what new access this change asks for (for IT to approve)
 ```
 
 - **Agent workspace checks** (`JH701`-`JH711`, `JH432`):
@@ -326,6 +327,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/deep-hunt.md`](references/deep-hunt.md) | The opt-in adversarial panel |
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
+| [`references/capability-delta.md`](references/capability-delta.md) | `passport --base`: the new access a change asks for, and how it is decided |
 | [`references/detonate.md`](references/detonate.md) | `detonate`: running the install hooks in a sandbox, the audit log, canaries and limits |
 | [`references/development.md`](references/development.md) | Architecture, development workflow, self-assurance, compatibility and migration notes |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release |

@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.1.0] — 2026-10-26
+
+From the third agent's proposal A10, reviewed and adjusted by the
+maintainer.
+
+### Added
+
+- **What new access does this change ask for?** `jankhunt42 passport .
+  --base REF` compares two commits, read from Git objects only (uncommitted
+  files are left out and no code runs), and lists the access the newer one
+  asks for:
+  - new hosts and ports;
+  - credentials read or passed (names only);
+  - new write, delete or admin authority and scopes;
+  - new production reach;
+  - new agent capabilities (MCP servers, approval bypasses, hooks).
+
+  Each request comes with evidence. Requests are compared by who does what
+  to which target, so moving code adds nothing.
+  - **The decision:**
+    - New `P-CAP-001` sends new or newly unresolved access to review.
+    - An incomplete comparison falls to the `P-COV-001` floor.
+    - With `--sandbox-network-ceiling`, each new host is marked within or
+      outside IT's approved list.
+  - **The comparison cannot be gamed:** repository ignore globs, inline
+    suppressions and disabled rules do not apply to it. Production writes
+    rank first, so a flood of harmless hosts cannot bury them. Counts drive
+    policy before display limits.
+  - **Unresolved items are judged by what changed:**
+    - newly unresolved: needs review;
+    - unresolved at the base and apparently resolved now: needs review;
+    - unresolved in both: listed as unchanged, without forcing review.
+  - **Output:** the passport field `capability_delta`, plain approver
+    lines in Markdown and the terminal, `references/capability-delta.md`,
+    and mutants M64 to M71.
+  - **Deferred:** recorded external approvals of a delta, registry
+    changes, and renamed principals.
+
 ## [3.0.0] — 2026-10-26
 
 ### Added

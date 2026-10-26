@@ -29,6 +29,26 @@
     "graph_ref"
   ],
   "properties": {
+    "capability_delta": {
+      "type": "object",
+      "required": ["model", "state", "base_sha", "head_sha", "counts", "requests", "unknowns", "truncation", "context_hash", "delta_hash"],
+      "properties": {
+        "model": {"const": "jankhunt.capability-delta.v1"},
+        "state": {"enum": ["not-requested", "complete", "incomplete"]},
+        "base_sha": {"type": ["string", "null"]},
+        "head_sha": {"type": ["string", "null"]},
+        "context_hash": {"type": ["string", "null"]},
+        "delta_hash": {"type": ["string", "null"]},
+        "counts": {"type": "object"},
+        "requests": {"type": "array"},
+        "unchanged_unknowns": {
+          "type": "array",
+          "description": "unresolved at both commits; listed, but not a reason for review of this change"
+        },
+        "unknowns": {"type": "array"},
+        "truncation": {"type": "object"}
+      }
+    },
     "schema_version": {
       "type": "string",
       "enum": [

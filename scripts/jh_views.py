@@ -229,6 +229,7 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
 
 
 def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
+    import jh_capabilities
     t = Theme(color, ascii_only, view_width(columns))
     c = t.c
     a = p["assessment"]
@@ -246,6 +247,10 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
         t.kv("lifecycle", "%s  ·  acceptance %s" % (p["lifecycle"]["state"], t.label("not-supplied" if p["lifecycle"]["acceptance"]["state"] == "not-supplied" else "declared"))),
     ]
     out += [""] + t.box(card, "cyan", "can we responsibly ship it?")
+    if p.get("capability_delta", {}).get("state", "not-requested") != "not-requested":
+        out += [""]
+        for line in jh_capabilities.approver_lines(p["capability_delta"]):
+            out += _wrap(clean(line), t.width, "")
     gov = p.get("governance") or {}
     if gov.get("profile") == "citizen":
         plain: List[str] = []

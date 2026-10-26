@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "3.0.0"
+  version: "3.1.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -191,6 +191,8 @@ jankhunt42 passport . --profile citizen       # strict decision with a plain-lan
 
 Failure classes, the agent blast radius, the profile table, and limits: `references/citizen.md`.
 
+
+**Approve changes, not whole apps.** For a pull request, `jankhunt42 passport . --base <target-branch> --md` lists the access the change newly asks for: hosts and ports, credential names, write/delete/admin authority, production reach and agent capabilities, plus newly unresolved items. `P-CAP-001` sends any of it to review; with `--sandbox-network-ceiling` each new host is checked against IT's approved list. Present the approver lines as they are. Details: `references/capability-delta.md`.
 ## Detonate (opt-in)
 
 `jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) in a disposable rootless container. The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.

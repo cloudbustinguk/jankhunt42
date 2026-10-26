@@ -45,6 +45,7 @@ import jh_policy  # noqa: E402
 import jh_passport  # noqa: E402
 import jh_change  # noqa: E402
 import jh_registry  # noqa: E402
+import jh_capabilities  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
 import jh_detonate  # noqa: E402
@@ -808,9 +809,23 @@ def _default_branch(root: str) -> str:
 
 
 def cmd_passport(args: argparse.Namespace) -> int:
+    if args.base:
+        if args.emit_sandbox_policy or args.compare or args.against or args.verify:
+            print("jankhunt42: passport: --base cannot combine export, comparison or native verification", file=sys.stderr)
+            return 2
+        try:
+            with jh_capabilities.snapshots(args) as snapshot:
+                return _cmd_passport(args, snapshot)
+        except (OSError, ValueError, jh_map.GitError) as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+    return _cmd_passport(args)
+
+
+def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
-    if args.sandbox_network_ceiling is not None and args.emit_sandbox_policy not in ("openshell", "claude-code"):
+    if args.sandbox_network_ceiling is not None and not args.base and args.emit_sandbox_policy not in ("openshell", "claude-code"):
         print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code",
               file=sys.stderr)
         return 2
@@ -838,9 +853,14 @@ def cmd_passport(args: argparse.Namespace) -> int:
         return 0
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
     try:
-        root, excludes, cfg = _map_inputs(args)
+        if snapshot:
+            root, cfg = snapshot["root"], snapshot["cfg"]
+            map_report, col = snapshot["map"], snapshot["col"]
+        else:
+            root, excludes, cfg = _map_inputs(args)
         network_ceiling = jh_ceiling.load(args.sandbox_network_ceiling, root) if args.sandbox_network_ceiling is not None else None
-        map_report, col = jh_map.run_map(root, [root], excludes, args.max_files, args.max_file_bytes,
+        if not snapshot:
+            map_report, col = jh_map.run_map(root, [root], excludes, args.max_files, args.max_file_bytes,
                                          cfg.passport, args.inventory, depth, with_items=True)
     except (OSError, ValueError, jh_map.GitError) as exc:
         print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
@@ -867,14 +887,18 @@ def cmd_passport(args: argparse.Namespace) -> int:
     # again, so the main scan is never starved by ignored trees.
     scan_cfg = cfg
     operator_excludes = list(args.exclude or ())
-    raw_pre = _load_sources([root], operator_excludes, args.max_files, args.max_file_bytes)
+    raw_pre = (root, [s for s in (jh_capabilities.source_from_text(i.rel, os.path.join(root, i.rel), i.text)
+                    for i in col.items) if s is not None], 0) if snapshot else _load_sources(
+                        [root], operator_excludes, args.max_files, args.max_file_bytes)
     raw_capped = len(raw_pre[1]) + raw_pre[2] >= args.max_files
     if not scan_cfg.ignore_globs:
         main_pre = raw_pre
     elif not raw_capped:
         main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
-    else:
+    elif not snapshot:
         main_pre = _load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
+    else:
+        main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
     _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
     # Governance leads (P-SEC-001, P-AGT-001). Raw: the shipped rules with no
     # repository ignore globs, config, or inline pragmas, which is what the
@@ -890,7 +914,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     jank = jh_score.compute(result.findings, result.loc).to_dict()
     try:
-        supply = _supply_with_verification(root, args, {"discover": True})
+        supply = _supply_with_verification(snapshot["frozen"] if snapshot else root, args, {"discover": True})
     except ValueError as exc:
         print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -899,6 +923,8 @@ def cmd_passport(args: argparse.Namespace) -> int:
         repo_paths.append(os.path.basename(cfg.source))
     if args.policy:
         try:
+            if snapshot and jh_map.inside(args.policy, jh_map.git_toplevel(root)):
+                raise jh_policy.PolicyError("--base requires --policy outside the repository; committed passport policy remains tighten-only")
             pol = jh_policy.load_policy_file(args.policy)
         except jh_policy.PolicyError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
@@ -913,6 +939,8 @@ def cmd_passport(args: argparse.Namespace) -> int:
     export, export_trusted, export_label = None, False, ""
     if args.branch_rules:
         try:
+            if snapshot and jh_map.inside(args.branch_rules, jh_map.git_toplevel(root)):
+                raise ValueError("--base requires --branch-rules outside the repository")
             export = _load_branch_rules(args.branch_rules)
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
@@ -924,12 +952,25 @@ def cmd_passport(args: argparse.Namespace) -> int:
                             "provider-verified")
     repo_name = os.path.basename(jh_map.git_toplevel(root) or root)
     change_control = jh_change.build(col.items, export, export_trusted, export_label, default_branch, repo_name)
-    package_sources = jh_registry.collect(col.items, root, operator_excludes + list(scan_cfg.ignore_globs or []))
+    package_sources = jh_registry.collect(col.items, snapshot["frozen"] if snapshot else root,
+                                          operator_excludes + list(scan_cfg.ignore_globs or []))
+    capability_delta = jh_capabilities.not_requested()
+    if snapshot:
+        context = dict(model=jh_capabilities.MODEL, analyzer=VERSION, policy=operator,
+                       inventory=snapshot["inventory"], config=snapshot["operator_config"],
+                       ceiling=sorted(network_ceiling) if network_ceiling is not None else None,
+                       excludes=operator_excludes, max_files=args.max_files, max_bytes=args.max_file_bytes,
+                       depth=depth, profile=args.profile, no_config=args.no_config,
+                       branch_rules=export, default_branch=default_branch,
+                       scope=os.path.relpath(root, jh_map.git_toplevel(root)))
+        capability_delta = jh_capabilities.compare(*snapshot["reports"],
+            *(c.items for c in snapshot["collections"]), network_ceiling, context)
+        warnings.append("--base assesses committed HEAD; working-tree and untracked changes are excluded")
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",
-        source_revision=jh_map.git_revision(root) if top else None,
-        dirty=jh_map.git_dirty(root) if top else None,
+        source_revision=capability_delta["head_sha"] if snapshot else jh_map.git_revision(root) if top else None,
+        dirty=False if snapshot else jh_map.git_dirty(root) if top else None,
         items=col.items, scan_files=result.files, scan_loc=result.loc, jank=jank, findings_counts=counts,
         supply=supply, map_report=map_report, passport_cfg=cfg.passport,
         config_path=os.path.basename(cfg.source) if cfg.source else None,
@@ -937,7 +978,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
         findings=result.findings, governance_findings=raw, governance_tuned=tuned,
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
-        package_sources=package_sources)
+        package_sources=package_sources, capability_delta=capability_delta)
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")
@@ -1210,6 +1251,7 @@ def build_parser() -> argparse.ArgumentParser:
                                     "evidence to a pass/review/insufficient-evidence/block assessment. "
                                     "Advisory unless --fail-on is given. Never an approval.")
     add_map_inputs(sp)
+    sp.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
     sp.add_argument("--policy", metavar="PATH",
                     help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
     sp.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),

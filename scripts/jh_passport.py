@@ -19,6 +19,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_change
+import jh_capabilities
 import jh_graph as G
 import jh_map
 import jh_frameworks
@@ -147,6 +148,7 @@ def ai_inventory(map_report: Optional[Dict[str, Any]], items: Sequence[jh_map.It
 
 
 _PLAIN = {
+    "P-CAP-001": "Its requested access changed or remains unresolved. An engineer must review the comparison.",
     "P-COV-001": "We could not see enough of the project to judge it.",
     "P-OWN-001": "Nobody is named as the owner.",
     "P-CUS-001": "No engineer is named as its custodian, so nobody with engineering responsibility answers for it.",
@@ -439,7 +441,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           findings: Sequence[Any] = (), governance_findings: Optional[Sequence[Any]] = None,
           governance_tuned: Optional[Sequence[Any]] = None, governance_truncated: bool = False,
           profile: Optional[str] = None, change_control: Optional[Dict[str, Any]] = None,
-          package_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+          package_sources: Optional[Dict[str, Any]] = None,
+          capability_delta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -487,6 +490,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     pkg = package_sources if package_sources is not None else jh_registry.collect(items)
     reg = jh_registry.assess(pkg, eff.get("allowed_registries") or [])
     facts = {
+        "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "files_scanned": scan_files,
         "map_files_inspected": map_report["coverage"]["files_inspected"] if map_report else 0,
         "map_status": map_report["coverage"]["status"] if map_report else "none",
@@ -536,6 +540,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     graph_unknowns = map_report["unknowns"] if map_report else [{"id": "connectivity", "detail": "map not assessed"}]
     report: Dict[str, Any] = {
         "schema_version": PASSPORT_SCHEMA,
+        "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "tool": TOOL,
         "tool_version": VERSION,
         "source_revision": source_revision,
@@ -620,6 +625,12 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     """Shareable passport: no hostnames, labels, owners, or snippets."""
     import json
     rep = json.loads(json.dumps(report))
+    delta = rep.get("capability_delta")
+    if delta:
+        for i, row in enumerate(delta["requests"], 1):
+            row.update(principal="principal", target={"logical_name": "target-%d" % i}, evidence=[], witness=[])
+        delta["unknowns"] = [{"id": u["id"], "detail": "unresolved access"} for u in delta["unknowns"]]
+        delta["truncation"]["reasons"] = ["comparison incomplete"] if delta["truncation"]["reasons"] else []
     for i, src in enumerate(rep["data"].get("sources", []), 1):
         src["label"] = "%s-%d" % (src["kind"], i)
         src["node"] = "%s-%d" % (src["kind"], i)
@@ -734,6 +745,9 @@ def markdown(p: Dict[str, Any]) -> str:
                                    " (working tree dirty)" if p["subject"].get("working_tree_dirty") else ""),
              ""]
     gov = p.get("governance") or {}
+    if p.get("capability_delta", {}).get("state", "not-requested") != "not-requested":
+        lines += ["## Requested access changes", ""] + ["- " + jh_capabilities.markdown_line(line) for line in
+                  jh_capabilities.approver_lines(p["capability_delta"])] + [""]
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
     lines += ["## Why this decision", ""]

@@ -15,6 +15,8 @@ explainable policy. It is a **local assessment**:
 
 ## Commands
 
+For changes between committed revisions, see [requested access changes](capability-delta.md).
+
 ```sh
 jankhunt42 passport .                          # TTY: software passport; piped: Markdown
 jankhunt42 passport . --json                   # jankhunt.passport.v1

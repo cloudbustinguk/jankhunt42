@@ -131,13 +131,13 @@ def git_dirty(path: str) -> Optional[bool]:
 
 
 def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
-                max_bytes: int, prefix: str = "") -> Collected:
+                max_bytes: int, prefix: str = "", include_locks: bool = False) -> Collected:
     """Read a committed tree from git objects only. The working tree is never
     consulted, so dirty or untracked files cannot leak into a --base diff."""
     listing = _git(root, ["ls-tree", "-r", "-z", "--long", rev] + ([prefix] if prefix else []))
     col = Collected()
     wanted: List[Tuple[str, str]] = []
-    pats = list(excludes) + ["*.min.js", "*.min.css", "*.map", "*.snap", "*.lock"]
+    pats = list(excludes) + ["*.min.js", "*.min.css", "*.map", "*.snap"] + ([] if include_locks else ["*.lock"])
     for entry in listing.decode("utf-8", "replace").split("\0"):
         if not entry:
             continue
@@ -151,11 +151,13 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
             col.skip("symlink-or-submodule", rel)
             continue
         segs = rel.split("/")
+        scoped_rel = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel
         if any(s in DEFAULT_SKIP_DIRS for s in segs[:-1]):
             col.skip("excluded", rel)
             continue
-        if any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(segs[-1], p) for p in pats) \
-                or _is_skipped_file(Path(rel)):
+        if any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(scoped_rel, p) or fnmatch.fnmatch(segs[-1], p) for p in pats) \
+                or (_is_skipped_file(Path(rel)) and not (include_locks and segs[-1].lower() in
+                    {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock", "pipfile.lock"})):
             col.skip("excluded", rel)
             continue
         try:
