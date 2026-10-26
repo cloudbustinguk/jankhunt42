@@ -4,6 +4,25 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.9.2] — 2026-10-26
+
+From the third agent's proposal A7, verified by the maintainer.
+
+### Changed
+
+- **Faster on large repositories, with identical results.** The tokenizer
+  that splits each file into code, comment and string views now jumps
+  straight to the next character that could open a string, comment or
+  regular expression, instead of stepping through every character. On a
+  1.3-million-line TypeScript repository, `scan` takes 12% less time
+  (37.1 s to 32.6 s) and `passport` 10% less (75.8 s to 68.1 s), with
+  byte-identical output.
+  - The views are identical for all 70,386 files of the maintainer's test
+    corpora (35 languages) and for 11,535 constructed cases, including
+    unterminated strings, nested templates, heredocs, regular expressions
+    and very long lines.
+  - New `tests/test_tokenizer.py`; mutants M56 to M63.
+
 ## [2.9.1] — 2026-10-26
 
 From mass-test batches b14 to b16 and the mass tester's verification pass.

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.9.1"
+VERSION = "2.9.2"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -423,6 +423,14 @@ class _Sanitizer:
         self.regex = lang in ("js", "ts", "vue", "svelte")
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
+        starts = {token[0] for token in self.quotes}
+        starts.update(start[0] for start, _ in self.blocks)
+        starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))
+        starts.update(token[0] for token in _WS_LINE_COMMENTS.get(lang, ()))
+        if self.regex:
+            starts.add("/")
+        self.opener_chars = "".join(sorted(starts))
+        self.openers = re.compile("[" + re.escape(self.opener_chars) + "]") if starts else None
 
     def run(self, text: str) -> Tuple[List[str], List[str], List[str]]:
         code_lines: List[str] = []
@@ -507,6 +515,13 @@ class _Sanitizer:
             if self.str_end is not None:
                 i = self._consume_string(line, code, i, n)
                 continue
+            # Ordinary spans cannot change lexical state or mask a character.
+            # Visit every possible opener; the existing state machine decides it.
+            if line[i] not in self.opener_chars:
+                opener = self.openers.search(line, i) if self.openers is not None else None
+                if opener is None:
+                    return
+                i = opener.start()
             block_i = self._start_block(line, code, nc, comments, i)
             if block_i is not None:
                 i = block_i

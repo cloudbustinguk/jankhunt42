@@ -183,6 +183,27 @@ MUTANTS = [
     ("M55-jh702-any-json-key-descriptive", "the bypass flag under any JSON key (a devcontainer's postCreateCommand) "
      "drops to minor", "jh_rules.py", "            return bool(_DESCRIPTIVE_KEY_RE.match(m.group(1)))",
      "            return True", "test_precision.py"),
+    ("M56-tokenizer-quotes-skipped", "ordinary-span skipping overlooks string openers", "jh_core.py",
+     '        starts = {token[0] for token in self.quotes}', '        starts = set()', "test_tokenizer.py"),
+    ("M57-tokenizer-line-comments-skipped", "ordinary-span skipping overlooks unconditional comments", "jh_core.py",
+     '        starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))', '        pass',
+     "test_tokenizer.py"),
+    ("M58-tokenizer-space-comments-skipped", "ordinary-span skipping overlooks whitespace-sensitive comments",
+     "jh_core.py", '        starts.update(token[0] for token in _WS_LINE_COMMENTS.get(lang, ()))',
+     '        pass', "test_tokenizer.py"),
+    ("M59-tokenizer-block-comments-skipped", "ordinary-span skipping overlooks block openers", "jh_core.py",
+     '        starts.update(start[0] for start, _ in self.blocks)', '        pass', "test_tokenizer.py"),
+    ("M60-tokenizer-regex-skipped", "a regex opener is missed in an embedded language", "jh_core.py",
+     '        if self.regex:\n            starts.add("/")', '        if False:\n            starts.add("/")',
+     "test_tokenizer.py"),
+    ("M61-tokenizer-active-block-lost", "active block state is ignored before ordinary-span skipping", "jh_core.py",
+     '            if self.block_end is not None:', '            if False:', "test_tokenizer.py"),
+    ("M62-tokenizer-active-string-lost", "active string state is ignored before ordinary-span skipping", "jh_core.py",
+     '            if self.str_end is not None:', '            if False:', "test_tokenizer.py"),
+
+    ("M63-tokenizer-real-opener-overrun", "a skipped span consumes a real lexical opener", "jh_core.py",
+     '                i = opener.start()', '                i = opener.end()', "test_tokenizer.py"),
+
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
