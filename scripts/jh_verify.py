@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_supply
-from jh_core import TOOL, VERSION, safe_text
+from jh_core import TOOL, VERSION, run_git, safe_text
 
 PLAN_SCHEMA = "jankhunt.verify.v1"
 API = "https://api.github.com"
@@ -703,7 +703,7 @@ def _verify_jfrog(plan: Dict[str, Any], tools: _Tools, scrub: _Scrub, spec: Dict
 
 def _git_head(root: str) -> Optional[str]:
     try:
-        proc = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], stdin=subprocess.DEVNULL,
+        proc = run_git(["git", "-C", root, "rev-parse", "HEAD"], stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return None

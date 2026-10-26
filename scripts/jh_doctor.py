@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from jh_core import TOOL, VERSION
+from jh_core import TOOL, VERSION, run_git
 
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target",
@@ -62,8 +62,9 @@ class DoctorResult:
 
 def _run(cmd: Sequence[str], cwd: Optional[str] = None, timeout: float = 2.5) -> Tuple[int, str]:
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                              timeout=timeout, errors="replace")
+        run = run_git if list(cmd[:2]) == ["git", "-C"] else subprocess.run
+        proc = run(cmd, cwd=cwd, capture_output=True, text=True,  # type: ignore[operator]
+                   timeout=timeout, errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, str(exc)
     out = (proc.stdout or "") + (proc.stderr or "")

@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import jh_agent
 import jh_yaml
-from jh_core import Finding, Rule, SourceFile, is_test_path, make_finding, redact_secrets, trim
+from jh_core import Finding, Rule, SourceFile, is_test_path, make_finding, redact_secrets, run_git, trim
 
 CHECKS: Dict[str, object] = {}
 
@@ -175,6 +175,25 @@ def _try_body(sf: SourceFile, i: int, python: bool) -> str:
     return text[:close]
 
 
+# an exception clause that names only import-time errors.
+_IMPORT_ERR_RE = re.compile(r"^(?:ModuleNotFoundError|ImportError)$")
+
+
+def _except_only_import_error(clause: str) -> bool:
+    """True if the exception clause (the text between `except` and `:`) names ONLY
+    ImportError and/or ModuleNotFoundError — a single name or a parenthesised tuple
+    of just those two, with an optional `as name`. Those are import-time errors;
+    they never wrap the OSError a failed write/save raises, so an empty handler
+    that catches only them cannot hide a write failure (the JH201 concern). Keep
+    firing on `except Exception`, a bare `except`, or anything that also catches
+    OSError."""
+    clause = re.sub(r"\bas\s+\w+\s*$", "", clause.strip()).strip()     # drop a trailing `as name`
+    if clause.startswith("(") and clause.endswith(")"):
+        clause = clause[1:-1]
+    parts = [p.strip() for p in clause.split(",") if p.strip()]        # drop empties (a trailing comma: `(ImportError,)`)
+    return bool(parts) and all(_IMPORT_ERR_RE.match(p) for p in parts)
+
+
 @check("empty_handler")
 def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
@@ -187,11 +206,13 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
 
     if sf.lang == "python":
         for i, line in enumerate(sf.code):
-            m = re.match(r"^(\s*)except\b[^:]*:\s*(pass|\.\.\.)?\s*$", line)
+            m = re.match(r"^(\s*)except\b([^:]*?):\s*(pass|\.\.\.)?\s*$", line)
             if not m:
                 continue
             base = indent_of(line)
-            same = m.group(2)
+            same = m.group(3)
+            if _except_only_import_error(m.group(2)):
+                continue           # ImportError/ModuleNotFoundError only: an empty handler here can't swallow the OSError a write raises
             if same:
                 if not _explains(sf.raw[i], "#"):          # a comment saying why makes it deliberate
                     add(i, i, "The except block contains only '%s'." % same)
@@ -565,7 +586,7 @@ def _git_root(path: str) -> Optional[str]:
     if d in _GIT_ROOT_CACHE:
         return _GIT_ROOT_CACHE[d]
     try:
-        proc = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+        proc = run_git(["git", "-C", d, "rev-parse", "--show-toplevel"],
                               capture_output=True, text=True, timeout=5)
         root = proc.stdout.strip() if proc.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
@@ -583,7 +604,7 @@ def _is_tracked(path: str) -> Optional[bool]:
         return None
     rel = os.path.relpath(path, root)
     try:
-        proc = subprocess.run(["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
+        proc = run_git(["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
                               capture_output=True, timeout=5)
         tracked = proc.returncode == 0
     except (OSError, subprocess.SubprocessError):

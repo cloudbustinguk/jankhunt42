@@ -20,6 +20,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from jh_core import (  # noqa: E402
+    run_git,
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, discover_files, load_source,
     make_finding, sev_at_least,
 )
@@ -796,7 +797,7 @@ def _load_branch_rules(path: str) -> object:
 def _default_branch(root: str) -> str:
     """The remote's default branch from git, else main."""
     try:
-        proc = subprocess.run(["git", "-C", root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        proc = run_git(["git", "-C", root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
                               capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return "main"

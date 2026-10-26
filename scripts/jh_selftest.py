@@ -111,6 +111,14 @@ MUTANTS = [
      "    if True:", "test_fence.py"),
     ("M30-fence-production-included", "a production asset goes into the agent's sandbox fence", "jh_fence.py",
      '        if n.get("environment") == "production":', "        if False:", "test_fence.py"),
+    ("M31-git-config-not-overridden", "git runs the repository's own fsmonitor hook, hooks and signature program",
+     "jh_core.py", '    opts = [a for kv in _GIT_SAFE_CONFIG for a in ("-c", kv)]', "    opts = []",
+     "test_git_safety.py"),
+    ("M32-git-filters-not-blanked", "git runs a filter program named by the repository", "jh_core.py",
+     "    filters = _git_filter_overrides(root)", "    filters = []", "test_git_safety.py"),
+    ("M33-git-textconv-allowed", "git diff runs a text converter named by the repository", "jh_core.py",
+     '        rest = [rest[0], "--no-ext-diff", "--no-textconv"] + rest[1:]', "        rest = rest",
+     "test_git_safety.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -14,7 +14,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from jh_core import SEV_RANK, SEVERITIES, TOOL, VERSION, redact_secrets, trim
+from jh_core import SEV_RANK, SEVERITIES, TOOL, VERSION, redact_secrets, run_git, trim
 import jh_score
 
 # ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ def _git_state(root: str) -> Dict[str, Any]:
     state: Dict[str, Any] = {"available": False}
     try:
         def git(*args: str) -> str:
-            proc = subprocess.run(
+            proc = run_git(
                 ["git", "-C", base] + list(args),
                 capture_output=True, text=True, timeout=8,
             )

@@ -33,7 +33,7 @@ import jh_agent
 import jh_egress
 import jh_graph as G
 import jh_yaml
-from jh_core import (TOOL, VERSION, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
+from jh_core import (TOOL, VERSION, run_git, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
 
 
@@ -98,7 +98,7 @@ class GitError(Exception):
 
 def _git(root: str, args: Sequence[str], data: Optional[bytes] = None, timeout: int = 60) -> bytes:
     try:
-        proc = subprocess.run(["git", "-C", root] + list(args), input=data, capture_output=True,
+        proc = run_git(["git", "-C", root] + list(args), input=data, capture_output=True,
                               timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         raise GitError(str(exc))

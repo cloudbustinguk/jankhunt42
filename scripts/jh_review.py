@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from jh_core import (
+from jh_core import (  # noqa: F401
+    run_git,
     Finding,
     safe_text,
     GENERATED_RE,
@@ -83,7 +84,7 @@ class DiffScope:
 
 def _run_git(root: str, args: Sequence[str], timeout: int = 45) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", root] + list(args), capture_output=True,
+        return run_git(["git", "-C", root] + list(args), capture_output=True,
                               text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ReviewError(str(exc))
@@ -295,7 +296,7 @@ def collect_diff(root: str, mode: str, base: str = "", commit: str = "",
 
 def _git_show(root: str, rev: str, rel: str) -> Optional[str]:
     try:
-        proc = subprocess.run(
+        proc = run_git(
             ["git", "-C", root, "show", "%s:%s" % (rev, rel)],
             capture_output=True, timeout=30,
         )
@@ -311,7 +312,7 @@ def _git_show(root: str, rev: str, rel: str) -> Optional[str]:
 
 def _index_text(root: str, rel: str) -> Optional[str]:
     try:
-        proc = subprocess.run(["git", "-C", root, "show", ":%s" % rel],
+        proc = run_git(["git", "-C", root, "show", ":%s" % rel],
                               capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None

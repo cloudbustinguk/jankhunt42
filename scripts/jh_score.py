@@ -23,7 +23,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from jh_core import Finding, SEV_RANK, SEVERITIES
+from jh_core import Finding, SEV_RANK, SEVERITIES, run_git
 
 SCORE_VERSION = "2.0"
 
@@ -356,7 +356,7 @@ def changed_lines(root: str, since: str = "HEAD") -> Tuple[Optional[Dict[str, Se
     Read-only. Returns (None, warning) when git or the revision is unavailable.
     """
     try:
-        proc = subprocess.run(
+        proc = run_git(
             ["git", "-C", root, "diff", "--unified=0", "--no-color", "--no-ext-diff",
              "--no-prefix", str(since), "--"],
             capture_output=True, text=True, timeout=30,

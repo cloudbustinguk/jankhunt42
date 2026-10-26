@@ -1036,8 +1036,19 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                        "signatures, passwords or tokens.")
                     if rule.id == "JH108" and m.group(0).startswith("debug") and not _web_debug(sf, idx, m.start()):
                         continue            # a library's verbosity flag, not a web debug server
+                    if (rule.id == "JH103" and pat.pattern == r"\bshell\s*=\s*True\b"
+                            and _shell_true_constant(sf, idx, m.start())):
+                        severity, confidence = "minor", "medium"
+                        message = (rule.message + " The command is a fixed literal with no interpolated or "
+                                   "concatenated value, so nothing attacker-controlled reaches the shell; a "
+                                   "minor hygiene note, not a shell-injection.")
                     if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
+                    if rule.id == "JH103" and "ProcessBuilder" in pat.pattern and \
+                            _processbuilder_shell(sf.nocomment[idx - 1][m.start():]) == "minor":
+                        severity, confidence = "minor", "low"
+                        message = (rule.message + " ProcessBuilder runs no shell itself; its single argument hides "
+                                   "what runs, so check that it never starts a shell with -c.")
                     if rule.id in ("JH124", "JH125", "JH126") and _constant_html(sf, idx, m.end()):
                         continue
                     if rule.id in ("JH124", "JH125", "JH126"):
@@ -1345,19 +1356,76 @@ _SHELL_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "ash", "fi
                    "pwsh", "su", "sudo", "doas", "env", "nohup", "xargs", "ssh", "script"}
 
 
+# a ProcessBuilder call that hands a shell a "-c" command string (e.g.
+# "bash", "-c" or '/bin/sh', '-c'): separate arguments run no shell of their own,
+# so this is the only shape of theirs that actually invokes a shell. Either quote
+# style — Java/ProcessBuilder double quotes or Kotlin single quotes.
+_SHELL_ARGV_RE = re.compile(
+    r'"(?:[^"\\]*/)?(?:sh|bash|dash|zsh|ksh|csh|tcsh|ash|fish|busybox)"\s*,\s*"-c"'
+    r'|'
+    r"'(?:[^'\\]*/)?(?:sh|bash|dash|zsh|ksh|csh|tcsh|ash|fish|busybox)'\s*,\s*'-c'")
+
+
+def _processbuilder_shell(tail: str) -> Optional[str]:
+    """ProcessBuilder runs no shell of its own. "major" when its arguments hand a
+    shell a -c command; None when they are separate arguments naming the program
+    (ProcessBuilder(node, "--version")); "minor" when a single list or spread
+    argument (ProcessBuilder(cmd), ProcessBuilder(*command)) hides what runs."""
+    m = re.match(r"ProcessBuilder\s*\((.*)", tail)
+    args = m.group(1) if m else ""
+    if _SHELL_ARGV_RE.search(tail) or re.search(r"[\"']-c[\"']", args):
+        return "major"
+    depth, buf, parts = 0, "", []
+    for ch in args:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    parts = [p.strip() for p in parts + [buf] if p.strip()]
+    if not parts or len(parts) == 1 and not re.match(r"[\"']|(?:List\.of|Arrays\.asList|listOf|mutableListOf)\s*\(",
+                                                     parts[0]):
+        return "minor"
+    return None
+
+
 def _argv_without_shell(sf: SourceFile, idx: int, col: int, pattern: str) -> bool:
-    """Runtime.exec(new String[]{"prog", ...}) and new ProcessBuilder("prog", ...)
-    name the program as a literal: unless it is a shell or runs commands
-    (su, env, ssh...), nothing parses the arguments. Read from the match on."""
-    if "Runtime" not in pattern and "ProcessBuilder" not in pattern:
-        return False
-    call = " ".join([sf.nocomment[idx - 1][col:]] + sf.nocomment[idx:idx + 2])
-    m = re.match(r"(?:Runtime\.getRuntime\(\)\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{|ProcessBuilder\s*\(\s*"
-                 r"(?:(?:List\.of|Arrays\.asList)\s*\()?)\s*\"([^\"\\]*)\"", call)
+    """Runtime.exec(new String[]{"prog", ...}) and new ProcessBuilder(...) name the
+    program explicitly, so no shell parses the arguments. Runtime is reported only
+    when the literal program is itself a shell or command runner (sh, su, env,
+    ssh...); ProcessBuilder with separate arguments runs no shell at all and is
+    reported only when the arguments visibly hand a shell a "-c" command. The
+    other JH103 forms (shell=True, os.system, execSync...) are left to the caller.
+    Read from the match on."""
+    tail = sf.nocomment[idx - 1][col:]
+    if "ProcessBuilder" in pattern:
+        return _processbuilder_shell(tail) is None
+    call = tail + " " + " ".join(sf.nocomment[idx:idx + 2])
+    m = re.match(r"Runtime\.getRuntime\(\)\.exec\s*\(\s*new\s+String\s*\[\s*\]\s*\{\s*\"([^\"\\]*)\"", call)
     if not m:
         return False
     program = re.split(r"[\\/]", m.group(1).strip())[-1].lower()
     return bool(program) and re.sub(r"\.exe$", "", program) not in _SHELL_PROGRAMS
+
+
+# the command is the call's first argument and a plain literal (r/b/u prefixes, never f), followed
+# directly by , or ): "ls %s" % x, "ls {}".format(x), "git diff " + arg and a variable all fail to match
+_SHELL_CALL_LITERAL_RE = re.compile(
+    r"\b(?:subprocess\.)?(?:run|call|Popen|check_output|check_call)\s*\(\s*[rRbBuU]{0,2}"
+    r"(?P<q>['\"])(?:(?!(?P=q))[^\\\n]|\\.)*(?P=q)\s*[,)]")
+
+
+def _shell_true_constant(sf: SourceFile, idx: int, col: int) -> bool:
+    """`shell=True` on a call whose command is a fixed literal: nothing attacker-
+    controlled reaches the shell, so it is minor. An f-string, % or .format()
+    formatting, concatenation, or a variable command stays major."""
+    return bool(_SHELL_CALL_LITERAL_RE.search(sf.nocomment[idx - 1][:col]))
 
 
 def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:

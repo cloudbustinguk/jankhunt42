@@ -8,7 +8,7 @@
 
 jankhunt42 is a local-first investigation and assurance toolkit. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.7.3 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.7.4 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -217,7 +217,7 @@ Suppress a confirmed false positive inline, with a reason: `# jankhunt42: ignore
   `map` and `passport` never resolve, probe, or connect to anything they find.
 - **Redaction.** Credentials, URL userinfo, query strings, connection-string secrets, keys, tokens and emails are removed before anything is hashed, displayed or stored. Repository control characters are neutralized before they reach a terminal. HTML output escapes everything and runs under a no-network content security policy.
 - **Sharing.** A connectivity graph can reveal internal topology, so use `--redact` for anything you share. Generated artifacts contain relative paths only.
-- **Untrusted repositories.** jankhunt42 never executes repository code. Instructions embedded in repository content are data, not commands.
+- **Untrusted repositories.** jankhunt42 never executes repository code. Instructions embedded in repository content are data, not commands. Its Git calls switch off every way a repository's own configuration can name a program (hooks, fsmonitor, clean/smudge filters, diff drivers and text converters, signature checking), never write the index or use the network, and ignore inherited `GIT_*` variables. A test proves each of these runs under plain Git and never under jankhunt42.
 
 ## Install as an agent skill
 

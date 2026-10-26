@@ -15,3 +15,6 @@ __pycache__/
 .opencode/
 .cursor/
 .codex/
+
+# local notes and agent discourse: never committed
+/docs/

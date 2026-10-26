@@ -9,10 +9,10 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "2.7.3"
+VERSION = "2.7.4"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -571,9 +571,75 @@ def _is_skipped_file(path: Path) -> bool:
     return False
 
 
+# Git reads the repository's own .git/config, attributes and hooks, and an untrusted folder controls
+# all three: core.fsmonitor and hooks run programs, diff drivers and filters run converters, and
+# log.showSignature runs gpg.program. Every git call goes through run_git(), which overrides those
+# settings on the command line (it outranks the repository's config), runs no hooks, never writes
+# the index, never uses the network, and drops inherited GIT_* variables.
+_GIT_SAFE_CONFIG = (
+    "core.fsmonitor=false", "core.hooksPath=/dev/null", "core.untrackedCache=false",
+    "diff.external=", "core.pager=cat", "log.showSignature=false", "gpg.program=false",
+    "credential.helper=", "core.askPass=", "protocol.allow=never",
+    "submodule.recurse=false", "diff.ignoreSubmodules=all", "status.submoduleSummary=false",
+)
+_GIT_DIFF_COMMANDS = ("diff", "log", "show")
+_git_filter_cache: Dict[str, List[Tuple[str, str]]] = {}
+
+
+def git_env(extra: Sequence[Tuple[str, str]] = ()) -> Dict[str, str]:
+    """The caller's environment without GIT_* variables (GIT_DIR, GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND,
+    GIT_CONFIG_*), plus no optional index writes, no prompts, and `extra` as command-line config."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", GIT_PAGER="cat")
+    if extra:
+        # GIT_CONFIG_KEY_n/VALUE_n keep key and value apart, so a filter named "a=b" is still overridden
+        env["GIT_CONFIG_COUNT"] = str(len(extra))
+        for n, (key, value) in enumerate(extra):
+            env["GIT_CONFIG_KEY_%d" % n], env["GIT_CONFIG_VALUE_%d" % n] = key, value
+    return env
+
+
+def _git_filter_overrides(root: str) -> List[Tuple[str, str]]:
+    """Every configured filter driver, blanked: a clean, smudge or process command of "" runs nothing."""
+    if root not in _git_filter_cache:
+        names: Set[str] = set()
+        try:
+            proc = subprocess.run(["git", "-C", root] + [a for kv in _GIT_SAFE_CONFIG for a in ("-c", kv)] +
+                                  ["config", "-z", "--get-regexp", r"^filter\..*\.(clean|smudge|process)$"],
+                                  capture_output=True, timeout=10, env=git_env(), stdin=subprocess.DEVNULL)
+            for entry in proc.stdout.decode("utf-8", "replace").split("\0"):
+                key = entry.split("\n", 1)[0]
+                if key.startswith("filter.") and key.count(".") >= 2:
+                    names.add(key[len("filter."):key.rfind(".")])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        _git_filter_cache[root] = [("filter.%s.%s" % (n, part), "") for n in sorted(names)
+                                   for part in ("clean", "smudge", "process")]
+    return _git_filter_cache[root]
+
+
+def run_git(argv: Sequence[str], **kwargs: object) -> "subprocess.CompletedProcess[Any]":
+    """subprocess.run for `["git", "-C", root, command, ...]` on a repository that may be hostile."""
+    argv = [str(a) for a in argv]
+    if argv[:2] != ["git", "-C"] or len(argv) < 4:
+        raise ValueError("run_git expects ['git', '-C', root, command, ...]")
+    root, rest = argv[2], argv[3:]
+    if rest[0] in _GIT_DIFF_COMMANDS:
+        rest = [rest[0], "--no-ext-diff", "--no-textconv"] + rest[1:]
+    if "input" not in kwargs and "stdin" not in kwargs:
+        kwargs["stdin"] = subprocess.DEVNULL
+    opts = [a for kv in _GIT_SAFE_CONFIG for a in ("-c", kv)]
+    filters = _git_filter_overrides(root)
+    # the environment carries every filter override (git 2.31+); -c repeats those whose names can be
+    # written as key=value, for older git
+    opts += [a for key, value in filters if "=" not in key and "\n" not in key for a in ("-c", key + "=" + value)]
+    return subprocess.run(["git", "-C", root] + opts + rest,  # type: ignore[call-overload]
+                          env=git_env(filters), **kwargs)
+
+
 def _git_files(root: Path) -> Optional[List[str]]:
     try:
-        proc = subprocess.run(
+        proc = run_git(
             ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
             capture_output=True, timeout=25,
         )

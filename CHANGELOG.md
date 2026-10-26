@@ -4,6 +4,50 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.7.4] — 2026-10-26
+
+From mass-test batch b08 and an adversarial review by a third agent (Codex
+CLI). Each change was verified, and where needed corrected, by the
+maintainer.
+
+### Security
+
+- **Static commands no longer run code that a repository's own Git
+  configuration names.** With a repository-local setting, 2.7.3 ran it:
+  even `scan` ran a `core.fsmonitor` hook through `git ls-files`, and
+  `review` ran a `diff.<driver>.textconv` converter. Normal clones do not
+  copy `.git/config`, but a shared folder or archive that includes `.git/`
+  does.
+  - Every Git call now goes through one runner. It overrides, on the
+    command line, fsmonitor, hooks, external diff, pager,
+    `log.showSignature`/`gpg.program`, credential helpers, network
+    transport and submodule recursion.
+  - It blanks every configured clean, smudge and process filter by name,
+    including names containing `=`.
+  - It adds `--no-ext-diff --no-textconv` to diffs.
+  - It never writes the index (`GIT_OPTIONAL_LOCKS=0`), so index hooks
+    cannot fire.
+  - It drops inherited `GIT_*` variables.
+  - `tests/test_git_safety.py` proves that seven such paths run under
+    plain Git and that none of them runs under `scan`, `map`, `map --base`,
+    `passport`, `review`, `review --base`, `doctor` or `score --since`.
+    New mutants M31 to M33 guard the overrides, the filter blanking and
+    the diff flags.
+
+### Fixed
+
+- `JH103`: `shell=True` whose command is a fixed literal (the call's first
+  argument, followed directly by a comma) is minor. An f-string, `%` or
+  `.format()` formatting, concatenation, or a variable command stays
+  major. `ProcessBuilder` runs no shell itself: separate arguments are not
+  reported, a visible `"sh", "-c"` is major, and a single list or spread
+  argument that hides what runs is minor.
+- `JH201`: an empty Python handler that catches only `ImportError` or
+  `ModuleNotFoundError` is not reported. It cannot swallow the `OSError` a
+  failed write raises, and it is the usual optional-import idiom.
+  `except Exception`, a bare `except`, and any tuple that also catches
+  `OSError` still are.
+
 ## [2.7.3] — 2026-10-26
 
 From mass-test batches b06 and b07. Each fix arrived as a tested proposal
