@@ -22,6 +22,7 @@ SKIP = [
     ("--pr", "needs the GitHub CLI and a checked-out pull request"),
     ("selftest", "selftest runs this suite; executing it here would recurse"),
     ("--online", "lets --verify fetch from GitHub; the suite is offline"),
+    ("detonate", "needs a container engine and the detonate image; tests/test_detonate.py covers it"),
     ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "
                                   "covers it"),
 ]

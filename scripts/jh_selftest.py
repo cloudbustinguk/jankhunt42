@@ -204,6 +204,11 @@ MUTANTS = [
     ("M63-tokenizer-real-opener-overrun", "a skipped span consumes a real lexical opener", "jh_core.py",
      '                i = opener.start()', '                i = opener.end()', "test_tokenizer.py"),
 
+    ("M72-detonate-network-on", "the detonate sandbox runs with a network", "jh_detonate.py",
+     '"--network=none", "--read-only"', '"--read-only"', "test_detonate.py"),
+    ("M73-detonate-canary-read-ignored", "reading a canary credential is not reported", "jh_detonate.py",
+     "            if f and f.group(1) in paths and not re.search", "            if False and re.search",
+     "test_detonate.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

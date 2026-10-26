@@ -4,6 +4,42 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.0.0] — 2026-10-26
+
+### Added
+
+- **`jankhunt42 detonate`: run the install hooks in a sandbox and log what
+  they try.** Static analysis says what code could do; `detonate` runs a
+  repository's own npm hooks (`preinstall`, `install`, `postinstall`,
+  `prepare`) and Python build (`setup.py`, a pyproject backend) in a
+  disposable rootless container and reports what they attempt.
+  - **The sandbox:**
+    - the network is off;
+    - the root filesystem is read-only;
+    - every capability is dropped, with `no-new-privileges`;
+    - processes, memory, CPU and time are limited;
+    - the repository is snapshotted without `.git` or followed links;
+    - fresh, never-issued canary credentials (AWS, GitHub, npm, SSH, `.env`)
+      sit in a throwaway, read-only home;
+    - everything is deleted afterwards.
+  - **The audit log:**
+    - DENY for every attempted connection and every DNS name, from a
+      loopback DNS sink;
+    - ALERT for a canary read, a canary passed to a program or written to
+      a socket, and a write into a startup or login path;
+    - INFO for expected behaviour, such as npm reading its own `~/.npmrc`.
+
+    Each event names the command and hook that caused it. Reports carry
+    canary IDs, never values.
+  - **The evidence tier is `sandbox-observed`:** it adds to static findings
+    and never refutes them. Coverage is `partial` when dependencies were
+    not installed (the network is off), a hook timed out, or a trace is
+    missing.
+  - It is opt-in, needs podman or docker and an image built once from
+    `templates/detonate.Containerfile`, and never pulls an image or builds
+    a repository's Dockerfile.
+  - See `references/detonate.md`. New mutants M72 and M73.
+
 ## [2.9.4] — 2026-10-26
 
 From mass-test batch b18.

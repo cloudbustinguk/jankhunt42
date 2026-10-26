@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.9.4"
+  version: "3.0.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -190,6 +190,12 @@ jankhunt42 passport . --profile citizen       # strict decision with a plain-lan
 - **To gate citizen pull requests,** point the operator to `templates/citizen-gate.yml`: a required workflow with a read-only token whose policy and ruleset export live in a protected repository. Never put the operator policy inside the citizen's repository.
 
 Failure classes, the agent blast radius, the profile table, and limits: `references/citizen.md`.
+
+## Detonate (opt-in)
+
+`jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) in a disposable rootless container. The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.
+
+**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. Details: `references/detonate.md`.
 
 ## Deep hunt (opt-in)
 
