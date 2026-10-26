@@ -332,7 +332,7 @@ def return_in_finally(sf: SourceFile, rule: Rule) -> List[Finding]:
 _BLOCKING = re.compile(
     r"\b(?:time\.sleep|requests\.(?:get|post|put|patch|delete|head|request)|"
     r"urllib\.request\.|subprocess\.(?:run|call|check_output|check_call)|"
-    r"os\.system|os\.popen|socket\.(?:create_connection|socket))\s*\("
+    r"os\.system|os\.popen|socket\.create_connection)\s*\("     # socket.socket() and bind() do not wait
 )
 # subprocess.Popen(...) returns a handle and does not stall the loop; waiting on it does: a trailing
 # .wait()/.communicate(), the same call on the handle later (proc.communicate()), or leaving a
@@ -2492,8 +2492,9 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
             for m in pat.finditer(line):
                 if re.search(r"\bdef\s+$", line[:m.start()]) or (
                         re.match(r"^\s*(?:(?:async|static|public|private|protected)\s+)*$", line[:m.start()])
-                        and re.match(r"\w+\s*\([^)]*\)\s*(?::\s*[\w<>\[\], |]+)?\s*\{", line[m.start():])):
-                    continue                # `def exec(self, ...)` or `async eval(expr) {` defines a method
+                        and re.match(r"\w+\s*\([^)]*\)\s*(?::\s*[\w<>\[\], |]+)?\s*\{|"
+                                     r"\w+\s*\([^)]*\)\s*:\s*[\w<>\[\], |.]+;?\s*$", line[m.start():])):
+                    continue                # `def exec(self, ...)`, `async eval(expr) {` or `eval(s: string): T;` declares one
                 lit = _EXEC_LITERAL_RE.match(raw, m.start())
                 if lit and not re.search(r"[$%{}`]|#\{", lit.group(2)):
                     continue
@@ -2520,6 +2521,8 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
             m = pat.search(line)
             if not m:
                 continue
+            if "insecure" in pat.pattern and re.search(r"\b(?:expect|assert\w*)\s*\(|\.to[A-Z]\w*\s*\(", line):
+                break                       # an expected value in a test (toMatchObject({insecure: true}))
             if "verify" in pat.pattern:
                 callee = _enclosing_callee(sf.code, i, m.start())
                 if callee is None:

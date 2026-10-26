@@ -404,6 +404,24 @@ class Scanner(unittest.TestCase):
                                 "  api_key: \"OmniサーバーのAPIキーを指定\",\n};\n"
                                 "export const hi = {\n  api_key: \"सर्वर की API कुंजी दर्ज करें\",\n};\n"
                                 "export const cfg = {\n  api_key: \"Q7vX2mK9pL4wR8tZ3nB6\",\n};\n"),
+        # soak b16 (all invented): a TypeScript method declaration named eval, fixed SQL strings joined with +,
+        # an expected value in a test, and a socket created for asyncio; each beside its real lead
+        "src/quota_store.ts": ("export interface ScriptStore {\n  get(key: string): Promise<string | null>;\n"
+                               "  eval(script: string, numkeys: number, ...args: unknown[]): Promise<unknown>;\n}\n"
+                               "export function run(code: string) {\n  eval(code);\n}\n"),
+        "src/db/overrides.ts": ("export function drop(db, p, m) {\n  return db\n    .prepare(\n"
+                                "      \"DELETE FROM capability_overrides \" +\n"
+                                "        \"WHERE provider = ? AND model_id = ?\"\n    )\n    .run(p, m);\n}\n"
+                                "export function dropOne(db, p) {\n  return db.prepare(\"DELETE FROM capability_overrides \" +\n"
+                                "    \"WHERE provider = '\" + p + \"'\").run();\n}\n"),
+        "web/test/link.test.ts": ("it('flags plain http', () => {\n"
+                                  "  expect(linkOf('http://a.example.test/')).toMatchObject({ host: 'a.example.test', insecure: true })\n"
+                                  "})\n"),
+        "web/src/agent.ts": "const agent = new https.Agent({ insecure: true });\n",
+        "py/bridge.py": ("import asyncio\nimport socket\n\n\nasync def serve():\n"
+                         "    sock = socket.socket(); sock.bind(('127.0.0.1', 0)); sock.listen(16)\n"
+                         "    return sock\n\n\nasync def dial(host):\n"
+                         "    return socket.create_connection((host, 443))\n"),
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
@@ -878,6 +896,13 @@ class Scanner(unittest.TestCase):
 
     def test_soak_b15_translated_label_is_not_a_secret(self):
         self.assertEqual(self.lines("JH101", "bin/gen-locales.mjs"), [9])
+
+    def test_soak_b16_declarations_constants_and_expectations(self):
+        self.assertEqual(self.lines("JH102", "src/quota_store.ts"), [6])
+        self.assertEqual(self.lines("JH104", "src/db/overrides.ts"), [10])
+        self.assertEqual(self.hits("JH105", "web/test/link.test.ts"), [])
+        self.assertEqual(self.lines("JH105", "web/src/agent.ts"), [1])
+        self.assertEqual(self.lines("JH210", "py/bridge.py"), [11])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])

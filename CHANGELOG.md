@@ -4,6 +4,28 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.8.1] — 2026-10-26
+
+From mass-test batch b16, verified by the maintainer against invented
+probes and the test corpora (eight findings dropped, none added).
+
+### Fixed
+
+- `JH102`: a TypeScript method declaration named `eval`, with a return type
+  (`eval(script: string, ...args: unknown[]): Promise<unknown>;` in an
+  interface), declares a method; it does not call one. A real `eval(code);`
+  is still reported.
+- `JH104`: SQL made of fixed strings joined with `+`
+  (`"DELETE FROM t " + "WHERE id = ?"`), up to the end of the argument, is
+  not dynamic. Any f-string, template, interpolated (`$"..."`) string, `%`
+  formatting or variable in the chain is still reported.
+- `JH105`: `insecure: true` inside a test expectation
+  (`expect(...).toMatchObject({ insecure: true })`) describes a result; it
+  turns nothing off.
+- `JH210`: creating, binding or listening on a socket in an `async def` does
+  not block (asyncio's `loop.sock_*` functions need exactly that).
+  `socket.create_connection` still does.
+
 ## [2.8.0] — 2026-10-26
 
 From the third agent's adversarial review (finding A2), revised by the

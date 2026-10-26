@@ -1312,6 +1312,10 @@ def _quoted_hint(sf: SourceFile, line: str, m: "re.Match[str]") -> Optional[str]
     return None
 
 
+_PLAIN_LIT = r"""(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')"""
+_CONST_CONCAT_RE = re.compile(r"\s*(?:%s\s*\+\s*)*%s\s*[),;]" % (_PLAIN_LIT, _PLAIN_LIT))
+
+
 def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", pattern: str) -> bool:
     """False for what looks like dynamic SQL but is not: a query()/exec()
     built by concatenation with nothing database- or SQL-shaped on the line
@@ -1328,6 +1332,11 @@ def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", patter
             interp = [k for k in (line.find("${", m.start()), line.find("#{", m.start())) if k >= 0]
             if close >= 0 and interp and close < min(interp):
                 return False
+    if pattern.startswith("(?i)([") and m.group(0).rstrip().endswith("+"):
+        # "DELETE FROM t " + "WHERE id = ?": only fixed literals joined up to the end of the argument
+        tail = " ".join([line[m.end():]] + sf.nocomment[idx:idx + 3])
+        if _CONST_CONCAT_RE.match(tail):
+            return False
     if pattern == _SQL_CALL_PATTERN:
         # the receiver, the first argument and the rest of the line, but not the method name itself
         arg = re.sub(r"(?i)^(?:execute|executemany|query|exec|raw)\s*\(", "", m.group(0))
