@@ -4,6 +4,26 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.9.3] — 2026-10-26
+
+### Changed
+
+- The skill's description (`SKILL.md`, which agents read to decide when to
+  use it, and the skills-hub listing) now leads with its purpose: catching
+  the jank in software that citizen developers build with AI coding
+  agents, and helping decide whether it can ship. It names when to use it:
+  a non-engineer building with Claude Code, Cursor or Codex, an IT,
+  security or engineering approver, or any repository.
+
+### Fixed
+
+- `JH701`: an override phrase passed to code, such as a string argument or
+  a list item in a skill's code example
+  (`jailbreak_score("Ignore previous instructions")`,
+  `"excludes": ["ignore previous instructions"]`), is minor: the file hands
+  the phrase to a detector rather than telling the agent to obey it. A bare
+  quoted command in prose is still major. From mass-test batch b17.
+
 ## [2.9.2] — 2026-10-26
 
 From the third agent's proposal A7, verified by the maintainer.

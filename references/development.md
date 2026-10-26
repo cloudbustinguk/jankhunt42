@@ -78,6 +78,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 2.9.0 adds `passport --sandbox-network-ceiling PATH` (with `--emit-sandbox-policy openshell` or `claude-code`; its input schema is `jankhunt.network-ceiling.v1`). Default policy output is unchanged. Egress `outside` and `unassessed` rows may now carry `port`, and one host reached on two ports gives two rows. A Claude Code allowlist entry jankhunt42 cannot parse makes that tool's coverage `unknown`.
 - 2.9.1 changes no options or fields. `JH702` is minor inside a descriptive JSON field.
 - 2.9.2 changes no options, fields or findings: the code/comment/string tokenizer is faster.
+- 2.9.3 changes no options or fields. `JH701` is minor for an override phrase handed to code; the skill description leads with citizen developers.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

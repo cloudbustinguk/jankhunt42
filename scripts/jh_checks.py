@@ -1422,6 +1422,9 @@ def _is_cited(sf: SourceFile, text: str, start: int, end: int) -> bool:
     for pat in _CITED_RES:
         for q in pat.finditer(text):
             if q.start(1) <= start and end <= q.end(1):
+                # a string handed to code (detect("Ignore previous instructions"), PHRASES = ['...']) is data
+                if re.search(r"[(\[,=]\s*$", text[:q.start()]):
+                    return True
                 # a bare quoted command (IMPORTANT: "Ignore all previous instructions ...") is not a citation
                 return bool(_CITE_FRAME_RE.search(text[:q.start()] + " " + text[q.end():]))
     return False
