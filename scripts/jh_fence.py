@@ -232,6 +232,15 @@ def validate(fmt: str, text: str) -> List[str]:
             problems.append("unexpected sandbox keys")
         if box.get("enabled") is not True:
             problems.append("sandbox.enabled is not true")
+        for key, expected in (("failIfUnavailable", True), ("allowUnsandboxedCommands", False)):
+            if box.get(key) is not expected:
+                problems.append("sandbox.%s is not %s" % (key, str(expected).lower()))
+        filesystem = box.get("filesystem")
+        read_denies = filesystem.get("denyRead") if isinstance(filesystem, dict) else None
+        if not isinstance(read_denies, list) or not all(isinstance(path, str) for path in read_denies):
+            problems.append("sandbox.filesystem.denyRead is not a list of paths")
+        elif not set(CREDENTIAL_PATHS).issubset(read_denies):
+            problems.append("sandbox.filesystem.denyRead is missing required credential paths")
         hosts = box.get("network", {}).get("allowedDomains", [])
         problems += ["bad host %r" % h for h in hosts if clean_host(h, wildcard=True) != h]
     elif fmt == "codex":

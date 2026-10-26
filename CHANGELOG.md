@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.7.5] — 2026-10-26
+
+From mass-test batches b08 to b13 and the third agent's adversarial
+review. Each fix arrived as a tested proposal and was verified, and where
+needed corrected, by the maintainer.
+
+### Security
+
+- `passport --emit-sandbox-policy`: the Claude Code policy's own output
+  gate now also requires `failIfUnavailable: true`,
+  `allowUnsandboxedCommands: false` and every credential read-deny the
+  emitter writes. Today's output already has them; the gate stops a future
+  change from handing over a weaker policy. Extra denies are still
+  accepted. New mutant M34.
+
+### Fixed
+
+- `JH107`: two digests that guard nothing are not reported: the hashing
+  trick `int(<digest>, 16) % n`, which reduces a digest to a bucket
+  number, and Git's object hash `sha1(b"blob %d\0" ...)`. If the same
+  statement names a security use (a password, token, signature, one-time
+  code), it stays major, so an MD5 one-time code built with the same trick
+  is still reported.
+- `JH212`: a test double defined with the matched name
+  (`def urlopen(req, timeout):`) is not an HTTP call.
+- `JH415`: the `kind: Secret` check is made per document. A ConfigMap's
+  `data:` in a file that also holds a Secret is plain configuration, not a
+  committed secret; the Secret document's values are still reported.
+- `JH424`: `"*"` or `"latest"` inside `peerDependencies` is info, not
+  minor. An open peer range is the usual way to accept the host app's
+  version, but npm 7 and later install a missing peer themselves, at the
+  newest release, so it is still reported, at info (shown with
+  `--min-severity info`). Direct and dev dependencies are unchanged.
+- `JH426`: `npm install -g` and `npm install --global` install a tool,
+  not the project's dependencies, so the "use npm ci" advice does not
+  apply. A plain `npm install`, with or without package names, is still
+  reported.
+
 ## [2.7.4] — 2026-10-26
 
 From mass-test batch b08 and an adversarial review by a third agent (Codex

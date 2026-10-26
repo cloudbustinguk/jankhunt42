@@ -120,6 +120,9 @@ MUTANTS = [
     ("M33-git-textconv-allowed", "git diff runs a text converter named by the repository", "jh_core.py",
      '        rest = rest[:pos + 1] + flags + rest[pos + 1:]', "        rest = rest",
      "test_git_safety.py"),
+    ("M34-fence-credential-deny-unchecked", "a sandbox policy missing a credential read-deny passes its own gate",
+     "jh_fence.py", "        elif not set(CREDENTIAL_PATHS).issubset(read_denies):", "        elif False:",
+     "test_fence.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -114,6 +114,28 @@ class Scanner(unittest.TestCase):
         "app/pw.js": "const v = { pass" + "word: '+Zx8kq2Lm!' }\n",
         "deploy/ssh-secret.yaml": ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: ssh\ndata:\n"
                                    "  id_rsa: LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0K/+dzc2\n  host: ZGI=\n"),
+        # JH415: a ConfigMap's data: is plain config; a Secret document in the same file still fires
+        "deploy/configmap.yaml": ("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\ndata:\n"
+                                  "  API_URL: \"http://api.internal.example:8080\"\n"
+                                  "  LOG_LEVEL: \"info\"\n  FEATURE_SET: \"standard\"\n"),
+        "deploy/mixed-manifest.yaml": ("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: mixed-config\ndata:\n"
+                                       "  LOG_LEVEL: \"info\"\n  FEATURE_SET: \"standard\"\n"
+                                       "---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: mixed-secret\ntype: Opaque\n"
+                                       "stringData:\n  API_TOKEN: \"z9y8x7w6v5u4t3s2r1q0-pool\"\n"),
+        "deploy/plain-secret.yaml": ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: app-secret\ntype: Opaque\n"
+                                     "stringData:\n  DB_PASSWORD: \"s3cr3t-pa55-longrandomvalue\"\n"),
+        # JH424: an open peer range is info (npm 7+ installs peers); direct and dev dependencies stay minor
+        "pkg/peer-only/package.json": ('{\n  "name": "fp-peer-pkg",\n  "version": "1.0.0",\n'
+                                       '  "peerDependencies": {\n    "react": "*",\n    "vue": "*"\n  }\n}\n'),
+        "pkg/deps/package.json": ('{\n  "name": "lead-pkg",\n  "version": "1.0.0",\n  "dependencies": {\n'
+                                  '    "left-pad": "*",\n    "is-odd": "latest"\n  }\n}\n'),
+        "pkg/dev-and-peer/package.json": ('{\n  "name": "mixed-pkg",\n  "version": "1.0.0",\n'
+                                          '  "peerDependencies": {\n    "react": "*",\n    "vue": "*"\n  },\n'
+                                          '  "devDependencies": {\n    "typescript": "*"\n  }\n}\n'),
+        # JH212: a test double defined with the name is not a call; a bare requests.get still fires
+        "web/mock_urlopen.py": ("def urlopen(req, timeout):\n    return req\n\n\n"
+                                "def urlretrieve(url, timeout):\n    return url\n"),
+        "web/plain_get.py": "import requests\n\n\ndef fetch(url):\n    return requests.get(url)\n",
         "app/safe_yaml.py": ("import yaml\ne = yaml.load(f, yaml.SafeLoader)\n"
                              "g = yaml.load(\n    f,\n    Loader=yaml.SafeLoader,\n)\n"),
         "app/Imports.java": "import java.beans.XMLDecoder;\nclass A {}\n",
@@ -345,6 +367,23 @@ class Scanner(unittest.TestCase):
             "def swap_config(tmp, dst):\n    try:\n        os.replace(tmp, dst)\n    except OSError:\n        pass\n\n\n"
             "def write_and_report(fh, blob):\n    try:\n        fh.write(blob)\n"
             "    except (ImportError, OSError):\n        pass\n"),
+        # soak b08 C4 (JH107): digests that guard nothing. The hashing trick reduces a digest to a bucket
+        # number; git's object hash is content addressing. Invented; the real leads below keep major.
+        "python/c4_hashing_trick.py": (
+            "import hashlib\n\n\n"
+            "def choose(node_count, key_bytes):\n    slot = int(hashlib.sha1(key_bytes).hexdigest(), 16) % node_count\n    return slot\n\n\n"
+            "def spread(table_count, tag):\n    return int(hashlib.md5(tag.encode()).hexdigest(), 16) % table_count\n\n\n"
+            "def spread_again(width, marker):\n    n = int(hashlib.sha1(marker.encode(\"utf-8\")).hexdigest(), 16) % width\n    return n\n"),
+        "python/c4_git_blob_hash.py": (
+            "import hashlib\n\n\n"
+            "def blob_oid(size, content):\n    return hashlib.sha1(b\"blob %d\\0\" % size + content).hexdigest()\n\n\n"
+            "def blob_oid_raw(size, content):\n    return hashlib.sha1(b\"blob %d\\x00\" % size + content).digest()\n"),
+        "python/c4_real_lead.py": (
+            "import hashlib\n\n\n"
+            "def verify_login(stored_digest, plain):\n    return stored_digest == hashlib.md5(plain.encode()).hexdigest()\n\n\n"
+            "def sign_challenge(passphrase, nonce_bytes):\n    return hashlib.sha1(passphrase + nonce_bytes).hexdigest()\n\n\n"
+            "def one_time_code(secret, counter):\n    otp = int(hashlib.md5(secret + counter).hexdigest(), 16) % 1000000\n"
+            "    return otp\n"),
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
@@ -595,6 +634,18 @@ class Scanner(unittest.TestCase):
         "tests/ng.spec.ts": ("fit('loads', fakeAsync(() => { tick(); }));\n"
                              "fit('multi', inject([Svc], (s) => { expect(s).toBeTruthy(); }));\n"),
         "docs/inline.md": "Run ```npm install``` first.\n\n[gone](./gone.md)\n",
+        # JH426: `npm install -g` / `--global` installs a tool, not the project's dependencies
+        ".github/workflows/bootstrap.yml": ("name: bootstrap\non: push\njobs:\n  build:\n"
+                                            "    runs-on: ubuntu-latest\n    steps:\n"
+                                            "      - run: npm install --global npm@9.1.0\n"
+                                            "      - run: npm install -g yarn@1.22.21\n"),
+        ".github/workflows/build.yml": ("name: build\non: push\njobs:\n  build:\n"
+                                        "    runs-on: ubuntu-latest\n    steps:\n"
+                                        "      - run: npm ci\n      - run: npm install\n"),
+        ".github/workflows/deps.yml": ("name: deps\non: push\njobs:\n  build:\n"
+                                       "    runs-on: ubuntu-latest\n    steps:\n"
+                                       "      - run: npm install lodash\n"
+                                       "      - run: npm install --save-dev foo\n"),
         "svc/proc_attr.py": ("import subprocess\nclass W:\n    async def go(self, cmd):\n        self.proc = subprocess.Popen(cmd)\n"
                              "        self.proc.wait()\n    async def read(self, cmd):\n        p = subprocess.Popen(cmd, stdout=1)\n"
                              "        data = p.stdout.read()\n"),
@@ -766,6 +817,36 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.hits("JH201", "python/c5_import_error_only.py"), [])
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH201", "python/c5_real_lead.py")),
                          [(8, "major"), (17, "minor"), (24, "minor"), (31, "minor")])
+
+    def test_soak_b08_jh107_hashing_trick(self):
+        # the hashing trick and git's blob hash guard nothing; a password check, a signature and an
+        # MD5 one-time code built with the same trick keep major
+        self.assertEqual(self.hits("JH107", "python/c4_hashing_trick.py"), [])
+        self.assertEqual(self.hits("JH107", "python/c4_git_blob_hash.py"), [])
+        self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH107", "python/c4_real_lead.py")),
+                         [(5, "major"), (9, "major"), (13, "major")])
+
+    def test_jh426_global_tool_install(self):
+        self.assertEqual(self.hits("JH426", ".github/workflows/bootstrap.yml"), [])
+        self.assertEqual(self.lines("JH426", ".github/workflows/build.yml"), [8])
+        self.assertEqual(self.lines("JH426", ".github/workflows/deps.yml"), [7, 8])
+
+    def test_jh415_kind_is_per_document(self):
+        self.assertEqual(self.hits("JH415", "deploy/configmap.yaml"), [])
+        self.assertEqual(self.lines("JH415", "deploy/mixed-manifest.yaml"), [15])
+        self.assertEqual(self.lines("JH415", "deploy/plain-secret.yaml"), [7])
+        self.assertEqual(self.lines("JH415", "deploy/secret.yaml"), [10])
+        self.assertEqual(self.lines("JH415", "deploy/ssh-secret.yaml"), [6])
+
+    def test_jh424_open_peer_range_is_info(self):
+        sev = lambda rel: sorted((f["line"], f["severity"]) for f in self.hits("JH424", rel))
+        self.assertEqual(sev("pkg/peer-only/package.json"), [(5, "info"), (6, "info")])
+        self.assertEqual(sev("pkg/deps/package.json"), [(5, "minor"), (6, "minor")])
+        self.assertEqual(sev("pkg/dev-and-peer/package.json"), [(5, "info"), (6, "info"), (9, "minor")])
+
+    def test_jh212_test_double_definition_is_not_a_call(self):
+        self.assertEqual(self.hits("JH212", "web/mock_urlopen.py"), [])
+        self.assertEqual(self.lines("JH212", "web/plain_get.py"), [5])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])

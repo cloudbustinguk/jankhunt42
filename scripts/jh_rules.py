@@ -489,8 +489,7 @@ RULES: List[Rule] = [
     R("JH424", "Unpinned npm dependency", "minor", "supply-chain",
       "A '*' or 'latest' version range makes installs non-reproducible and can pull breaking or hostile releases.",
       "Pin an exact version or a bounded range and update intentionally.",
-      confidence="high", target="nocomment", kinds=("package_json",),
-      patterns=(r'^\s*"[^"]+"\s*:\s*"(?:\*|latest)"',)),
+      confidence="high", check="package_json_dep", kinds=("package_json",)),
     R("JH425", "Compose host network", "info", "security",
       "network_mode: host removes network isolation for the container.",
       "Use a user-defined network and expose only the required ports.",
@@ -500,7 +499,7 @@ RULES: List[Rule] = [
       "npm install can rewrite the lockfile and is not reproducible; npm ci is.",
       "Use npm ci (or pnpm install --frozen-lockfile / yarn --immutable).",
       confidence="medium", target="nocomment", kinds=CI,
-      patterns=(r"\bnpm\s+install\b",)),
+      patterns=(r"\bnpm\s+install\b(?!\s+(?:--global|-g)\b)",)),   # -g installs a tool, not the project's dependencies
     R("JH427", "All secrets serialized", "critical", "security",
       "toJSON(secrets) hands every repository and organization secret to one step; a compromised step exfiltrates them all.",
       "Pass only the individual secrets the step needs (secrets.NAME), through env:.",
@@ -1020,6 +1019,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "usedforsecurity=False" in line:
                             continue        # Python says so explicitly
                         own = " ".join(sf.nocomment[max(0, idx - 2):idx]).lower()   # this statement and the one before
+                        security = re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp|api_?key", own)
+                        if not security and (_HASHING_TRICK_RE.search(line) and "digest" in line
+                                             or _GIT_BLOB_HASH_RE.search(sf.nocomment[idx - 1])):
+                            continue        # int(digest, 16) % n buckets; b"blob %d\0" is git's content address
                         target = re.match(r"\s*(?:self\.)?(\w+)\s*=", sf.nocomment[idx - 1])
                         above = " ".join(l for l in sf.raw[max(0, idx - 5):idx - 1]
                                          if re.match(r"\s*(?:#|//|/?\*|\"{3}|'{3})", l)).lower()
@@ -1030,7 +1033,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             re.search(r"cache|etag|dedup|fingerprint|checksum|identifier|缓存", above) or \
                             re.search(r"cache|etag|dedup", below) or \
                             re.search(r"hexdigest\(\)\s*\[|digest\(\)\s*\[", sf.nocomment[idx - 1])
-                        if not re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp|api_?key", own) and purpose:
+                        if not security and purpose:
                             severity, confidence = "minor", "medium"
                             message = ("MD5/SHA-1 as an identifier, cache key or checksum is fine; it matters only for "
                                        "signatures, passwords or tokens.")
@@ -1219,6 +1222,11 @@ _SQL_CONTEXT_RE = re.compile(r"(?i)\b(?:select|insert|update|delete|where|from|j
                              r"session|tx|trx|stmt|statement|jdbc\w*|engine|dbh|pg|mysql|sqlite3?|sql\w*|\w*query|"
                              r"\w*clause)\b")
 _SQL_TAG_RE = re.compile(r"(?:\b(?:sql|SQL|Prisma\.sql|db\.sql|tx\.sql)|\$(?:queryRaw|executeRaw))\s*$")
+# JH107 digests that guard nothing: the hashing trick int(<digest>, 16) % n reduces a digest to a bucket
+# number, and git's object hash sha1(b"blob %d\0" ...) is content addressing. Matched exactly, so a plain
+# sha1(user_data) still fires; skipped only when the statement names no security use (an MD5 OTP stays).
+_HASHING_TRICK_RE = re.compile(r"int\s*\(.*?,\s*16\s*\)\s*%\s*\S")
+_GIT_BLOB_HASH_RE = re.compile(r"hashlib\.(?:md5|sha1)\s*\(\s*b[\"']blob %d(?:\\0|\\x00)[\"']")
 
 
 # a value passed through an HTML sanitizer or escaper before it reaches the sink

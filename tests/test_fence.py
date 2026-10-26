@@ -3,9 +3,11 @@ coding agent, in Claude Code, Codex and OpenShell formats. The fence must
 leave production out, never guess a host, never let a hostile host name
 become a rule, and read back through jankhunt42's own boundary readers as the
 same allowlist."""
+import copy
 import json
 import os
 import unittest
+from unittest.mock import patch
 
 import _util
 from _util import run_cli
@@ -138,6 +140,65 @@ class Review270(unittest.TestCase):
 
     def test_toml_escaped_quote_does_not_end_the_string(self):
         self.assertEqual(jh_egress._strip_toml_comment('"a\\"b # c" = "allow"  # x'), '"a\\"b # c" = "allow"  ')
+
+
+class SafetyControls(unittest.TestCase):
+    """The output gate rejects a policy with a weakened fallback switch or a missing credential deny,
+    so a future rendering change cannot hand one over (Codex's A5 finding, 2026-10-26)."""
+
+    def setUp(self):
+        self.report = {"graph": {"nodes": [], "edges": []}}
+        self.text, self.notes = jh_fence.emit("claude-code", self.report, None, "test")
+        self.doc = json.loads(self.text)
+
+    def assert_rejected(self, doc):
+        with patch.object(jh_fence, "render", return_value=(json.dumps(doc), [])):
+            with self.assertRaises(ValueError):
+                jh_fence.emit("claude-code", self.report, None, "test")
+
+    def test_fail_if_unavailable_requires_literal_true(self):
+        for value in (False, None, 0, 1, "true"):
+            with self.subTest(value=value):
+                doc = copy.deepcopy(self.doc)
+                doc["sandbox"]["failIfUnavailable"] = value
+                self.assert_rejected(doc)
+        del self.doc["sandbox"]["failIfUnavailable"]
+        self.assert_rejected(self.doc)
+
+    def test_unsandboxed_commands_require_literal_false(self):
+        for value in (True, None, 0, 1, "false"):
+            with self.subTest(value=value):
+                doc = copy.deepcopy(self.doc)
+                doc["sandbox"]["allowUnsandboxedCommands"] = value
+                self.assert_rejected(doc)
+        del self.doc["sandbox"]["allowUnsandboxedCommands"]
+        self.assert_rejected(self.doc)
+
+    def test_removing_any_credential_deny_is_rejected(self):
+        entries = self.doc["sandbox"]["filesystem"]["denyRead"]
+        self.assertTrue(entries)
+        for index in range(len(entries)):
+            with self.subTest(entry=index):
+                doc = copy.deepcopy(self.doc)
+                del doc["sandbox"]["filesystem"]["denyRead"][index]
+                self.assert_rejected(doc)
+
+    def test_invalid_or_missing_credential_denies_are_rejected(self):
+        entries = self.doc["sandbox"]["filesystem"]["denyRead"]
+        for value in (None, entries[0], {entry: True for entry in entries}, entries + [True]):
+            with self.subTest(value_type=type(value).__name__):
+                doc = copy.deepcopy(self.doc)
+                doc["sandbox"]["filesystem"]["denyRead"] = value
+                self.assert_rejected(doc)
+        del self.doc["sandbox"]["filesystem"]
+        self.assert_rejected(self.doc)
+
+    def test_additional_denies_remain_valid(self):
+        self.doc["sandbox"]["filesystem"]["denyRead"].append("/tmp/invented-private-store")
+        text = json.dumps(self.doc)
+        with patch.object(jh_fence, "render", return_value=(text, self.notes)):
+            emitted, _ = jh_fence.emit("claude-code", self.report, None, "test")
+        self.assertEqual(emitted, text)
 
 
 if __name__ == "__main__":

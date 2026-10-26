@@ -444,6 +444,8 @@ def missing_timeout(sf: SourceFile, rule: Rule) -> List[Finding]:
         if re.search(r"\btimeout\s*=(?!\s*None\b)", stmt):
             continue                    # timeout=None is explicitly no timeout
         call = (_HTTP_RE.search(line) or _URLOPEN_RE.search(line)).start()
+        if re.search(r"\bdef\s+\**\w*\s*$", line[:call]):
+            continue                    # a test double defined with this name (def urlopen(req, timeout):)
         wrapper = _WAIT_FOR.search(line[:call])
         # an asyncio deadline cancels only at an await: it covers an async client's call
         # (await client.requests.get(...)), never the synchronous requests/httpx/urlopen functions,
@@ -794,38 +796,48 @@ _K8S_NOT_SECRET = {"type", "provider", "host", "hostname", "port", "database", "
 
 @check("k8s_secret_literal")
 def k8s_secret_literal(sf: SourceFile, rule: Rule) -> List[Finding]:
-    if not re.search(r"(?m)^\s*kind\s*:\s*Secret\s*$", "\n".join(sf.nocomment)):
-        return []
     out: List[Finding] = []
     lines = sf.nocomment
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^(\s*)(?:stringData|data)\s*:\s*$", lines[i])
-        if not m:
-            i += 1
+    # one file can hold several documents (---): a ConfigMap's data: is plain config, so the kind
+    # gate and the value scan are per document, and a Secret elsewhere in the file changes nothing
+    docs: List[Tuple[int, List[str]]] = []
+    start = 0
+    for i, line in enumerate(lines):
+        if re.match(r"^---(?:\s|$)", line):
+            docs.append((start, lines[start:i]))
+            start = i + 1
+    docs.append((start, lines[start:]))
+    for start, block in docs:
+        if not re.search(r"(?m)^\s*kind\s*:\s*Secret\s*$", "\n".join(block)):
             continue
-        base = len(m.group(1))
-        j = i + 1
-        while j < len(lines):
-            line = lines[j]
-            if not line.strip():
+        j = 0
+        while j < len(block):
+            m = re.match(r"^(\s*)(?:stringData|data)\s*:\s*$", block[j])
+            if not m:
                 j += 1
                 continue
-            if indent_of(line) <= base:
-                break
-            km = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*:\s*(.*)$", line)
-            if km:
-                val = km.group(2).strip().strip("'\"")
-                # connection details (type, host, port, database, username) are not secrets
-                if val and not val.startswith(("|", ">", "{{", "$")) and val not in ("null", "~") \
-                        and not _FAKE_VALUES.match(val) and km.group(1).lower() not in _K8S_NOT_SECRET:
-                    out.append(make_finding(rule, sf, j + 1,
-                                            evidence="%s: ***REDACTED***" % km.group(1),
-                                            message="Secret value for key '%s' is committed in plaintext." % km.group(1)))
-                    if len(out) >= 5:
-                        return out
-            j += 1
-        i = j
+            base = len(m.group(1))
+            k = j + 1
+            while k < len(block):
+                line = block[k]
+                if not line.strip():
+                    k += 1
+                    continue
+                if indent_of(line) <= base:
+                    break
+                km = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*:\s*(.*)$", line)
+                if km:
+                    val = km.group(2).strip().strip("'\"")
+                    # connection details (type, host, port, database, username) are not secrets
+                    if val and not val.startswith(("|", ">", "{{", "$")) and val not in ("null", "~") \
+                            and not _FAKE_VALUES.match(val) and km.group(1).lower() not in _K8S_NOT_SECRET:
+                        out.append(make_finding(rule, sf, start + k + 1,
+                                                evidence="%s: ***REDACTED***" % km.group(1),
+                                                message="Secret value for key '%s' is committed in plaintext." % km.group(1)))
+                        if len(out) >= 5:
+                            return out
+                k += 1
+            j = k
     return out
 
 
@@ -2289,6 +2301,29 @@ def broken_links(sf: SourceFile, rule: Rule) -> List[Finding]:
                                         message="Link target '%s' does not exist." % target))
                 if len(out) >= 20:
                     return out
+    return out
+
+
+@check("package_json_dep")
+def package_json_dep(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """'*' or 'latest' in package.json. Inside peerDependencies an open range is the usual way to say
+    "whatever the host app uses", but npm 7+ installs missing peers itself, so it is info, not minor."""
+    out: List[Finding] = []
+    peer = 0                                    # brace depth inside "peerDependencies": { ... }
+    for i, line in enumerate(sf.nocomment):
+        if peer:
+            peer = max(0, peer + line.count("{") - line.count("}"))
+        elif re.match(r'^\s*"peerDependencies"\s*:\s*\{', line):
+            peer = max(0, line.count("{") - line.count("}"))
+            continue
+        if not re.match(r'^\s*"[^"]+"\s*:\s*"(?:\*|latest)"', line):
+            continue
+        if peer:
+            out.append(make_finding(rule, sf, i + 1, severity="info", confidence="medium",
+                                    message="An open peer dependency range lets the host app choose the version; "
+                                            "npm 7+ installs a missing peer itself, at the newest release."))
+        else:
+            out.append(make_finding(rule, sf, i + 1))
     return out
 
 
