@@ -726,6 +726,9 @@ def _url_without_secret(value: str) -> bool:
 
 # usernames that services fix for token authentication (the token is the password)
 _TOKEN_USERNAMES = {"x-oauth-basic", "x-access-token", "oauth2", "oauth2accesstoken", "token", "__token__"}
+_UI_MESSAGE_RE = re.compile(r"(?i)\b(?:is|are)\s+(?:required|invalid|missing|empty|incorrect|too\s+(?:short|long|weak))\b|"
+                            r"\bmust\s+(?:be|contain|have|match|include)\b|\bplease\s+(?:enter|provide|choose|type)\b|"
+                            r"\b(?:enter|confirm)\s+(?:a|an|the|your)\b|\bdo(?:es)?\s+not\s+match\b")
 _STOPWORDS = {"the", "a", "an", "is", "are", "not", "on", "in", "to", "of", "for", "and", "or", "with", "this",
               "that", "your", "you", "it", "be", "can", "from", "use", "create", "at", "by", "must", "should",
               "will", "has", "have", "no", "if", "only", "all", "some", "least", "characters", "required",
@@ -752,6 +755,9 @@ def secret_placeholder(match_text: str) -> bool:
         return True
     # text in a non-Latin script, such as a translated label for "API key": credentials are ASCII
     if any(ch.isalpha() and ord(ch) > 0x24F for ch in value):
+        return True
+    # a form or validation message ("Password is required", "Token must be 32 characters")
+    if len(value.split()) >= 3 and _UI_MESSAGE_RE.search(value):
         return True
     # a sentence: five or more words, two of them common function words
     words = value.lower().replace(";", " ").replace(",", " ").replace(".", " ").split()
@@ -1061,6 +1067,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "what runs, so check that it never starts a shell with -c.")
                     if rule.id in ("JH124", "JH125", "JH126") and _constant_html(sf, idx, m.end()):
                         continue
+                    if rule.id in ("JH124", "JH125", "JH126") and _constant_name_html(sf, idx, m.end()):
+                        severity, confidence = "minor", "low"
+                        message = (rule.message + " The HTML comes from a CONSTANT_NAME (an icon, a theme script), "
+                                   "which usually holds fixed markup; check that it is not built from user data.")
                     if rule.id in ("JH124", "JH125", "JH126"):
                         window = " ".join([sf.nocomment[idx - 1][m.end():]] + sf.nocomment[idx:idx + 2])
                         if re.match(r"\s*=\s*\{\{\s*__html\s*:\s*Object\.entries\(\s*THEMES\s*\)", window):
@@ -1543,6 +1553,24 @@ def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
     window = " ".join([line[col:]] + sf.nocomment[idx:idx + 3])
     m = re.match(r"\s*=\s*\{\{\s*__html\s*:\s*", window)
     return bool(m and re.match(r"%s\s*,?\s*\}" % lit, window[m.end():]))
+
+
+_CONST_NAME = r"[A-Z][A-Z0-9_]{2,}(?![\w.(\[])"
+
+
+def _constant_name_html(sf: SourceFile, idx: int, col: int) -> bool:
+    """innerHTML = EYE_ICON_SVG, = open ? EYE : EYE_CLOSED, or __html: THEME_INIT_SCRIPT: the markup comes from
+    names written as constants. A naming convention, not proof, so the caller downgrades rather than skips."""
+    line = sf.nocomment[idx - 1]
+    rest = line[col:]
+    nxt = next((n for n in sf.nocomment[idx:idx + 3] if n.strip()), "")
+    goes_on = not line.rstrip().endswith(";") and re.match(r"\s*(?:[-+*/%?:.,|&]|concat\b)", nxt)
+    if re.match(r"\s*=?\s*(?:%s|[^;?\n]{1,80}\?\s*%s\s*:\s*%s)\s*\)?\s*;?\s*$" % (_CONST_NAME, _CONST_NAME, _CONST_NAME),
+                rest):
+        return not goes_on
+    window = " ".join([rest] + sf.nocomment[idx:idx + 3])
+    m = re.match(r"\s*=\s*\{\{\s*__html\s*:\s*", window)
+    return bool(m and re.match(r"%s\s*,?\s*\}" % _CONST_NAME, window[m.end():]))
 
 
 def _firebase_web_config(sf: SourceFile, idx: int) -> bool:

@@ -1,6 +1,6 @@
 ---
 name: jankhunt42
-description: Catches the jank in software that citizen developers build with AI coding agents, then helps decide whether it can ship. Use it when a non-engineer builds an app with Claude Code, Cursor or Codex, when IT, security or engineering must approve one, or on any repository. Answers three questions with evidence, locally. What's broken? Debugging (bugs, crashes, hangs, leaks, flaky tests, build failures), a jank scanner for code, CI, containers, Kubernetes, secrets, CVEs and AI-agent workspaces (approval bypasses, unpinned MCP servers, prompt injection, hidden instructions), diff review, log triage. What can it hurt? Offline maps of data exposure and blast radius, including what an agent's MCP servers reach, and least-privilege sandbox policies. Can we ship it? A passport with an explainable pass/review/block decision, SBOM quality, an AI-use inventory (NIST AI RMF) and a strict citizen profile requiring a named engineering custodian. Leads, not verdicts; unknown is never safe; nothing is uploaded.
+description: Catches the jank in software that citizen developers build with AI coding agents, then helps decide whether it can ship. Use it when a non-engineer builds an app with Claude Code, Cursor or Codex, when IT, security or engineering must approve one, or on any repository. Answers three questions with evidence. What's broken? Debugging (bugs, crashes, hangs, leaks, flaky tests, build failures), a jank scanner for code, CI, containers, Kubernetes, secrets, CVEs and AI-agent workspaces (approval bypasses, unpinned MCP servers, prompt injection, hidden instructions), diff review, log triage. What can it hurt? Offline maps of data exposure and blast radius, including what an agent's MCP servers reach, and least-privilege sandbox policies. Can we ship it? A passport with an explainable pass/review/block decision, SBOM quality, an AI-use inventory (NIST AI RMF) and a strict citizen profile requiring a named engineering custodian. Leads, not verdicts; unknown is never safe; nothing is uploaded.
 license: MIT
 compatibility: "Claude Code · Cursor · Codex CLI · OpenCode V2 · Python 3.9+ · Linux/macOS/Windows"
 platforms:
@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "2.9.3"
+  version: "2.9.4"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?

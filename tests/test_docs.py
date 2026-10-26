@@ -175,6 +175,8 @@ class SkillContract(unittest.TestCase):
         text = read("SKILL.md")
         self.assertLess(len(text.splitlines()), 500)
         front = text.split("---", 2)[1]
+        description = re.search(r"^description: (.*)$", front, re.M).group(1)
+        self.assertLessEqual(len(description), 1000, "skills-hub lists at most 1000 characters of description")
         for key in ("name: jankhunt42", "description:", "license: MIT", "compatibility:", 'version: "'):
             self.assertIn(key, front)
         for trigger in ("passport", "blast radius", "data exposure", "connectivity", "deep hunt"):

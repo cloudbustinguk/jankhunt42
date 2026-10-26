@@ -4,6 +4,23 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.9.4] — 2026-10-26
+
+From mass-test batch b18.
+
+### Fixed
+
+- `JH101`: a form or validation message under a password or token key
+  (`errors.password = "Password is required"`, `"Token must be 32
+  characters"`) is text, not a credential.
+- `JH124` to `JH126`: HTML set from a name written as a constant
+  (`innerHTML = EYE_ICON_SVG`, `open ? EYE : EYE_OFF`,
+  `__html: THEME_INIT_SCRIPT`) is minor. Such names usually hold fixed
+  markup, but a name is a convention, not proof, so it is still shown.
+  Markup from any other variable stays major.
+- The skill description is 998 characters, so the skills-hub listing shows
+  all of it; a test keeps it within 1000.
+
 ## [2.9.3] — 2026-10-26
 
 ### Changed
