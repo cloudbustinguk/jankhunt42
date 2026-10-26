@@ -21,14 +21,17 @@ What stays out, listed for a decision, never guessed:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_yaml
 
 FORMATS = ("claude-code", "codex", "openshell")
 PROFILE = "jankhunt42-fence"
+CLAUDE_PORT_NOTE = ("port-qualified entries verified on Claude Code 2.1.310; earlier versions are unverified, and the "
+                    "sandbox runtime before July 2026 rejected port suffixes")
 
 # a plain DNS name, optionally with a leading `*.` label, or an IPv4 address
 _HOST_RE = re.compile(r"^(?:\*\.)?(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
@@ -87,6 +90,37 @@ def clean_host(value: Any, wildcard: bool = False) -> Optional[str]:
     if _HOST_RE.match(h) and "." in h.lstrip("*.") or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", h):
         return h
     return None
+
+
+def split_claude_domain(value: Any, deny: bool = False) -> Optional[Tuple[str, Optional[int]]]:
+    """The bounded native domain/optional-port subset; invalid input grants nothing.
+
+    Port-less entries mean every port. Brackets disambiguate IPv6 literals.
+    Only deny lists may contain a bare `*`; `*.` means strict subdomains.
+    """
+    if not isinstance(value, str) or not value or value != value.strip():
+        return None
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing < 0 or "%" in value:
+            return None
+        try:
+            host = str(ipaddress.IPv6Address(value[1:closing]))
+        except ValueError:
+            return None
+        suffix = value[closing + 1:]
+    else:
+        host, colon, tail = value.partition(":")
+        suffix = colon + tail
+        host = host.lower().rstrip(".")
+        if host != "*" or not deny:
+            if clean_host(host, wildcard=True) != host:
+                return None
+    if not suffix:
+        return host, None
+    if not re.fullmatch(r":[1-9][0-9]{0,4}", suffix) or int(suffix[1:]) > 65535:
+        return None
+    return host, int(suffix[1:])
 
 
 def plan(report: Dict[str, Any], package_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -150,18 +184,21 @@ def _hosts(p: Dict[str, Any]) -> List[str]:
     return sorted({r["host"] for r in p["allow"]}, key=lambda h: (h.lstrip("*."), h))
 
 
-def render(fmt: str, p: Dict[str, Any], version: str) -> Tuple[str, List[str]]:
+def render(fmt: str, p: Dict[str, Any], version: str, port_qualified: bool = False) -> Tuple[str, List[str]]:
     """(policy text, notes for stderr). Deterministic for a given plan and version."""
     notes = ["%d host(s) allowed; everything else is denied by the sandbox, where the tool enforces it" % len(_hosts(p))]
     notes += ["excluded: %s: %s" % (e["what"], e["why"]) for e in p["excluded"]]
     if fmt == "claude-code":
+        domains = sorted({"%s:%d" % (r["host"], r["port"]) for r in p["allow"]}) if port_qualified else _hosts(p)
         doc = {"$schema": "https://json.schemastore.org/claude-code-settings.json",
                "sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
-                           "network": {"allowedDomains": _hosts(p)},
+                           "network": {"allowedDomains": domains},
                            "filesystem": {"denyRead": CREDENTIAL_PATHS}}}
         notes.append("merge into .claude/settings.json; a project file only pre-allows these hosts: to deny every "
                      "other host instead of prompting, set sandbox.network.strictAllowlist to true in "
                      "~/.claude/settings.json or managed settings (a project file cannot)")
+        if port_qualified:
+            notes.append(CLAUDE_PORT_NOTE)
         return json.dumps(doc, indent=2) + "\n", notes
     if fmt == "codex":
         lines = ["# Least-privilege network fence for Codex, written by jankhunt42 %s." % version,
@@ -183,7 +220,8 @@ def render(fmt: str, p: Dict[str, Any], version: str) -> Tuple[str, List[str]]:
         out = ["# Least-privilege network policy for OpenShell, written by jankhunt42 %s." % version,
                "# Review it before use; jankhunt42 never applies it. Binary paths are the usual locations in",
                "# Debian/Ubuntu images: replace them with your image's real paths (OpenShell does not follow",
-               "# symlinks). A rule with no binaries matches nothing.", "version: 1", "network_policies:"]
+               "# symlinks). A rule with no binaries matches nothing.", "version: 1",
+               "network_policies:" if p["allow"] else "network_policies: {}"]
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for r in p["allow"]:
             groups.setdefault(r["group"], []).append(r)
@@ -242,7 +280,10 @@ def validate(fmt: str, text: str) -> List[str]:
         elif not set(CREDENTIAL_PATHS).issubset(read_denies):
             problems.append("sandbox.filesystem.denyRead is missing required credential paths")
         hosts = box.get("network", {}).get("allowedDomains", [])
-        problems += ["bad host %r" % h for h in hosts if clean_host(h, wildcard=True) != h]
+        if not isinstance(hosts, list):
+            problems.append("allowedDomains is not a list")
+        else:
+            problems += ["bad host %r" % h for h in hosts if split_claude_domain(h) is None]
     elif fmt == "codex":
         table, domains, required = "", {}, set()
         for raw in text.split("\n"):
@@ -289,9 +330,19 @@ def validate(fmt: str, text: str) -> List[str]:
     return problems
 
 
-def emit(fmt: str, report: Dict[str, Any], package_sources: Optional[Dict[str, Any]], version: str
+def emit(fmt: str, report: Dict[str, Any], package_sources: Optional[Dict[str, Any]], version: str,
+         network_ceiling: Optional[AbstractSet[Tuple[str, int]]] = None
          ) -> Tuple[str, List[str]]:
-    text, notes = render(fmt, plan(report, package_sources), version)
+    proposed = plan(report, package_sources)
+    if network_ceiling is not None:
+        if fmt not in ("openshell", "claude-code"):
+            raise ValueError("the network ceiling requires openshell or claude-code: codex domain rules discard destination ports")
+        import jh_ceiling
+        proposed = jh_ceiling.constrain(proposed, network_ceiling)
+    text, notes = render(fmt, proposed, version, port_qualified=fmt == "claude-code" and network_ceiling is not None)
+    if network_ceiling is not None:
+        notes.append("operator network ceiling applied: only approved discovered host/port pairs retained; "
+                     "native enforcement is not verified")
     problems = validate(fmt, text)
     if problems:                        # never hand over a policy that fails its own check
         raise ValueError("emitted %s policy failed validation: %s" % (fmt, "; ".join(problems)))

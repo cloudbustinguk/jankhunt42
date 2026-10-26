@@ -255,8 +255,12 @@ as a **declared boundary**:
   and nested `enabled` form are recognized. A legacy `sandbox_mode` selector
   makes applicability unknown because effective precedence is not resolved.
 - Claude Code `.claude/settings*.json`: `sandbox.network.allowedDomains` and
-  `deniedDomains`. Custom proxy ports make built-in domain-filter applicability
-  unknown; the external proxy's policy is not inspected.
+  `deniedDomains`, including optional destination ports and bracketed IPv6.
+  An unqualified entry matches every port. Known protocol defaults supply a
+  missing mapped port; unknown ports that affect the decision remain unassessed.
+  Malformed or unsupported domain patterns make applicability unknown.
+  Custom proxy ports make built-in domain-filter applicability unknown; the
+  external proxy's policy is not inspected.
 - OpenShell policies: every `network_policies` endpoint `host` and
   `allowed_ips` (default deny).
 
@@ -272,7 +276,10 @@ unresolved activation is not credited.
 Each tool is assessed on its own (`egress.contexts`), and one tool's allowlist
 never covers another tool's reach. When every tool's selected declaration is
 resolved, `egress.state` is `declared` and `egress.outside` lists each reached
-host that at least one of them does not admit, with `contexts` naming which.
+destination that at least one of them does not admit, with `contexts` naming
+which. Different ports on the same host remain separate; known ports are in
+the optional `port` field of `outside` and `unassessed` rows and are displayed
+with the host in text and HTML views.
 So a repository that commits the Claude Code, Codex and OpenShell policies from
 `--emit-sandbox-policy` gets one answer for all three. Two settings scopes of
 the same tool (for example `.claude/settings.json` and

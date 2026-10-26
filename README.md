@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 2.8.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 2.9.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -56,6 +56,7 @@ jankhunt42 scan . --category agent          # what an agent would do when it ope
 jankhunt42 map .                            # what the software and its agent's MCP servers can reach
 jankhunt42 passport . --profile citizen     # a strict release decision, explained in plain terms
 jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell)
+jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceiling /etc/it/approved.json   # capped by IT's approved list
 ```
 
 - **Agent workspace checks** (`JH701`-`JH711`, `JH432`):

@@ -295,7 +295,7 @@ Object.keys(ass.blast_radius).forEach(p=>(ass.blast_radius[p].drivers||[]).slice
 const EG=DATA.egress||{};if(Array.isArray(EG.boundaries)&&EG.boundaries.length){sc=section(cv,'egress boundary (declared allowlists vs reached hosts)');
   add(sc,el('p',{class:'muted'},EG.note||''));if(EG.state==='unknown')add(sc,el('p',null,'Coverage unknown: '+(EG.unassessed||[]).length+' reached endpoint(s) unassessed.'));
   ul=add(sc,el('ul'));EG.boundaries.forEach(b=>add(ul,el('li',null,b.tool+(b.profile?' ['+b.profile+']':'')+' '+b.path+':'+b.line+': '+b.allow.length+' allowed, '+b.deny.length+' denied'+(b.note?' ('+b.note+')':''))));
-  EG.outside.forEach(o=>{const li=add(ul,el('li'));li.appendChild(badge('outside','st-failed'));li.appendChild(document.createTextNode(' '+o.host+' ('+o.tier+', reached by '+o.reached_by.join(', ')+'): '+o.why+((EG.contexts||[]).length>1?' ['+(o.contexts||[]).join(', ')+']':'')));});
+  EG.outside.forEach(o=>{const li=add(ul,el('li'));li.appendChild(badge('outside','st-failed'));const host=o.port==null?o.host:(o.host.includes(':')?'['+o.host.replace(/^\[|\]$/g,'')+']':o.host)+':'+o.port;li.appendChild(document.createTextNode(' '+host+' ('+o.tier+', reached by '+o.reached_by.join(', ')+'): '+o.why+((EG.contexts||[]).length>1?' ['+(o.contexts||[]).join(', ')+']':'')));});
   if(EG.wildcards.length)add(ul,el('li',null,'wildcards: '+EG.wildcards.join(', ')));if(EG.unused.length)add(ul,el('li',null,'allowed but unused by the mapped code: '+EG.unused.join(', ')));}
 const CBR=((ass.credential_blast_radius||{}).identities||[]).filter(r=>r.mutating.length||r.flags.some(f=>f!=='holder-not-visible'));
 if(CBR.length){sc=section(cv,'credential blast radius (what each identity unlocks; informational)');ul=add(sc,el('ul'));

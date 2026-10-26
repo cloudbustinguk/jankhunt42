@@ -4,6 +4,40 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [2.9.0] — 2026-10-26
+
+From the third agent's proposals A4 and A6, reviewed by the maintainer.
+
+### Added
+
+- **An operator network ceiling** for the sandbox policies jankhunt42
+  writes. `passport --emit-sandbox-policy openshell|claude-code
+  --sandbox-network-ceiling PATH` keeps only the destinations the code
+  reaches **and** an external approved list allows, so IT can cap the
+  policy a citizen developer's repository produces. The ceiling only
+  removes destinations, never adds them; production assets stay excluded.
+  - The file must sit outside the scanned repository and any enclosing Git
+    repository, without symbolic or hard links. It is at most 64 KiB,
+    with exactly the documented fields, and must not change while it is
+    read.
+  - Codex output refuses a ceiling, because Codex domain rules drop ports.
+  - See `references/network-ceiling.md`. New mutants M39 to M54.
+- **Claude Code policies can carry ports.** With a ceiling,
+  `allowedDomains` entries are port-qualified (`api.openai.com:443`), one
+  per host and port. Without one, output is unchanged (port-less entries
+  allow every port). Port-qualified entries are verified on Claude Code
+  2.1.310 only; earlier versions are unverified, and jankhunt42 says so
+  when it writes them.
+
+### Changed
+
+- Reading a Claude Code allowlist back (`map`, `passport`): a port-qualified
+  entry admits that port only, a port-less one every port. When the port
+  the code uses is unknown, the endpoint is unassessed, not guessed. An
+  entry jankhunt42 cannot parse (a URL with a path, say) makes that tool's
+  coverage `unknown` instead of being read loosely. Egress rows carry
+  `port` where it is known.
+
 ## [2.8.1] — 2026-10-26
 
 From mass-test batch b16, verified by the maintainer against invented

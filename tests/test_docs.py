@@ -22,6 +22,8 @@ SKIP = [
     ("--pr", "needs the GitHub CLI and a checked-out pull request"),
     ("selftest", "selftest runs this suite; executing it here would recurse"),
     ("--online", "lets --verify fetch from GitHub; the suite is offline"),
+    ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "
+                                  "covers it"),
 ]
 GIT_ENV = {"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
            "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",

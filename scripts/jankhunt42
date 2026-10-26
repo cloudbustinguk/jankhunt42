@@ -26,6 +26,7 @@ from jh_core import (  # noqa: E402
 )
 from jh_rules import RULES, ScanOptions, ScanResult, scan_sources, rule_by_id  # noqa: E402
 import jh_fence  # noqa: E402
+import jh_ceiling  # noqa: E402
 import jh_render  # noqa: E402
 import jh_doctor  # noqa: E402
 import jh_triage  # noqa: E402
@@ -808,6 +809,10 @@ def _default_branch(root: str) -> str:
 def cmd_passport(args: argparse.Namespace) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
+    if args.sandbox_network_ceiling is not None and args.emit_sandbox_policy not in ("openshell", "claude-code"):
+        print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code",
+              file=sys.stderr)
+        return 2
     if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
         print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
               "--json, --html, --md or --compare", file=sys.stderr)
@@ -833,6 +838,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
     try:
         root, excludes, cfg = _map_inputs(args)
+        network_ceiling = jh_ceiling.load(args.sandbox_network_ceiling, root) if args.sandbox_network_ceiling is not None else None
         map_report, col = jh_map.run_map(root, [root], excludes, args.max_files, args.max_file_bytes,
                                          cfg.passport, args.inventory, depth, with_items=True)
     except (OSError, ValueError, jh_map.GitError) as exc:
@@ -841,7 +847,7 @@ def cmd_passport(args: argparse.Namespace) -> int:
     if args.emit_sandbox_policy:
         pkg = jh_registry.collect(col.items, root, list(args.exclude or ()) + list(cfg.ignore_globs or []))
         try:
-            text, notes = jh_fence.emit(args.emit_sandbox_policy, map_report, pkg, VERSION)
+            text, notes = jh_fence.emit(args.emit_sandbox_policy, map_report, pkg, VERSION, network_ceiling)
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
@@ -1206,6 +1212,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write a least-privilege network fence for an AI coding agent from what the code reaches "
                          "(production assets excluded): claude-code, codex or openshell. A review artefact; "
                          "jankhunt42 never applies it")
+    sp.add_argument("--sandbox-network-ceiling", metavar="PATH",
+                    help="an operator's JSON list of approved host/port pairs, kept outside the repository; the openshell or "
+                         "claude-code policy keeps only reached destinations it approves (references/network-ceiling.md)")
     add_verify_inputs(sp)
     sp.set_defaults(func=cmd_passport)
 

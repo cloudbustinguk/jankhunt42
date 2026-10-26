@@ -20,6 +20,7 @@ and enforcement at runtime are not verified here.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -27,6 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import jh_agent
 import jh_yaml
 from jh_core import _looks_like_sandbox_policy as looks_like_sandbox_policy
+from jh_fence import DEFAULT_PORTS, split_claude_domain
 
 TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
 
@@ -195,6 +197,8 @@ def _claude(rel: str, text: str) -> List[Dict[str, Any]]:
     valid = isinstance(raw_allow, list) and isinstance(raw_deny, list) and \
         all(isinstance(value, str) for value in raw_allow + raw_deny)
     allow, deny = (raw_allow, raw_deny) if valid else ([], [])
+    valid = valid and all(split_claude_domain(value) is not None for value in allow) and \
+        all(split_claude_domain(value, deny=True) is not None for value in deny)
     if not any(key in net for key in ("allowedDomains", "deniedDomains")):
         return []
     enabled = box.get("enabled") if valid and isinstance(box.get("enabled"), bool) else None
@@ -250,7 +254,8 @@ def boundaries(items: Sequence[Any]) -> List[Dict[str, Any]]:
 def matches(host: str, pattern: str) -> bool:
     """Host pattern semantics shared by the three tools, read permissively:
     exact name, `*.d` and `**.d` for subdomains (`**.d` also the apex), `*`
-    for everything. Ports are ignored."""
+    for everything. Codex/OpenShell host inventory uses this matcher; Claude
+    Code uses claude_matches so its declared ports are not discarded."""
     h = host.lower().rstrip(".")
     p = pattern.lower().strip().split(":")[0].rstrip(".")
     if p in ("*", "**"):
@@ -268,22 +273,66 @@ def _wild(pattern: str) -> bool:
     return "*" in pattern or pattern.strip() in ("0.0.0.0/0", "::/0")
 
 
+def claude_matches(host: str, port: Optional[int], pattern: str) -> Optional[bool]:
+    """Host and optional destination port; None means a matching port is unknown."""
+    parsed = split_claude_domain(pattern, deny=True)
+    if parsed is None:
+        return None
+    target, target_port = parsed
+    host = host.lower().rstrip(".")
+    try:
+        host = str(ipaddress.ip_address(host.strip("[]")))
+        is_ip = True
+    except ValueError:
+        is_ip = False
+    host_matches = target == "*" or host == target or \
+        target.startswith("*.") and not is_ip and host.endswith(target[1:])
+    if not host_matches:
+        return False
+    return True if target_port is None else None if port is None else port == target_port
+
+
+def _destination_port(attrs: Dict[str, Any]) -> Optional[int]:
+    port = attrs.get("port")
+    if port is not None:
+        return port if type(port) is int and 1 <= port <= 65535 else None
+    engine = str(attrs.get("engine") or "").lower()
+    return 443 if engine == "https" else DEFAULT_PORTS.get(engine)
+
+
+def destination_label(row: Dict[str, Any]) -> str:
+    host = row["host"]
+    if row.get("port") is None:
+        return host
+    return "%s:%s" % ("[" + host.strip("[]") + "]" if ":" in host else host, row["port"])
+
+
+def _endpoint_key(row: Dict[str, Any]) -> Tuple[str, int]:
+    return row["host"], row.get("port") or 0
+
+
 def compare(bounds: Sequence[Dict[str, Any]], report: Dict[str, Any]) -> Dict[str, Any]:
     nodes = {n["id"]: n for n in report["graph"]["nodes"]}
     radii = report["assessment"].get("blast_radius", {})
-    reached: Dict[str, Dict[str, Any]] = {}
+    reached: Dict[Tuple[str, int], Dict[str, Any]] = {}
     for principal, br in radii.items():
         for impact in br["impacts"].values():
             for nid, info in impact.items():
                 n = nodes.get(nid, {})
-                host = n.get("attributes", {}).get("host")
+                attrs = n.get("attributes", {})
+                host = attrs.get("host")
                 if not host or n.get("trust_domain") == "local" or n.get("kind") == "identity":
                     continue
-                cur = reached.setdefault(host, {"host": host, "tier": info["tier"], "reached_by": set(), "node": nid})
+                port = _destination_port(attrs)
+                endpoint = {"host": host, **({"port": port} if port is not None else {})}
+                cur = reached.setdefault(_endpoint_key(endpoint), dict(endpoint, tier=info["tier"], reached_by=set()))
                 cur["tier"] = max(cur["tier"], info["tier"])
                 cur["reached_by"].add(nodes.get(principal, {}).get("display_label", principal))
-    unassessed = [{"host": host, "tier": TIER[row["tier"]], "reached_by": sorted(row["reached_by"])[:5]}
-                  for host, row in sorted(reached.items())][:100]
+    def describe(row: Dict[str, Any]) -> Dict[str, Any]:
+        return {"host": row["host"], **({"port": row["port"]} if "port" in row else {}),
+                "tier": TIER[row["tier"]], "reached_by": sorted(row["reached_by"])[:5]}
+
+    unassessed = [describe(row) for _, row in sorted(reached.items())][:100]
 
     def assess(boundary: Dict[str, Any]) -> Dict[str, Any]:
         result = {key: boundary.get(key) for key in ("tool", "path", "profile", "selected", "enabled")}
@@ -291,16 +340,26 @@ def compare(bounds: Sequence[Dict[str, Any]], report: Dict[str, Any]) -> Dict[st
             result.update(state="unknown", outside=[], unused=[], wildcards=[], unassessed=unassessed)
             return result
         allow, deny = boundary["allow"], boundary["deny"]
-        outside = []
-        for host, row in sorted(reached.items()):
-            denied = any(matches(host, pattern) for pattern in deny)
-            allowed = any(matches(host, pattern) for pattern in allow)
+        outside, unresolved = [], []
+
+        def match(row: Dict[str, Any], pattern: str) -> Optional[bool]:
+            return claude_matches(row["host"], row.get("port"), pattern) if boundary["tool"] == "claude-code" else \
+                matches(row["host"], pattern)
+
+        for _, row in sorted(reached.items()):
+            denials = [match(row, pattern) for pattern in deny]
+            grants = [match(row, pattern) for pattern in allow]
+            denied, allowed = True in denials, True in grants
+            if not denied and ((allowed or boundary["open"]) and None in denials or
+                               not allowed and not boundary["open"] and None in grants):
+                unresolved.append(describe(row))
+                continue
             if denied or (not allowed and not boundary["open"]):
-                outside.append({"host": host, "tier": TIER[row["tier"]], "reached_by": sorted(row["reached_by"])[:5],
-                    "why": "denied by %s" % boundary["path"] if denied else "not in the selected declared allowlist"})
-        result.update(state="declared", outside=outside[:100], unassessed=[],
+                outside.append(dict(describe(row),
+                    why="denied by %s" % boundary["path"] if denied else "not in the selected declared allowlist"))
+        result.update(state="unknown" if unresolved else "declared", outside=outside[:100], unassessed=unresolved[:100],
             unused=sorted({"%s (%s)" % (pattern, boundary["path"]) for pattern in allow
-                           if not _wild(pattern) and not any(matches(host, pattern) for host in reached)})[:100],
+                           if not _wild(pattern) and all(match(row, pattern) is False for row in reached.values())})[:100],
             wildcards=sorted({"%s (%s)" % (pattern, boundary["path"]) for pattern in allow if _wild(pattern)})[:50])
         return result
 
@@ -309,11 +368,11 @@ def compare(bounds: Sequence[Dict[str, Any]], report: Dict[str, Any]) -> Dict[st
     tools = [context["tool"] for context in chosen]
     one_each = len(tools) == len(set(tools))        # two scopes of one tool merge in ways not modeled here
     known = bool(chosen) and one_each and len(bounds) <= 50 and all(c["state"] == "declared" for c in chosen)
-    outside: Dict[str, Dict[str, Any]] = {}
+    outside: Dict[Tuple[str, int], Dict[str, Any]] = {}
     for context in chosen if known else []:         # each tool on its own: outside if any one of them misses it
         label = context["tool"] + (" [%s]" % context["profile"] if context.get("profile") else "")
         for row in context["outside"]:
-            outside.setdefault(row["host"], dict(row, contexts=[]))["contexts"].append(label)
+            outside.setdefault(_endpoint_key(row), dict(row, contexts=[]))["contexts"].append(label)
     if not bounds:
         note = "no structured egress allowlist is committed; the reachable network is unknown, not open"
     elif not chosen:
@@ -323,13 +382,13 @@ def compare(bounds: Sequence[Dict[str, Any]], report: Dict[str, Any]) -> Dict[st
     elif not known:
         note = "a selected declaration is disabled, unsupported or unresolved; coverage is unknown"
     elif len(chosen) > 1:
-        note = ("each tool's selected declaration is compared with mapped reach on its own, and a host is outside "
+        note = ("each tool's selected declaration is compared with mapped reach on its own, and an endpoint is outside "
                 "when any one of them does not admit it; effective settings and runtime enforcement are not verified")
     else:
         note = "one selected declared context compared with mapped reach; effective settings and runtime enforcement are not verified"
     return {"state": "declared" if known else "unknown",
             "boundaries": [dict(b, allow=b["allow"][:50], deny=b["deny"][:50]) for b in bounds[:50]],
             "contexts": contexts, "unassessed": [] if known else unassessed,
-            "outside": [outside[host] for host in sorted(outside)][:100],
+            "outside": [outside[key] for key in sorted(outside)][:100],
             "unused": sorted({row for c in chosen for row in c["unused"]})[:100] if known else [],
             "wildcards": sorted({row for c in chosen for row in c["wildcards"]})[:50] if known else [], "note": note}

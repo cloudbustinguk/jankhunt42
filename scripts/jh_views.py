@@ -13,6 +13,7 @@ import sys
 from typing import List, Optional, Sequence
 
 from jh_core import safe_text
+from jh_egress import destination_label
 from jh_render import Colors, _pad, _truncate, _visible, frame, score_tone
 
 
@@ -199,7 +200,7 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
             out.append(c.yellow("  coverage unknown: %d reached endpoint(s) unassessed" % len(eg.get("unassessed", []))))
             out.append(c.grey("  " + clean(eg.get("note", ""))))
         for o in eg["outside"][:5]:
-            out.append("  %s %s %s %s" % (c.red("!"), c.bold(clean(o["host"])), t.label(o["tier"]),
+            out.append("  %s %s %s %s" % (c.red("!"), c.bold(clean(destination_label(o))), t.label(o["tier"]),
                                           c.grey("outside: " + clean(o["why"])
                                                  + (" [%s]" % ", ".join(o["contexts"]) if len(eg.get("contexts", [])) > 1 else ""))))
         if len(eg["outside"]) > 5:

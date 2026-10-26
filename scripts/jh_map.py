@@ -2624,7 +2624,7 @@ def markdown(report: Dict[str, Any]) -> str:
         if eg.get("state") == "unknown":
             lines.append("- **coverage unknown**: %d reached endpoint(s) remain unassessed." % len(eg.get("unassessed", [])))
         for o in eg["outside"]:
-            lines.append("- **outside**: %s (%s; reached by %s): %s%s" % (o["host"], o["tier"], ", ".join(o["reached_by"]), o["why"],
+            lines.append("- **outside**: %s (%s; reached by %s): %s%s" % (jh_egress.destination_label(o), o["tier"], ", ".join(o["reached_by"]), o["why"],
                          " [%s]" % ", ".join(o["contexts"]) if len(eg.get("contexts", [])) > 1 else ""))
         if eg["wildcards"]:
             lines.append("- wildcards: %s" % ", ".join(eg["wildcards"]))
