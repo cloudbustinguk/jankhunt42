@@ -38,14 +38,10 @@ $JH supply-chain . --require-sbom --require-attestation
 $JH supply-chain . --jfrog-evidence apptrust-evidence.json
 $JH supply-chain . --verify ../verify-plan.json            # gh/cosign/jf, offline
 $JH supply-chain . --verify ../verify-plan.json --online   # may fetch from GitHub
-$JH score .                             # dimension scorecard
-$JH score . --json                      # score breakdown for CI
-$JH triage app.log --top 25             # fingerprint and rank log clusters
-$JH doctor --system                     # repo + host health
-$JH report . --logs app.log --out report.md
-$JH hunt . --focus security --json > hunt.json
-$JH hunt . --md --prompts > hunt-brief.md
-$JH merge panel-*.json --md
+$JH scan . --score                      # dimension scorecard
+$JH scan . --score --json               # score breakdown for CI
+$JH triage app.log --top 25             # debugging helper: fingerprint and rank log clusters
+$JH doctor --system                     # debugging helper: repo + host health
 $JH rules --category security
 
 # What can it hurt? (offline connectivity + blast radius; references/connectivity.md)
@@ -98,9 +94,9 @@ downgrades a rule's severity (and marks it `low` confidence, tagged
 `calibrated`) once it crosses a suppression-rate threshold with enough
 history. Commit the ledger if you want the calibration shared across a team
 or CI; gitignore it for a purely local signal. Both config and calibration
-apply to `scan`, `score`, and `hunt`; `review`'s receipt pipeline does not
+apply to `scan` and `scan --score`; `review`'s receipt pipeline does not
 consult them yet. Cross-file duplicate clusters ("same bug, N sites") are
-always computed on `scan`/`score`/`hunt` and need no flag — see the
+always computed on `scan` and need no flag — see the
 `cross_file_duplicates` key in `--json` output. Files treated as minified
 bundles (read only by secret, hidden-Unicode and agent rules) are listed
 under `minified`.

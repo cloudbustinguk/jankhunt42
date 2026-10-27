@@ -172,7 +172,7 @@ The policy is separate from CI:
 | **warn** | Overall ≥ 16; any dimension ≥ 16; or a medium-confidence critical or high-confidence major in security/reliability |
 | **pass** | Everything else |
 
-`jankhunt42 score --fail-policy` exits `1` on `fail`. This is an **advisory** gate.
+`jankhunt42 scan --score --fail-policy` exits `1` on `fail`. This is an **advisory** gate.
 Use `jankhunt42 scan --fail-on SEV` when you need a simple, explainable CI threshold.
 
 ### 2.7 New-code view ("Clean as You Code")
@@ -181,7 +181,7 @@ Use `jankhunt42 scan --fail-on SEV` when you need a simple, explainable CI thres
 
 ```sh
 jankhunt42 scan . --since origin/main
-jankhunt42 score . --since HEAD
+jankhunt42 scan . --score --since HEAD
 ```
 
 Only findings whose line (or multi-line range) intersects the changed lines are
@@ -265,7 +265,7 @@ Read it in this order:
 ## 7. Implementation notes
 
 - Module: `scripts/jh_score.py`
-- CLI: `jankhunt42 score`, `jankhunt42 scan --json` (`summary.jank`), `--since REF`
+- CLI: `jankhunt42 scan --score`, `jankhunt42 scan --json` (`summary.jank`), `--since REF`
 - Formula version: `SCORE_VERSION = "2.0"`
 - The score is deterministic: same findings + same LOC + same version = same
   result.

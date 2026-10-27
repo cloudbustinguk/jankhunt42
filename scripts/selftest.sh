@@ -31,8 +31,6 @@ VERSION="$("$PY" "$JH" --version | awk '{print $NF}')"
 grep -q "version: \"$VERSION\"" "$SKILL/SKILL.md" || fail "SKILL.md version is not $VERSION"
 grep -q "^## \[$VERSION\]" "$SKILL/CHANGELOG.md" || fail "CHANGELOG.md has no $VERSION section"
 grep -q "Version:.*$VERSION" "$SKILL/README.md" || fail "README.md version is not $VERSION"
-"$PY" -m json.tool "$SKILL/templates/panel-finding.json" >/dev/null \
-  || fail "panel-finding.json is not valid JSON"
 note "version: $VERSION"
 
 # ---------------------------------------------------------------------------
@@ -516,7 +514,7 @@ PY
 # ---------------------------------------------------------------------------
 # Score + new-code view
 # ---------------------------------------------------------------------------
-"$PY" "$JH" score "$FIX" --json --no-progress > "$TMP/score.json"
+"$PY" "$JH" scan "$FIX" --score --json --no-progress > "$TMP/score.json"
 "$PY" - "$TMP/score.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -530,7 +528,7 @@ assert "formula" in j and "severity" in j["formula"], j
 print("score: %s/%s policy=%s worst=%s" % (j["score"], j["grade"], j["policy"], j["worst_dimension"]))
 PY
 
-"$PY" "$JH" score "$FIX" --md --no-progress | grep -q "Score 2.0" \
+"$PY" "$JH" scan "$FIX" --score --md --no-progress | grep -q "Score 2.0" \
   || fail "score --md missing methodology"
 
 # Build a tiny git repo: clean commit, then a bad line on top.
@@ -545,7 +543,7 @@ git add app.py
 git commit -qm "clean baseline"
 printf 'def bad():\n    eval(input())\n' >> app.py
 cd "$TMP"
-"$PY" "$JH" score "$REPO" --since HEAD --json --no-progress > "$TMP/newcode.json"
+"$PY" "$JH" scan "$REPO" --score --since HEAD --json --no-progress > "$TMP/newcode.json"
 "$PY" - "$TMP/newcode.json" <<'PY'
 import json, sys
 j = json.load(open(sys.argv[1]))["jank"]
@@ -834,158 +832,6 @@ print("doctor: ok")
 PY
 
 # ---------------------------------------------------------------------------
-# Hunt plan + merge
-# ---------------------------------------------------------------------------
-"$PY" "$JH" hunt "$FIX" --json --no-progress > "$TMP/hunt.json"
-"$PY" - "$TMP/hunt.json" <<'PY'
-import json, os, sys
-d = json.load(open(sys.argv[1]))
-assert d["command"] == "hunt", d
-assert len(d["roles"]) >= 3, d
-assert d["roles"][-1]["id"] == "verifier", d
-assert len(d["prompts"]) == len(d["roles"]), d
-assert d["leads"], d
-assert d["scenarios"], d
-assert d["consensus"]["levels"]["confirmed"], d
-blob = json.dumps(d)
-assert os.environ["FAKE_KEY"] not in blob, "secret leaked into hunt plan"
-assert os.environ["FAKE_TOKEN"] not in blob, "token leaked into hunt plan"
-assert "Do not spawn subagents" in d["prompts"][0]["text"], "missing recursion guard"
-print("hunt: %d roles, %d leads, %d scenarios" % (len(d["roles"]), len(d["leads"]), len(d["scenarios"])))
-PY
-
-cat > "$TMP/panel-a.json" <<'JSON'
-{
-  "agent": "red-team",
-  "findings": [
-    {
-      "title": "SQL injection in user lookup",
-      "rule": "JH104",
-      "severity": "critical",
-      "confidence": "high",
-      "status": "supported",
-      "path": "src/users.py",
-      "line": 42,
-      "evidence": "cursor.execute('...' + name)",
-      "causal_chain": "name -> query -> impact",
-      "repro": "not reproduced",
-      "fix": "parameterize"
-    },
-    {
-      "title": "Missing authz on export",
-      "severity": "major",
-      "confidence": "medium",
-      "status": "unverified",
-      "path": "src/export.py",
-      "line": 10,
-      "evidence": "no permission check"
-    },
-    {
-      "title": "Path traversal in upload",
-      "severity": "critical",
-      "confidence": "high",
-      "status": "confirmed",
-      "path": "src/upload.py",
-      "line": 5,
-      "evidence": "Static trace only; no runtime check.",
-      "repro": "not reproduced"
-    }
-  ],
-  "rejected": [
-    {
-      "title": "XSS in admin",
-      "reason": "React escapes the value",
-      "evidence": "src/admin.tsx:9"
-    }
-  ]
-}
-JSON
-
-cat > "$TMP/panel-b.json" <<'JSON'
-{
-  "agent": "verifier",
-  "findings": [
-    {
-      "title": "SQL injection in user lookup",
-      "rule": "JH104",
-      "severity": "critical",
-      "confidence": "high",
-      "status": "confirmed",
-      "path": "src/users.py",
-      "line": 42,
-      "evidence": "reproduced with payload",
-      "repro": "pytest -q tests/test_users.py::test_lookup",
-      "fix": "parameterize"
-    },
-    {
-      "title": "SQL injection in user lookup",
-      "rule": "JH104",
-      "severity": "minor",
-      "confidence": "low",
-      "status": "rejected",
-      "path": "src/users.py",
-      "line": 42,
-      "evidence": "ORM validates input"
-    },
-    {
-      "title": "Race in token refresh",
-      "severity": "major",
-      "confidence": "high",
-      "status": "confirmed",
-      "path": "src/auth.py",
-      "line": 20,
-      "evidence": "Duplicate refresh requests observed.",
-      "repro": "not reproduced",
-      "runtime_evidence": "Load test produced two refresh requests for one session; logs attached."
-    }
-  ]
-}
-JSON
-
-"$PY" "$JH" merge "$TMP/panel-a.json" "$TMP/panel-b.json" --json > "$TMP/merge.json"
-"$PY" - "$TMP/merge.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-assert d["command"] == "merge", d
-assert d["summary"]["sources"] == 2, d
-by_title = {f["title"]: f for f in d["findings"]}
-sql = by_title["SQL injection in user lookup"]
-assert sql["status"] == "contested", sql
-assert sql["conflict"] and sql["dissent"], sql
-assert sql["votes"] == 2, sql
-gated = by_title["Path traversal in upload"]
-assert gated["status"] == "supported", gated
-assert gated["status_requested"] == "confirmed", gated
-assert "repro" in gated["status_note"] and "runtime" in gated["status_note"], gated
-runtime = by_title["Race in token refresh"]
-assert runtime["status"] == "confirmed", runtime
-assert runtime["runtime"], runtime
-assert any(f["status"] == "rejected" for f in d["findings"]), d
-assert any(f["status"] == "unverified" for f in d["findings"]), d
-print("merge: %d merged, %d conflicts" % (d["summary"]["merged_findings"], d["summary"]["conflicts"]))
-PY
-
-# A downgraded claim must not trip the confirmed-finding gate.
-if ! "$PY" "$JH" merge "$TMP/panel-a.json" "$TMP/panel-b.json" --fail-on critical \
-    --json > /dev/null; then
-  fail "merge --fail-on critical should ignore an evidence-gated claim"
-fi
-
-"$PY" "$JH" merge "$TMP/panel-a.json" "$TMP/panel-b.json" --md > "$TMP/merge.md"
-grep -q "panel consensus" "$TMP/merge.md" || fail "merge --md missing title"
-grep -q "CONTESTED" "$TMP/merge.md" || fail "merge --md missing contested status"
-grep -q "downgraded" "$TMP/merge.md" || fail "merge --md missing evidence-gate note"
-
-# ---------------------------------------------------------------------------
-# Report
-# ---------------------------------------------------------------------------
-"$PY" "$JH" report "$FIX" --logs "$FIX/app.log" --out "$TMP/report.md" --no-progress >/dev/null
-grep -q "jankhunt42 report" "$TMP/report.md" || fail "report missing title"
-grep -q "Jank score" "$TMP/report.md" || fail "report missing score"
-grep -q "Investigation worksheet" "$TMP/report.md" || fail "report missing worksheet"
-grep -q "Log triage" "$TMP/report.md" || fail "report missing triage"
-
-# ---------------------------------------------------------------------------
 # Rule catalog, help, and TTY
 # ---------------------------------------------------------------------------
 "$PY" "$JH" rules --json > "$TMP/rules.json"
@@ -1000,8 +846,11 @@ print("rules: %d" % len(d))
 PY
 
 "$PY" "$JH" --help >/dev/null
-for cmd in scan review supply-chain score hunt merge triage doctor report rules; do
+for cmd in scan review supply-chain map passport detonate selftest rules score triage doctor; do
   "$PY" "$JH" "$cmd" --help >/dev/null || fail "help failed for $cmd"
+done
+for cmd in hunt merge report; do
+  if "$PY" "$JH" "$cmd" . >/dev/null 2>&1; then fail "removed command $cmd still runs"; fi
 done
 
 if command -v script >/dev/null 2>&1; then
@@ -1197,10 +1046,9 @@ note "citizen gate: template command passes the compliant fixture, fails an unap
 # ---------------------------------------------------------------------------
 for doc in "$SKILL/SKILL.md" "$SKILL/README.md" "$SKILL/CHANGELOG.md" \
            "$SKILL/references/method.md" "$SKILL/references/playbooks.md" \
-           "$SKILL/references/toolbox.md" "$SKILL/references/deep-hunt.md" \
+           "$SKILL/references/toolbox.md" "$SKILL/references/change-review.md" \
            "$SKILL/references/scoring.md" "$SKILL/references/review.md" \
            "$SKILL/references/supply-chain.md" "$SKILL/templates/report.md" \
-           "$SKILL/templates/hunt-report.md" "$SKILL/templates/panel-finding.json" \
            "$SKILL/templates/review-receipt.schema.json" \
            "$SKILL/references/connectivity.md" "$SKILL/references/passport.md" \
            "$SKILL/templates/map.schema.json" "$SKILL/templates/passport.schema.json" \

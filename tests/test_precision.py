@@ -1346,7 +1346,7 @@ class MissingPath(unittest.TestCase):
     def test_a_missing_path_is_an_error_not_a_clean_scan(self):
         with tempfile.TemporaryDirectory() as root:
             gone = os.path.join(root, "does-not-exist")
-            for command in ("scan", "score", "supply-chain", "hunt", "report", "doctor", "map", "passport"):
+            for command in ("scan", "score", "supply-chain", "doctor", "map", "passport"):
                 p = run_cli(command, gone)
                 self.assertEqual(p.returncode, 2, command)
                 self.assertIn("no such file or directory", p.stderr, command)

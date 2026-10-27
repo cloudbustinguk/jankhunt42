@@ -111,16 +111,62 @@ Each event names the command that caused it and the step it ran under.
 `canary-aws`. Exit code 1 means at least one ALERT; 2 means the sandbox
 could not run.
 
-## Dependencies (`--npm-cache`, `--wheelhouse`)
+## Dependencies (`--fetch`, `--npm-cache`, `--wheelhouse`)
 
 Most install-time attacks hide in a dependency's install hook, not in the
-repository itself. To run those hooks too, supply the dependencies as a
-cache made outside the repository. detonate never fetches anything itself.
+repository itself. To run those hooks too, the sandbox needs the
+dependencies on disk. `--fetch` gets the npm ones for you; or you supply a
+cache.
 
 ```sh
-jankhunt42 detonate . --npm-cache /path/outside/npm-cache
-jankhunt42 detonate . --wheelhouse /path/outside/wheelhouse
+jankhunt42 detonate . --fetch https://registry.npmjs.org/    # fetch the pinned npm packages, verified
+jankhunt42 detonate . --npm-cache /path/outside/npm-cache     # or bring your own cache
+jankhunt42 detonate . --wheelhouse /path/outside/wheelhouse   # Python
 ```
+
+### Fetching npm dependencies (`--fetch`)
+
+`--fetch URL` is the only detonate option that uses the network, and only to
+download from the origins you name. The usual way to fetch dependencies,
+`npm install`, runs the package manager online, and it can run package code
+while it fetches. `--fetch` never does:
+
+1. **It reads the lockfile.** One artifact per pinned package: the tarball
+   URL and its `sha512` integrity, from `package-lock.json` or
+   `npm-shrinkwrap.json` (lockfile version 2 or later).
+2. **jankhunt42 downloads each one itself,** and only when:
+   - the URL is HTTPS, under an origin you named with `--fetch`, with no
+     credentials, query, dot segments or encoded separators;
+   - the host resolves to a public address. Private, loopback,
+     link-local, cloud-metadata and reserved ranges are refused. The
+     connection goes to the address that was checked, so a DNS rebind
+     cannot redirect it;
+   - the server answers `200`. Redirects are refused;
+   - the size is under 128 MB per package and 768 MB in total. Every byte
+     received counts, headers and framing included, and a download stops
+     the moment it reaches the limit;
+   - the bytes match the lockfile's `sha512`. Anything else is deleted.
+3. **The cache is built offline.** `npm cache add` runs on the verified
+   tarballs inside this same sandbox, with no network. npm only reads the
+   tarballs; no script runs.
+4. **The cache lives only for this run,** in a private folder that is
+   deleted afterwards. The result's `fetch` section records the lockfile's
+   `sha256`, the origins, the counts and every refused package.
+
+**What `--fetch` does not do:**
+- **Judge the packages.** The lockfile is the repository's choice, so a
+  malicious package it pins is fetched faithfully. `--fetch` proves the
+  bytes are the pinned ones, from an origin you approved; the run shows
+  what they do.
+- **Fetch git, file, link or plain-http dependencies,** any without a
+  `sha512` integrity, or a URL the lockfile pins to two different hashes. Each one is listed as refused, and coverage is
+  partial.
+- **Fetch packages for other platforms.** The sandbox is linux/x64.
+- **Use a proxy or a registry login** (not yet). Use a public registry, or
+  a mirror that needs no credentials.
+- **Fetch Python packages** (not yet). Supply a wheelhouse, as below.
+
+### Using a cache
 
 **npm:** with a cache and a `package-lock.json` (or `npm-shrinkwrap.json`),
 detonate runs one traced step:
@@ -155,32 +201,19 @@ be steered while it runs:
 Links, FIFOs and devices are left out. An unreadable cache, or a temporary
 folder inside the cache, stops the run.
 
-**Making a cache is a fetch, and it can run code.** The repository's
-lockfile and requirements decide what is downloaded, and from where. Some
-downloads also run package code on the machine doing them:
-- **pip:** a requirements file can switch a package to source
-  (`--no-binary :all:`), even against `--only-binary` on the command line,
-  and building a source package's metadata runs its setup code;
-- **npm:** a git dependency is packed by running its own scripts.
-
-So treat making a cache like running the repository:
-1. **Check the sources first,** for example with
-   `jankhunt42 passport . --policy POLICY` and `allowed_registries`. That
-   tells you where packages come from, not that fetching them is safe.
-2. **Fetch in a disposable environment:** a throwaway container or VM with
-   no credentials, whose network reaches only your registry or proxy, and
-   never your workstation. Copy only the resulting cache out.
-3. **Fetch from a list you control:** a normalized, hash-locked list of
-   exact wheels, not the repository's own requirements file:
+**Making a cache by hand is a fetch that can run code.** A pip
+requirements file can switch a package to a source build (even against
+`--only-binary`), and building a source package's metadata runs its setup
+code. An npm git dependency is packed by running its own scripts. If you
+make a cache by hand, as you must for Python today:
+- do it in a disposable environment with no credentials, whose network
+  reaches only your registry;
+- fetch from a hash-locked list you control, not the repository's own
+  requirements file:
 
 ```sh
-# inside the disposable environment
-npm ci --ignore-scripts --cache /cache/npm                # in a clean checkout of the repository
 pip download --only-binary=:all: --no-deps --require-hashes -d /cache/wheels -r /reviewed/wheels.lock
 ```
-
-A cache made this way is the one input detonate trusts you for. It still
-never fetches anything itself.
 
 ## Use it in a passport
 
@@ -205,6 +238,21 @@ With `--base`, the assessed tree is the committed `HEAD`. Its digest comes
 from the commit's own objects, so run detonate on a clean checkout of that
 commit. A tree, or a commit, that cannot be read in full matches no run.
 Results made before 3.6.1 use an older digest and must be re-run.
+
+**Declared versus attempted:** the passport also compares every
+destination the run tried to reach (each DNS name it looked up, each
+address it connected to) with what is declared. That means:
+- the hosts in the repository's own map, and
+- the operator's network ceiling, when `--sandbox-network-ceiling` is
+  given (exact hosts and ports).
+
+A connection must match the port too, whenever the declaration names one;
+the ceiling always does. DNS carries no port, so a name matches by host
+alone. Every attempt is compared, however many there are; the passport
+lists the first 100 and counts the rest. An attempt to reach
+anything else is behaviour the repository does not admit to:
+`P-RUN-002` asks for review (block in the citizen profile). The passport
+lists those destinations, and `--redact` replaces their names.
 
 **What it can change:** sandbox evidence can only add an outcome.
 - An ALERT makes `P-RUN-001` review (block in the citizen profile), as a

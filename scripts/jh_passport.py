@@ -387,7 +387,7 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
         elif rule == "P-EVD-001":
             steps.append("Produce the required supply-chain evidence (%s); see `jankhunt42 supply-chain`." % r["message"])
         elif rule == "P-JNK-001":
-            steps.append("Work down the weakest Jank Score dimension first (`jankhunt42 score`), then the "
+            steps.append("Work down the weakest Jank Score dimension first (`jankhunt42 scan --score`), then the "
                          "highest-severity leads (`jankhunt42 scan --min-severity critical`).")
         elif rule == "P-EXP-001":
             steps.append("Reduce exposure below the policy maximum: remove unneeded write/delete paths shown by `jankhunt42 map`.")
@@ -646,6 +646,16 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     for i, alert in enumerate((rep.get("sandbox_run") or {}).get("alerts", []), 1):
         alert["detail"] = "redacted"            # paths and hosts from the run
         alert["step"] = "step-%d" % i           # step names carry task labels and server names
+    run = rep.get("sandbox_run") or {}
+    for i, attempt in enumerate(run.get("attempts", []), 1):
+        attempt["target"] = "destination-%d" % i
+    if run.get("undeclared"):
+        run["undeclared"] = ["destination" for _ in run["undeclared"]]
+    decision = rep.get("assessment", {}).get("decision", {})
+    for rule in decision.get("rules", []) + decision.get("reasons", []):       # reasons repeat the triggered rules
+        if rule.get("rule") == "P-RUN-002" and run.get("undeclared"):
+            rule["message"] = "the sandbox run tried %d destination(s) the repository does not declare" % max(
+                len(run["undeclared"]), (run.get("counts") or {}).get("UNDECLARED") or 0)
     approval = rep.get("capability_approval") or {}
     for key in ("approved_by", "subject_id", "rationale", "record"):
         if key in approval:
@@ -789,6 +799,8 @@ def markdown(p: Dict[str, Any]) -> str:
         lines += ["## Sandbox run", "", jh_capabilities.markdown_line(sandbox_line), ""]
         for a in (p.get("sandbox_run") or {}).get("alerts", [])[:20]:
             lines.append("- " + jh_capabilities.markdown_line("ALERT %s: %s (%s)" % (a["kind"], a["detail"], a["step"])))
+        for target in (p.get("sandbox_run") or {}).get("undeclared", [])[:20]:
+            lines.append("- " + jh_capabilities.markdown_line("Undeclared destination tried: %s" % target))
         lines += [""] if (p.get("sandbox_run") or {}).get("alerts") else []
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]

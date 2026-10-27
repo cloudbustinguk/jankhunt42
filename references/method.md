@@ -229,17 +229,28 @@ the debugging session.
   should not be published.
 - Do not paste raw prompts or private conversation text into a public report.
 
-## 13. When to switch to a deep hunt
+## 13. Native tools, in order
 
-Use the single-agent method for most bugs. Switch to the opt-in deep hunt
-(`references/deep-hunt.md`) when independent adversarial review is worth the cost:
+Order: build/typecheck → targeted tests → full tests → linters → sanitizers → profilers → security scanners. `jankhunt42 doctor` detects what is available.
 
-- A security-sensitive change or a suspected exploitable defect.
-- A release gate or a migration with irreversible risk.
-- A bug that has survived two normal debugging attempts.
-- A postmortem where the team disagrees on the cause.
-- A codebase or dependency you do not trust yet.
+- **JS/TS:** `tsc --noEmit`, ESLint, Vitest/Jest, `node --inspect`, `--trace-warnings`.
+- **Python:** `python -X dev`, `pytest -x -vv --tb=long`, Ruff, mypy, `py-spy`, `faulthandler`, `tracemalloc`.
+- **Go:** `go vet`, `go test -race -count=1`, `GOTRACEBACK=all`, pprof.
+- **Rust:** `cargo clippy`, `cargo test`, `RUST_BACKTRACE=full`; Miri for UB.
+- **C/C++:** ASan/UBSan/TSan, Valgrind, gdb/lldb, `-Wall -Wextra`.
+- **JVM:** `-XX:+HeapDumpOnOutOfMemoryError`, `jstack`, async-profiler.
+- **Shell:** `shellcheck`, `bash -x`, `set -euo pipefail`.
+- **Containers/K8s:** `docker logs/inspect`, `kubectl describe`, events, `--previous` logs, limits/probes.
+- **System:** `journalctl`, `dmesg`, `ss`, `lsof`, `strace`, `perf`, `df -h`, `free -h`, `ulimit -a`.
 
-A deep hunt does not replace this method. It multiplies it: independent
-investigators, a devil's advocate, cross-examination, and an evidence-weighted
-consensus board.
+## 14. Universal suspects
+
+- Recent diff, dependency bump, config drift, environment difference.
+- Null/undefined/empty, off-by-one, encoding/locale, time zone/clock, units.
+- Paths (relative/absolute, case, spaces, symlinks), permissions, disk/inodes, file descriptors.
+- DNS/TLS/proxy/firewall, cert expiry, clock skew.
+- Version skew: client/server/schema, stale cache or build artifact, wrong interpreter or venv.
+- Concurrency: shared mutable state, lock order, missing `await`, unbounded queue, retry storm.
+- Limits: memory, CPU, `ulimit`, cgroup/container limits, connection and thread pools.
+- Silent failure: swallowed exception, ignored return code, callback never invoked.
+- "Works on my machine" means the environment is part of the bug.

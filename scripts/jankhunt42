@@ -31,7 +31,6 @@ import jh_render  # noqa: E402
 import jh_doctor  # noqa: E402
 import jh_triage  # noqa: E402
 import jh_cve  # noqa: E402
-import jh_hunt  # noqa: E402
 import jh_score  # noqa: E402
 import jh_html  # noqa: E402
 import jh_review  # noqa: E402
@@ -311,6 +310,13 @@ def _sarif(result: ScanResult) -> str:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
+    if getattr(args, "score", False):
+        if args.sarif or args.html or args.fail_on:
+            print("jankhunt42: scan: --score prints the Jank Score breakdown; it cannot combine with --sarif, --html "
+                  "or --fail-on (gate on findings with scan --fail-on, or on the score with --score --fail-policy)",
+                  file=sys.stderr)
+            return 2
+        return cmd_score(args)
     formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html) if enabled)
     if formats > 1:
         print("jankhunt42: choose one output format: --md, --json, --sarif, or --html",
@@ -467,74 +473,22 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_hunt(args: argparse.Namespace) -> int:
-    tty = sys.stdout.isatty() and not args.md and not args.json
-    spinner = None if args.no_scan else Spinner(tty and not args.quiet and not args.no_progress)
-    if args.no_scan:
-        root = os.path.abspath(args.paths[0] if args.paths else ".")
-        result = ScanResult()
-        meta: Dict[str, object] = {"elapsed": 0.0, "cve": False}
-    else:
-        root, result, meta = run_scan(args, spinner)
-    plan = jh_hunt.build_plan(
-        root, result, meta,
-        focus=args.focus,
-        panel=args.panel,
-        rounds=args.rounds,
-        max_agents=args.max_agents,
-        lead_limit=args.leads,
-        include_prompts=True,
-        scope=args.paths or [root],
-        exclusions=args.exclude or (),
-    )
-    if args.json:
-        content = json.dumps(plan, indent=2, ensure_ascii=False)
-        print(content)
-    elif tty and not args.no_color:
-        print(jh_hunt.hunt_tty(plan))
-    else:
-        print(jh_hunt.hunt_markdown(plan, include_prompts=args.prompts))
-    if args.out:
-        if args.json or (not args.md and args.out.endswith(".json")):
-            payload = json.dumps(plan, indent=2, ensure_ascii=False)
-        else:
-            payload = jh_hunt.hunt_markdown(plan, include_prompts=args.prompts)
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(payload + "\n")
-        print("hunt brief written: %s" % args.out, file=sys.stderr)
-        print("  focus: %s · panelists: %d · leads: %d · rounds: %d"
-              % (plan["focus"], len(plan["roles"]), len(plan["leads"]), len(plan["rounds"])),
-              file=sys.stderr)
-    return 0
+# 4.0.0 removed these commands; the old name says where to go, for one release
+_REMOVED = {
+    "hunt": "`hunt` was removed in 4.0.0: use `jankhunt42 scan` and `jankhunt42 review`.",
+    "merge": "`merge` was removed in 4.0.0, with `hunt`.",
+    "report": "`report` was removed in 4.0.0: use `jankhunt42 scan --md` (and `doctor` or `triage` if you need them).",
+}
 
 
-def cmd_merge(args: argparse.Namespace) -> int:
-    paths = list(args.paths)
-    if not paths:
-        if not sys.stdin.isatty():
-            paths = ["-"]
-        else:
-            print("jankhunt42: give at least one panel JSON file (or pipe via stdin)", file=sys.stderr)
-            return 2
-    try:
-        reports = jh_hunt.load_reports(paths)
-    except (OSError, ValueError) as exc:
-        print("jankhunt42: %s" % exc, file=sys.stderr)
-        return 2
-    merged = jh_hunt.merge_reports(reports)
-    if args.json:
-        print(json.dumps(merged, indent=2, ensure_ascii=False))
-    else:
-        tty = sys.stdout.isatty() and not args.md
-        if tty and not args.no_color:
-            print(jh_hunt.merge_tty(merged))
-        else:
-            print(jh_hunt.merge_markdown(merged))
-    if args.fail_on:
-        for f in merged["findings"]:
-            if f["status"] == "confirmed" and sev_at_least(f["severity"], args.fail_on):
-                return 1
-    return 0
+def cmd_removed(args: argparse.Namespace) -> int:
+    print("jankhunt42: " + _REMOVED[args.command], file=sys.stderr)
+    return 2
+
+
+def cmd_score_alias(args: argparse.Namespace) -> int:
+    print("jankhunt42: `score` is now `scan --score`; the old name goes in 4.1.", file=sys.stderr)
+    return cmd_score(args)
 
 
 def cmd_triage(args: argparse.Namespace) -> int:
@@ -580,111 +534,6 @@ def cmd_rules(args: argparse.Namespace) -> int:
     for r in rows:
         print("| `%s` | %s | %s | %s | %s |" % (r.id, r.severity, r.category, r.confidence, r.title))
     print("\n%d rules shown. `JH901` is populated by `scan --cve` (OSV.dev)." % len(rows))
-    return 0
-
-
-def _report_markdown(root: str, scan: ScanResult, meta: Dict[str, object],
-                     doctor: jh_doctor.DoctorResult,
-                     logs: Optional[jh_triage.TriageResult]) -> str:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    counts: Dict[str, int] = {}
-    for f in scan.findings:
-        counts[f.severity] = counts.get(f.severity, 0) + 1
-    score = jh_score.compute(scan.findings, scan.loc)
-    if meta.get("new_code"):
-        score.new_code = meta["new_code"]
-    out: List[str] = []
-    out.append("# jankhunt42 report")
-    out.append("")
-    out.append("**Root:** `%s` · **Generated:** %s · **Files:** %d · **LOC:** %d"
-               % (root, now, scan.files, scan.loc))
-    out.append("")
-    out.append("## 1. Executive summary")
-    out.append("")
-    out.append(jh_score.scorecard_markdown(score, heading="### Jank score"))
-    out.append("")
-    out.append("**Findings:** %d — %s"
-               % (len(scan.findings),
-                  ", ".join("%s %d" % (s, counts[s]) for s in SEVERITIES if counts.get(s)) or "none"))
-    top = jh_render._top_rules(scan.findings, 8)
-    if top:
-        out.append("")
-        out.append("| Rule | Title | Count |")
-        out.append("|---|---|---:|")
-        for rid, title, count in top:
-            out.append("| `%s` | %s | %d |" % (rid, title, count))
-    if meta.get("cve_warnings"):
-        out.append("")
-        for warning in meta["cve_warnings"]:
-            out.append("> CVE lookup: %s" % warning)
-    out.append("")
-    out.append("## 2. Environment")
-    out.append("")
-    from jh_doctor import doctor_markdown
-    env = doctor_markdown(doctor).split("\n", 1)
-    out.append(env[1] if len(env) > 1 else "")
-    out.append("")
-    out.append("## 3. Static findings")
-    out.append("")
-    body = jh_render.scan_markdown(scan, meta, max_findings=150).split("\n", 1)
-    out.append(body[1] if len(body) > 1 else body[0])
-    if logs is not None:
-        out.append("")
-        out.append("## 4. Log triage")
-        out.append("")
-        from jh_triage import triage_markdown
-        log_md = triage_markdown(logs, top=20).split("\n", 1)
-        out.append(log_md[1] if len(log_md) > 1 else log_md[0])
-    out.append("")
-    out.append("## 5. Investigation worksheet")
-    out.append("")
-    out.append("| Field | Value |")
-    out.append("|---|---|")
-    out.append("| Symptom (expected vs actual) | _fill_ |")
-    out.append("| Exact repro command | _fill_ |")
-    out.append("| Frequency / first seen | _fill_ |")
-    out.append("| Last known good | _fill_ |")
-    out.append("| Suspect change | _fill_ |")
-    out.append("| Hypothesis H1 | _fill_ |")
-    out.append("| Cheapest discriminating test | _fill_ |")
-    out.append("| Root cause (proven) | _fill_ |")
-    out.append("| Fix + regression test | _fill_ |")
-    out.append("")
-    out.append("## 6. Next moves")
-    out.append("")
-    out.append("1. Reproduce the failure and capture exit code + full stack trace.")
-    out.append("2. Confirm the top severity findings in context; do not fix regex hits blindly.")
-    out.append("3. Run the project's native compiler/tests/linter; compare against the last known good commit.")
-    out.append("4. If the bug is intermittent, add timestamps/correlation IDs and measure frequency before changing code.")
-    out.append("5. Record the causal chain and the verification command in the final report.")
-    return "\n".join(out)
-
-
-def cmd_report(args: argparse.Namespace) -> int:
-    spinner = Spinner(sys.stdout.isatty() and not args.quiet and not args.no_progress)
-    root, scan, meta = run_scan(args, spinner)
-    spinner.update("checking the environment…")
-    doc = jh_doctor.doctor(root, deep=args.system)
-    logs = None
-    if args.logs:
-        logs = jh_triage.triage_paths(args.logs)
-    report = _report_markdown(root, scan, meta, doc, logs)
-    if args.out:
-        spinner.done()
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(report + "\n")
-        counts: Dict[str, int] = {}
-        for f in scan.findings:
-            counts[f.severity] = counts.get(f.severity, 0) + 1
-        score = jh_score.compute(scan.findings, scan.loc)
-        print("report written: %s" % args.out)
-        print("  files: %d · findings: %d · jank: %d/100 (%s · %s) · policy %s"
-              % (scan.files, len(scan.findings), score.score, score.grade,
-                 score.label, score.policy))
-        if counts:
-            print("  " + " · ".join("%s %d" % (s, counts[s]) for s in SEVERITIES if counts.get(s)))
-    else:
-        print(report)
     return 0
 
 
@@ -834,9 +683,10 @@ def cmd_passport(args: argparse.Namespace) -> int:
 def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
-    if args.sandbox_network_ceiling is not None and not args.base and args.emit_sandbox_policy not in ("openshell", "claude-code"):
-        print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code",
-              file=sys.stderr)
+    if args.sandbox_network_ceiling is not None and not args.base and args.detonation is None and \
+            args.emit_sandbox_policy not in ("openshell", "claude-code"):
+        print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code, "
+              "--base, or --detonation", file=sys.stderr)
         return 2
     if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
         print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
@@ -991,7 +841,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
                         os.path.realpath(root), os.path.realpath(top)).replace(os.sep, "/"))
                 except (jh_map.GitError, ValueError, IndexError):
                     digest = {"error": "unreadable"}
-            sandbox = jh_detonate.passport_evidence(doc, root, digest)
+            sandbox = jh_detonate.compare_declared(jh_detonate.passport_evidence(doc, root, digest), map_report,
+                                                   network_ceiling)
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
@@ -1044,13 +895,36 @@ def cmd_detonate(args: argparse.Namespace) -> int:
     if not os.path.isdir(args.path):
         print("jankhunt42: detonate: %s is not a directory" % jh_core_safe(args.path), file=sys.stderr)
         return 2
+    if args.fetch and args.npm_cache:
+        print("jankhunt42: detonate: --fetch makes the npm cache; it cannot combine with --npm-cache", file=sys.stderr)
+        return 2
+    import shutil
+    import tempfile
+    import jh_acquire
+    fetched, workdir = None, None
     try:
+        npm_cache = args.npm_cache
+        if args.fetch:
+            # the pinned packages, fetched and verified into a private folder for this run only
+            workdir = os.path.realpath(tempfile.mkdtemp(prefix="jh-fetch-"))
+            fetched = jh_acquire.run(args.path, args.fetch, os.path.join(workdir, "acq"), image=args.image,
+                                     engine=args.engine)
+            npm_cache = fetched["cache"]
         surfaces = jh_detonate.SURFACES if args.surface == "all" else (args.surface,)
         result = jh_detonate.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
-                                 surfaces=surfaces, npm_cache=args.npm_cache, wheelhouse=args.wheelhouse)
-    except RuntimeError as exc:
+                                 surfaces=surfaces, npm_cache=npm_cache, wheelhouse=args.wheelhouse)
+    except (RuntimeError, jh_acquire.AcquireError, OSError, subprocess.SubprocessError) as exc:
         print("jankhunt42: detonate: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
+    finally:
+        if workdir:
+            shutil.rmtree(workdir, ignore_errors=True)
+    if fetched is not None:
+        result["fetch"] = jh_acquire.summary(fetched)
+        if fetched["refused"]:
+            result["coverage"]["gaps"].append("pinned packages not fetched: %d (see fetch.refused)"
+                                              % len(fetched["refused"]))
+            result["coverage"]["state"] = "partial"
     result["version"] = VERSION
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -1068,10 +942,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="jankhunt42",
         description="What's broken? What can it hurt? Can we responsibly ship it? "
-                    "Offline investigation (scan, review, hunt), blast-radius maps (map), and software passports (passport).",
+                    "Scans (scan, review), blast-radius maps (map), software passports (passport) and an opt-in "
+                    "sandbox (detonate).",
     )
     p.add_argument("--version", action="version", version="%(prog)s " + VERSION)
-    sub = p.add_subparsers(dest="command", required=True)
+    # hidden commands (no help=) still parse: the debugging helpers, the score alias and the removed names
+    sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND",
+                           title="commands")
 
     def add_common_scan_inputs(sp, cve_help):
         sp.add_argument("--no-color", action="store_true")
@@ -1106,69 +983,76 @@ def build_parser() -> argparse.ArgumentParser:
                         help="display cap (JSON/SARIF keep all)")
         sp.add_argument("--fail-on", choices=SEVERITIES,
                         help="exit 1 if a finding meets this severity")
+        sp.add_argument("--score", action="store_true",
+                        help="show the Jank Score breakdown (dimensions, grades, policy) instead of the findings")
+        sp.add_argument("--fail-policy", action="store_true",
+                        help="with --score: exit 1 when the advisory policy is 'fail' (not a substitute for --fail-on)")
 
     sp = sub.add_parser("scan", help="scan code, infra, CI, and config")
     add_scan_opts(sp)
     sp.set_defaults(func=cmd_scan)
 
-    sp = sub.add_parser("score", help="show the Jank Score 2.0 breakdown (dimensions, grades, policy)")
+    sp = sub.add_parser("score")      # 4.0.0: an alias of `scan --score`, hidden, for one release
     sp.add_argument("paths", nargs="*", help="files or directories (default: .)")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--md", action="store_true")
     add_common_scan_inputs(sp, "include OSV.dev advisories (network)")
     sp.add_argument("--fail-policy", action="store_true",
                     help="exit 1 when the advisory policy is 'fail' (not a substitute for --fail-on)")
-    sp.set_defaults(func=cmd_score)
-
-    def add_review_scan_inputs(sp):
-        sp.add_argument("--no-color", action="store_true")
-        sp.add_argument("--quiet", action="store_true")
-        sp.add_argument("--no-progress", action="store_true")
-        sp.add_argument("--min-severity", choices=SEVERITIES, default="minor")
-        sp.add_argument("--category", action="append", help="filter category (repeatable)")
-        sp.add_argument("--rule", action="append", help="filter rule id (repeatable)")
-        sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
-        sp.add_argument("--max-files", type=int, default=20000)
-        sp.add_argument("--max-file-bytes", type=int, default=1500000)
-        sp.add_argument("--max-per-file-rule", type=int, default=5)
-        sp.add_argument("--max-per-rule", type=int, default=200)
-        # Deliberately no --config/--calibrate here: `review` has its own
-        # evidence-gated receipt pipeline (jh_review.py) that these do not
-        # yet reach. Accepting the flags without wiring them would silently
-        # do nothing, which is worse than not offering them.
+    sp.set_defaults(func=cmd_score_alias)
 
     sp = sub.add_parser("review", help="diff-aware review with receipts, coverage, and baseline deltas")
     sp.add_argument("paths", nargs="*", help="repository root or path filter (default: .)")
-    group = sp.add_mutually_exclusive_group()
+    what = sp.add_argument_group("what to review (one of)")
+    out = sp.add_argument_group("output")
+    filters = sp.add_argument_group("filters")
+    gates = sp.add_argument_group("baselines and gates")
+    supply = sp.add_argument_group("supply-chain evidence")
+    limits = sp.add_argument_group("advanced: limits")
+    group = what.add_mutually_exclusive_group()
     group.add_argument("--base", metavar="REF",
                        help="review REF...HEAD (committed changes since a base ref)")
     group.add_argument("--commit", metavar="SHA", help="review a single commit")
     group.add_argument("--staged", action="store_true", help="review the index only")
     group.add_argument("--pr", metavar="N", help="review a checked-out GitHub PR by number or URL")
-    sp.add_argument("--json", action="store_true", help="machine-readable review receipts")
-    sp.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 with receipt fingerprints")
-    sp.add_argument("--md", action="store_true", help="force Markdown output")
-    sp.add_argument("--brief", action="store_true", help="Markdown review brief for the host agent")
-    add_review_scan_inputs(sp)
-    sp.add_argument("--max-findings", type=int, default=300, help="display cap (JSON/SARIF keep all)")
-    sp.add_argument("--baseline", metavar="PATH", help="prior scan/review JSON for new-vs-persisting deltas")
-    sp.add_argument("--save-baseline", metavar="PATH", help="write the current review as the next baseline")
-    sp.add_argument("--fail-on", choices=SEVERITIES,
-                    help="exit 1 for new supported findings at or above this severity")
-    sp.add_argument("--include-unverified", action="store_true",
-                    help="include unverified leads in the --fail-on gate")
-    sp.add_argument("--no-supply-chain", action="store_true", help="skip SBOM/attestation evidence discovery")
-    sp.add_argument("--no-supply-chain-discovery", action="store_true",
-                    help="only inspect explicitly supplied evidence files")
-    sp.add_argument("--sbom", action="append", metavar="PATH", help="explicit SBOM path (repeatable)")
-    sp.add_argument("--attestation", action="append", metavar="PATH",
-                    help="explicit in-toto/Sigstore/GitHub attestation path (repeatable)")
-    sp.add_argument("--jfrog-evidence", action="append", metavar="PATH",
-                    help="explicit JFrog AppTrust evidence path (repeatable)")
-    sp.add_argument("--require-sbom", action="store_true", help="fail if no SBOM is found")
-    sp.add_argument("--require-attestation", action="store_true", help="fail if no attestation is found")
-    sp.add_argument("--require-verified-attestation", action="store_true",
-                    help="fail unless the exporter recorded a successful verification")
+    out.add_argument("--json", action="store_true", help="machine-readable review receipts")
+    out.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 with receipt fingerprints")
+    out.add_argument("--md", action="store_true", help="force Markdown output")
+    out.add_argument("--brief", action="store_true", help="Markdown review brief for the host agent")
+    out.add_argument("--no-color", action="store_true")
+    out.add_argument("--quiet", action="store_true")
+    out.add_argument("--no-progress", action="store_true")
+    out.add_argument("--max-findings", type=int, default=300, help="display cap (JSON/SARIF keep all)")
+    filters.add_argument("--min-severity", choices=SEVERITIES, default="minor")
+    filters.add_argument("--category", action="append", help="filter category (repeatable)")
+    filters.add_argument("--rule", action="append", help="filter rule id (repeatable)")
+    filters.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
+    limits.add_argument("--max-files", type=int, default=20000)
+    limits.add_argument("--max-file-bytes", type=int, default=1500000)
+    limits.add_argument("--max-per-file-rule", type=int, default=5)
+    limits.add_argument("--max-per-rule", type=int, default=200)
+    # Deliberately no --config/--calibrate here: `review` has its own
+    # evidence-gated receipt pipeline (jh_review.py) that these do not
+    # yet reach. Accepting the flags without wiring them would silently
+    # do nothing, which is worse than not offering them.
+    gates.add_argument("--baseline", metavar="PATH", help="prior scan/review JSON for new-vs-persisting deltas")
+    gates.add_argument("--save-baseline", metavar="PATH", help="write the current review as the next baseline")
+    gates.add_argument("--fail-on", choices=SEVERITIES,
+                       help="exit 1 for new supported findings at or above this severity")
+    gates.add_argument("--include-unverified", action="store_true",
+                       help="include unverified leads in the --fail-on gate")
+    supply.add_argument("--no-supply-chain", action="store_true", help="skip SBOM/attestation evidence discovery")
+    supply.add_argument("--no-supply-chain-discovery", action="store_true",
+                        help="only inspect explicitly supplied evidence files")
+    supply.add_argument("--sbom", action="append", metavar="PATH", help="explicit SBOM path (repeatable)")
+    supply.add_argument("--attestation", action="append", metavar="PATH",
+                        help="explicit in-toto/Sigstore/GitHub attestation path (repeatable)")
+    supply.add_argument("--jfrog-evidence", action="append", metavar="PATH",
+                        help="explicit JFrog AppTrust evidence path (repeatable)")
+    supply.add_argument("--require-sbom", action="store_true", help="fail if no SBOM is found")
+    supply.add_argument("--require-attestation", action="store_true", help="fail if no attestation is found")
+    supply.add_argument("--require-verified-attestation", action="store_true",
+                        help="fail unless the exporter recorded a successful verification")
     sp.set_defaults(func=cmd_review)
 
     def add_verify_inputs(sp):
@@ -1200,32 +1084,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --verify: keep fetched evidence in DIR (default: a temporary directory)")
     sp.set_defaults(func=cmd_supply_chain)
 
-    sp = sub.add_parser("hunt", help="plan an opt-in adversarial deep hunt (agent prompts + consensus contract)")
-    sp.add_argument("paths", nargs="*", help="files or directories (default: .)")
-    sp.add_argument("--focus", choices=("all", "security", "reliability", "performance", "data", "ci"),
-                    default="all", help="panel lens (default: all)")
-    sp.add_argument("--panel", type=int, default=6, help="number of independent panelists (3-12)")
-    sp.add_argument("--rounds", type=int, default=3, help="hunt rounds (2-5)")
-    sp.add_argument("--max-agents", type=int, help="hard cap on spawned agents (default: panel size)")
-    sp.add_argument("--leads", type=int, default=12, help="scanner leads included in each prompt")
-    sp.add_argument("--prompts", action="store_true", help="include the full agent prompt pack in Markdown output")
-    sp.add_argument("--out", help="write the brief to this path (.json writes JSON)")
-    sp.add_argument("--no-scan", action="store_true", help="plan without running the scanner")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    add_common_scan_inputs(sp, "include OSV.dev advisories in the lead board (network)")
-    sp.set_defaults(func=cmd_hunt)
-
-    sp = sub.add_parser("merge", help="merge panel JSON into an evidence-weighted consensus board")
-    sp.add_argument("paths", nargs="*", help="panel/scan JSON or JSONL files (- for stdin)")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    sp.add_argument("--no-color", action="store_true")
-    sp.add_argument("--fail-on", choices=SEVERITIES,
-                    help="exit 1 if a confirmed finding meets this severity")
-    sp.set_defaults(func=cmd_merge)
-
-    sp = sub.add_parser("triage", help="parse, fingerprint, and rank logs")
+    sp = sub.add_parser("triage")     # 4.0.0: hidden from the main help; logs, ranked
     sp.add_argument("paths", nargs="*", help="log files, .gz, or - for stdin")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--md", action="store_true")
@@ -1234,7 +1093,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--grep", help="only consider lines matching this regex")
     sp.set_defaults(func=cmd_triage)
 
-    sp = sub.add_parser("doctor", help="project + system environment health")
+    sp = sub.add_parser("doctor")     # 4.0.0: hidden from the main help; environment health
     sp.add_argument("path", nargs="?", default=".")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--md", action="store_true")
@@ -1242,34 +1101,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--system", action="store_true", help="include ports, failed units, kernel log")
     sp.set_defaults(func=cmd_doctor)
 
-    sp = sub.add_parser("report", help="scan + doctor + logs → Markdown investigation report")
-    sp.add_argument("paths", nargs="*")
-    sp.add_argument("--logs", action="append", help="log file(s) to triage (repeatable)")
-    sp.add_argument("--out", help="write report to this path")
-    sp.add_argument("--system", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    add_common_scan_inputs(sp, "include OSV.dev advisories (network)")
-    sp.add_argument("--max-findings", type=int, default=300)
-    sp.add_argument("--fail-on", choices=SEVERITIES)
-    sp.set_defaults(func=cmd_report)
 
-    def add_map_inputs(sp):
+    def add_map_inputs(sp, out=None, inputs=None, limits=None):
+        out, inputs, limits = out or sp, inputs or sp, limits or sp
         sp.add_argument("path", nargs="?", default=".", help="repository root (default: .)")
-        sp.add_argument("--json", action="store_true", help="versioned JSON (stdout carries only JSON)")
-        sp.add_argument("--html", action="store_true", help="self-contained offline HTML (stdout)")
-        sp.add_argument("--md", action="store_true", help="force Markdown output")
-        sp.add_argument("--no-color", action="store_true")
-        sp.add_argument("--redact", action="store_true",
-                        help="shareable output: pseudonymous IDs/labels, no hostnames, owners, or snippets")
-        sp.add_argument("--inventory", metavar="PATH",
-                        help="JSON inventory of assets/grants; provider-verified only if the file is outside the repo")
-        sp.add_argument("--max-depth", type=int, default=jh_graph.DEFAULT_DEPTH,
-                        help="reachability depth bound (1-%d, default %d)" % (jh_graph.MAX_DEPTH, jh_graph.DEFAULT_DEPTH))
-        sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
-        sp.add_argument("--max-files", type=int, default=20000)
-        sp.add_argument("--max-file-bytes", type=int, default=1500000)
-        sp.add_argument("--config", metavar="PATH", help="explicit .jankhunt42.toml/.jankhunt42.json")
-        sp.add_argument("--no-config", action="store_true", help="ignore repository config and declarations")
+        out.add_argument("--json", action="store_true", help="versioned JSON (stdout carries only JSON)")
+        out.add_argument("--html", action="store_true", help="self-contained offline HTML (stdout)")
+        out.add_argument("--md", action="store_true", help="force Markdown output")
+        out.add_argument("--no-color", action="store_true")
+        out.add_argument("--redact", action="store_true",
+                         help="shareable output: pseudonymous IDs/labels, no hostnames, owners, or snippets")
+        inputs.add_argument("--inventory", metavar="PATH",
+                            help="JSON inventory of assets/grants; provider-verified only if the file is outside the repo")
+        limits.add_argument("--max-depth", type=int, default=jh_graph.DEFAULT_DEPTH,
+                            help="reachability depth bound (1-%d, default %d)" % (jh_graph.MAX_DEPTH, jh_graph.DEFAULT_DEPTH))
+        limits.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
+        limits.add_argument("--max-files", type=int, default=20000)
+        limits.add_argument("--max-file-bytes", type=int, default=1500000)
+        inputs.add_argument("--config", metavar="PATH", help="explicit .jankhunt42.toml/.jankhunt42.json")
+        inputs.add_argument("--no-config", action="store_true", help="ignore repository config and declarations")
 
     sp = sub.add_parser("map", help="what can it hurt? connectivity graph, CIA blast radius, --base graph diff",
                         description="Offline, static connectivity discovery and blast-radius reasoning. "
@@ -1289,38 +1139,48 @@ def build_parser() -> argparse.ArgumentParser:
                         description="Software passport: links scan, map, supply-chain, ownership and operations "
                                     "evidence to a pass/review/insufficient-evidence/block assessment. "
                                     "Advisory unless --fail-on is given. Never an approval.")
-    add_map_inputs(sp)
-    sp.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
-    sp.add_argument("--capability-approval", metavar="PATH", help="external operator record for this exact concrete access change")
-    sp.add_argument("--detonation", metavar="PATH",
-                    help="a `detonate --json` result kept outside the repository; used only if made on this exact tree, "
-                         "and it can only add outcomes (P-RUN-001)")
-    sp.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
-    sp.add_argument("--policy", metavar="PATH",
-                    help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
-    sp.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),
-                    help="enforce: exit 1 when the decision is at or above this outcome")
-    sp.add_argument("--profile", choices=("standard", "citizen"),
-                    help="citizen: govern software built by non-engineers (custodian, tests, CI, classification "
-                         "required; unverified authority blocks); the repository can opt in, never out")
-    sp.add_argument("--acceptance", metavar="PATH",
-                    help="operator acceptance record (outside the repo) bound to revision, policy hash, and decision")
-    sp.add_argument("--compare", metavar="OLD.json",
-                    help="compare a previous passport with the current one (or with --against)")
-    sp.add_argument("--against", metavar="NEW.json", help="with --compare: compare two stored passports, no scan")
-    sp.add_argument("--branch-rules", metavar="PATH",
-                    help="the repository's rulesets or branch protection as exported from the GitHub REST API; "
-                         "provider-verified only when the file is outside the repository")
-    sp.add_argument("--default-branch", metavar="NAME",
-                    help="the default branch the change-control checks apply to (default: from git, else main)")
-    sp.add_argument("--emit-sandbox-policy", metavar="FORMAT", choices=jh_fence.FORMATS,
-                    help="write a least-privilege network fence for an AI coding agent from what the code reaches "
-                         "(production assets excluded): claude-code, codex or openshell. A review artefact; "
-                         "jankhunt42 never applies it")
-    sp.add_argument("--sandbox-network-ceiling", metavar="PATH",
-                    help="an operator's JSON list of approved host/port pairs, kept outside the repository; the openshell or "
-                         "claude-code policy keeps only reached destinations it approves (references/network-ceiling.md)")
-    add_verify_inputs(sp)
+    out = sp.add_argument_group("output")
+    decision = sp.add_argument_group("the decision")
+    change = sp.add_argument_group("change review (--base)")
+    sandbox = sp.add_argument_group("sandbox")
+    control = sp.add_argument_group("change control")
+    compare = sp.add_argument_group("comparing passports")
+    supply = sp.add_argument_group("supply chain")
+    inputs = sp.add_argument_group("inputs")
+    limits = sp.add_argument_group("advanced: limits")
+    add_map_inputs(sp, out, inputs, limits)
+    change.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
+    change.add_argument("--capability-approval", metavar="PATH", help="external operator record for this exact concrete access change")
+    sandbox.add_argument("--detonation", metavar="PATH",
+                         help="a `detonate --json` result kept outside the repository; used only if made on this exact "
+                              "tree, and it can only add outcomes (P-RUN-001, P-RUN-002)")
+    change.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
+    decision.add_argument("--policy", metavar="PATH",
+                          help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
+    decision.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),
+                          help="enforce: exit 1 when the decision is at or above this outcome")
+    decision.add_argument("--profile", choices=("standard", "citizen"),
+                          help="citizen: govern software built by non-engineers (custodian, tests, CI, classification "
+                               "required; unverified authority blocks); the repository can opt in, never out")
+    decision.add_argument("--acceptance", metavar="PATH",
+                          help="operator acceptance record (outside the repo) bound to revision, policy hash, and decision")
+    compare.add_argument("--compare", metavar="OLD.json",
+                         help="compare a previous passport with the current one (or with --against)")
+    compare.add_argument("--against", metavar="NEW.json", help="with --compare: compare two stored passports, no scan")
+    control.add_argument("--branch-rules", metavar="PATH",
+                         help="the repository's rulesets or branch protection as exported from the GitHub REST API; "
+                              "provider-verified only when the file is outside the repository")
+    control.add_argument("--default-branch", metavar="NAME",
+                         help="the default branch the change-control checks apply to (default: from git, else main)")
+    sandbox.add_argument("--emit-sandbox-policy", metavar="FORMAT", choices=jh_fence.FORMATS,
+                         help="write a least-privilege network fence for an AI coding agent from what the code reaches "
+                              "(production assets excluded): claude-code, codex or openshell. A review artefact; "
+                              "jankhunt42 never applies it")
+    sandbox.add_argument("--sandbox-network-ceiling", metavar="PATH",
+                         help="an operator's JSON list of approved host/port pairs, kept outside the repository: it "
+                              "narrows an emitted policy, and counts as declared for --detonation "
+                              "(references/network-ceiling.md)")
+    add_verify_inputs(supply)
     sp.set_defaults(func=cmd_passport)
 
     sp = sub.add_parser("detonate", help="opt-in: run the install hooks and what runs on open in a disposable sandbox, "
@@ -1330,6 +1190,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the runner image, built once from templates/detonate.Containerfile (never pulled)")
     sp.add_argument("--engine", choices=("podman", "docker"), help="container engine (default: podman, else docker)")
     sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
+    sp.add_argument("--fetch", action="append", metavar="URL",
+                    help="fetch the npm packages the lockfile pins from this approved https origin (repeatable), "
+                         "verified against the lockfile, into a cache for this run; the only detonate option that "
+                         "uses the network (references/detonate.md)")
     sp.add_argument("--npm-cache", metavar="DIR",
                     help="an npm cache made outside the repository (npm ci --ignore-scripts --cache DIR): with a "
                          "lockfile, npm ci runs offline from it, so dependencies' install hooks run too")
@@ -1354,12 +1218,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--category", action="append")
     sp.add_argument("--min-severity", choices=SEVERITIES, default="info")
     sp.set_defaults(func=cmd_rules)
+
+    for name in _REMOVED:
+        sp = sub.add_parser(name, add_help=False)
+        sp.add_argument("rest", nargs=argparse.REMAINDER)
+        sp.set_defaults(func=cmd_removed)
     return p
 
 
 # commands whose positional arguments are files or directories to read
 # (review's are path filters, which may name a deleted file)
-_PATH_COMMANDS = ("scan", "score", "supply-chain", "hunt", "report", "doctor", "map", "passport")
+_PATH_COMMANDS = ("scan", "score", "supply-chain", "doctor", "map", "passport")
 
 
 def _unreadable(path: str) -> str:

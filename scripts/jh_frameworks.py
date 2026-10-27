@@ -88,6 +88,7 @@ def subcategory_key(sub: str) -> Tuple[int, List[int]]:
 RULES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "P-CAP-001": (("MEASURE 2.7", "MAP 3.5", "MANAGE 1.3"), ("III", "IV")),
     "P-RUN-001": (("MEASURE 2.7", "MANAGE 1.3"), ("III", "IV")),
+    "P-RUN-002": (("MEASURE 2.7", "MAP 3.5", "MANAGE 1.3"), ("III", "IV")),
     "P-COV-001": (("MEASURE 1.1",), ("III",)),
     "P-OWN-001": (("GOVERN 2.1",), ("I",)),
     "P-CUS-001": (("GOVERN 2.1", "GOVERN 3.2"), ("I", "III")),

@@ -87,8 +87,10 @@ def inventory(report, items):
     if report["coverage"].get("skipped", {}).get("symlink-or-submodule"):
         reasons.append("snapshot links or submodules are not inspected")
 
-    def receipt(row, path, line):
+    def receipt(row, path, line, source=None):
         item = dict(snapshot=report["source_revision"], path=G.sanitize_text(path, 300), line=line)
+        if source and "json_pointer" in source:
+            item.update(json_pointer=source["json_pointer"], code_line=source["code_line"])
         if item not in row["evidence"]:
             if len(row["evidence"]) < 20:
                 row["evidence"].append(item)
@@ -112,7 +114,7 @@ def inventory(report, items):
         for ref in refs:
             ev = evidence.get(ref)
             if ev:
-                receipt(row, ev["path"], ev["line"])
+                receipt(row, ev["path"], ev["line"], ev)
         if location:
             receipt(row, *location)
         row["witness"] = [report["source_revision"] + ":" + eid for eid in path]
@@ -379,6 +381,8 @@ def approver_lines(delta):
             label += " (unknown port)"
         ev = row["evidence"][0] if row["evidence"] else None
         where = "; %s:%s" % (ev["path"], ev["line"]) if ev else ""
+        if ev and 'json_pointer' in ev:
+            where += ' %s, code line %d' % (ev['json_pointer'], ev['code_line'])
         lines.append("%s: %s may %s %s (%s; %s%s)." % (
             "Within network ceiling" if row["ceiling"] == "within" else "Needs approval",
             row["principal"], row["action"], label, row["certainty"], row["ceiling"], where))

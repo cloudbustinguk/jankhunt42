@@ -89,6 +89,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-CHG-001` change control on the default branch | not required | **required**: block on no review or an app bypass; insufficient-evidence when unknown or only declared in the repository |
 | `P-SUP-001` package sources | only when `allowed_registries` is set | **block** on a source outside `allowed_registries`; insufficient-evidence when a package manager has no committed registry config |
 | `P-RUN-001` sandbox run (`--detonation`) | review on an ALERT | **block** on an ALERT |
+| `P-RUN-002` sandbox run tried undeclared destinations | review | **block** |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
 usual meaning.

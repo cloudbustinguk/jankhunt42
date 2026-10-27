@@ -33,6 +33,7 @@ import jh_agent
 import jh_egress
 import jh_graph as G
 import jh_n8n
+import jh_n8n_code
 import jh_yaml
 from jh_core import (TOOL, VERSION, run_git, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
@@ -208,11 +209,14 @@ SECRET_STORES = ("azure-keyvault",)
 
 
 class Ctx:
-    def __init__(self, graph: G.Graph, app_name: str):
+    def __init__(self, graph: G.Graph, app_name: str, *, principal: Optional[str] = None,
+                 source_pointer: Optional[str] = None):
         self.g = graph
-        self.app = graph.add_node("application", ["repository"], app_name, trust_domain="internal",
+        self.app = principal or graph.add_node("application", ["repository"], app_name, trust_domain="internal",
                                   attributes={"role": "repository code"})
-        self.g.nodes[self.app]["classification_source"] = "assumption"
+        if principal is None:
+            self.g.nodes[self.app]["classification_source"] = "assumption"
+        self.source_pointer = source_pointer
         # env/config definitions: NAME -> [(endpoint, evidence id, env hint, path)]
         self.defs: Dict[str, List[Tuple[Dict[str, Any], str, str, str]]] = {}
         # code-side env usages: (NAME, path, line, families in file)
@@ -231,6 +235,14 @@ class Ctx:
         self.by_adapter: Dict[str, int] = {}
         self.inspected: List[str] = []
         self.warnings: List[str] = []
+
+    def evidence(self, path, line, adapter, snippet, state, assumptions=(), counterevidence=()):
+        location = {}
+        if self.source_pointer is not None:
+            location = dict(json_pointer=self.source_pointer, code_line=line)
+            assumptions = tuple(assumptions) + ('JSON pointer: ' + self.source_pointer, 'Code line: %d' % line)
+            line = 1  # JSON anchor, not the line inside the decoded string
+        return self.g.add_evidence(path, line, adapter, snippet, state, assumptions, counterevidence, **location)
 
     def endpoint_node(self, ep: Dict[str, Any], env_hint: str = "unknown", unresolved_hint: str = "",
                       evidence: Optional[str] = None, label_suffix: str = "") -> Optional[str]:
@@ -708,7 +720,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
             fam = G.hosted_family(m.group(1), tenant_only=True)
             if fam and _in_string(code[idx - 1] if idx - 1 < len(code) else "", m.start(1)) \
                     and "@" not in line[max(0, m.start(1) - 1):m.start(1)]:
-                ev = g.add_evidence(item.rel, idx, adapter + ":cloud-host", line, "observed")
+                ev = ctx.evidence(item.rel, idx, adapter + ":cloud-host", line, "observed")
                 nid = ctx.endpoint_node({"kind": fam[0], "engine": fam[1], "host": m.group(1).lower(), "port": None,
                                          "path": "", "resolved": True}, env_hint, evidence=ev)
                 touch(nid)
@@ -739,7 +751,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                     _uc_edge(ctx, item.rel, adapter, idx, line, m.group(2), cap, env_hint, local_vars)
         if lang == "python":
             for m in _DBUTILS_SECRET_RE.finditer(line):
-                ev = g.add_evidence(item.rel, idx, adapter + ":databricks-secret", line, "observed",
+                ev = ctx.evidence(item.rel, idx, adapter + ":databricks-secret", line, "observed",
                                     assumptions=["secret read by scope and key name; its value and what it unlocks are not visible"])
                 iid = g.add_node("identity", ["databricks-secret", m.group(1), m.group(2)],
                                  "databricks secret %s/%s" % (m.group(1), m.group(2)), trust_domain="unknown",
@@ -750,7 +762,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                            assumptions=["the code reads this secret; what it grants is not visible in the repository"])
         # Azure AD credentials (managed identity, service principal, developer login)
         for m in _AZURE_CRED_RE.finditer(line):
-            ev = g.add_evidence(item.rel, idx, adapter + ":azure-credential", line, "observed",
+            ev = ctx.evidence(item.rel, idx, adapter + ":azure-credential", line, "observed",
                                 assumptions=["the Azure identity's role assignments are not visible in code"])
             ckind = m.group(1)
             iid = g.add_node("identity", ["azure-credential", ckind], "azure identity (%s)" % ckind, trust_domain="external",
@@ -774,13 +786,13 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
             ep = G.parse_endpoint(m.group(1))
             if not ep:
                 continue
-            ev = g.add_evidence(item.rel, idx, adapter + ":endpoint-literal", line, "observed")
+            ev = ctx.evidence(item.rel, idx, adapter + ":endpoint-literal", line, "observed")
             nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
             touch(nid)
             g.add_edge(ctx.app, nid, "connects", "unknown", "observed", "medium", evidence=ev,
                        assumptions=["literal endpoint in code; effective grants and live reachability not verified"])
         # HTTP calls with a literal URL
-        for m in _HTTP_CALL_RE.finditer(line):
+        for m in (() if ctx.source_pointer is not None else _HTTP_CALL_RE.finditer(line)):
             ep = G.parse_endpoint(m.group(3))
             if not ep:
                 continue
@@ -791,7 +803,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                 window = " ".join(nocomment[idx - 1: idx + 3])
                 mm = re.search(r"""method\s*:\s*["'](\w+)["']""", window, re.I)
                 cap = {"GET": "read", "HEAD": "read", "DELETE": "delete"}.get(mm.group(1).upper(), "write") if mm else "read"
-            ev = g.add_evidence(item.rel, idx, adapter + ":http-call", line, "observed")
+            ev = ctx.evidence(item.rel, idx, adapter + ":http-call", line, "observed")
             nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
             touch(nid)
             g.add_edge(ctx.app, nid, "calls", cap, "observed", "medium", evidence=ev,
@@ -822,7 +834,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
             m = _URL_CONST_RE.match(line)
             if m:
                 consts[m.group(1)] = (m.group(2), idx, line)
-    if consts:
+    if consts and ctx.source_pointer is None:
         aliases: Dict[str, str] = {}
         for idx, line in enumerate(nocomment, 1):
             if len(line) > MAX_LINE:
@@ -846,7 +858,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
                         {"post": "POST", "put": "PUT", "patch": "PATCH", "delete": "DELETE"}.get(
                             cm.group(0).split("(")[0].strip(". ").lower(), "GET"))
                 cap = {"GET": "read", "HEAD": "read", "DELETE": "delete"}.get(verb, "write")
-                ev = g.add_evidence(item.rel, idx, adapter + ":http-call", line, "observed",
+                ev = ctx.evidence(item.rel, idx, adapter + ":http-call", line, "observed",
                                     assumptions=["URL from constant %s defined at line %d" % (const, cidx)])
                 nid = ctx.endpoint_node(ep, env_hint, evidence=ev)
                 touch(nid)
@@ -856,7 +868,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
     if ("storage", "s3") in families:
         for idx, line in enumerate(nocomment, 1):
             for m in _BUCKET_RE.finditer(line):
-                ev = g.add_evidence(item.rel, idx, adapter + ":s3-bucket", line, "observed")
+                ev = ctx.evidence(item.rel, idx, adapter + ":s3-bucket", line, "observed")
                 nid = g.add_node("storage", ["s3", m.group(1), "", env_hint], "s3 bucket %s" % m.group(1),
                                  trust_domain="external", environment=G.infer_environment(m.group(1), env_hint),
                                  attributes={"engine": "s3"}, evidence=ev)
@@ -881,7 +893,7 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
         if concrete:
             continue
         if host:
-            ev = g.add_evidence(item.rel, idx, adapter + ":sdk", line, "inferred",
+            ev = ctx.evidence(item.rel, idx, adapter + ":sdk", line, "inferred",
                                 assumptions=["SDK presence is a hypothesis of use, not a confirmed data flow"])
             nid = ctx.endpoint_node({"kind": kind, "engine": engine, "host": host, "port": None,
                                      "path": "", "resolved": True}, evidence=ev)
@@ -891,12 +903,24 @@ def adapt_code(ctx: Ctx, item: Item, lang: str) -> None:
             continue
         if any(endpointish(n) for (n, p, _, _, _) in ctx.uses if p == item.rel):
             continue  # resolved later through environment definitions
-        ev = g.add_evidence(item.rel, idx, adapter + ":import", line, "inferred",
+        ev = ctx.evidence(item.rel, idx, adapter + ":import", line, "inferred",
                             assumptions=["import or client type only; target, reachability and grants unknown"])
         nid = ctx.endpoint_node({"kind": kind, "engine": engine, "resolved": False}, env_hint, "", evidence=ev)
         touch(nid)
         g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "low", evidence=ev,
                    assumptions=["import or client type only; target, reachability and grants unknown"])
+    if ctx.source_pointer is not None:
+        calls, capped = jh_n8n_code.http_calls(item.text)
+        for idx, url, cap in calls:
+            ep = G.parse_endpoint(url)
+            if ep:
+                ev = ctx.evidence(item.rel, idx, 'javascript:http-call', 'Embedded HTTP call', 'observed',
+                    assumptions=['Source intent only; n8n runtime availability and grants are unverified'])
+                nid = ctx.endpoint_node(ep, evidence=ev)
+                touch(nid)
+                g.add_edge(ctx.app, nid, 'calls', cap, 'observed', 'medium', evidence=ev)
+        if capped or any(len(line) > MAX_LINE for line in nocomment):
+            ctx.parse_failures.append(dict(path=item.rel, reason='embedded JavaScript analysis limit'))
     ctx._pending_ops = getattr(ctx, "_pending_ops", [])
     ctx._pending_ops.append((item.rel, adapter, targets))
 
@@ -919,7 +943,7 @@ def _uc_edge(ctx: Ctx, rel: str, adapter: str, idx: int, line: str, name: str, c
         catalog = "default"
     else:
         catalog = ""                    # {var}.x or {var}: the catalog is decided at runtime
-    ev = g.add_evidence(rel, idx, adapter + ":spark-table-%s" % cap, line, "observed",
+    ev = ctx.evidence(rel, idx, adapter + ":spark-table-%s" % cap, line, "observed",
                         assumptions=[assumption] + ([] if resolved == name.replace("`", "") else
                                                     ["table name resolved from string assignments to %s" % resolved[:80]]))
     if catalog:
@@ -947,7 +971,7 @@ def _attach_ops(ctx: Ctx) -> None:
             continue
         for ref in e["evidence_refs"]:
             ev = g.evidence.get(ref)
-            if ev:
+            if ev and (ctx.source_pointer is None or ev.get("json_pointer") == ctx.source_pointer):
                 resolved_by_file.setdefault(ev["path"], set()).add(e["target"])
     for rel, adapter, targets in getattr(ctx, "_pending_ops", []):
         file_targets = resolved_by_file.get(rel, set())
@@ -969,7 +993,7 @@ def _op_edges(ctx: Ctx, rel: str, adapter: str, idx: int, line: str, cap: str,
         state, conf = "observed", "medium"
     else:
         state, conf = "inferred", "low"
-    ev = g.add_evidence(rel, idx, adapter + ":%s-%s" % (kind, cap), line, state, assumptions=[assumption])
+    ev = ctx.evidence(rel, idx, adapter + ":%s-%s" % (kind, cap), line, state, assumptions=[assumption])
     if not nodes:
         nodes = [ctx.endpoint_node({"kind": kind, "engine": engine, "resolved": False}, _file_env(rel),
                                    "operation without a resolved target", evidence=ev)]
@@ -1882,7 +1906,7 @@ def _resolve_env(ctx: Ctx) -> None:
         defs = ctx.defs.get(name) or ctx.defs.get(name.split(":")[-1])
         if defs:
             for ep, def_ev, env_hint, def_path in defs:
-                ev = g.add_evidence(rel, line, "env:resolved", snippet, "inferred",
+                ev = ctx.evidence(rel, line, "env:resolved", snippet, "inferred",
                                     assumptions=["endpoint resolved by environment-variable name %s from %s" % (name, def_path)])
                 nid = ctx.endpoint_node(ep, env_hint, unresolved_hint=name, evidence=def_ev)
                 g.add_edge(ctx.app, nid, "connects", "unknown", "inferred", "medium", evidence=ev,
@@ -1892,7 +1916,7 @@ def _resolve_env(ctx: Ctx) -> None:
             continue
         kinds = sorted(fams)
         fam = kinds[0] if len(kinds) == 1 else ("unknown", "endpoint")
-        ev = g.add_evidence(rel, line, "env:unresolved", snippet, "inferred",
+        ev = ctx.evidence(rel, line, "env:unresolved", snippet, "inferred",
                             assumptions=["endpoint supplied at runtime via %s; no definition found in the repository" % name])
         nid = ctx.endpoint_node({"kind": fam[0], "engine": fam[1], "resolved": False}, _file_env(rel),
                                 "env %s" % name, evidence=ev)
@@ -2078,6 +2102,32 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
 _HELM_SYNTAX_RE = re.compile(r"(?<!\$)\{\{-?\s*(?:\.|include\b|if\b|else\b|range\b|end\b|define\b|template\b|with\b|toYaml\b|tpl\b)")
 
 
+def _adapt_n8n_code(ctx, item, parsed, principal):
+    node = parsed['raw']
+    typ, version, params = node['type'], node.get('typeVersion'), node['parameters']
+    if not principal or type(version) not in (int, float):
+        return
+    if typ == 'n8n-nodes-base.code' and version in (1, 2):
+        language = 'javaScript' if version == 1 else params.get('language', 'javaScript')
+        if language != 'javaScript' or params.get('mode', 'runOnceForAllItems') not in (
+                'runOnceForAllItems', 'runOnceForEachItem'):
+            return
+        parameter = 'jsCode'
+    elif typ in ('n8n-nodes-base.function', 'n8n-nodes-base.functionItem') and version == 1:
+        parameter = 'functionCode'
+    else:
+        return
+    text = params.get(parameter)
+    if not isinstance(text, str):
+        return
+    pointer = jh_n8n.pointer(parsed['pointer'] + ['parameters', parameter])
+    child = Ctx(ctx.g, '', principal=principal, source_pointer=pointer)
+    adapt_code(child, Item(item.rel, text), 'javascript')
+    _resolve_env(child)
+    _attach_ops(child)
+    ctx.parse_failures.extend(child.parse_failures)
+
+
 def adapt_n8n(ctx: Ctx, item: Item) -> None:
     g = ctx.g
     for flow in jh_n8n.parse(item.rel, item.text) or []:
@@ -2134,6 +2184,7 @@ def adapt_n8n(ctx: Ctx, item: Item) -> None:
                 target = g.add_node('unknown', [nk, 'execution'], 'Unresolved n8n execution binding',
                     attributes={'platform': 'n8n', 'unresolved': True}, evidence=ev)
                 g.add_edge(principal, target, 'calls', 'unknown', 'declared', 'high', evidence=ev)
+                _adapt_n8n_code(ctx, item, n, principal)
         for source, target in flow['links']:
             g.add_edge(node_ids[source], node_ids[target], 'depends-on', 'none', 'declared', 'high', evidence=wev,
                        assumptions=['Workflow connection transfers no authority'])
@@ -2702,6 +2753,13 @@ def markdown(report: Dict[str, Any]) -> str:
             lines.append("- wildcards: %s" % ", ".join(eg["wildcards"]))
         if eg["unused"]:
             lines.append("- allowed but unused by the mapped code: %s" % ", ".join(eg["unused"]))
+    embedded = [e for e in report['evidence'] if 'json_pointer' in e]
+    if embedded:
+        lines += ['', '## Embedded code receipts', '']
+        lines += ['- `%s:%d` %s, code line %d' % (e['path'].replace('`', "'"), e['line'],
+                  e['json_pointer'], e['code_line']) for e in embedded[:20]]
+        if len(embedded) > 20:
+            lines.append('- %d more embedded receipts in JSON.' % (len(embedded) - 20))
     lines += ["", "## Unknowns", ""]
     for u in report["unknowns"]:
         lines.append("- %s: %s" % (u["id"], u["detail"]))

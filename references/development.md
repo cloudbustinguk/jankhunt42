@@ -25,7 +25,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- twenty mutants that the tests must kill, each with an unmutated control;
+- mutants that the tests must kill (141 in 4.0.0), each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
@@ -38,14 +38,15 @@ Missing optional tools are reported as `skip`, never as a pass. A perfect self-s
 
 ```text
 SKILL.md                 routing doctrine for agents (three questions, permission gates)
-references/              method, playbooks, toolbox, scoring, review, supply-chain, deep-hunt,
-                         connectivity (map), passport (passport, exposure, policy), citizen,
-                         ai-governance, examples, development
+references/              method, playbooks, toolbox, scoring, review, supply-chain,
+                         connectivity (map), passport (passport, exposure, policy), change-review,
+                         citizen, ai-governance, n8n, network-ceiling, detonate, examples, development
 templates/               report templates; review-receipt, map, and passport JSON Schemas
 scripts/jankhunt42       CLI entry point
 scripts/jh_core.py       types, discovery, sanitizer, safe_text      scripts/jh_rules.py, jh_checks.py  scanner rules
 scripts/jh_score.py      Jank Score 2.0                              scripts/jh_review.py   diff review and receipts
-scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_hunt.py     deep hunt and merge
+scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_detonate.py opt-in sandbox runs
+scripts/jh_acquire.py    detonate --fetch: verified npm downloads    scripts/jh_n8n.py      n8n workflow reader
 scripts/jh_graph.py      graph model, sanitizing, reachability, exposure, diff, redaction
 scripts/jh_map.py        discovery adapters, coverage, map views    scripts/jh_yaml.py     bounded YAML subset reader
 scripts/jh_policy.py     passport rules, profiles, precedence       scripts/jh_passport.py passport assembly
@@ -59,7 +60,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 
 ## Compatibility and migration
 
-- Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged. The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
+- Every 1.x command, flag, exit code, JSON field and SARIF field is unchanged, except the commands 4.0.0 removed (`hunt`, `merge`, `report`). The compatibility suite runs the 1.1.0 release and 2.0 side by side on the demo fixture and requires identical `scan`/`score`/`rules` JSON and SARIF (ignoring only version, timing, and absolute-root fields).
 - 2.1.0 adds options only (`map --what-if/--drift/--mermaid/--csv`, `passport --acceptance/--compare/--against`), plus `passport.bindings`. It also narrows `JH104`, which no longer flags parameterized `%s`/`%(name)s` placeholders; this removes findings and never adds them.
 - 2.2.0 adds options only (`supply-chain --verify/--online/--fetch-dir`, `passport --verify/--online`) and additive fields (`key_source`, `origin`, `verification`). JFrog records whose key came from the Sigstore bundle now carry a warning; their state is unchanged.
 - 2.3.0 adds 17 rules (`JH131`-`JH134`, `JH427`-`JH431`, `JH701`-`JH708`, with the new `agent` category), `passport --profile`, `passport.profile` and `passport.custodians`, five passport rules, an additive `governance` section, and the map's `mcp` adapter. Every older rule's catalog entry and every existing JSON and SARIF field is unchanged. Under the standard profile, `P-SEC-001` and `P-AGT-001` add `review` reasons when their leads appear. The effective policy gained keys, so the policy hash changed: acceptance records bound to an earlier hash must be re-issued. Under the citizen profile, governance leads ignore repository scan config and inline pragmas, and only a custodian named in the operator policy lets `P-CUS-001` pass or signs an acceptance. `JH502` no longer fires on unittest-style assertions or on assertions made in helper methods, and `JH401` no longer treats a CI workflow named `secrets.yml` as a credential file.
@@ -81,7 +82,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 2.9.3 changes no options or fields. `JH701` is minor for an override phrase handed to code; the skill description leads with citizen developers.
 - 2.9.4 changes no options or fields. `JH101` narrows; `JH124`-`JH126` are minor for HTML from a CONSTANT_NAME.
 - 3.0.0 adds the opt-in command `detonate` (schema `jankhunt.detonate.v1`) and `templates/detonate.Containerfile`. No existing command, option or field changes. Exit codes for `detonate`: 0 no ALERT, 1 at least one ALERT, 2 the sandbox could not run.
-- 3.1.0 adds `passport --base REF` and the passport field `capability_delta` (schema `jankhunt.capability-delta.v1`; `not-requested` without `--base`), the policy rule `P-CAP-001`, and `references/capability-delta.md`. Without `--base`, passports are unchanged apart from the additive field.
+- 3.1.0 adds `passport --base REF` and the passport field `capability_delta` (schema `jankhunt.capability-delta.v1`; `not-requested` without `--base`), the policy rule `P-CAP-001`, and its reference page (in 4.0.0, `references/change-review.md`). Without `--base`, passports are unchanged apart from the additive field.
 - 3.1.1 changes no options or fields: a changed hook or MCP definition behind an unchanged identity is reported (`change: definition-changed`) and needs review.
 - 3.1.2 changes no options or fields. `JH101`, `JH104`, `JH109`, `JH124`-`JH126`, `JH131`, `JH203`, `JH205` and `JH502` narrow.
 - 3.2.0 adds `passport --capability-approval PATH` and `--emit-capability-approval` (with `--base`), the passport field `capability_approval`, the operator-policy section `capability_approvals`, and `templates/capability-approval.schema.json`. Unmapped-language files are compared whole under `--base`.
@@ -92,6 +93,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 3.6.0 adds `detonate --npm-cache DIR` and `--wheelhouse DIR`, and `dependency_caches` (file and byte counts) in `jankhunt.detonate.v1`. `jh_ceiling.inside_repository()` is shared by the external-input checks.
 - 3.6.1: the detonate `tree` gains `format` (2): sorted entries and the user-executable bit only, so results from 3.5.0 and 3.6.0 must be re-run. `passport --base --detonation` binds to the commit's own objects (`git_tree_digest`).
 - 3.6.2 changes no options or fields.
+- 4.0.0 removes `hunt`, `merge` and `report` (each name exits 2 with a pointer), `scripts/jh_hunt.py` and the deep-hunt templates. `score` becomes `scan --score` (the old name works through 4.0, with a notice on stderr); `triage` and `doctor` still work but leave the main help. `detonate --fetch URL` downloads the npm packages the lockfile pins from approved origins (`scripts/jh_acquire.py`) and adds `fetch` to `jankhunt.detonate.v1`. n8n Code-node JavaScript (`scripts/jh_n8n_code.py`): map evidence may carry `json_pointer` and `code_line`. The policy rule `P-RUN-002` (declared versus attempted; standard review, citizen block) and the passport fields `sandbox_run.attempts`, `attempts_total` and `undeclared`; `--sandbox-network-ceiling` is also accepted with `--detonation`. JSON and SARIF of `scan`, `scan --score`, `review` and `rules` are unchanged.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

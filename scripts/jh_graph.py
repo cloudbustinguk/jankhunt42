@@ -418,11 +418,19 @@ class Graph:
 
     # -- evidence ----------------------------------------------------------
     def add_evidence(self, path: str, line: int, adapter: str, snippet: str, state: str,
-                     assumptions: Sequence[str] = (), counterevidence: Sequence[str] = ()) -> Optional[str]:
+                     assumptions: Sequence[str] = (), counterevidence: Sequence[str] = (), *, json_pointer: Optional[str] = None,
+                     code_line: Optional[int] = None) -> Optional[str]:
         from jh_core import safe_text
         clean = sanitize_text(snippet, 160)
         path = safe_text(path).replace("\\", "/")
-        key = canonical_json([path, int(line), adapter, clean])
+        location = {}
+        if json_pointer is not None or code_line is not None:
+            if (not isinstance(json_pointer, str) or not re.fullmatch(
+                    r'/(?:[0-9]+/)?nodes/[0-9]+/parameters/(?:jsCode|functionCode)', json_pointer)
+                    or type(code_line) is not int or code_line < 1):
+                raise ValueError('invalid embedded source location')
+            location = dict(json_pointer=json_pointer, code_line=code_line)
+        key = canonical_json([path, int(line), adapter, clean] + ([location] if location else []))
         eid = "ev:" + sha(key)
         if eid in self.evidence:
             return eid
@@ -440,6 +448,7 @@ class Graph:
             "source_snapshot": self.snapshot,
             "assumptions": sorted(set(assumptions)),
             "counterevidence": sorted(set(counterevidence)),
+            **location,
         }
         return eid
 

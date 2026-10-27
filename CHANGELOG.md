@@ -4,6 +4,93 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.0.0] — 2026-10-27
+
+A smaller jankhunt42, and the first release audited whole before it was
+tagged: Codex's six findings are fixed inside it. The commands that did not
+serve the three questions
+are gone or folded in, so the main help now lists eight commands, and
+`SKILL.md` is under 200 lines. Alongside that: dependencies' install hooks
+in the sandbox, n8n Code nodes, and declared-versus-attempted network
+evidence.
+
+### Added
+
+- **`detonate --fetch URL`: run the dependencies' install hooks too.**
+  Most install-time attacks hide in a dependency's hook. `--fetch` gets
+  the npm packages the lockfile pins, safely, for this run:
+
+  ```sh
+  jankhunt42 detonate . --fetch https://registry.npmjs.org/
+  ```
+
+  - jankhunt42 downloads exactly the tarballs the lockfile pins. No
+    package manager runs online, so no package code runs while fetching.
+  - It downloads only from HTTPS origins you name, only from a public
+    address, and connects to the address it checked.
+  - It refuses redirects and URLs with credentials, dot segments or
+    encoded separators, and checks every byte against the lockfile's
+    `sha512`.
+  - Size limits count every byte received, headers and framing included,
+    and a download stops the moment it reaches its limit. Downloads that
+    then fail verification or are cut short count too. A URL the lockfile pins to two different
+    hashes is refused, and the lockfile is read without following links.
+  - The npm cache is built offline in the same sandbox, used for this
+    run, and deleted afterwards. The result's `fetch` section lists the
+    counts and every refused package; refused packages make coverage
+    partial.
+
+  It is the only detonate option that uses the network. See "Fetching
+  npm dependencies" in `references/detonate.md`. Mutants M130 to M134
+  and M138 to M145.
+- **n8n Code nodes are read.** Literal `fetch`, `axios`,
+  `this.helpers.httpRequest` and `$http` calls in a Code or Function
+  node's JavaScript now appear as calls of that node, with a JSON pointer
+  and a code line. The code itself stays an "arbitrary behaviour" unknown,
+  dynamic calls and Python stay unknown, and output for ordinary code is
+  byte-identical to before. Designed and built by Codex (proposal A12,
+  mutants M122 to M129).
+- **Declared versus attempted.** With `passport --detonation`, every
+  destination the sandbox run tried to reach (each DNS name, each
+  address) is compared with what the repository declares: the hosts in
+  its own map, plus the operator's network ceiling. Anything else is
+  listed, and the new rule `P-RUN-002` asks for review (block in the
+  citizen profile). A connection must match the declared port too, and
+  every attempt is compared, however many there are. This is evidence of
+  intent: what the code tries, set against what it admits to. It only
+  adds outcomes, and `--redact` hides the names. Mutants M135 to M137.
+- **`scan --score`** shows the Jank Score breakdown (it was `score`), with
+  `--fail-policy`. It refuses `--fail-on`, which gates on findings, not
+  on the score.
+
+### Changed
+
+- **`score` is now `scan --score`.** The old name still works in 4.0 and
+  prints a notice; it goes in 4.1.
+- **`triage` and `doctor` leave the main help.** Both still work, as
+  debugging helpers.
+- **`passport --help` and `review --help` group their options by job:**
+  output, the decision, change review, sandbox, change control,
+  comparing, supply chain, inputs, and limits. No option changed.
+- `--sandbox-network-ceiling` is also accepted with `passport --detonation`.
+- **Docs:** `SKILL.md` is under 200 lines, with a shorter description.
+  `references/capability-delta.md` and `references/capability-approval.md`
+  are now one page, `references/change-review.md`. The debugging
+  workflow's native tools and usual suspects moved to
+  `references/method.md`.
+- A passport's next step for `P-JNK-001` points to `scan --score`. The
+  review brief no longer ends with "Then run `jankhunt42 merge`".
+
+### Removed
+
+- **`hunt` and `merge`** (the deep-hunt panel plan and its consensus
+  merge), with `references/deep-hunt.md`, `templates/hunt-report.md`,
+  `templates/panel-finding.json` and `scripts/jh_hunt.py`. A host agent
+  that wants several reviewers can run `review --brief` for each.
+- **`report`.** Use `scan --md`, plus `doctor` or `triage` if you need them.
+
+Each removed name exits 2 with a pointer to what replaces it.
+
 ## [3.6.2] — 2026-10-27
 
 The last batched precision patch from the mass soak, which has now

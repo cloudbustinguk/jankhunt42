@@ -131,6 +131,8 @@
           "line": {
             "type": "integer"
           },
+          "json_pointer": {"type": "string", "pattern": "^/(?:[0-9]+/)?nodes/[0-9]+/parameters/(?:jsCode|functionCode)$"},
+          "code_line": {"type": "integer", "minimum": 1},
           "adapter": {
             "type": "string"
           },

@@ -535,6 +535,76 @@ class PassportEvidence(unittest.TestCase):
         self.assertNotIn("private-label-marker", out)
         self.assertIn('"other"', out)
 
+    def dns(self, *names, connect=()):
+        return [{"verdict": "DENY", "kind": "dns", "detail": n, "pid": "", "process": "", "step": ""} for n in names] + \
+               [{"verdict": "DENY", "kind": "network", "detail": c, "pid": "1", "process": "node x.js", "step": "s"}
+                for c in connect]
+
+    def test_declared_versus_attempted(self):
+        root = self.tree({"app.py": "x = 1\n"})
+        ev = jh_detonate.passport_evidence(self.result(root, self.dns(
+            "api.example.invalid", "evil.example.invalid", "pkg.example.invalid", connect=[
+                "203.0.113.9:443", "198.51.100.7:443", "198.51.100.7:22", "192.0.2.37:443", "192.0.2.37:22",
+                "api.example.invalid:8080"])), root)
+        report = {"graph": {"nodes": [{"attributes": {"host": "api.example.invalid"}},          # any port
+                                      {"attributes": {"host": "198.51.100.7", "port": 443}}]}}  # this port only
+        ev = jh_detonate.compare_declared(ev, report, {("192.0.2.37", 443), ("pkg.example.invalid", 443)})
+        # a connection must match the declared port; a DNS name matches by host
+        self.assertEqual(sorted(ev["undeclared"]), ["192.0.2.37:22", "198.51.100.7:22", "203.0.113.9:443",
+                                                    "evil.example.invalid"])
+        self.assertEqual(ev["counts"]["UNDECLARED"], 4)
+        stale = jh_detonate.compare_declared({"state": "stale"}, report)
+        self.assertNotIn("undeclared", stale)
+
+    def test_every_attempt_is_compared_before_the_lists_are_capped(self):
+        import jh_policy
+        root = self.tree({"app.py": "x = 1\n"})
+        declared = ["a%03d.example.invalid" % i for i in range(jh_detonate.MAX_ATTEMPTS)]
+        hidden = ["z%03d.example.invalid" % i for i in range(150)]          # sorted after every declared name
+        report = {"graph": {"nodes": [{"attributes": {"host": h}} for h in declared]}}
+        ev = jh_detonate.compare_declared(jh_detonate.passport_evidence(
+            self.result(root, self.dns(*declared + hidden)), root), report)
+        self.assertEqual((ev["attempts_total"], len(ev["attempts"])), (250, jh_detonate.MAX_ATTEMPTS))
+        self.assertEqual((ev["counts"]["UNDECLARED"], len(ev["undeclared"])), (150, jh_detonate.MAX_ATTEMPTS))
+        rule = [r for r in jh_policy.evaluate(jh_policy.merge(None, [], [], None),
+                                              {"sandbox": ev, "files_scanned": 1, "map_files_inspected": 1},
+                                              None)["rules"] if r["rule"] == "P-RUN-002"][0]
+        self.assertEqual(rule["outcome"], "review")
+        self.assertIn("tried 150 destination(s)", rule["message"])
+
+    def test_p_run_002_only_adds_outcomes(self):
+        import jh_policy
+        def outcome(sandbox, profile=None):
+            facts = {"sandbox": sandbox, "files_scanned": 1, "map_files_inspected": 1}
+            eff = jh_policy.merge(None, [], [], profile)
+            return [r for r in jh_policy.evaluate(eff, facts, None)["rules"] if r["rule"] == "P-RUN-002"][0]["outcome"]
+        matched = {"state": "matched", "counts": {"ALERT": 0, "DENY": 2, "UNDECLARED": 1}, "alerts": [],
+                   "undeclared": ["evil.example.invalid"]}
+        self.assertEqual(outcome(matched), "review")
+        self.assertEqual(outcome(matched, "citizen"), "block")
+        self.assertEqual(outcome(dict(matched, undeclared=[])), "pass")
+        self.assertEqual(outcome({"state": "not-supplied"}), "pass")
+
+    def test_the_passport_names_undeclared_destinations(self):
+        from _util import run_cli
+        root = self.tree({"app.py": "import requests\nrequests.get('https://api.example.invalid/v1')\n"})
+        outside = self.tree({})
+        det = os.path.join(outside, "det.json")
+        with open(det, "w") as fh:
+            json.dump(self.result(root, self.dns("api.example.invalid", "evil.example.invalid")), fh)
+        p = json.loads(run_cli("passport", root, "--json", "--detonation", det).stdout)
+        self.assertEqual(p["sandbox_run"]["undeclared"], ["evil.example.invalid"])
+        rule = [r for r in p["assessment"]["decision"]["rules"] if r["rule"] == "P-RUN-002"][0]
+        self.assertEqual(rule["outcome"], "review")
+        shared = run_cli("passport", root, "--json", "--redact", "--detonation", det).stdout
+        self.assertNotIn("evil.example.invalid", shared)
+        ceiling = os.path.join(outside, "ceiling.json")
+        with open(ceiling, "w") as fh:
+            json.dump({"schema": "jankhunt.network-ceiling.v1", "allow": [{"host": "evil.example.invalid", "port": 443}]}, fh)
+        r = run_cli("passport", root, "--json", "--detonation", det, "--sandbox-network-ceiling", ceiling)
+        p = json.loads(r.stdout)
+        self.assertEqual(p["sandbox_run"]["undeclared"], [], r.stderr)
+
     def test_a_result_counts_only_on_its_own_tree(self):
         root = self.tree({"package.json": "{}\n"})
         alert = {"verdict": "ALERT", "kind": "canary-read", "detail": "~/.aws/credentials (canary-aws)",

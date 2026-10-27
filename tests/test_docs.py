@@ -106,7 +106,6 @@ class DocumentedCommands(unittest.TestCase):
         run("update-ref", "refs/remotes/origin/main", "HEAD~1")
         with open(os.path.join(cls.repo, "app.log"), "w") as fh:
             fh.write("2026-01-01T00:00:00Z ERROR timeout talking to db id=42\n" * 3)
-        shutil.copy(os.path.join(_util.ROOT, "templates", "panel-finding.json"), os.path.join(cls.repo, "panel-1.json"))
         with open(os.path.join(cls.repo, "apptrust-evidence.json"), "w") as fh:
             json.dump({"evidence": []}, fh)
         with open(os.path.join(cls.tmp, "inventory.json"), "w") as fh:
@@ -142,7 +141,7 @@ class DocumentedCommands(unittest.TestCase):
         ran, skipped = 0, []
         for cmd in commands(read(source)):
             reason = next((why for token, why in SKIP if re.search(r"(^|\s)%s(\s|$)" % re.escape(token), cmd)), None)
-            if not reason and len(cmd.split()) == 2 and cmd.split()[1] in ("map", "merge", "hunt", "review", "triage"):
+            if not reason and len(cmd.split()) == 2 and cmd.split()[1] in ("map", "review", "triage"):
                 reason = MENTION
             if reason:
                 skipped.append((cmd, reason))
@@ -177,13 +176,14 @@ class DocumentedCommands(unittest.TestCase):
 class SkillContract(unittest.TestCase):
     def test_frontmatter_and_size(self):
         text = read("SKILL.md")
-        self.assertLess(len(text.splitlines()), 500)
+        self.assertLess(len(text.splitlines()), 200)
         front = text.split("---", 2)[1]
         description = re.search(r"^description: (.*)$", front, re.M).group(1)
         self.assertLessEqual(len(description), 1000, "skills-hub lists at most 1000 characters of description")
+        self.assertLessEqual(len(description), 700, "keep the description short enough to read at a glance")
         for key in ("name: jankhunt42", "description:", "license: MIT", "compatibility:", 'version: "'):
             self.assertIn(key, front)
-        for trigger in ("passport", "blast radius", "data exposure", "connectivity", "deep hunt"):
+        for trigger in ("passport", "blast radius", "data exposure", "connectivity", "detonate", "sandbox"):
             self.assertIn(trigger, text.lower())
         self.assertIn("Permission gate", text)
 

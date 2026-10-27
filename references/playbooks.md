@@ -337,7 +337,7 @@ network.
 
 1. Map the entry points, data stores, external calls, and deploy path.
 2. Run the existing tests and build before changing anything.
-3. Use `jankhunt42 scan`, `score`, `doctor`, and `triage` for a fast inventory.
+3. Use `jankhunt42 scan`, `scan --score`, `doctor`, and `triage` for a fast inventory.
    The scorecard tells you which dimension to inspect first; it is not a verdict.
 4. Read the code path end to end for the specific symptom; do not audit the whole
    repo.
@@ -362,9 +362,3 @@ in every environment.
 | C/C++ | ASan/UBSan/TSan, Valgrind, gdb/lldb, `-Wall -Wextra` | UB, use-after-free, ABI mismatch |
 | Shell | `shellcheck`, `bash -x`, `set -euo pipefail` | unquoted expansion, ignored exit code, `cd` failure |
 | SQL | `EXPLAIN (ANALYZE, BUFFERS)`, lock views, `pg_stat_activity` | N+1, missing index, long transaction |
-
-## Deep hunt
-
-If the playbook does not converge, or the risk justifies independent adversarial
-review, read `references/deep-hunt.md` and use the opt-in panel workflow. Do not
-spawn agents without explicit permission.

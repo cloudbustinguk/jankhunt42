@@ -8,17 +8,17 @@
 
 AI app builders and coding agents let anyone turn an idea into running software in an afternoon. That software inherits its builder's credentials, the tools their agent is wired to, and their access to production data, often without an engineer ever looking at it. jankhunt42 is the review that is missing. It reads a repository the way a security engineer would and explains what it finds in plain terms, both to the citizen developer who built it and to the team asked to approve it.
 
-jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
+jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `detonate --fetch`).
 
-**Version:** 3.6.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.0.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
 | Question | Commands | What you get |
 |---|---|---|
-| **What's broken?** | `scan`, `score`, `review`, `triage`, `doctor`, `hunt` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts; log clustering; an opt-in adversarial deep hunt |
+| **What's broken?** | `scan`, `review`, `supply-chain` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts |
 | **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, n8n workflows, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
-| **Can we responsibly ship it?** | `passport`, `supply-chain` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
+| **Can we responsibly ship it?** | `passport`, `detonate` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
 
 Each answer keeps its own evidence model:
 
@@ -139,21 +139,15 @@ jankhunt42 scan . --sarif > jank.sarif   # SARIF 2.1.0 for code scanning
 jankhunt42 scan . --html > jankhunt42.html
 jankhunt42 scan . --fail-on critical     # explicit CI gate
 jankhunt42 scan . --since HEAD           # whole-tree plus new-code score
-jankhunt42 score . --json                # Jank Score 2.0 breakdown
+jankhunt42 scan . --score --json         # Jank Score 2.0 breakdown
 jankhunt42 rules --category security     # the catalog of 100 rules
 jankhunt42 review . --base HEAD~1 --json # committed changes, with receipts
 jankhunt42 review . --staged --md
 jankhunt42 review . --commit HEAD --brief            # handoff for a semantic reviewer
 jankhunt42 review . --base HEAD~1 --save-baseline baseline.json --json
 jankhunt42 review . --base HEAD~1 --baseline baseline.json --fail-on major
-jankhunt42 triage app.log --top 25       # fingerprint and rank log clusters
-jankhunt42 doctor --system               # repo and host health
-jankhunt42 report . --logs app.log --out report.md
-jankhunt42 hunt . --focus security --panel 6 --json > hunt.json   # opt-in deep hunt plan
-jankhunt42 merge panel-*.json --md
-jankhunt42 detonate . --json             # opt-in sandbox run of the install hooks and what runs on open (references/detonate.md)
-jankhunt42 passport . --detonation /path/outside/run.json   # carry that run into the passport (P-RUN-001)
-jankhunt42 detonate . --npm-cache /path/outside/npm-cache   # dependencies' install hooks too, offline from a cache
+jankhunt42 triage app.log --top 25       # debugging helper: fingerprint and rank log clusters
+jankhunt42 doctor --system               # debugging helper: repo and host health
 
 # What can it hurt?
 jankhunt42 map . --json                        # jankhunt.map.v1 (templates/map.schema.json)
@@ -172,6 +166,9 @@ jankhunt42 passport . --policy ../policy.json  # operator policy (outside the re
 jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
 jankhunt42 passport . --compare ../old-passport.json      # regressions since a stored passport
 jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance, bound to revision and policy
+jankhunt42 detonate . --json                   # opt-in sandbox run of the install hooks and what runs on open
+jankhunt42 detonate . --fetch https://registry.npmjs.org/ --json   # dependencies' hooks too: fetches the pinned npm packages, verified
+jankhunt42 passport . --detonation /path/outside/run.json   # carry a saved run into the passport (P-RUN-001, P-RUN-002)
 jankhunt42 passport . --branch-rules ../rules/app.json    # rulesets exported by an operator: is review enforced?
 jankhunt42 supply-chain . --json                          # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog
 jankhunt42 supply-chain . --require-sbom-minimum          # fail unless an SBOM has the NTIA minimum elements
@@ -246,7 +243,7 @@ The skill routes requests to the matching command and reference:
 - passport and release readiness;
 - citizen-developer governance.
 
-It never starts a deep hunt without explicit permission. The listing on [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42) carries the `SKILL.md` instructions only; clone the repository to get the CLI.
+It never runs a repository's code without explicit permission. The listing on [skills-hub.ai](https://skills-hub.ai/skills/jankhunt42) carries the `SKILL.md` instructions only; clone the repository to get the CLI.
 
 ### Verifying a release
 
@@ -303,7 +300,7 @@ Everything else is advisory.
 | Code | Meaning |
 |---|---|
 | `0` | Ran successfully and no explicit gate tripped (`map` and an advisory `passport` always exit 0) |
-| `1` | A gate tripped: `--fail-on`, a supply-chain requirement, `score --fail-policy`, or a failing `selftest` |
+| `1` | A gate tripped: `--fail-on`, a supply-chain requirement, `scan --score --fail-policy`, a failing `selftest`, or a detonate ALERT |
 | `2` | Usage error, unreadable input, unresolvable git ref, or invalid inventory/policy file |
 | `130` | Interrupted |
 
@@ -328,11 +325,9 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/scoring.md`](references/scoring.md) | Jank Score 2.0 formula, weights, and limits |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
-| [`references/deep-hunt.md`](references/deep-hunt.md) | The opt-in adversarial panel |
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
-| [`references/capability-approval.md`](references/capability-approval.md) | Approving one access change, so CI passes it next time |
-| [`references/capability-delta.md`](references/capability-delta.md) | `passport --base`: the new access a change asks for, and how it is decided |
+| [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |
 | [`references/detonate.md`](references/detonate.md) | `detonate`: running the install hooks and what runs on open in a sandbox, the audit log, canaries and limits |
 | [`references/development.md`](references/development.md) | Architecture, development workflow, self-assurance, compatibility and migration notes |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release |

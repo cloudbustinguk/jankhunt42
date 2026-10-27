@@ -46,9 +46,9 @@ next steps
   2. Check what data reaches the AI provider and its terms (retention,
      training use, region), record the decision, or keep restricted
      data away from AI calls.
-  3. Work down the weakest Jank Score dimension first (`jankhunt42 score`),
-     then the highest-severity leads (`jankhunt42 scan --min-severity
-     critical`).
+  3. Work down the weakest Jank Score dimension first (`jankhunt42 scan
+     --score`), then the highest-severity leads (`jankhunt42 scan
+     --min-severity critical`).
   4. Add or declare observability evidence (currently not observed).
   5. Add or declare runbook evidence (currently not observed).
 

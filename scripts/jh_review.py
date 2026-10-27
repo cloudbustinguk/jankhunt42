@@ -1020,8 +1020,7 @@ def brief(review: Dict[str, Any]) -> str:
     out.append("")
     out.append("Return JSON with `agent`, `findings`, and `rejected`. Each finding needs "
                "`title`, `severity`, `confidence`, `status`, `path`, `line`, `evidence`, "
-               "and either `repro` or `runtime_evidence` when status is `confirmed`. "
-               "Then run `jankhunt42 merge`.")
+               "and either `repro` or `runtime_evidence` when status is `confirmed`.")
     return "\n".join(out)
 
 

@@ -127,7 +127,7 @@ Do not list "be more careful" as prevention.
 - Raw logs / traces (redacted).
 - Related issues, PRs, advisories.
 - Environment snapshot.
-- Scorecard (if `jankhunt42` was used): `jankhunt42 score . --json`.
+- Scorecard (if `jankhunt42` was used): `jankhunt42 scan . --score --json`.
 
 ---
 

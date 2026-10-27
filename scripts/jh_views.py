@@ -213,6 +213,14 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
             out.append("  %s wildcards: %s" % (c.yellow("*"), clean(", ".join(eg["wildcards"][:4]))[: t.width - 16]))
         if eg["unused"]:
             out.append(c.grey("  unused by the mapped code: %s" % clean(", ".join(eg["unused"][:4]))[: t.width - 30]))
+    embedded = [e for e in report['evidence'] if 'json_pointer' in e]
+    if embedded:
+        out += ['', c.bold('embedded code receipts')]
+        for e in embedded[:10]:
+            out += _wrap(clean('%s:%d %s, code line %d' % (e['path'], e['line'],
+                         e['json_pointer'], e['code_line'])), t.width, '  ')
+        if len(embedded) > 10:
+            out.append(c.grey('  +%d more receipts in JSON' % (len(embedded) - 10)))
     out += ["", c.bold("unknowns") + c.grey("  (unknown is not safe, and not dangerous)")]
     for u in report["unknowns"]:
         for i, ln in enumerate(_wrap("%s: %s" % (u["id"], clean(u["detail"])), t.width - 6, "    ")):

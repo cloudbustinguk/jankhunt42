@@ -64,10 +64,59 @@ workflow is deployed or active.
 
 **What stays unresolved,** shown as an explicit unknown for review:
 - expressions (`={{ ... }}`);
-- Code and Function nodes;
+- arbitrary behaviour inside Code and Function nodes, even when literal calls map;
 - arbitrary SQL and aggregates;
 - unknown versions and community nodes;
 - HTTP options beyond the URL and method, such as a proxy;
+
+## JavaScript inside Code nodes
+
+A Code node runs JavaScript the citizen developer wrote, and that's where
+a workflow can quietly call out. jankhunt42 reads that JavaScript with its
+usual reader. The n8n node, not the repository, is the code's owner.
+
+**Which code is read:**
+- **Code nodes:** versions 1 and 2, the `jsCode` parameter.
+- **Function and FunctionItem nodes:** version 1, the `functionCode`
+  parameter.
+- **The `language` field:** version 2 defaults to JavaScript. Python
+  (`python`, `pythonNative`, read from `pythonCode`) is not read yet and
+  stays unknown.
+- **`mode`** (once for all items, or once per item) changes how often the
+  code runs, not what it can reach.
+
+**What becomes a call:**
+- `fetch`, `axios` and `axios.get/post/...` with a literal URL;
+- `this.helpers.httpRequest` and `$http` with a literal options object
+  (`url`, and `method`, GET by default).
+
+A method in any letter case maps (`post` and `POST`). `$http` is matched
+as a call shape only; whether a deployment provides it is not checked.
+
+**What stays unknown:**
+- dynamic URLs or methods, spreads, `${}` interpolation, and syntax the
+  reader can't follow;
+- **the code itself.** Even when its literal calls map, a Code node keeps
+  an "arbitrary behaviour" unknown, because code can do things a reader
+  cannot see.
+
+**Receipts:** each call keeps the export file and the JSON line, plus a
+`json_pointer` to the code parameter and a `code_line` within the code.
+**Isolation:** each node's code is read on its own, so another node's code,
+or the repository's own config, can't supply its values.
+**Comparison:** `passport --base` compares the whole workflow, code and
+language and mode included, so an edit to code needs review. An inactive or
+disabled flag waives nothing, and hitting the reader's limits makes
+coverage partial.
+
+These are what the code declares, not proven runtime access. n8n can
+restrict what Code nodes may do, depending on the deployment
+([runtime restrictions](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.code#file-system-and-http-requests)).
+The fields come from the
+[upstream Code node](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Code/Code.node.ts)
+and the
+[helper options](https://github.com/n8n-io/n8n-docs/blob/main/docs/connect/create-nodes/build-your-node/reference/http-request-helpers.md),
+where the legacy `uri` option is not read as `url`.
 
 ## Credentials and secrets
 

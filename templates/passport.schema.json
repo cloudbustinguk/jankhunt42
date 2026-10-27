@@ -38,10 +38,15 @@
         "reason": {"type": "string"},
         "tool_version": {"type": "string"},
         "surfaces": {"type": "array", "items": {"enum": ["install", "open"]}},
-        "counts": {"type": "object", "properties": {"ALERT": {"type": "integer"}, "DENY": {"type": "integer"}}},
+        "counts": {"type": "object", "properties": {"ALERT": {"type": "integer"}, "DENY": {"type": "integer"},
+          "UNDECLARED": {"type": "integer"}}},
         "alerts": {"type": "array", "maxItems": 50, "items": {"type": "object", "properties": {
           "kind": {"type": "string"}, "detail": {"type": "string"}, "step": {"type": "string"}}}},
-        "coverage": {"type": "object", "properties": {"state": {"enum": ["complete", "partial"]}, "gaps": {"type": "integer"}}}
+        "coverage": {"type": "object", "properties": {"state": {"enum": ["complete", "partial"]}, "gaps": {"type": "integer"}}},
+        "attempts": {"type": "array", "maxItems": 100, "items": {"type": "object", "properties": {
+          "kind": {"enum": ["dns", "connect"]}, "target": {"type": "string"}}}},
+        "attempts_total": {"type": "integer"},
+        "undeclared": {"type": "array", "maxItems": 100, "items": {"type": "string"}}
       }
     },
     "capability_approval": {
@@ -68,7 +73,13 @@
         "context_hash": {"type": ["string", "null"]},
         "delta_hash": {"type": ["string", "null"]},
         "counts": {"type": "object"},
-        "requests": {"type": "array"},
+        "requests": {"type": "array", "items": {"type": "object", "properties": {
+          "evidence": {"type": "array", "items": {"type": "object", "properties": {
+            "snapshot": {"type": "string"}, "path": {"type": "string"}, "line": {"type": "integer"},
+            "json_pointer": {"type": "string", "pattern": "^/(?:[0-9]+/)?nodes/[0-9]+/parameters/(?:jsCode|functionCode)$"},
+            "code_line": {"type": "integer", "minimum": 1}
+          }}}
+        }}},
         "unchanged_unknowns": {
           "type": "array",
           "description": "unresolved at both commits; listed, but not a reason for review of this change"

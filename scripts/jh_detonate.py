@@ -28,7 +28,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import jh_agent
 import jh_ceiling
@@ -674,20 +674,91 @@ def passport_evidence(doc: Optional[Dict[str, Any]], root: str,
     alerts = [{"kind": e["kind"] if e["kind"] in ALERT_KINDS else "other", "detail": jh_graph.sanitize_text(e["detail"], 200),
                "step": jh_graph.sanitize_text(e.get("step", ""), 80)} for e in doc["events"] if e["verdict"] == "ALERT"]
     surfaces = [s for s in doc.get("surfaces") or [] if s in SURFACES] if isinstance(doc.get("surfaces"), list) else []
+    # the destinations the run tried to reach: names it looked up, and addresses it connected to directly
+    targets = sorted({("dns" if e["kind"] == "dns" else "connect", jh_graph.sanitize_text(e["detail"], 120))
+                      for e in doc["events"] if e["verdict"] == "DENY" and e["kind"] in ("dns", "network")})
     return {"state": "matched", "evidence_tier": "sandbox-observed",
+            "attempts": [{"kind": k, "target": t} for k, t in targets],     # capped once compared
+            "attempts_total": len(targets),
             "tool_version": jh_graph.sanitize_text(str(doc.get("version", "?")), 20), "surfaces": surfaces,
             "counts": {"ALERT": len(alerts), "DENY": sum(1 for e in doc["events"] if e["verdict"] == "DENY")},
             "alerts": alerts[:50],
             "coverage": {"state": doc["coverage"]["state"], "gaps": len(doc["coverage"]["gaps"])}}
 
 
+MAX_ATTEMPTS = 100
+
+
+def _endpoint_of(attempt: Dict[str, str]) -> Tuple[str, Optional[int]]:
+    """An attempt's host and port: a connection carries its port, a DNS lookup none."""
+    host, port = attempt["target"], None
+    if attempt["kind"] == "connect":
+        head, _, tail = host.rpartition(":")
+        if head and tail.isdigit():
+            host, port = head, int(tail)
+    return host.strip("[]").lower().rstrip("."), port
+
+
+def _port_of(value: Any) -> Optional[int]:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
+def compare_declared(ev: Dict[str, Any], map_report: Optional[Dict[str, Any]],
+                     ceiling: Optional[Any] = None) -> Dict[str, Any]:
+    """Declared versus attempted. A destination the run tried is declared when the repository's own map names that
+    host or address, or the operator's network ceiling allows it. A connection must match the port as well, when the
+    declaration names one (a ceiling always does); DNS carries no port, so a name matches by host. Everything else is
+    undeclared: behaviour the repository does not admit to. Every attempt is compared; only the lists shown are
+    capped."""
+    if ev.get("state") != "matched":
+        return ev
+    nodes = ((map_report or {}).get("graph") or {}).get("nodes") or []
+    nodes = nodes.values() if isinstance(nodes, dict) else nodes
+    ports: Dict[str, Optional[Set[int]]] = {}       # host -> its declared ports; None: any port
+
+    def declare(host: Any, port: Optional[int]) -> None:
+        h = str(host or "").lower().rstrip(".")
+        if not h:
+            return
+        if port is None:
+            ports[h] = None
+        elif ports.get(h, set()) is not None:
+            ports.setdefault(h, set()).add(port)
+
+    for node in nodes:
+        if isinstance(node, dict):
+            attributes = node.get("attributes") or {}
+            declare(attributes.get("host"), _port_of(attributes.get("port")))
+    for host, port in ceiling or ():
+        declare(host, _port_of(port))
+
+    def declared(attempt: Dict[str, str]) -> bool:
+        host, port = _endpoint_of(attempt)
+        if host not in ports:
+            return False
+        return ports[host] is None or port is None or port in ports[host]
+
+    attempts = ev.get("attempts", [])
+    undeclared = [a["target"] for a in attempts if not declared(a)]
+    ev["attempts"] = attempts[:MAX_ATTEMPTS]
+    ev["undeclared"] = undeclared[:MAX_ATTEMPTS]
+    ev["counts"]["UNDECLARED"] = len(undeclared)
+    return ev
+
+
 def passport_line(ev: Dict[str, Any]) -> str:
     """One plain line for the passport's approver view."""
     state = ev.get("state", "not-supplied")
     if state == "matched":
-        return "Sandbox run (sandbox-observed, coverage %s): %d ALERT(s), %d blocked network attempt(s)%s." % (
+        undeclared = ev["counts"].get("UNDECLARED")
+        return "Sandbox run (sandbox-observed, coverage %s): %d ALERT(s), %d blocked network attempt(s)%s%s." % (
             ev["coverage"]["state"], ev["counts"]["ALERT"], ev["counts"]["DENY"],
-            "" if ev["counts"]["ALERT"] else "; a clean run says nothing about what it did not reach")
+            "" if undeclared is None else ", %d to destinations the repository does not declare" % undeclared,
+            "" if ev["counts"]["ALERT"] or undeclared else "; a clean run says nothing about what it did not reach")
     if state == "stale":
         return "Sandbox run supplied but not used: " + ev.get("reason", "made on a different tree") + "."
     return ""
