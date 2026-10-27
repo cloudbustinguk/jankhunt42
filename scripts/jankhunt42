@@ -1038,7 +1038,7 @@ def cmd_detonate(args: argparse.Namespace) -> int:
     try:
         surfaces = jh_detonate.SURFACES if args.surface == "all" else (args.surface,)
         result = jh_detonate.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
-                                 surfaces=surfaces)
+                                 surfaces=surfaces, npm_cache=args.npm_cache, wheelhouse=args.wheelhouse)
     except RuntimeError as exc:
         print("jankhunt42: detonate: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -1321,6 +1321,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the runner image, built once from templates/detonate.Containerfile (never pulled)")
     sp.add_argument("--engine", choices=("podman", "docker"), help="container engine (default: podman, else docker)")
     sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
+    sp.add_argument("--npm-cache", metavar="DIR",
+                    help="an npm cache made outside the repository (npm ci --ignore-scripts --cache DIR): with a "
+                         "lockfile, npm ci runs offline from it, so dependencies' install hooks run too")
+    sp.add_argument("--wheelhouse", metavar="DIR",
+                    help="Python wheels and source packages made outside the repository: requirements and the build "
+                         "backend install offline from it")
     sp.add_argument("--surface", choices=("install", "open", "all"), default="all",
                     help="install: package hooks; open: what an agent or editor runs when the repository is opened "
                          "(default: all)")

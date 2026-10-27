@@ -44,8 +44,8 @@ def _endpoint(row: Any) -> Tuple[str, int]:
     return host, port
 
 
-def read_external_json(path: str, root: str, description: str = "network ceiling", limit: int = MAX_BYTES) -> Any:
-    """Read a bounded regular file outside both root spellings; no stdin."""
+def inside_repository(path: str, root: str) -> bool:
+    """True when path (either spelling) is inside root or a repository that contains root."""
     absolute, resolved = os.path.abspath(path), os.path.realpath(path)
     roots = {os.path.abspath(root), os.path.realpath(root)}
     # A scanned subdirectory cannot promote its containing repository's file
@@ -59,7 +59,13 @@ def read_external_json(path: str, root: str, description: str = "network ceiling
             if parent == ancestor:
                 break
             ancestor = parent
-    if any(_under(candidate, base) for candidate in (absolute, resolved) for base in roots):
+    return any(_under(candidate, base) for candidate in (absolute, resolved) for base in roots)
+
+
+def read_external_json(path: str, root: str, description: str = "network ceiling", limit: int = MAX_BYTES) -> Any:
+    """Read a bounded regular file outside both root spellings; no stdin."""
+    absolute, resolved = os.path.abspath(path), os.path.realpath(path)
+    if inside_repository(path, root):
         raise ValueError(description + " must be supplied from outside the scanned repository")
     if absolute != resolved:
         raise ValueError(description + " requires a canonical external path without symlinks")

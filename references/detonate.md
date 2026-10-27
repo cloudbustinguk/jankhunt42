@@ -19,8 +19,9 @@ jankhunt42 detonate . --surface open    # only what runs when the repository is 
   in `package.json`, as `npm run --if-present <hook>`.
 - **Python:** `setup.py egg_info`, or, with only `pyproject.toml`, a wheel
   build with the backend already in the image.
-- **Dependencies are not installed,** because the network is off. Their own
-  install hooks therefore do not run, and coverage says so.
+- **Dependencies are installed only from a cache you supply,** because the
+  network is off. Without one, their install hooks do not run, and coverage
+  says so. See "Dependencies" below.
 
 ## What runs when it is opened (`--surface open`)
 
@@ -109,6 +110,51 @@ Each event names the command that caused it and the step it ran under.
 **Reports never contain canary values,** only canary IDs such as
 `canary-aws`. Exit code 1 means at least one ALERT; 2 means the sandbox
 could not run.
+
+## Dependencies (`--npm-cache`, `--wheelhouse`)
+
+Most install-time attacks hide in a dependency's install hook, not in the
+repository itself. To run those hooks too, supply the dependencies as a
+cache made outside the repository. detonate never fetches anything itself.
+
+```sh
+jankhunt42 detonate . --npm-cache /path/outside/npm-cache
+jankhunt42 detonate . --wheelhouse /path/outside/wheelhouse
+```
+
+**npm:** with a cache and a `package-lock.json` (or `npm-shrinkwrap.json`),
+detonate runs one traced step:
+
+    npm ci --offline --cache /cache/npm --foreground-scripts
+
+- **Which hooks run:** the package's own hooks and every dependency's run
+  inside it, once, in place of the separate root-hook steps.
+- **When something is missing:** a package missing from the cache, a git or
+  URL dependency, or a missing lockfile makes coverage partial.
+
+**Python:** with a wheelhouse, `requirements.txt` installs offline into the
+sandbox (`pip install --no-index --find-links`), and a pyproject's build
+backend comes from the wheelhouse. A wheel runs no code when installed. Only
+source packages in the wheelhouse are built, so only their setup code runs.
+
+**The copy:** each cache must be a real directory outside the repository,
+with no link in its path, of at most 768 MB. detonate copies it into the
+run's private folder, so your directory is never written to or relabeled.
+
+**Making a cache is a fetch: do it deliberately.** The lockfile decides what
+is downloaded, and from where.
+1. Check the package sources first, for example with
+   `jankhunt42 passport . --policy POLICY` and `allowed_registries`.
+2. Then fetch on a machine that is allowed to reach your registry, without
+   running anything:
+
+```sh
+npm ci --ignore-scripts --cache /path/outside/npm-cache          # in a clean checkout
+pip download --only-binary=:all: -d /path/outside/wheelhouse -r requirements.txt
+```
+
+`--only-binary` avoids building source packages while downloading, because
+a build runs the package's setup code.
 
 ## Use it in a passport
 

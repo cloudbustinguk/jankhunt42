@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "3.5.0"
+  version: "3.6.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -198,7 +198,7 @@ Failure classes, the agent blast radius, the profile table, and limits: `referen
 
 `jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks and helper commands, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. `--surface install|open|all` picks which (default all). The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.
 
-**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. To carry a run into a passport, save `detonate --json` outside the repository and pass `passport --detonation PATH`: it counts only if made on the exact same tree, and its ALERTs make `P-RUN-001` review (block in the citizen profile); a clean run never relieves another rule. Details: `references/detonate.md`.
+**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. Dependencies' install hooks run only from an operator-supplied cache: `--npm-cache DIR` (with a lockfile, `npm ci` runs offline, dependency hooks included) and `--wheelhouse DIR`; never fetch dependencies for the user. To carry a run into a passport, save `detonate --json` outside the repository and pass `passport --detonation PATH`: it counts only if made on the exact same tree, and its ALERTs make `P-RUN-001` review (block in the citizen profile); a clean run never relieves another rule. Details: `references/detonate.md`.
 
 ## Deep hunt (opt-in)
 

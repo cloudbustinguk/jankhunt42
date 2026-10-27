@@ -31,6 +31,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import jh_agent
+import jh_ceiling
 import jh_checks
 import jh_graph
 from jh_core import MCP_CONFIG_FILES, redact_secrets
@@ -63,6 +64,12 @@ MCP_SECONDS = 20          # a server runs until stopped; this long is enough to 
 MAX_OPEN_STEPS = 40
 MAX_CONFIG_BYTES = 1000000
 # what the sandbox writes is untrusted: read only regular files, never through a link, and only this much
+# operator-supplied dependency caches: made outside the sandbox, copied into the run, never fetched by it
+MAX_CACHE_BYTES = 768 * 1024 * 1024
+CACHE_MOUNTS = {"npm": ("/cache/npm", "rw"), "wheels": ("/cache/wheels", "ro")}
+NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
+NPM_CI = "npm ci --offline --cache /cache/npm --foreground-scripts --no-audit --no-fund --ignore-scripts=false"
+PIP_OFFLINE = "python3 -m pip install --no-index --find-links /cache/wheels --no-cache-dir --disable-pip-version-check"
 MAX_TRACE_BYTES = 64 * 1024 * 1024
 MAX_DNS_BYTES = 1024 * 1024
 _HOSTNAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}\Z")
@@ -80,12 +87,14 @@ def make_canaries() -> List[Dict[str, Any]]:
     return out
 
 
-def plan_steps(root: str, surfaces: Tuple[str, ...] = SURFACES) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """The commands to run, and why coverage is partial before anything runs."""
+def plan_steps(root: str, surfaces: Tuple[str, ...] = SURFACES,
+               caches: Tuple[str, ...] = ()) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """The commands to run, and why coverage is partial before anything runs. caches names the operator-supplied
+    dependency caches ("npm", "wheels") the sandbox will hold."""
     steps: List[Dict[str, Any]] = []
     gaps: List[str] = []
     if "install" in surfaces:
-        _plan_install(root, steps, gaps)
+        _plan_install(root, steps, gaps, caches)
     if "open" in surfaces:
         _plan_open(root, steps, gaps)
     return steps, gaps
@@ -97,7 +106,7 @@ def _step(name: str, surface: str, script: str, source: str = "", stdin: str = "
     return dict(name=name, surface=surface, script=script, source=source, stdin=stdin, **extra)
 
 
-def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str]) -> None:
+def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], caches: Tuple[str, ...] = ()) -> None:
     pkg = os.path.join(root, "package.json")
     if os.path.isfile(pkg) and not os.path.islink(pkg):
         try:
@@ -107,18 +116,43 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str]) -> No
             doc = {}
             gaps.append("package.json could not be read")
         scripts = doc.get("scripts") if isinstance(doc.get("scripts"), dict) else {}
-        for hook in NPM_HOOKS:
-            if isinstance(scripts.get(hook), str):
-                steps.append(_step("npm %s" % hook, "install", "npm run --if-present %s" % hook, "package.json"))
-        if doc.get("dependencies") or doc.get("devDependencies"):
-            gaps.append("npm dependencies are not installed (the network is off), so their install hooks did not run")
+        deps = any(doc.get(k) for k in ("dependencies", "devDependencies", "optionalDependencies"))
+        lock = next((f for f in NPM_LOCKFILES if os.path.isfile(os.path.join(root, f)) and
+                     not os.path.islink(os.path.join(root, f))), None)
+        if "npm" in caches and lock:
+            # one install from the cache: the package's own hooks and every dependency's run inside it, once
+            steps.append(_step("npm ci (offline, with dependencies)", "install", NPM_CI, lock, npm_ci=True))
+        else:
+            for hook in NPM_HOOKS:
+                if isinstance(scripts.get(hook), str):
+                    steps.append(_step("npm %s" % hook, "install", "npm run --if-present %s" % hook, "package.json"))
+            if "npm" in caches:
+                gaps.append("npm ci needs package-lock.json or npm-shrinkwrap.json, so dependencies were not installed "
+                            "and their install hooks did not run")
+            elif deps:
+                gaps.append("npm dependencies are not installed (no --npm-cache), so their install hooks did not run")
+    requirements = os.path.isfile(os.path.join(root, "requirements.txt"))
+    if requirements and "wheels" in caches:
+        steps.append(_step("pip install requirements (offline)", "install",
+                           PIP_OFFLINE + " --target /work/pydeps -r requirements.txt", "requirements.txt", pip=True))
+    elif requirements:
+        gaps.append("Python requirements are not installed (no --wheelhouse), so any source package's setup code "
+                    "did not run")
     if os.path.isfile(os.path.join(root, "setup.py")):
-        steps.append(_step("python setup.py", "install", "python3 setup.py egg_info --egg-base /tmp", "setup.py"))
+        steps.append(_step("python setup.py", "install",
+                           ("PYTHONPATH=/work/pydeps " if "wheels" in caches else "") +
+                           "python3 setup.py egg_info --egg-base /tmp", "setup.py"))
     elif os.path.isfile(os.path.join(root, "pyproject.toml")):
-        steps.append(_step("python build backend", "install",
-                           "python3 -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
-                           "pyproject.toml"))
-        gaps.append("a pyproject build backend that is not in the image cannot run")
+        if "wheels" in caches:
+            # build isolation installs the build backend from the wheelhouse
+            steps.append(_step("python build backend", "install",
+                               "python3 -m pip wheel --no-deps --no-index --find-links /cache/wheels "
+                               "--disable-pip-version-check -w /tmp/wheel .", "pyproject.toml", pip=True))
+        else:
+            steps.append(_step("python build backend", "install",
+                               "python3 -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
+                               "pyproject.toml"))
+            gaps.append("a pyproject build backend that is not in the image cannot run (no --wheelhouse)")
 
 
 def _inside(root: str, rel: str) -> bool:
@@ -390,11 +424,16 @@ def shown(text: str, values: List[Tuple[str, str]] = ()) -> str:
     return jh_graph.sanitize_text(redact_secrets(mask(text, list(values))), 160)
 
 
-def container_argv(engine: str, image: str, run_dir: str, src: str) -> List[str]:
+def container_argv(engine: str, image: str, run_dir: str, src: str, caches: Tuple[str, ...] = ()) -> List[str]:
     z = ",Z" if engine == "podman" else ""
+    mounts = []
+    for name in sorted(caches):
+        target, mode = CACHE_MOUNTS[name]
+        # the run's own copy of the operator's cache, never the operator's directory itself
+        mounts += ["-v", "%s/cache/%s:%s:%s%s" % (run_dir, name, target, mode, z)]
     return [engine, "run", "--rm", "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", *LIMITS, "--sysctl", "net.ipv4.ip_unprivileged_port_start=0",
-            "--tmpfs", "/tmp:rw,size=256m,mode=1777", "--tmpfs", "/work:rw,size=1g,mode=1777",
+            "--tmpfs", "/tmp:rw,size=256m,mode=1777", "--tmpfs", "/work:rw,size=1g,mode=1777", *mounts,
             "-v", "%s:/src:ro%s" % (src, z), "-v", "%s/home:%s:ro%s" % (run_dir, HOME, z),
             "-v", "%s/jh:/jh:ro%s" % (run_dir, z), "-v", "%s/out:/out:rw%s" % (run_dir, z),
             "-v", "%s/jh/resolv.conf:/etc/resolv.conf:ro%s" % (run_dir, z),
@@ -602,6 +641,42 @@ def passport_line(ev: Dict[str, Any]) -> str:
     return ""
 
 
+def check_cache(path: str, root: str, what: str) -> Dict[str, int]:
+    """An operator-supplied dependency cache: a real directory (no link anywhere in its path), outside the
+    repository, at most MAX_CACHE_BYTES of regular files. Its contents decide what the offline install can use."""
+    if not os.path.isdir(path):
+        raise RuntimeError("%s %s is not a directory" % (what, path))
+    if os.path.abspath(path) != os.path.realpath(path):
+        raise RuntimeError("%s must be a canonical path without links" % what)
+    if jh_ceiling.inside_repository(path, root):
+        raise RuntimeError("%s must be outside the repository: what a repository brings cannot be its own cache" % what)
+    files = size = 0
+    for base, dirs, names in os.walk(path):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(base, d))]
+        for name in names:
+            full = os.path.join(base, name)
+            if os.path.isfile(full) and not os.path.islink(full):
+                files += 1
+                size += os.path.getsize(full)
+                if size > MAX_CACHE_BYTES:
+                    raise RuntimeError("%s is larger than %d MB" % (what, MAX_CACHE_BYTES // (1024 * 1024)))
+    return {"files": files, "bytes": size}
+
+
+def copy_cache(src: str, dest: str, writable: bool) -> None:
+    """Regular files only (links are left out), readable, and writable when the package manager writes to it."""
+    for base, dirs, names in os.walk(src):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(base, d))]
+        target = os.path.join(dest, os.path.relpath(base, src))
+        os.makedirs(target, exist_ok=True)
+        os.chmod(target, 0o777 if writable else 0o755)
+        for name in names:
+            full = os.path.join(base, name)
+            if os.path.isfile(full) and not os.path.islink(full):
+                shutil.copyfile(full, os.path.join(target, name))
+                os.chmod(os.path.join(target, name), 0o666 if writable else 0o644)
+
+
 def find_engine(prefer: Optional[str] = None) -> Optional[str]:
     for engine in ([prefer] if prefer else ["podman", "docker"]):
         if engine and shutil.which(engine):
@@ -610,8 +685,11 @@ def find_engine(prefer: Optional[str] = None) -> Optional[str]:
 
 
 def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, timeout: int = 120,
-        surfaces: Tuple[str, ...] = SURFACES) -> Dict[str, Any]:
+        surfaces: Tuple[str, ...] = SURFACES, npm_cache: Optional[str] = None,
+        wheelhouse: Optional[str] = None) -> Dict[str, Any]:
     root = os.path.abspath(root)
+    supplied = {name: (path, check_cache(path, root, label)) for name, path, label in
+                (("npm", npm_cache, "--npm-cache"), ("wheels", wheelhouse, "--wheelhouse")) if path}
     result: Dict[str, Any] = {"schema": SCHEMA, "root": root, "image": image, "evidence_tier": "sandbox-observed",
                               "surfaces": [s for s in SURFACES if s in surfaces],
                               "steps": [], "events": [], "dns": [], "canaries": [], "coverage": {}, "limits": [
@@ -628,6 +706,7 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         raise RuntimeError("image %s is not present; build it once with: %s build -t %s -f "
                            "templates/detonate.Containerfile templates" % (image, engine, image))
     result["engine"], result["image_id"] = engine, probe.stdout.strip()[:80]
+    result["dependency_caches"] = {name: counts for name, (_, counts) in supplied.items()}
     canaries = make_canaries()
     run_dir = tempfile.mkdtemp(prefix="jh-detonate-")
     try:
@@ -643,7 +722,9 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
             raise RuntimeError("could not snapshot %s: %s" % (root, exc))
         # plan from the snapshot, so what runs is exactly what was read; its digest lets a passport match the run
         result["tree"] = tree_digest(snap)
-        steps, gaps = plan_steps(snap, surfaces)
+        for name, (path, _) in supplied.items():
+            copy_cache(path, os.path.join(run_dir, "cache", name), writable=CACHE_MOUNTS[name][1] == "rw")
+        steps, gaps = plan_steps(snap, surfaces, tuple(supplied))
         if not steps:
             gaps.append("nothing to run was found (package hooks, or commands that run when the repository is opened)")
         os.makedirs(os.path.join(run_dir, "jh"))
@@ -659,12 +740,16 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         timed_out = False
         if steps:
             try:
-                subprocess.run(container_argv(engine, image, run_dir, snap), capture_output=True,
+                subprocess.run(container_argv(engine, image, run_dir, snap, tuple(supplied)), capture_output=True,
                                timeout=sum(step_limit(s, int(timeout)) + 5 for s in steps) + 60)
             except subprocess.TimeoutExpired:
                 timed_out = True
                 gaps.append("the run exceeded its time limit")
         rows, events, dns = collect(os.path.join(run_dir, "out"), steps, canaries, int(timeout), gaps)
+        for step, row in zip(steps, rows):
+            if (step.get("npm_ci") or step.get("pip")) and row["exit"] not in ("0", None):
+                gaps.append("%s failed (exit %s): a package missing from the cache, a git or URL dependency, or "
+                            "another error; not every install hook may have run" % (step["name"], row["exit"]))
         result["steps"], result["events"], result["dns"] = rows, events, dns
         result["timed_out"] = timed_out
     finally:

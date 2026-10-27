@@ -141,8 +141,7 @@ MUTANTS = [
      "jh_ceiling.py", "    if type(port) is not int or not 1 <= port <= 65535:",
      "    if not isinstance(port, int) or not 1 <= port <= 65535:", "test_network_ceiling.py"),
     ("M41-network-ceiling-repository-input", "a repository file becomes the operator ceiling",
-     "jh_ceiling.py", "    if any(_under(candidate, base) for candidate in (absolute, resolved) for base in roots):",
-     "    if False:", "test_network_ceiling.py"),
+     "jh_ceiling.py", "    if inside_repository(path, root):", "    if False:", "test_network_ceiling.py"),
     ("M42-network-ceiling-directory-alias", "a symlinked directory can select operator input",
      "jh_ceiling.py", "    if absolute != resolved:", "    if False:", "test_network_ceiling.py"),
     ("M43-network-ceiling-port-loss", "an exporter discards mandatory ceiling ports",
@@ -319,6 +318,10 @@ MUTANTS = [
     ("M112-p-run-alerts-ignored", "sandbox ALERTs never reach the decision", "jh_policy.py",
      '    alerts = (sandbox.get("counts") or {}).get("ALERT", 0) if sandbox.get("state") == "matched" else 0',
      "    alerts = 0", "test_detonate.py"),
+    ("M120-detonate-cache-in-repository", "a repository's own folder is accepted as the dependency cache",
+     "jh_detonate.py", "    if jh_ceiling.inside_repository(path, root):", "    if False:", "test_detonate.py"),
+    ("M121-detonate-npm-ci-never-planned", "with a cache and a lockfile, dependencies still never install",
+     "jh_detonate.py", '        if "npm" in caches and lock:', "        if False:", "test_detonate.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -4,6 +4,28 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.6.0] — 2026-10-27
+
+### Added
+
+- **detonate runs dependencies' install hooks too, offline from a cache
+  you supply.** Most install-time attacks hide in a dependency's
+  `postinstall`, not in the repository.
+  - **npm:** with `--npm-cache DIR` and a lockfile, detonate runs
+    `npm ci --offline --foreground-scripts` as one traced step. The
+    package's own hooks and every dependency's run inside it, against the
+    usual canaries and audit log.
+  - **Python:** with `--wheelhouse DIR`, requirements and the build backend
+    install offline.
+  - **The caches:** each must be a real directory outside the repository,
+    at most 768 MB. It is copied into the run, so your directory is never
+    written to. detonate still never touches the network.
+
+  A live test builds an invented dependency into a cache offline and sees
+  its `postinstall` read the canary. Mutants M120 and M121. See
+  "Dependencies" in `references/detonate.md`, including how to make a cache
+  without running anything.
+
 ## [3.5.0] — 2026-10-27
 
 ### Added

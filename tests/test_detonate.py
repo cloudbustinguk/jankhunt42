@@ -317,6 +317,75 @@ class Planning(unittest.TestCase):
         self.assertTrue(all(any("JH42CANARY" in v for v in c["values"]) for c in a))
 
 
+class DependencyCaches(unittest.TestCase):
+    """Operator-supplied caches: planning and checks on invented trees; nothing run."""
+
+    def tree(self, files):
+        root = tempfile.mkdtemp(prefix="jh-det-dep-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel, text in files.items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write(text)
+        return root
+
+    PKG = json.dumps({"name": "app", "version": "1.0.0", "scripts": {"postinstall": "node x.js"},
+                      "dependencies": {"left-pad": "1.3.0"}})
+
+    def test_npm_ci_replaces_the_root_hooks_when_a_cache_and_lockfile_exist(self):
+        root = self.tree({"package.json": self.PKG, "package-lock.json": "{}"})
+        steps, gaps = jh_detonate.plan_steps(root, ("install",), ("npm",))
+        self.assertEqual([s["name"] for s in steps], ["npm ci (offline, with dependencies)"])
+        self.assertIn("--offline", steps[0]["script"])
+        self.assertEqual(gaps, [])
+        steps, gaps = jh_detonate.plan_steps(root, ("install",))
+        self.assertEqual([s["name"] for s in steps], ["npm postinstall"])
+        self.assertTrue(any("no --npm-cache" in g for g in gaps))
+
+    def test_without_a_lockfile_npm_ci_cannot_run(self):
+        root = self.tree({"package.json": self.PKG})
+        steps, gaps = jh_detonate.plan_steps(root, ("install",), ("npm",))
+        self.assertEqual([s["name"] for s in steps], ["npm postinstall"])
+        self.assertTrue(any("needs package-lock.json" in g for g in gaps))
+
+    def test_a_wheelhouse_installs_requirements_and_the_build_backend(self):
+        root = self.tree({"requirements.txt": "invented-pkg==1.0\n", "pyproject.toml": "[project]\nname='x'\n"})
+        steps, gaps = jh_detonate.plan_steps(root, ("install",), ("wheels",))
+        self.assertEqual([s["name"] for s in steps], ["pip install requirements (offline)", "python build backend"])
+        self.assertTrue(all("--find-links /cache/wheels" in s["script"] and "--no-index" in s["script"] for s in steps))
+        self.assertEqual(gaps, [])
+        _, gaps = jh_detonate.plan_steps(root, ("install",))
+        self.assertTrue(any("no --wheelhouse" in g for g in gaps))
+
+    def test_a_cache_must_be_a_real_directory_outside_the_repository(self):
+        root = self.tree({"package.json": "{}", "cache/x": "1"})
+        with self.assertRaisesRegex(RuntimeError, "outside the repository"):
+            jh_detonate.check_cache(os.path.join(root, "cache"), root, "--npm-cache")
+        outside = self.tree({"index/a": "12345"})
+        self.assertEqual(jh_detonate.check_cache(outside, root, "--npm-cache"), {"files": 1, "bytes": 5})
+        link = os.path.join(self.tree({}), "link")
+        os.symlink(outside, link)
+        with self.assertRaisesRegex(RuntimeError, "without links"):
+            jh_detonate.check_cache(link, root, "--npm-cache")
+        with self.assertRaisesRegex(RuntimeError, "not a directory"):
+            jh_detonate.check_cache(os.path.join(outside, "missing"), root, "--npm-cache")
+        old = jh_detonate.MAX_CACHE_BYTES
+        jh_detonate.MAX_CACHE_BYTES = 4
+        try:
+            with self.assertRaisesRegex(RuntimeError, "larger than"):
+                jh_detonate.check_cache(outside, root, "--npm-cache")
+        finally:
+            jh_detonate.MAX_CACHE_BYTES = old
+
+    def test_caches_are_copies_mounted_with_the_network_still_off(self):
+        argv = jh_detonate.container_argv("podman", "img", "/tmp/run", "/src", ("npm", "wheels"))
+        self.assertIn("/tmp/run/cache/npm:/cache/npm:rw,Z", argv)
+        self.assertIn("/tmp/run/cache/wheels:/cache/wheels:ro,Z", argv)
+        self.assertIn("--network=none", argv)
+        self.assertNotIn("/cache/npm", " ".join(jh_detonate.container_argv("podman", "img", "/tmp/run", "/src")))
+
+
 class PassportEvidence(unittest.TestCase):
     """A detonate result in the passport: invented trees and results, nothing run."""
 
@@ -425,6 +494,44 @@ class Live(unittest.TestCase):
         self.assertIn(("ALERT", "canary-read"), got)
         self.assertIn(("DENY", "network"), got)
         self.assertNotIn("JH42CANARY", json.dumps(r))
+
+    def test_a_dependency_hook_runs_from_an_offline_cache(self):
+        # an invented dependency whose postinstall reads the canary; its cache is built in the image, offline
+        work = tempfile.mkdtemp(prefix="jh-det-npm-")
+        self.addCleanup(lambda: subprocess.run(["podman", "unshare", "rm", "-rf", work]))
+        os.chmod(work, 0o777)
+        dep = os.path.join(work, "dep")
+        os.makedirs(dep)
+        with open(os.path.join(dep, "package.json"), "w") as fh:
+            json.dump({"name": "jh-inert-dep", "version": "1.0.0", "scripts": {
+                "postinstall": "node -e \"require('fs').readFileSync(process.env.HOME + '/.aws/credentials')\""}}, fh)
+        os.chmod(dep, 0o777)
+        os.makedirs(os.path.join(work, "cache"), mode=0o777)
+        os.chmod(os.path.join(work, "cache"), 0o777)
+        subprocess.run(["podman", "run", "--rm", "--pull=never", "--network=none", "-v", work + ":/w:rw,Z",
+                        "-e", "HOME=/tmp", "-e", "npm_config_update_notifier=false", jh_detonate.DEFAULT_IMAGE, "sh", "-c",
+                        "cd /w/dep && npm pack --pack-destination /w && npm cache add /w/jh-inert-dep-1.0.0.tgz "
+                        "--cache /w/cache"], capture_output=True, check=True)
+        subprocess.run(["podman", "unshare", "chown", "-R", "0:0", work], check=True)
+        import base64, hashlib
+        with open(os.path.join(work, "jh-inert-dep-1.0.0.tgz"), "rb") as fh:
+            integrity = "sha512-" + base64.b64encode(hashlib.sha512(fh.read()).digest()).decode()
+        app = tempfile.mkdtemp(prefix="jh-det-app-")
+        self.addCleanup(shutil.rmtree, app, True)
+        with open(os.path.join(app, "package.json"), "w") as fh:
+            json.dump({"name": "app", "version": "1.0.0", "dependencies": {"jh-inert-dep": "1.0.0"}}, fh)
+        with open(os.path.join(app, "package-lock.json"), "w") as fh:
+            json.dump({"name": "app", "version": "1.0.0", "lockfileVersion": 3, "requires": True, "packages": {
+                "": {"name": "app", "version": "1.0.0", "dependencies": {"jh-inert-dep": "1.0.0"}},
+                "node_modules/jh-inert-dep": {"version": "1.0.0", "hasInstallScript": True, "integrity": integrity,
+                                              "resolved": "https://registry.npmjs.org/jh-inert-dep/-/jh-inert-dep-1.0.0.tgz"}}}, fh)
+        r = jh_detonate.run(app, timeout=90, surfaces=("install",), npm_cache=os.path.join(work, "cache"))
+        self.assertEqual([(s["name"], s["exit"], s["traced"]) for s in r["steps"]],
+                         [("npm ci (offline, with dependencies)", "0", True)])
+        reads = [e for e in r["events"] if (e["verdict"], e["kind"]) == ("ALERT", "canary-read")]
+        self.assertTrue(reads, r["events"])
+        self.assertNotIn("JH42CANARY", json.dumps(r))
+        self.assertEqual(r["dependency_caches"]["npm"]["files"] > 0, True)
 
     def test_inert_open_surface(self):
         root = tempfile.mkdtemp(prefix="jh-det-live-")
