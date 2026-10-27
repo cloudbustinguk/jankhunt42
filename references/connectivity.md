@@ -180,6 +180,12 @@ monotonicity guarantee above still holds.
 | openapi | OpenAPI 3 / Swagger 2 documents (YAML or JSON): servers and operations | **no edges**: enriches an `api`/`external` node the code already calls (`openapi_operations`), otherwise records the operations the application `exposes` |
 | mcp | MCP server definitions: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`, `.codex/config.toml` MCP tables, `opencode.json(c)`, `claude_desktop_config.json`, and any JSON with `mcpServers` | an **AI agent** principal per file (`platform: ai-agent`), `calls` to each enabled server (local process or remote endpoint), `connects` from a server to endpoints in its args/env, `authenticates-as` to credentials by name; every capability `unknown`, every edge `declared` |
 
+The `n8n` adapter reads workflow JSON objects/arrays, including exports under
+test paths: per-node workloads, inert control-flow links, credential references,
+HTTP endpoints and logical data operations. Expressions, code, unknown versions
+and external credential grants remain unresolved. See [n8n exports](n8n.md) for
+versioned operations, bounds and comparison behavior.
+
 The code adapters also know the stack AI app builders use: Supabase,
 Firebase/Firestore, Neon/Vercel Postgres, Upstash, Turso, Airtable, and
 Google Sheets clients and hosts (`*.supabase.co`, `*.firebaseio.com`,

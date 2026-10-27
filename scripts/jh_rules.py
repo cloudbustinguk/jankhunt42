@@ -971,6 +971,21 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue                # a build bundle: a leaked key, hidden Unicode or agent hazard still counts
             if opts.rule_ids and rule.id not in opts.rule_ids:
                 continue
+            if rule.id == 'JH101':
+                import jh_n8n
+                try:
+                    flows = jh_n8n.parse(sf.rel, '\n'.join(sf.raw)) or []
+                    pointers = [jh_n8n.pointer(n['pointer'] + ['parameters']) + p
+                                for flow in flows for n in flow['nodes']
+                                for p in jh_n8n.secret_sites(n['raw']['parameters'])]
+                except (ValueError, RecursionError):
+                    pointers = []
+                if pointers:
+                    f = make_finding(rule, sf, 1, evidence='n8n export contains literal secret-shaped parameters (values withheld)',
+                                     extra={'json_pointers': [jh_n8n.safe_pointer(p) for p in pointers[:50]], 'sites': len(pointers)})
+                    _example_context(f)
+                    if acceptor.accept(f):
+                        result.findings.append(f)
             if rule.check:
                 fn = CHECKS.get(rule.check)
                 if not fn:

@@ -10,14 +10,14 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 3.3.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 3.4.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
 | Question | Commands | What you get |
 |---|---|---|
 | **What's broken?** | `scan`, `score`, `review`, `triage`, `doctor`, `hunt` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts; log clustering; an opt-in adversarial deep hunt |
-| **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
+| **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, n8n workflows, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
 | **Can we responsibly ship it?** | `passport`, `supply-chain` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
 
 Each answer keeps its own evidence model:
@@ -328,6 +328,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/deep-hunt.md`](references/deep-hunt.md) | The opt-in adversarial panel |
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
+| [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
 | [`references/capability-approval.md`](references/capability-approval.md) | Approving one access change, so CI passes it next time |
 | [`references/capability-delta.md`](references/capability-delta.md) | `passport --base`: the new access a change asks for, and how it is decided |
 | [`references/detonate.md`](references/detonate.md) | `detonate`: running the install hooks and what runs on open in a sandbox, the audit log, canaries and limits |

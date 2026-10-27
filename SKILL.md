@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "3.3.0"
+  version: "3.4.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -146,6 +146,7 @@ How to use it:
 - Never upgrade a connection string to a grant, an import to a data flow, or a `secretKeyRef` to a disclosed secret.
 - For a diff, `--base` compares committed trees only; mention escalations and newly reachable sensitive assets first.
 - What-if results are hypothetical. Present them as "under this assumption", never as the current state.
+- **n8n workflows** (exported JSON) are mapped too: HTTP calls, databases and sheets with their operation, and credentials by name. Expressions and Code nodes stay unknown; nothing is run. Details: `references/n8n.md`.
 
 Details, edge semantics, adapters, inventory format, and limitations: `references/connectivity.md`.
 

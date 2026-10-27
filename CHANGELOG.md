@@ -4,6 +4,30 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.4.0] — 2026-10-27
+
+### Added
+
+- **n8n workflows in the map and passport.** Exported n8n workflows (JSON)
+  now show what each automation can reach:
+  - HTTP services, with host and port;
+  - Postgres, MySQL and MongoDB, Google Sheets and Airtable, with the
+    operation (read, write or delete);
+  - the credentials it uses, by type and name only.
+
+  How it reads them:
+  - Expressions, Code nodes, unknown versions and community nodes stay
+    explicit unknowns.
+  - Nothing is evaluated, run or fetched.
+  - With `passport --base`, new access in a workflow is a change for IT to
+    review. A late edit or a rewiring of an unresolved node needs review
+    too.
+  - A secret-shaped literal in a node's parameters is a JH101 lead that
+    points at the parameter and never contains the value.
+
+  See `references/n8n.md`. Designed and built by Codex (proposal A11a,
+  mutants M83 to M90).
+
 ## [3.3.0] — 2026-10-27
 
 ### Added

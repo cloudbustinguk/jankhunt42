@@ -32,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import jh_agent
 import jh_egress
 import jh_graph as G
+import jh_n8n
 import jh_yaml
 from jh_core import (TOOL, VERSION, run_git, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
@@ -2077,9 +2078,63 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
 _HELM_SYNTAX_RE = re.compile(r"(?<!\$)\{\{-?\s*(?:\.|include\b|if\b|else\b|range\b|end\b|define\b|template\b|with\b|toYaml\b|tpl\b)")
 
 
+def adapt_n8n(ctx: Ctx, item: Item) -> None:
+    g = ctx.g
+    for flow in jh_n8n.parse(item.rel, item.text) or []:
+        wev = g.add_evidence(item.rel, 1, 'n8n', 'n8n workflow declaration', 'declared')
+        workflow = g.add_node('workload', [flow['key']], str(flow['name']), evidence=wev,
+                             attributes={'platform': 'n8n', 'n8n_key': flow['key']})
+        node_ids = {}
+        for n in flow['nodes']:
+            raw, nk = n['raw'], n['key']
+            ptr = jh_n8n.pointer(n['pointer'])
+            ev = g.add_evidence(item.rel, 1, 'n8n', 'n8n node at ' + ptr, 'declared',
+                                assumptions=['JSON pointer: ' + ptr, 'Export declaration; execution and credential grants unverified'])
+            refs = [G.sanitize_text(k + ':' + v['name']) for k, v in n['credentials'].items()]
+            refs += ['literal parameter ' + jh_n8n.safe_pointer(p) for p in jh_n8n.secret_sites(raw['parameters'])]
+            principal = g.add_node('workload', [nk], raw['name'], evidence=ev,
+                attributes={'platform': 'n8n', 'n8n_key': nk, 'credential_refs': refs,
+                            'disabled': raw.get('disabled') is True})
+            node_ids[raw['id']] = principal
+            g.add_edge(workflow, principal, 'depends-on', 'none', 'declared', 'high', evidence=ev)
+            for typ, ref in n['credentials'].items():
+                identity = g.add_node('identity', ['n8n', typ, ref['id']], typ + ':' + ref['name'],
+                    attributes={'platform': 'n8n', 'credential_refs': [G.sanitize_text(typ + ':' + ref['name'])]}, evidence=ev)
+                g.add_edge(principal, identity, 'authenticates-as', 'none', 'declared', 'high', evidence=ev)
+            engine, cap, scope = jh_n8n.operation(raw)
+            if engine == 'http':
+                url = jh_n8n.http_url(scope.get('url'))
+                ep = G.parse_endpoint(url) if url else None
+                target = ctx.endpoint_node(ep, evidence=ev) if ep else None
+                if target:
+                    g.add_edge(principal, target, 'calls', cap, 'declared', 'high', evidence=ev)
+                if not target or not ep.get('resolved') or cap == 'unknown' or jh_n8n.dynamic(raw['parameters']) or \
+                        set(raw['parameters']) - {'url', 'method', 'requestMethod'}:
+                    opaque = g.add_node('unknown', [nk, 'http'], 'Unresolved n8n HTTP binding',
+                        attributes={'platform': 'n8n', 'unresolved': True}, evidence=ev)
+                    g.add_edge(principal, opaque, 'calls', 'unknown', 'declared', 'high', evidence=ev)
+            elif engine != 'n8n':
+                clean_scope = {k: G.sanitize_text(str(v)) for k, v in scope.items() if v is not None}
+                target = g.add_node('database', [nk, engine, G.canonical_json(clean_scope)], engine + ' logical resource',
+                    attributes={'engine': engine, 'platform': 'n8n', 'scope': clean_scope,
+                                'unresolved': True}, evidence=ev)
+                kind = {'read': 'reads', 'write': 'writes', 'delete': 'deletes'}.get(cap, 'calls')
+                g.add_edge(principal, target, kind, cap, 'declared', 'high', evidence=ev,
+                           assumptions=['Credential store and deployed host/grants are external to the export'])
+            else:
+                target = g.add_node('unknown', [nk, 'execution'], 'Unresolved n8n execution binding',
+                    attributes={'platform': 'n8n', 'unresolved': True}, evidence=ev)
+                g.add_edge(principal, target, 'calls', 'unknown', 'declared', 'high', evidence=ev)
+        for source, target in flow['links']:
+            g.add_edge(node_ids[source], node_ids[target], 'depends-on', 'none', 'declared', 'high', evidence=wev,
+                       assumptions=['Workflow connection transfers no authority'])
+
+
 def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     low = rel.lower()
     base = os.path.basename(low)
+    if jh_n8n.candidate(rel, text):
+        return "n8n", None
     if is_test_path(rel):
         return "test", None
     if low.endswith((".md", ".rst", ".txt")) and not base.startswith("requirements"):
@@ -2155,7 +2210,7 @@ def _notebook_code(text: str) -> str:
 
 
 ADAPTERS = ("python", "javascript", "dotnet", "go", "rust", "jvm", "config", "appsettings", "kubernetes", "compose",
-            "github-actions", "terraform", "manifest", "openapi", "mcp")
+            "github-actions", "terraform", "manifest", "openapi", "mcp", "n8n")
 
 
 def _collect_str_vars(ctx: Ctx, items: Sequence[Item]) -> None:
@@ -2240,6 +2295,8 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
                 adapt_openapi(ctx, item, docs or [])
             elif kind == "mcp":
                 adapt_mcp(ctx, item)
+            elif kind == "n8n":
+                adapt_n8n(ctx, item)
         except (RecursionError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
             # A malformed file degrades coverage; it never aborts the map.
             ctx.parse_failures.append({"path": item.rel, "reason": "%s: %s" % (type(exc).__name__, safe_text(str(exc))[:60])})

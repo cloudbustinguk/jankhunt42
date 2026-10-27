@@ -18,6 +18,7 @@ import jh_agent
 import jh_config
 import jh_graph as G
 import jh_map
+import jh_n8n
 from jh_core import VERSION, source_from_text, is_mcp_config
 from jh_rules import ScanOptions, scan_sources
 
@@ -41,6 +42,8 @@ def not_requested():
 
 def _subject(node):
     a = node["attributes"]
+    if a.get('platform') == 'n8n' and a.get('n8n_key'):
+        return a['n8n_key']
     if node["kind"] == "application":
         return "application"
     if a.get("platform") == "ai-agent":
@@ -267,10 +270,12 @@ def _mcp_definitions(items):
     return {name: sorted(defs) for name, defs in out.items()}, {rel: sorted(defs) for rel, defs in by_file.items()}
 
 
-def _definition(row, lines, mcp):
+def _definition(row, lines, mcp, n8n):
     """What an opaque request stands for in one snapshot, compared in memory and never exported: an MCP server's
     normalized definition, else the text around each evidence line (locations dropped, so a move is no change).
     None when nothing comparable was captured, which counts as changed."""
+    if row['principal'].startswith('n8n:'):
+        return n8n.get(row['principal'])
     if row["kind"] == "agent" and row["action"] == "start-mcp":
         defs = mcp[0].get(row["target"].get("name"))
         return digest(defs) if defs else None
@@ -314,8 +319,8 @@ def compare(base, head, base_items, head_items, ceiling, context):
         hu[key]["change"] = "new"
     # Unresolved in both is non-gating only when what it stands for is demonstrably the same: a hook whose command
     # was replaced, or an MCP server whose arguments changed, keeps its coarse identity and must still be reviewed.
-    base_view = ({i.rel: i.text.split("\n") for i in base_items}, _mcp_definitions(base_items))
-    head_view = ({i.rel: i.text.split("\n") for i in head_items}, _mcp_definitions(head_items))
+    base_view = ({i.rel: i.text.split("\n") for i in base_items}, _mcp_definitions(base_items), jh_n8n.definitions(base_items))
+    head_view = ({i.rel: i.text.split("\n") for i in head_items}, _mcp_definitions(head_items), jh_n8n.definitions(head_items))
     for key in hu.keys() & bu.keys():
         old, new = _definition(before[key], *base_view), _definition(after[key], *head_view)
         if old is None or old != new:
