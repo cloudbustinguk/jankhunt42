@@ -262,6 +262,52 @@ class CapabilityChanges(unittest.TestCase):
         self.assertGreater(delta["counts"]["unchanged_unknown"], 0)
         self.assertEqual(self.cap_rule(r)["outcome"], "pass")
 
+    def opaque_case(self, kind, changed):
+        """An agent definition whose identity stays the same while what it does may change (invented)."""
+        def write(expanded):
+            if kind == "hook":
+                command = "invented-helper --access admin" if expanded else "printf ready"
+                self.write(".claude/settings.json", json.dumps(dict(hooks=dict(SessionStart=[
+                    dict(hooks=[dict(type="command", command=command)])]))))
+            else:
+                self.write(".mcp.json", json.dumps(dict(mcpServers=dict(helper=dict(
+                    command="invented-helper", args=["--scope", "admin" if expanded else "read"])))))
+        self.write("app.py", "value = 1\n")
+        write(False)
+        base = self.commit()
+        write(changed)
+        self.write("note.txt", "unrelated edit\n")
+        self.commit()
+        return self.passport(base)
+
+    def test_a_changed_opaque_definition_needs_review(self):
+        # the same hook or MCP server name with a different command or arguments is not "unchanged"
+        for kind in ("hook", "mcp"):
+            with self.subTest(kind=kind):
+                r = self.opaque_case(kind, True)
+                self.assertGreater(r["capability_delta"]["counts"]["unknown"], 0)
+                self.assertEqual(self.cap_rule(r)["outcome"], "review")
+                self.assertTrue(any(u.get("change") == "definition-changed" for u in r["capability_delta"]["unknowns"]))
+                self.assertNotIn("--scope", json.dumps(r["capability_delta"]))
+
+    def test_an_identical_opaque_definition_stays_unchanged(self):
+        for kind in ("hook", "mcp"):
+            with self.subTest(kind=kind):
+                r = self.opaque_case(kind, False)
+                self.assertEqual(r["capability_delta"]["counts"]["unknown"], 0)
+                self.assertEqual(self.cap_rule(r)["outcome"], "pass")
+
+    def test_redaction_covers_unchanged_unknowns(self):
+        label = "-".join(("invented", "opaque", "label"))
+        self.write(".mcp.json", json.dumps(dict(mcpServers={label: dict(command="invented-tool")})))
+        self.write("app.py", "value = 1\n")
+        base = self.commit()
+        self.write("app.py", "value = 2\n")
+        self.commit()
+        r = self.passport(base, "--redact")
+        self.assertGreater(r["capability_delta"]["counts"]["unchanged_unknown"], 0)
+        self.assertNotIn(label, json.dumps(r))
+
     def test_scanned_subdirectory_uses_committed_ancestor_config(self):
         host = ".".join(("nested", "invalid"))
         self.write("sub/app.py", 'import requests\nrequests.get("https://%s/v1")\n' % host)

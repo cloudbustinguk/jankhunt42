@@ -227,6 +227,12 @@ MUTANTS = [
      'declarations = cfg.passport',
      'declarations = cfg.passport\n        col.items = [i for i in col.items if not any(__import__("fnmatch").fnmatch(i.rel, p) for p in cfg.ignore_globs)]',
      "test_capabilities.py"),
+    ("M74-capability-opaque-change-unchanged", "a changed hook or MCP definition passes as an unchanged unknown",
+     "jh_capabilities.py", "        if old is None or old != new:", "        if old is None:", "test_capabilities.py"),
+    ("M75-capability-unchanged-not-redacted", "a shareable passport keeps unchanged unknowns' labels", "jh_passport.py",
+     '        delta["unchanged_unknowns"] = [{"id": u["id"], "detail": "unresolved access, unchanged"}\n'
+     '                                       for u in delta.get("unchanged_unknowns", [])]',
+     '        pass', "test_capabilities.py"),
     ("M72-detonate-network-on", "the detonate sandbox runs with a network", "jh_detonate.py",
      '"--network=none", "--read-only"', '"--read-only"', "test_detonate.py"),
     ("M73-detonate-canary-read-ignored", "reading a canary credential is not reported", "jh_detonate.py",

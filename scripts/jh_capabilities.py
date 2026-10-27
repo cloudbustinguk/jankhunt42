@@ -246,6 +246,48 @@ def inventory(report, items):
     return rows, unknowns, sorted(set(reasons))
 
 
+def _mcp_definitions(items):
+    """({server name: definitions}, {config path: definitions}): command, arguments, env and header NAMES, URL,
+    transport. Values are left out: a changed credential value alone is not new access."""
+    out, by_file = {}, {}
+    for item in items:
+        if not is_mcp_config(item.rel, item.text):
+            continue
+        try:
+            servers = jh_agent.mcp_servers(item.rel, item.text)
+        except (ValueError, TypeError, RecursionError):
+            continue
+        for s in servers:
+            text = json.dumps(dict(
+                command=s.command, args=list(s.args or ()), env=sorted(s.env or {}),
+                url=s.url, transport=s.transport, disabled=s.disabled, headers=sorted(s.headers or {}),
+                token_env=s.token_env), sort_keys=True)
+            out.setdefault(s.name, []).append(text)
+            by_file.setdefault(item.rel, []).append(text)
+    return {name: sorted(defs) for name, defs in out.items()}, {rel: sorted(defs) for rel, defs in by_file.items()}
+
+
+def _definition(row, lines, mcp):
+    """What an opaque request stands for in one snapshot, compared in memory and never exported: an MCP server's
+    normalized definition, else the text around each evidence line (locations dropped, so a move is no change).
+    None when nothing comparable was captured, which counts as changed."""
+    if row["kind"] == "agent" and row["action"] == "start-mcp":
+        defs = mcp[0].get(row["target"].get("name"))
+        return digest(defs) if defs else None
+    if row.get("evidence_omitted") or not row.get("evidence"):
+        return None
+    parts = []
+    for ev in row["evidence"]:
+        if ev["path"] in mcp[1]:                    # a control inside an MCP config: its servers, values left out
+            parts.append(json.dumps(mcp[1][ev["path"]]))
+            continue
+        text = lines.get(ev["path"])
+        if text is None or not 1 <= ev["line"] <= len(text):
+            return None
+        parts.append("\n".join(x.strip() for x in text[max(0, ev["line"] - 3):ev["line"] + 2]))
+    return digest(sorted(parts))
+
+
 def compare(base, head, base_items, head_items, ceiling, context):
     before, bu, br = inventory(base, base_items)
     after, hu, hr = inventory(head, head_items)
@@ -266,6 +308,15 @@ def compare(base, head, base_items, head_items, ceiling, context):
     # both need review. Unresolved and unchanged in both is listed but does not force review on every change.
     for key in hu.keys() - bu.keys():
         hu[key]["change"] = "new"
+    # Unresolved in both is non-gating only when what it stands for is demonstrably the same: a hook whose command
+    # was replaced, or an MCP server whose arguments changed, keeps its coarse identity and must still be reviewed.
+    base_view = ({i.rel: i.text.split("\n") for i in base_items}, _mcp_definitions(base_items))
+    head_view = ({i.rel: i.text.split("\n") for i in head_items}, _mcp_definitions(head_items))
+    for key in hu.keys() & bu.keys():
+        old, new = _definition(before[key], *base_view), _definition(after[key], *head_view)
+        if old is None or old != new:
+            hu[key]["change"] = "definition-changed"
+            bu.pop(key)
     for key in bu.keys() - hu.keys():
         bu[key]["change"] = "resolved-in-head"
     unknowns = sorted([u for k, u in {**bu, **hu}.items() if not (k in bu and k in hu)], key=lambda u: u["id"])
@@ -322,6 +373,7 @@ def approver_lines(delta):
         lines.append("Resolve first: %s for %s %s." % (
             _label(unknown.get("target") or {}), unknown.get("principal", "principal"),
             "is newly unresolved" if unknown.get("change") == "new" else
+            "changed its definition; check what it now does" if unknown.get("change") == "definition-changed" else
             "was unresolved at the base; check what resolved it"))
     if delta["counts"].get("unchanged_unknown"):
         lines.append("Unchanged: %d item(s) were already unresolved at the base and still are; they do not "

@@ -33,8 +33,13 @@ authority cannot be read statically, such as a URL built at run time:
 - **newly unresolved in the change:** reported, and needs review;
 - **unresolved at the base and apparently resolved now:** reported, and
   needs review, because a resolution can hide new authority;
-- **unresolved in both:** listed as unchanged, and does not force review
-  for this change.
+- **unresolved in both, with the same definition:** listed as unchanged,
+  and does not force review for this change;
+- **unresolved in both, but its definition changed:** for example a hook
+  whose command was replaced, or an MCP server whose arguments changed.
+  It needs review. For an MCP server the comparison covers the command,
+  arguments, environment and header names, URL and transport. A changed
+  credential value alone does not count.
 
 ## The decision
 

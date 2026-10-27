@@ -630,6 +630,8 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         for i, row in enumerate(delta["requests"], 1):
             row.update(principal="principal", target={"logical_name": "target-%d" % i}, evidence=[], witness=[])
         delta["unknowns"] = [{"id": u["id"], "detail": "unresolved access"} for u in delta["unknowns"]]
+        delta["unchanged_unknowns"] = [{"id": u["id"], "detail": "unresolved access, unchanged"}
+                                       for u in delta.get("unchanged_unknowns", [])]
         delta["truncation"]["reasons"] = ["comparison incomplete"] if delta["truncation"]["reasons"] else []
     for i, src in enumerate(rep["data"].get("sources", []), 1):
         src["label"] = "%s-%d" % (src["kind"], i)

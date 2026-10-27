@@ -4,6 +4,30 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.1.1] — 2026-10-26
+
+### Security
+
+- **`passport --base`: a hook or MCP server whose definition changed no
+  longer passes as unchanged.** 3.1.0 treated an item that was unresolved
+  at both commits as unchanged without forcing review. But it matched such
+  items by their coarse identity, which for hooks and MCP servers leaves out
+  the command and its arguments. So replacing a hook's command, or changing
+  an MCP server from `--scope read` to `--scope admin`, passed `P-CAP-001`.
+  - Such an item now counts as unchanged only when its definition is
+    demonstrably the same. For an MCP server that means its command,
+    arguments, environment and header names, URL and transport (a changed
+    credential value alone does not count). For anything else, it means
+    the text around its evidence, so moving code is still no change.
+  - Anything else is reported as `definition-changed` and needs review.
+  - Nothing compared is exported.
+  - Found by the third agent (Codex) the hour 3.1.0 shipped. New mutant
+    M74.
+- **`passport --base --redact`: unchanged unknowns are redacted too.** The
+  shareable copy redacted `unknowns` but not 3.1.0's `unchanged_unknowns`,
+  so the name of an MCP server could survive. They now get the same
+  ID-and-detail-only projection. Also found by Codex. New mutant M75.
+
 ## [3.1.0] — 2026-10-26
 
 From the third agent's proposal A10, reviewed and adjusted by the
