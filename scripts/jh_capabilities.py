@@ -284,6 +284,10 @@ def _definition(row, lines, mcp):
         text = lines.get(ev["path"])
         if text is None or not 1 <= ev["line"] <= len(text):
             return None
+        if row["action"] == "resolve-analysis":
+            # a whole file in a language without a connectivity reader: any edit anywhere may change it
+            parts.append("\n".join(x.rstrip() for x in text))
+            continue
         parts.append("\n".join(x.strip() for x in text[max(0, ev["line"] - 3):ev["line"] + 2]))
     return digest(sorted(parts))
 

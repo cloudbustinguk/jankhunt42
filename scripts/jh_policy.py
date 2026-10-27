@@ -33,6 +33,7 @@ import json
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_graph as G
+import jh_capability_approval
 
 POLICY_SCHEMA = "jankhunt.policy.v1"
 OUTCOMES = ("pass", "review", "insufficient-evidence", "block")
@@ -72,6 +73,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
                 "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review"},
     # Registry URL prefixes or host names packages may come from (operator policy only).
     "allowed_registries": [],
+    "capability_approvals": {},
     "max_exposure": None,
     # What unverified (static) authority and export leads may do at most.
     "static_leads": "review",
@@ -97,6 +99,12 @@ class PolicyError(ValueError):
 
 def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"require": {}, "actions": {}}
+    if "capability_approvals" in raw:
+        try:
+            out["capability_approvals"] = jh_capability_approval.configuration(raw["capability_approvals"])
+        except ValueError:
+            warnings.append(label + " policy: invalid capability_approvals; approvals disabled")
+            out["capability_approvals"] = {"approvers": [], "max_lifetime_seconds": 0}
     prof = raw.get("profile")
     if prof is not None:
         if prof in PROFILES:
@@ -153,6 +161,15 @@ def _validate(raw: Dict[str, Any], label: str, warnings: List[str]) -> Dict[str,
 
 def _tighten(eff: Dict[str, Any], rp: Dict[str, Any], warnings: List[str], who: str = "repository") -> None:
     """Apply `rp` to `eff` so that nothing gets weaker."""
+    if "capability_approvals" in rp:
+        cur = eff["capability_approvals"]
+        caps = rp["capability_approvals"]
+        if "subject_id" in caps and caps["subject_id"] != cur.get("subject_id"):
+            warnings.append(who + " cannot set the approval subject; ignored")
+        if "approvers" in caps:
+            cur["approvers"] = sorted(set(cur.get("approvers", [])) & set(caps["approvers"]))
+        if "max_lifetime_seconds" in caps:
+            cur["max_lifetime_seconds"] = min(cur.get("max_lifetime_seconds", 0), caps["max_lifetime_seconds"])
     for k, v in rp.get("require", {}).items():
         if v and not eff["require"][k]:
             eff["require"][k] = True
@@ -225,6 +242,7 @@ def merge(operator: Optional[Dict[str, Any]], repository: Any,
     op = _validate(operator, "operator", warnings) if operator else {"require": {}, "actions": {}}
     eff["require"].update(op["require"])
     eff["actions"].update(op["actions"])
+    eff["capability_approvals"] = copy.deepcopy(op.get("capability_approvals") or {})
     if "max_exposure" in op:
         eff["max_exposure"] = op["max_exposure"]
     if "static_leads" in op:
@@ -312,8 +330,12 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     add("P-COV-001", "insufficient-evidence" if cov_reasons else "pass",
         "; ".join(cov_reasons) or "scan and map coverage present", floor=True)
     needs_review = bool((delta.get("counts") or {}).get("total") or (delta.get("counts") or {}).get("unknown"))
+    approved = (facts.get("capability_approval") or {}).get("state") == "accepted"
+    if approved:
+        needs_review = False
     add("P-CAP-001", max("review", _outcome_for(acts["P-CAP-001"]), key=OUTCOME_RANK.get) if needs_review else "pass",
         "new or unresolved requested access: review the committed comparison" if needs_review else
+        "access change covered by a declared-by-operator record" if approved else
         "access comparison " + delta.get("state", "not-requested"), floor=needs_review)
 
     exposure = facts.get("exposure", "Unknown")

@@ -308,6 +308,21 @@ class CapabilityChanges(unittest.TestCase):
         self.assertGreater(r["capability_delta"]["counts"]["unchanged_unknown"], 0)
         self.assertNotIn(label, json.dumps(r))
 
+    def test_an_edit_anywhere_in_an_unmapped_file_needs_review(self):
+        # a shell script is unresolved as a whole: changing line 11 must not pass as unchanged (invented)
+        prefix = "".join("# setup step %d\n" % i for i in range(1, 11))
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                self.tearDown()
+                self.setUp()
+                self.write("run.sh", prefix + "printf ready\n")
+                base = self.commit()
+                self.write("run.sh", prefix + ("invented-tool --upload out.tgz\n" if changed else "printf ready\n"))
+                self.write("note.txt", "unrelated edit\n")
+                self.commit()
+                r = self.passport(base)
+                self.assertEqual(self.cap_rule(r)["outcome"], "review" if changed else "pass")
+
     def test_scanned_subdirectory_uses_committed_ancestor_config(self):
         host = ".".join(("nested", "invalid"))
         self.write("sub/app.py", 'import requests\nrequests.get("https://%s/v1")\n' % host)

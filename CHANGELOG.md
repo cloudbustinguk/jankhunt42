@@ -4,6 +4,39 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.2.0] — 2026-10-27
+
+### Added
+
+- **Approve one access change, so CI passes it next time.** After IT
+  reviews a `passport --base` comparison:
+  - `--emit-capability-approval` prints a pre-filled record with every
+    binding: subject, both commits, the comparison, context and policy
+    hashes, and the exact request IDs.
+  - IT adds the approver, expiry and rationale and keeps the record outside
+    the repository.
+  - `--capability-approval PATH` then lets that exact comparison pass
+    `P-CAP-001`.
+
+  The rules around it:
+  - The operator policy names the subject, the allowed approvers and the
+    maximum lifetime. A repository policy can only narrow them.
+  - Any change in commit, application, analyzer, policy, inventory or
+    ceiling, any missing or extra request, an unlisted approver, or an
+    expired record invalidates it.
+  - Nothing unresolved, truncated or not concrete can be approved.
+  - The assurance is `declared-by-operator`, never "verified", and it never
+    approves the application.
+
+  See `references/capability-approval.md`. Designed and built by the third
+  agent (Codex, proposal A10 v2); mutants M76 to M81.
+
+### Security
+
+- `passport --base`: a file in a language jankhunt42 has no connectivity
+  reader for (a shell script, say) is compared whole. An edit far from its
+  first line no longer passes as unchanged. Found by Codex. Mutant M82.
+
 ## [3.1.2] — 2026-10-27
 
 The day's batched precision patch, from mass-test batches b19 to b24 and

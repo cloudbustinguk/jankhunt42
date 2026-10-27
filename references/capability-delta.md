@@ -1,5 +1,8 @@
 # What new access does this change ask for?
 
+For a separate IT record accepting an exact concrete change, see
+[external capability approval](capability-approval.md).
+
 Citizen development scales when IT approves *changes*, not whole apps.
 `passport --base REF` compares two commits and lists the access the newer
 one asks for that the older one did not.
@@ -71,7 +74,6 @@ Not yet covered:
 - registry changes;
 - downgrades other than to and from production;
 - renamed principals;
-- recorded approvals of a delta (a file IT keeps outside the repository,
-  so a re-run of an approved change passes).
+- (recorded approvals of a delta are in `references/capability-approval.md`).
 
 A passport acceptance record is separate from approving a change.

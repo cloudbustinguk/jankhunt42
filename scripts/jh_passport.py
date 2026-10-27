@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_change
 import jh_capabilities
+import jh_capability_approval
 import jh_graph as G
 import jh_map
 import jh_frameworks
@@ -442,7 +443,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           governance_tuned: Optional[Sequence[Any]] = None, governance_truncated: bool = False,
           profile: Optional[str] = None, change_control: Optional[Dict[str, Any]] = None,
           package_sources: Optional[Dict[str, Any]] = None,
-          capability_delta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+          capability_delta: Optional[Dict[str, Any]] = None,
+          capability_approval_record: Optional[Dict[str, Any]] = None,
+          capability_approval_label: str = "") -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -489,7 +492,10 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     severe, weak, unknown = jh_change.violations(cc)
     pkg = package_sources if package_sources is not None else jh_registry.collect(items)
     reg = jh_registry.assess(pkg, eff.get("allowed_registries") or [])
+    approval = jh_capability_approval.evaluate(capability_approval_record,
+        capability_delta or jh_capabilities.not_requested(), eff, jh_policy.policy_hash(eff), capability_approval_label)
     facts = {
+        "capability_approval": approval,
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "files_scanned": scan_files,
         "map_files_inspected": map_report["coverage"]["files_inspected"] if map_report else 0,
@@ -541,6 +547,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     report: Dict[str, Any] = {
         "schema_version": PASSPORT_SCHEMA,
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
+        "capability_approval": approval,
         "tool": TOOL,
         "tool_version": VERSION,
         "source_revision": source_revision,
@@ -625,6 +632,10 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     """Shareable passport: no hostnames, labels, owners, or snippets."""
     import json
     rep = json.loads(json.dumps(report))
+    approval = rep.get("capability_approval") or {}
+    for key in ("approved_by", "subject_id", "rationale", "record"):
+        if key in approval:
+            approval[key] = "redacted"
     delta = rep.get("capability_delta")
     if delta:
         for i, row in enumerate(delta["requests"], 1):
@@ -648,6 +659,9 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         eff["custodians"] = ["custodian-%d" % i for i, _ in enumerate(eff["custodians"], 1)]
     if eff.get("allowed_registries"):
         eff["allowed_registries"] = ["allowed-%d" % i for i, _ in enumerate(eff["allowed_registries"], 1)]
+    if eff.get("capability_approvals"):
+        eff["capability_approvals"] = {"subject_id": "redacted", "approvers": ["approver"],
+                                      "max_lifetime_seconds": eff["capability_approvals"].get("max_lifetime_seconds", 0)}
     for r in rep["assessment"]["decision"]["rules"] + rep["assessment"]["decision"]["reasons"]:
         r["evidence_refs"] = ["ref-%d" % i for i, _ in enumerate(r["evidence_refs"], 1)]
         if r["rule"] in _DETAILED_RULES and ":" in r["message"]:
@@ -750,6 +764,9 @@ def markdown(p: Dict[str, Any]) -> str:
     if p.get("capability_delta", {}).get("state", "not-requested") != "not-requested":
         lines += ["## Requested access changes", ""] + ["- " + jh_capabilities.markdown_line(line) for line in
                   jh_capabilities.approver_lines(p["capability_delta"])] + [""]
+        approval_line = jh_capability_approval.approver_line(p.get("capability_approval") or {})
+        if approval_line:
+            lines += [jh_capabilities.markdown_line(approval_line), ""]
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
     lines += ["## Why this decision", ""]

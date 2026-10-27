@@ -44,7 +44,7 @@ def _endpoint(row: Any) -> Tuple[str, int]:
     return host, port
 
 
-def load(path: str, root: str) -> Set[Tuple[str, int]]:
+def read_external_json(path: str, root: str, description: str = "network ceiling") -> Any:
     """Read a bounded regular file outside both root spellings; no stdin."""
     absolute, resolved = os.path.abspath(path), os.path.realpath(path)
     roots = {os.path.abspath(root), os.path.realpath(root)}
@@ -60,31 +60,36 @@ def load(path: str, root: str) -> Set[Tuple[str, int]]:
                 break
             ancestor = parent
     if any(_under(candidate, base) for candidate in (absolute, resolved) for base in roots):
-        raise ValueError("network ceiling must be supplied from outside the scanned repository")
+        raise ValueError(description + " must be supplied from outside the scanned repository")
     if absolute != resolved:
-        raise ValueError("network ceiling requires a canonical external path without symlinks")
+        raise ValueError(description + " requires a canonical external path without symlinks")
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(absolute, flags)
         with os.fdopen(fd, "rb") as stream:
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
-                raise ValueError("network ceiling requires a regular file without hard links")
+                raise ValueError(description + " requires a regular file without hard links")
             if info.st_size > MAX_BYTES:
-                raise ValueError("network ceiling exceeds the size limit")
+                raise ValueError(description + " exceeds the size limit")
             raw = stream.read(MAX_BYTES + 1)
             after = os.fstat(stream.fileno())
             fingerprint = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_nlink)
             if fingerprint(info) != fingerprint(after):
-                raise ValueError("network ceiling changed while it was read")
+                raise ValueError(description + " changed while it was read")
     except OSError as exc:
-        raise ValueError("cannot read operator network ceiling") from exc
+        raise ValueError("cannot read operator " + description) from exc
     if len(raw) > MAX_BYTES:
-        raise ValueError("network ceiling exceeds the size limit")
+        raise ValueError(description + " exceeds the size limit")
     try:
         doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique)
     except (UnicodeError, ValueError, RecursionError) as exc:
-        raise ValueError("network ceiling is not unambiguous UTF-8 JSON") from exc
+        raise ValueError(description + " is not unambiguous UTF-8 JSON") from exc
+    return doc
+
+
+def load(path: str, root: str) -> Set[Tuple[str, int]]:
+    doc = read_external_json(path, root)
     if not isinstance(doc, dict) or set(doc) != {"schema", "allow"} or doc["schema"] != SCHEMA:
         raise ValueError("unsupported network ceiling schema or fields")
     rows = doc["allow"]

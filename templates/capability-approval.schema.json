@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "jankhunt42 declared operator approval of one concrete access change",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "model", "subject_id", "base_sha", "head_sha", "context_hash", "delta_hash", "policy_hash", "approved_request_ids", "approved_by", "issued_at", "expires_at", "rationale"],
+  "properties": {
+    "schema": {"const": "jankhunt.capability-approval.v1"},
+    "model": {"const": "jankhunt.capability-delta.v1"},
+    "subject_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "base_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "head_sha": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "context_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "delta_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "approved_request_ids": {"type": "array", "uniqueItems": true, "maxItems": 20000, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "approved_by": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "issued_at": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"},
+    "expires_at": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"},
+    "rationale": {"type": "string", "minLength": 1, "maxLength": 2000}
+  }
+}

@@ -46,6 +46,7 @@ import jh_passport  # noqa: E402
 import jh_change  # noqa: E402
 import jh_registry  # noqa: E402
 import jh_capabilities  # noqa: E402
+import jh_capability_approval  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
 import jh_detonate  # noqa: E402
@@ -809,6 +810,14 @@ def _default_branch(root: str) -> str:
 
 
 def cmd_passport(args: argparse.Namespace) -> int:
+    if (args.capability_approval is not None or args.emit_capability_approval) and not args.base:
+        print("jankhunt42: passport: capability approval needs --base REF", file=sys.stderr)
+        return 2
+    if args.emit_capability_approval and (args.capability_approval is not None or args.json or args.md or args.html or
+                                        args.acceptance or args.redact):
+        print("jankhunt42: passport: approval template writes unsigned JSON; cannot combine a record, formats, acceptance or redaction",
+              file=sys.stderr)
+        return 2
     if args.base:
         if args.emit_sandbox_policy or args.compare or args.against or args.verify:
             print("jankhunt42: passport: --base cannot combine export, comparison or native verification", file=sys.stderr)
@@ -955,6 +964,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     package_sources = jh_registry.collect(col.items, snapshot["frozen"] if snapshot else root,
                                           operator_excludes + list(scan_cfg.ignore_globs or []))
     capability_delta = jh_capabilities.not_requested()
+    capability_approval_record = None
     if snapshot:
         context = dict(model=jh_capabilities.MODEL, analyzer=VERSION, policy=operator,
                        inventory=snapshot["inventory"], config=snapshot["operator_config"],
@@ -966,6 +976,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         capability_delta = jh_capabilities.compare(*snapshot["reports"],
             *(c.items for c in snapshot["collections"]), network_ceiling, context)
         warnings.append("--base assesses committed HEAD; working-tree and untracked changes are excluded")
+        if args.capability_approval is not None:
+            capability_approval_record = jh_capability_approval.load(args.capability_approval, root)
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",
@@ -978,7 +990,14 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
         findings=result.findings, governance_findings=raw, governance_tuned=tuned,
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
-        package_sources=package_sources, capability_delta=capability_delta)
+        package_sources=package_sources, capability_delta=capability_delta,
+        capability_approval_record=capability_approval_record,
+        capability_approval_label=os.path.basename(args.capability_approval or ""))
+    if args.emit_capability_approval:
+        decision_policy = passport["assessment"]["decision"]["policy"]
+        print(json.dumps(jh_capability_approval.template(capability_delta, decision_policy["effective"],
+                                                       decision_policy["hash"]), indent=2))
+        return 0
     if args.acceptance:
         try:
             record = _load_doc(args.acceptance, "acceptance record")
@@ -1252,6 +1271,8 @@ def build_parser() -> argparse.ArgumentParser:
                                     "Advisory unless --fail-on is given. Never an approval.")
     add_map_inputs(sp)
     sp.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
+    sp.add_argument("--capability-approval", metavar="PATH", help="external operator record for this exact concrete access change")
+    sp.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
     sp.add_argument("--policy", metavar="PATH",
                     help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
     sp.add_argument("--fail-on", choices=("review", "insufficient-evidence", "block"),

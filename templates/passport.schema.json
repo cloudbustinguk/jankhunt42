@@ -29,6 +29,19 @@
     "graph_ref"
   ],
   "properties": {
+    "capability_approval": {
+      "type": "object",
+      "required": ["schema", "state", "assurance", "reasons"],
+      "properties": {
+        "schema": {"const": "jankhunt.capability-approval.v1"},
+        "state": {"enum": ["not-supplied", "invalid", "accepted"]},
+        "assurance": {"enum": ["none", "declared-by-operator"]},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "approved_request_ids": {"type": "array", "items": {"type": "string"}},
+        "approved_by": {"type": "string"},
+        "expires_at": {"type": "string"}
+      }
+    },
     "capability_delta": {
       "type": "object",
       "required": ["model", "state", "base_sha", "head_sha", "counts", "requests", "unknowns", "truncation", "context_hash", "delta_hash"],
