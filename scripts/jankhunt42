@@ -1022,12 +1022,15 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
 
 
 def cmd_detonate(args: argparse.Namespace) -> int:
-    """Opt-in: run the repository's own install hooks in a disposable sandbox and report what they try to do."""
+    """Opt-in: run the repository's install hooks and the commands that run when it is opened, in a disposable
+    sandbox, and report what they try to do."""
     if not os.path.isdir(args.path):
         print("jankhunt42: detonate: %s is not a directory" % jh_core_safe(args.path), file=sys.stderr)
         return 2
     try:
-        result = jh_detonate.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout)
+        surfaces = jh_detonate.SURFACES if args.surface == "all" else (args.surface,)
+        result = jh_detonate.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
+                                 surfaces=surfaces)
     except RuntimeError as exc:
         print("jankhunt42: detonate: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -1300,12 +1303,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_verify_inputs(sp)
     sp.set_defaults(func=cmd_passport)
 
-    sp = sub.add_parser("detonate", help="opt-in: run the install hooks in a disposable sandbox and log what they try")
+    sp = sub.add_parser("detonate", help="opt-in: run the install hooks and what runs on open in a disposable sandbox, "
+                                         "and log what they try")
     sp.add_argument("path", nargs="?", default=".")
     sp.add_argument("--image", default=jh_detonate.DEFAULT_IMAGE,
                     help="the runner image, built once from templates/detonate.Containerfile (never pulled)")
     sp.add_argument("--engine", choices=("podman", "docker"), help="container engine (default: podman, else docker)")
-    sp.add_argument("--timeout", type=int, default=120, help="seconds per install hook (default 120)")
+    sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
+    sp.add_argument("--surface", choices=("install", "open", "all"), default="all",
+                    help="install: package hooks; open: what an agent or editor runs when the repository is opened "
+                         "(default: all)")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--md", action="store_true")
     sp.set_defaults(func=cmd_detonate)

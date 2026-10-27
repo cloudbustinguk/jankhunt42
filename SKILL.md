@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "3.2.0"
+  version: "3.3.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -195,7 +195,7 @@ Failure classes, the agent blast radius, the profile table, and limits: `referen
 **Approve changes, not whole apps.** For a pull request, `jankhunt42 passport . --base <target-branch> --md` lists the access the change newly asks for: hosts and ports, credential names, write/delete/admin authority, production reach and agent capabilities, plus newly unresolved items. `P-CAP-001` sends any of it to review; with `--sandbox-network-ceiling` each new host is checked against IT's approved list. Present the approver lines as they are. Details: `references/capability-delta.md`. Once IT has reviewed a change, `--emit-capability-approval` prints a record for IT to complete and keep outside the repository; `--capability-approval PATH` then lets that exact change pass `P-CAP-001` (assurance `declared-by-operator`; never an application approval). Details: `references/capability-approval.md`.
 ## Detonate (opt-in)
 
-`jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) in a disposable rootless container. The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.
+`jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks and helper commands, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. `--surface install|open|all` picks which (default all). The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.
 
 **Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. Details: `references/detonate.md`.
 

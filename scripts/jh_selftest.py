@@ -256,6 +256,20 @@ MUTANTS = [
      '        if not issued <= clock < expires:', '        if not issued <= clock:', "test_capability_approval.py"),
     ("M82-capability-unmapped-file-window", "an edit far from line 1 of an unmapped file passes as unchanged",
      "jh_capabilities.py", '        if row["action"] == "resolve-analysis":', '        if False:', "test_capabilities.py"),
+    ("M91-detonate-command-in-runner", "a repository's hook command is pasted into the sandbox runner script",
+     "jh_detonate.py", '        runner = "sh /jh/step.%d.sh" % i', '        runner = step["script"]', "test_detonate.py"),
+    ("M92-detonate-follows-links", "settings behind a link (the user's own ~/.claude) are read and run",
+     "jh_detonate.py", "        if os.path.islink(path):\n            return False", "        if False:\n            return False",
+     "test_detonate.py"),
+    ("M93-detonate-open-surface-off", "the commands that run when a repository is opened are never planned",
+     "jh_detonate.py", '    if "open" in surfaces:\n        _plan_open', '    if False:\n        _plan_open', "test_detonate.py"),
+    ("M94-detonate-raw-step-names", "a task label or server name with a newline forges a line in the report",
+     "jh_detonate.py", '    name = jh_graph.sanitize_text(name, 80).replace("*", "").replace("`", "\'")', "    name = name",
+     "test_detonate.py"),
+    ("M95-detonate-vscode-quotes-everything", "every VS Code task argument is quoted, so $(...) that runs in the "
+     "editor stays inert in the sandbox", "jh_detonate.py",
+     "    return \"'\" + value + \"'\" if _unquoted_space(value) and not already else value",
+     "    return shlex.quote(value)", "test_detonate.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

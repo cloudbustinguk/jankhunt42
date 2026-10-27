@@ -1,18 +1,19 @@
-# detonate: run the install hooks in a sandbox
+# detonate: run what a repository runs, in a sandbox
 
-Static analysis says what code *could* do. `jankhunt42 detonate` runs a
-repository's own install hooks in a disposable sandbox and reports what they
-*try* to do: connect to the network, read credentials, start programs, or
-change startup files. It is opt-in and never runs as part of `scan`, `map`
-or `passport`.
+Static analysis says what code *could* do. `jankhunt42 detonate` runs the
+commands a repository runs by itself, both when it is installed and when it
+is opened, in a disposable sandbox. It reports what they *try* to do:
+connect to the network, read credentials, start programs, or change startup
+files. It is opt-in and never runs as part of `scan`, `map` or `passport`.
 
 ```sh
 podman build -t localhost/jankhunt42-detonate:0.1 -f templates/detonate.Containerfile templates   # once
-jankhunt42 detonate .            # Markdown audit log
-jankhunt42 detonate . --json     # schema jankhunt.detonate.v1
+jankhunt42 detonate .                   # Markdown audit log
+jankhunt42 detonate . --json            # schema jankhunt.detonate.v1
+jankhunt42 detonate . --surface open    # only what runs when the repository is opened
 ```
 
-## What runs
+## What runs when it is installed (`--surface install`)
 
 - **npm:** the `preinstall`, `install`, `postinstall` and `prepare` scripts
   in `package.json`, as `npm run --if-present <hook>`.
@@ -20,6 +21,38 @@ jankhunt42 detonate . --json     # schema jankhunt.detonate.v1
   build with the backend already in the image.
 - **Dependencies are not installed,** because the network is off. Their own
   install hooks therefore do not run, and coverage says so.
+
+## What runs when it is opened (`--surface open`)
+
+Opening a repository in an agent or an editor can run commands once the
+folder is trusted (VS Code also asks before it runs automatic tasks).
+detonate runs each of them once:
+
+- **Agent hooks and helpers:** command hooks in `.claude/settings.json`,
+  `.claude/settings.local.json` and `.gemini/settings.json`. Each hook gets
+  a synthetic event on standard input, and nothing from a real session. The
+  helper commands (`apiKeyHelper`, `statusLine` and the AWS and telemetry
+  helpers) also run. URL hooks send data, so they are left to `scan`.
+- **Dev container commands:** `initializeCommand` and the `onCreate`,
+  `updateContent`, `postCreate`, `postStart` and `postAttach` commands, in
+  string, list or named form. The report marks `initializeCommand`, because
+  in real use it runs on the host machine, outside any container.
+- **VS Code tasks** that run on folder open (`runOptions.runOn:
+  folderOpen`), written the way VS Code writes them for a POSIX shell. An
+  argument is quoted only when it has an unquoted space, so `$VAR` and
+  `$(...)` stay live, as they are in the editor. `${workspaceFolder}` becomes
+  the repository. A task's shell, environment and working-folder options,
+  and any other `${...}` variable, are not applied, and coverage says so.
+- **MCP stdio servers** from the project's MCP configuration files. Each
+  gets one `initialize` request and is stopped after 20 seconds, because a
+  server runs until it is stopped. Its configured environment is not
+  applied, and coverage says so.
+
+These files are read only at their usual places in the repository and never
+through a link: a repository's `.claude` could point at your own settings.
+Every command is written to its own file and run by `sh` under the tracer,
+so text from the repository never becomes part of the runner. In the
+report, commands are shown redacted and cut to one line.
 
 ## The sandbox
 
@@ -34,7 +67,8 @@ jankhunt42 detonate . --json     # schema jankhunt.detonate.v1
   per hook.
 - **A snapshot:** the repository is copied without `.git` and without
   following links, then mounted read-only and copied again to a scratch area
-  inside the sandbox.
+  inside the sandbox. What runs is planned from the snapshot, so it is
+  exactly what was read.
 - **Canary credentials:** a throwaway, read-only home holds fresh, never
   issued AWS, GitHub, npm, SSH and `.env` values for each run. Each value
   carries a `JH42CANARY` marker.
@@ -53,7 +87,7 @@ jankhunt42 detonate . --json     # schema jankhunt.detonate.v1
 | **DENY** `dns` | a name looked up |
 | **INFO** | expected behaviour, such as npm reading its own `~/.npmrc` |
 
-Each event names the command that caused it and the hook it ran under.
+Each event names the command that caused it and the step it ran under.
 **Reports never contain canary values,** only canary IDs such as
 `canary-aws`. Exit code 1 means at least one ALERT; 2 means the sandbox
 could not run.
@@ -63,8 +97,9 @@ could not run.
 The evidence tier is `sandbox-observed`. It adds to static findings and
 never refutes them:
 - A run that did not reach a path says nothing about that path.
-- Only the hooks listed ran, and coverage is `partial` when dependencies
-  were missing, a hook timed out, or a trace is missing.
+- Only the commands listed ran. Coverage is `partial` when dependencies were
+  missing, a command timed out, a trace is missing, or a hook needed more
+  than a synthetic event.
 - The tracer runs as the same user as the code it watches, so code written
   to evade tracing can hide.
 - An encrypted or transformed canary is not recognised when sent.

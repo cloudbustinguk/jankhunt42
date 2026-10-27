@@ -4,6 +4,41 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.3.0] — 2026-10-27
+
+### Added
+
+- **detonate runs what a repository runs when it is opened, not only when
+  it is installed.** Once a folder is trusted, opening it in an agent or an
+  editor can run commands. detonate now runs each one once in the same
+  sandbox, with the same canaries and audit log:
+  - agent hooks and helper commands (`.claude/settings*.json`,
+    `.gemini/settings.json`), each hook with a synthetic event;
+  - dev container commands, with `initializeCommand` marked because it
+    runs on the host in real use;
+  - VS Code folder-open tasks, written as VS Code writes them: an argument
+    is quoted only when it has an unquoted space, so `$VAR` and `$(...)`
+    stay live as in the editor. Shell, environment and working-folder
+    options and unknown variables are coverage gaps. Thanks to Codex's
+    quoting baseline (M95);
+  - MCP stdio servers, started with one `initialize` request and stopped
+    after 20 seconds.
+
+  `--surface install|open|all` picks which; the default is all. See
+  `references/detonate.md`.
+
+### Security
+
+- detonate writes each command to its own file and runs it with `sh` under
+  the tracer, so repository text never becomes part of the runner (M91).
+- detonate never reads a config path that contains a link. A repository's
+  `.claude` could point at the user's own settings (M92).
+- detonate plans from the snapshot, so what runs is exactly what was read.
+- The report shows commands redacted and cut to one line. Step names carry
+  repository text (hook events, task labels, server names), so each is one
+  plain, bounded line and cannot forge a report line (M94).
+- npx reading its own `~/.npmrc` is INFO, like npm.
+
 ## [3.2.0] — 2026-10-27
 
 ### Added
