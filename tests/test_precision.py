@@ -477,6 +477,42 @@ class Scanner(unittest.TestCase):
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
+        # soak batch b25 verification (3.7.0 batch): invented after the tester's probes
+        "py/repo_var.py": ("def by_ids(cur, ids):\n    placeholders = \",\".join(\"?\" for _ in ids)\n"
+                           "    sql = f\"SELECT * FROM users WHERE id IN ({placeholders})\"\n    conn = cur.connection\n"
+                           "    cur.execute(sql, ids)\n    return cur.fetchall()\n\n\n"
+                           "def by_name(cur, name):\n    sql = f\"SELECT * FROM users WHERE name = '{name}'\"\n"
+                           "    cur.execute(sql)\n\n\n"
+                           "def by_ids_unbound(cur, ids):\n    sql = f\"SELECT * FROM users WHERE id IN ({placeholders})\"\n"
+                           "    cur.execute(sql)\n"),
+        "py/columns.py": ("ALL_COLUMNS = (\"id\", \"name\")\n_SKILL_COLS = \"a, b\"\n\n\n"
+                          "def q1(conn):\n    sql = f\"SELECT {', '.join(ALL_COLUMNS)} FROM scoring\"\n"
+                          "    return conn.execute(sql)\n\n\n"
+                          "def q2(conn):\n    return conn.execute(f\"SELECT s.{_SKILL_COLS.replace(', ', ', s.')} FROM skills s\")\n\n\n"
+                          "def q3(conn, edit):\n    return conn.execute(f\"SELECT {', '.join(edit)} FROM registry\")\n"),
+        # found by Codex before 3.6.2 was tagged: none of these may be silenced
+        "py/not_constant.py": ("def a(conn):\n    return conn.execute(f\"SELECT * FROM t WHERE x = {TAKE_INPUT()}\")\n\n\n"
+                               "def b(conn):\n    return conn.execute(f\"SELECT * FROM t WHERE x = {BAG.read_value()}\")\n\n\n"
+                               "def c(conn, BAG):\n    return conn.execute(f\"SELECT * FROM t WHERE x = {BAG.value}\")\n"),
+        "py/half_bound.py": ("def a(cursor, ids):\n    query = f\"SELECT * FROM t WHERE id IN ({placeholders})\"\n"
+                             "    cursor.execute(query)\n    cursor.execute(query, ids)\n\n\n"
+                             "def b(cursor):\n    query = f\"SELECT * FROM t WHERE id IN ({placeholders})\"\n    return 1\n\n\n"
+                             "def c(cursor, ids):\n    cursor.execute(query, ids)\n\n\n"
+                             "class D:\n    def d(self, cursor, ids):\n"
+                             "        self.query = f\"SELECT * FROM t WHERE id IN ({placeholders})\"\n"
+                             "        cursor.execute(self.query)\n        cursor.execute(query, ids)\n"),
+        "tests/test_shadowed_helpers.py": ("from helpers import check, verify\nfrom checks import expect_ok as\tok\n\n"
+                                           "check = lambda value: value\n\n\n"
+                                           "def setup():\n    from helpers import verify_more\n\n\n"
+                                           "def test_lambda_shadow():\n    check(run())\n\n\n"
+                                           "def test_param_shadow(verify):\n    verify(run())\n\n\n"
+                                           "def test_import_elsewhere():\n    verify_more(run())\n\n\n"
+                                           "def test_tab_alias():\n    ok(run())\n"),
+        "tests/test_imported_helpers.py": ("from helpers import check, verify as ok\nfrom mypkg import check_input\n\n\n"
+                                           "def test_parses():\n    result = run()\n    check(result)\n\n\n"
+                                           "def test_aliased():\n    ok(run())\n\n\n"
+                                           "def test_not_a_helper():\n    check_input(run())\n\n\n"
+                                           "def test_method_is_not_it():\n    thing.check(run())\n"),
         # soak batch b01 (2.7.0)
         "web/markers.ts": ("/** +41 XX XXX XX XX for Swiss numbers */\n// Todo lo demás se queda igual\n"
                            "// TODO: handle refunds\n// todo: lowercase marker\n// XXX: broken on Safari\n"),
@@ -989,6 +1025,19 @@ class Scanner(unittest.TestCase):
     def test_verify_b22_placeholders_and_cross_module_helpers(self):
         self.assertEqual(self.lines("JH104", "py/repo.py"), [7])
         self.assertEqual(self.lines("JH502", "tests/test_helpers_cross.py"), [9])
+
+    def test_verify_b25_variable_bound_sql_and_imported_helpers(self):
+        # real interpolation into quoted SQL fires once assigned (the 3.6.2 recall fix); a placeholders-only query
+        # bound later is still reported, as before 3.6.2 (its exemption was not provable without scope analysis)
+        self.assertEqual(self.lines("JH104", "py/repo_var.py"), [3, 10, 15])
+        # helpers imported by name are not treated as assertions (as before 3.6.2)
+        self.assertEqual(self.lines("JH502", "tests/test_imported_helpers.py"), [5, 10, 14, 18])
+        # a column list made from constants is not injection; one made from a variable still is
+        self.assertEqual(self.lines("JH104", "py/columns.py"), [15])
+        # found by Codex before tagging: a call or an attribute is not a constant, and none of these are silenced
+        self.assertEqual(self.lines("JH104", "py/not_constant.py"), [2, 6, 10])
+        self.assertEqual(self.lines("JH104", "py/half_bound.py"), [2, 8, 18])
+        self.assertEqual(self.lines("JH502", "tests/test_shadowed_helpers.py"), [11, 15, 19, 23])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])

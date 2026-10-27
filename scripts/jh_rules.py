@@ -122,8 +122,10 @@ RULES: List[Rule] = [
           # ${...} or #{...} after SQL text, also on a later line of a
           # template literal or heredoc whose opening quote is lines above
           r"(?i)\b(?:select\b[^\n]{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b[^\n]*(?:\$\{|#\{)",
-          # an f-string that interpolates into SQL-shaped text
-          r"(?i)\bf([\"'])(?=[^\"']*\{)[^\"']*\b(?:select\b[^\"']{0,200}\bfrom|insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
+          # an f-string that interpolates into SQL-shaped text (its own quote ends it; '{name}' inside an f"..." is
+          # quoted SQL text, the commonest injection shape)
+          r"(?i)\bf([\"'])(?=(?:(?!\1)[^\n])*\{)(?:(?!\1)[^\n])*?\b(?:select\b(?:(?!\1)[^\n]){0,200}\bfrom|"
+          r"insert\s+into|update\s+\w+\s+set|delete\s+from)\b",
           _SQL_CALL_PATTERN,
       )),
     R("JH105", "TLS verification disabled", "major", "security",
@@ -971,7 +973,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue                # a build bundle: a leaked key, hidden Unicode or agent hazard still counts
             if opts.rule_ids and rule.id not in opts.rule_ids:
                 continue
-            if rule.id == 'JH101':
+            if rule.id == 'JH101' and sf.rel.lower().endswith('.json'):     # only a .json file can be an n8n export
                 import jh_n8n
                 try:
                     flows = jh_n8n.parse(sf.rel, '\n'.join(sf.raw)) or []
@@ -1372,6 +1374,20 @@ def _descriptive_json_value(line: str, pos: int) -> bool:
     return False
 
 
+_CONST_OPERAND = r"(?:(?:self|cls)\s*\.\s*)?_*[A-Z][A-Z0-9_]*"
+_CONSTANT_EXPR_RE = re.compile(
+    r"\s*(?:" + _CONST_OPERAND +
+    r"|''\s*\.\s*join\s*\(\s*" + _CONST_OPERAND + r"\s*\)" +
+    r"|" + _CONST_OPERAND + r"\s*\.\s*(?:replace|upper|lower|strip|lstrip|rstrip|title)\s*\(\s*(?:''\s*(?:,\s*''\s*)*)?\))\s*")
+
+
+def _constant_derived(expr: str) -> bool:
+    """An interpolation of a CONSTANT_NAME (as before 3.6.2: CONSTANT, self.CONSTANT, cls.CONSTANT), or of one only
+    through '<literal>'.join(CONSTANT) or CONSTANT.replace(...) and similar string methods with literal arguments.
+    Any call (TAKE_INPUT(), BAG.read_value()), attribute (BAG.value), variable or other shape keeps the finding."""
+    return bool(_CONSTANT_EXPR_RE.fullmatch(re.sub(r"\"[^\"]*\"|'[^']*'", "''", expr)))
+
+
 def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", pattern: str) -> bool:
     """False for what looks like dynamic SQL but is not: a query()/exec()
     built by concatenation with nothing database- or SQL-shaped on the line
@@ -1414,7 +1430,7 @@ def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", patter
     if names and all(_PLACEHOLDER_NAME_RE.fullmatch(n) for n in names) and \
             re.search(r"[\"']\s*,\s*[\w(\[*]|\.bind\s*\(\s*\*", " ".join([raw] + sf.nocomment[idx:idx + 3])):
         return False
-    if names and all(re.fullmatch(r"\s*(?:self\.|cls\.)?_*[A-Z][A-Z0-9_]*\s*", n) for n in names) and \
+    if names and all(_constant_derived(n) for n in names) and \
             not re.search(r"[\"'`]\s*(?:\+|%|\.format\b)|\+\s*[\"'`]", raw):
         return False
     return True

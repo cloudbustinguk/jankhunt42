@@ -4,6 +4,25 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.6.2] — 2026-10-27
+
+The last batched precision patch from the mass soak, which has now
+stopped.
+
+### Fixed
+
+- **JH104 catches f-string SQL that quotes its value.** A pattern for SQL
+  built in f-strings rejected any f-string holding the other quote
+  character. So `sql = f"... WHERE name = '{name}'"`, the commonest SQL
+  injection shape in Python, was missed once assigned to a variable. It
+  is caught now: across our test corpora, 15 more real leads.
+- **JH104: column lists made from constants** (`', '.join(ALL_COLUMNS)`,
+  `COLS.replace(...)`) are not injection. A list made from a variable, a
+  call or an attribute (`BAG.value`) still is.
+- **Faster on data-heavy repositories:** duplicate-block detection
+  compiles its patterns once, and the n8n check only parses `.json`
+  files. Findings are identical.
+
 ## [3.6.1] — 2026-10-27
 
 ### Security

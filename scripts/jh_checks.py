@@ -545,6 +545,10 @@ def large_file(sf: SourceFile, rule: Rule) -> List[Finding]:
                          message="File is %d lines (threshold 1500)." % len(sf.raw))]
 
 
+_WS_RUN_RE = re.compile(r"\s+")
+_PUNCT_ONLY_RE = re.compile(r"^[{}()\[\],;.]+$")
+
+
 @check("duplicate_blocks")
 def duplicate_blocks(sf: SourceFile, rule: Rule) -> List[Finding]:
     lines = sf.raw
@@ -552,8 +556,8 @@ def duplicate_blocks(sf: SourceFile, rule: Rule) -> List[Finding]:
         return []
     norm = []
     for line in lines:
-        s = re.sub(r"\s+", " ", line.strip())
-        norm.append(s if len(s) > 2 and not re.match(r"^[{}()\[\],;.]+$", s) else "")
+        s = _WS_RUN_RE.sub(" ", line.strip())
+        norm.append(s if len(s) > 2 and not _PUNCT_ONLY_RE.match(s) else "")
     size = 8
     seen: Dict[Tuple[str, ...], int] = {}
     out: List[Finding] = []
