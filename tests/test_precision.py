@@ -448,6 +448,32 @@ class Scanner(unittest.TestCase):
                               "  btn.innerHTML = EYE_ICON_SVG;\n  btn.innerHTML = label;\n}\n"),
         "web/src/app/layout.tsx": ("export default function Root() {\n  return <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />;\n}\n"
                                    "export function Bio({ bio }) {\n  return <div dangerouslySetInnerHTML={{ __html: bio }} />;\n}\n"),
+        # soak b19-b24 (invented): "BUG" as an English word is not a marker; JSDoc shapes are not commented code
+        "py/notes.py": ("# handles the BUG reporting pipeline\n# THE BUG THIS EXISTS TO FIX is described below\n"
+                        "# BUG: the cache is never invalidated\n# TODO refactor this module\nvalue = 1\n"),
+        "web/chart.js": ("/**\n * Draw the chart.\n * Expects: seriesByName = { a: [{date, value}] };\n"
+                         " * @param {Object} opts = { width: 10 };\n */\nexport function draw(opts) {}\n"
+                         "/*\n const legacy = draw({ width: 5 });\n*/\n"),
+        # soak b19-b21 (invented): a sanitizer's regex class with bidi characters, CORS advice text, a detector's
+        # regex, each beside its real lead
+        "web/sanitize.ts": ("export const quote = (v: string) => v.replace(/[\\x00-\\x1f\u202a-\u202e\u2066-\u2069]+/g, ' ');\n"
+                            "export const label = 'admin\u202e';\n"),
+        "web/rules.ts": ("const FIX_CORS =\n  \"Restrict CORS to an explicit allowlist. origin: '*' lets any website read "
+                         "authenticated responses from your API.\";\n"
+                         "app.enableCors({ origin: '*' });\n"),
+        "web/signals.ts": ("const SIGNALS = {\n  'SAST-002': /innerHTML|dangerouslySetInnerHTML/i,\n};\n"
+                          "el.innerHTML = userBio;\n"),
+        # soak b21 (invented): an AWS-shaped run inside embedded font data is not a key; the same key alone is
+        "lib/fonts/modern.ts": ("const fonts = {\n  italic: \"AAEAAA" + "Qx7Z" * 40 + "AKIA" + "R8T2V6Y4N1M5K3P7" + "Zp3v" * 20 + "\",\n};\n"
+                                "const aws = { id: \"AKIA" + "QZ7W3MN4XK2PL9RB" + "\" };\n"),
+        # verify-b22 (invented): placeholders only, values bound; a real interpolation beside it stays major.
+        # A test whose assertion lives in another module's check_ helper; an empty one still fires
+        "py/repo.py": ("def by_ids(cur, ids):\n    placeholders = ','.join('?' * len(ids))\n"
+                       "    return cur.execute(f\"SELECT * FROM item WHERE id IN ({placeholders})\", ids)\n\n\n"
+                       "def by_name(cur, name, ident):\n"
+                       "    return cur.execute(f\"SELECT * FROM item WHERE name = '{name}' AND id = ?\", (ident,))\n"),
+        "tests/test_helpers_cross.py": ("import mytestlib\n\n\ndef test_parses():\n    result = run()\n"
+                                        "    mytestlib.check_ok(result)\n\n\ndef test_runs():\n    run()\n"),
         "api/Cors.java": ("class C { void c(CorsConfiguration cfg) { cfg.addAllowedOrigin(\"*\");\n"
                           "  cfg.setAllowCredentials(true); resp.setHeader(\"Access-Control-Allow-Origin\", \"*\"); } }\n"),
         "app/settings.py": "CORS_ORIGIN_ALLOW_ALL = True\n",
@@ -945,6 +971,24 @@ class Scanner(unittest.TestCase):
         sev = lambda rule, rel: sorted((f["line"], f["severity"]) for f in self.hits(rule, rel))
         self.assertEqual(sev("JH126", "web/src/ui/eye.ts"), [(4, "minor"), (5, "minor"), (6, "major")])
         self.assertEqual(sev("JH125", "web/src/app/layout.tsx"), [(2, "minor"), (5, "major")])
+
+    def test_soak_b23_markers_and_doc_blocks(self):
+        self.assertEqual(self.lines("JH203", "py/notes.py"), [3, 4])
+        self.assertEqual(self.lines("JH205", "web/chart.js"), [8])
+
+    def test_soak_b21_detector_patterns_and_advice(self):
+        sev = lambda rule, rel: sorted((f["line"], f["severity"]) for f in self.hits(rule, rel))
+        self.assertEqual(sev("JH131", "web/sanitize.ts"), [(1, "minor"), (2, "major")])
+        self.assertEqual(self.lines("JH109", "web/rules.ts"), [3])
+        self.assertEqual(self.lines("JH126", "web/signals.ts"), [4])
+        self.assertEqual(self.hits("JH125", "web/signals.ts"), [])
+
+    def test_soak_b21_base64_blob_is_not_a_key(self):
+        self.assertEqual(self.lines("JH101", "lib/fonts/modern.ts"), [4])
+
+    def test_verify_b22_placeholders_and_cross_module_helpers(self):
+        self.assertEqual(self.lines("JH104", "py/repo.py"), [7])
+        self.assertEqual(self.lines("JH502", "tests/test_helpers_cross.py"), [9])
 
     def test_capabilities(self):
         self.assertEqual(self.hits("JH414", "deploy/hardened.yaml"), [])

@@ -12,6 +12,7 @@ from jh_core import (
     Rule,
     SourceFile,
     SEV_RANK,
+    _regex_literal_end,
     is_test_path,
     make_finding,
     path_matches,
@@ -299,7 +300,10 @@ RULES: List[Rule] = [
       "An unresolved marker records known debt or a known defect.",
       "Link it to an issue or resolve it; do not let it become permanent.",
       confidence="high", target="comments",
-      patterns=(r"\b(?:TODO|FIXME|HACK|BUG)\b|\bXXX\b(?=\s*[:(\-])|(?:^|[#/*;\-]|<!--)\s*(?i:(?:todo|fixme|hack)\s*[:(])",)),
+      # BUG is also an English word ("the BUG reporting pipeline"): it counts where a marker would sit, at the
+      # start of a comment or before : ( - or the end of the line; TODO, FIXME and HACK count anywhere
+      patterns=(r"\b(?:TODO|FIXME|HACK)\b|\bBUG\b(?=\s*[:(\-]|\s*$)|(?:^|[#/*;\-]|<!--)\s*BUG\b|"
+                r"\bXXX\b(?=\s*[:(\-])|(?:^|[#/*;\-]|<!--)\s*(?i:(?:todo|fixme|hack)\s*[:(])",)),
     R("JH204", "Debug leftover", "minor", "reliability",
       "Debug output or a debugger hook is still in the code path.",
       "Remove it or route it through the project logger at an appropriate level.",
@@ -1057,6 +1061,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "minor hygiene note, not a shell-injection.")
                     if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
+                    if rule.id == "JH205" and _in_doc_block(sf, idx):
+                        continue                # a /** ... */ documentation block describes code; it is not code
                     shell = _processbuilder_shell(" ".join([sf.nocomment[idx - 1][m.start():]] + sf.nocomment[idx:idx + 2])) \
                         if rule.id == "JH103" and "ProcessBuilder" in pat.pattern else "major"
                     if shell is None:
@@ -1065,6 +1071,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         severity, confidence = "minor", "low"
                         message = (rule.message + " ProcessBuilder runs no shell itself; its single argument hides "
                                    "what runs, so check that it never starts a shell with -c.")
+                    if rule.id == "JH109" and _inside_prose_string(sf.nocomment[idx - 1], m.start()):
+                        continue                # advice text ("origin: '*' lets any website ..."), not a setting
+                    if rule.id in ("JH124", "JH125", "JH126") and _inside_regex_literal(sf.nocomment[idx - 1], m.start()):
+                        continue                # a detector's pattern (/innerHTML|dangerouslySetInnerHTML/i)
                     if rule.id in ("JH124", "JH125", "JH126") and _constant_html(sf, idx, m.end()):
                         continue
                     if rule.id in ("JH124", "JH125", "JH126") and _constant_name_html(sf, idx, m.end()):
@@ -1106,6 +1116,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if not m:
                             continue
                         provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
+                        if provider and _inside_base64_blob(line, m.start(), m.end()):
+                            continue    # a provider-shaped run by chance inside embedded binary (a font, an image)
                         if provider and re.search(r"(?:AWSAccessKeyId|X-Amz-Credential)=(?:\S*?%2F)?$|"
                                                   r"(?:AWSAccessKeyId|X-Amz-Credential)=$", line[:m.start()]):
                             severity, confidence = "minor", "low"
@@ -1382,6 +1394,11 @@ def _dynamic_sql(sf: SourceFile, idx: int, line: str, m: "re.Match[str]", patter
     names = [a or b for a, b in exprs]
     if not names and re.search(r"(?i)\bf[\"']", raw):
         names = re.findall(r"(?<!\{)\{([^{}]*)\}(?!\})", raw)
+    # only placeholders interpolated (f"... IN ({placeholders})", built from ? or %s) with the values bound on the
+    # call: the query's shape varies, its values do not reach it
+    if names and all(_PLACEHOLDER_NAME_RE.fullmatch(n) for n in names) and \
+            re.search(r"[\"']\s*,\s*[\w(\[*]|\.bind\s*\(\s*\*", " ".join([raw] + sf.nocomment[idx:idx + 3])):
+        return False
     if names and all(re.fullmatch(r"\s*(?:self\.|cls\.)?_*[A-Z][A-Z0-9_]*\s*", n) for n in names) and \
             not re.search(r"[\"'`]\s*(?:\+|%|\.format\b)|\+\s*[\"'`]", raw):
         return False
@@ -1571,6 +1588,52 @@ def _constant_name_html(sf: SourceFile, idx: int, col: int) -> bool:
     window = " ".join([rest] + sf.nocomment[idx:idx + 3])
     m = re.match(r"\s*=\s*\{\{\s*__html\s*:\s*", window)
     return bool(m and re.match(r"%s\s*,?\s*\}" % _CONST_NAME, window[m.end():]))
+
+
+_PLACEHOLDER_NAME_RE = re.compile(r"\s*\w*(?:placeholders?|qmarks|marks|bind_list|in_clause)\w*\s*|"
+                                  r"\s*[\"']\s*,\s*[\"']\.join\(\s*\[?\s*[\"'](?:\?|%s)[\"'].*\)\s*", re.IGNORECASE)
+
+
+def _inside_base64_blob(line: str, start: int, end: int) -> bool:
+    """The match is part of, and not the start of, a base64 run of 200+ characters: encoded binary data, where any
+    four-letter prefix turns up by chance. A key on its own is never 200 characters long."""
+    a, b = start, end
+    while a > 0 and (line[a - 1].isalnum() or line[a - 1] in "+/="):
+        a -= 1
+    while b < len(line) and (line[b].isalnum() or line[b] in "+/="):
+        b += 1
+    return b - a >= 200 and start > a
+
+
+def _inside_prose_string(line: str, col: int) -> bool:
+    """col sits inside a quoted string of eight or more words: a sentence of advice or documentation."""
+    for q in re.finditer(r"""(["'`])((?:(?!\1)[^\\\n]|\\.)*)\1""", line):
+        if q.start(2) <= col < q.end(2):
+            return "${" not in q.group(2) and len(q.group(2).split()) >= 8     # a template with ${...} holds code
+    return False
+
+
+def _inside_regex_literal(line: str, col: int) -> bool:
+    """col sits inside a JavaScript regex literal on this line."""
+    for k in range(col - 1, -1, -1):
+        if line[k] == "/" and (k == 0 or line[k - 1] != "\\"):
+            end = _regex_literal_end(line, k)
+            if end and end > col:
+                return True
+    return False
+
+
+def _in_doc_block(sf: SourceFile, idx: int) -> bool:
+    """Line idx (1-based) sits inside a /** ... */ documentation block (JSDoc, Javadoc, PHPDoc), which describes
+    parameters and shapes in code-like text. A plain /* ... */ block may hold commented-out code, so it does not count."""
+    for k in range(idx - 1, max(-1, idx - 201), -1):
+        line = sf.raw[k]
+        if k < idx - 1 and "*/" in line:
+            return False
+        opener = line.rfind("/*")
+        if opener >= 0:
+            return line.startswith("/**", opener) and not line.startswith("/**/", opener)
+    return False
 
 
 def _firebase_web_config(sf: SourceFile, idx: int) -> bool:

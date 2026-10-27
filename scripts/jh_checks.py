@@ -1334,7 +1334,8 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
                        "parsed or read (Trojan Source, CVE-2021-42574).")
             # a detector's own character class (BIDI_OVERRIDE = /[...]/): still reported, at minor
             outside = re.sub(r"\[[^\]\n]*\]", "", line)
-            if not agent and re.search(r"(?i)bidi|invisible|zero.?width|trojan|homoglyph|confusable", line) and \
+            if not agent and (re.search(r"(?i)bidi|invisible|zero.?width|trojan|homoglyph|confusable", line) or
+                              re.search(r"/\[[^\]\n]*[\u202a-\u202e\u2066-\u2069][^\]\n]*\][^/\n]*/[a-z]*", line)) and \
                     re.search(r"\[[^\]\n]*[\u202a-\u202e\u2066-\u2069][^\]\n]*\]", line) and \
                     not re.search(r"[\u202a-\u202e\u2066-\u2069]", outside):
                 severity = "minor"
@@ -2144,6 +2145,10 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             body = "\n".join(sf.code[start:end + 1])
             if _PY_ASSERT_RE.search(body) or (calls and calls.search(body)):
+                continue
+            # a checking helper on a test-support module (mytestlib.check_ok(...), test_utils.assert_valid(...)); a
+            # method of the code under test (limiter.check_n(...), oracle.verify_with_test(...)) is not an assertion
+            if re.search(r"\b(?:\w*test\w*|helpers?|assertions?|checks?)\.(?:check|verify|assert|expect)_\w+\s*\(", body):
                 continue
             raw_body = "\n".join(sf.nocomment[start:end + 1])
             if re.search(r"\bsimplefilter\s*\(\s*[\"']error[\"']", raw_body):

@@ -4,6 +4,39 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.1.2] — 2026-10-27
+
+The day's batched precision patch, from mass-test batches b19 to b24 and
+the mass tester's verification pass. Each fix was checked against invented
+probes and the test corpora; the maintainer narrowed three of the tester's
+proposals before applying them.
+
+### Fixed
+
+- `JH101`: a provider-shaped run inside a long base64 blob, such as
+  embedded font or image data, is not a key. A key on its own still is.
+- `JH104`: SQL that interpolates only placeholders
+  (`f"... IN ({placeholders})"`, built from `?` or `%s`), with the values
+  passed separately, is not dynamic. Any other interpolated value stays
+  major, even with parameters beside it.
+- `JH109`: CORS text inside a sentence of advice or documentation (a quoted
+  string of eight or more words, with no `${...}`) configures nothing.
+- `JH124` to `JH126`: a match inside a JavaScript regex literal (a
+  detector's `/innerHTML|dangerouslySetInnerHTML/`) is not a sink.
+- `JH131`: bidirectional characters that sit only inside a regex character
+  class in a regex literal (a sanitizer stripping them) are minor, as they
+  already were next to a detector word.
+- `JH203`: `BUG` counts as a marker only where a marker sits: at the start
+  of a comment, or before `:`, `(`, `-` or the end of the line. "The BUG
+  reporting pipeline" is prose. TODO, FIXME and HACK are unchanged.
+- `JH205`: lines inside a `/** ... */` documentation block (JSDoc, Javadoc,
+  PHPDoc) describe code shapes; they are not commented-out code. A plain
+  `/* ... */` block still counts.
+- `JH502` (Python): a checking helper called on a test-support module
+  (`mytestlib.check_ok(...)`, `test_utils.assert_valid(...)`) is an
+  assertion. A method of the code under test (`limiter.check_n(...)`) is
+  not.
+
 ## [3.1.1] — 2026-10-26
 
 ### Security
