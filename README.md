@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 3.4.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 3.4.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 

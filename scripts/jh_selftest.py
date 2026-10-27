@@ -287,6 +287,17 @@ MUTANTS = [
      "editor stays inert in the sandbox", "jh_detonate.py",
      "    return \"'\" + value + \"'\" if _unquoted_space(value) and not already else value",
      "    return shlex.quote(value)", "test_detonate.py"),
+    ("M96-detonate-follows-output-links", "a link the sandbox leaves in its output makes the host read a file it "
+     "points to", "jh_detonate.py", "os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |", "os.O_RDONLY | os.O_NONBLOCK |",
+     "test_detonate.py"),
+    ("M97-detonate-empty-trace-observed", "an empty or forged trace counts as observation", "jh_detonate.py",
+     '            traced = trace is not None and problem != "unusable" and _started(trace_text, i)',
+     "            traced = trace is not None", "test_detonate.py"),
+    ("M98-detonate-dns-lines-unchecked", "any line in the sandbox's DNS log becomes a report entry", "jh_detonate.py",
+     "    names = sorted(n for n in lines if _HOSTNAME.match(n))", "    names = sorted(lines)", "test_detonate.py"),
+    ("M99-detonate-vscode-dependencies-skipped", "a payload in a folder-open task's dependency never runs",
+     "jh_detonate.py", "            out.extend(_vscode_chain(by_label[dep], by_label, gaps, stack + (label,)))",
+     "            pass", "test_detonate.py"),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -4,6 +4,35 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.4.1] — 2026-10-27
+
+### Security
+
+- **detonate no longer trusts the files the sandbox writes.** The output
+  folder is writable by the code under test, but detonate read its exit
+  codes, traces and DNS log with ordinary opens. A hook could replace
+  `dns.log` with a link to a file the user can read, and the host would copy
+  that file into the report. This has been present since 3.0.0. Every
+  output file is now read:
+  - through the folder's descriptor, never through a link;
+  - only if it is a regular file with one link;
+  - within size bounds (M96).
+
+  Anything unusable makes coverage partial. Found by Codex.
+- **An empty or forged trace no longer counts as observation:** a step is
+  traced only if its trace shows the step starting (M97).
+- **DNS lines must be host names (M98).** Every repository-derived message,
+  including an MCP server's name, is one sanitized line. Report fields are
+  escaped, so nothing the code writes can look like a report line.
+- **VS Code folder-open tasks follow VS Code more closely:**
+  - their `dependsOn` tasks run first, so a payload placed in a dependency
+    is run (M99);
+  - an escaped space is left unquoted, and strong quoting wraps the value
+    as VS Code does;
+  - file-wide options and old-format files are coverage gaps.
+
+  Found by Codex.
+
 ## [3.4.0] — 2026-10-27
 
 ### Added

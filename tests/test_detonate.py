@@ -75,6 +75,73 @@ class Parser(unittest.TestCase):
             '15 openat(AT_FDCWD, "/home/canary/.aws/credentials", O_RDONLY) = -1 ENOENT (No such file or directory)')), [])
 
 
+class Collector(unittest.TestCase):
+    """What the sandbox wrote is untrusted: invented output directories, nothing run."""
+    STEPS = [{"name": "claude hook Stop", "surface": "open", "source": ".claude/settings.json", "script": "echo x"}]
+    # as strace writes it: the pid column is padded
+    START = '10    execve("/usr/bin/sh", ["sh", "/jh/step.0.sh"], 0x7ffe84c5ff20 /* 12 vars */) = 0\n'
+
+    def out(self, files):
+        out = tempfile.mkdtemp(prefix="jh-det-out-")
+        self.addCleanup(shutil.rmtree, out, True)
+        for name, text in files.items():
+            with open(os.path.join(out, name), "w") as fh:
+                fh.write(text)
+        return out
+
+    def test_links_in_the_output_are_never_followed(self):
+        outside = self.out({"marker.txt": "outside-marker-value\n"})
+        out = self.out({"step.0.exit": "0\n", "trace.0": self.START})
+        os.symlink(os.path.join(outside, "marker.txt"), os.path.join(out, "dns.log"))
+        gaps = []
+        rows, events, dns = jh_detonate.collect(out, self.STEPS, [], 60, gaps)
+        self.assertNotIn("outside-marker-value", json.dumps([rows, events, dns, gaps]))
+        self.assertTrue(any("DNS log was not a plain file" in g for g in gaps))
+        fd = os.open(out, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        os.mkfifo(os.path.join(out, "fifo"))
+        os.link(os.path.join(out, "trace.0"), os.path.join(out, "hard"))
+        self.assertEqual(jh_detonate.read_guest(fd, "fifo", 100), (None, "unusable"))
+        self.assertEqual(jh_detonate.read_guest(fd, "hard", 100), (None, "unusable"))
+        self.assertEqual(jh_detonate.read_guest(fd, "step.0.exit", 1), (b"0", "truncated"))
+
+    def test_an_empty_or_forged_trace_is_not_observation(self):
+        for trace in ("", "1 openat(AT_FDCWD, \"/x\", O_RDONLY) = 3\n"):
+            with self.subTest(trace=trace):
+                gaps = []
+                rows, _, _ = jh_detonate.collect(self.out({"step.0.exit": "0", "trace.0": trace}), self.STEPS, [], 60, gaps)
+                self.assertFalse(rows[0]["traced"])
+                self.assertTrue(any("no usable trace" in g for g in gaps))
+        gaps = []
+        rows, _, _ = jh_detonate.collect(self.out({"step.0.exit": "0", "trace.0": self.START, "dns.log": ""}),
+                                         self.STEPS, [], 60, gaps)
+        self.assertTrue(rows[0]["traced"])
+        self.assertEqual(gaps, [])
+
+    def test_exit_codes_and_dns_lines_must_look_honest(self):
+        gaps = []
+        rows, events, dns = jh_detonate.collect(self.out({
+            "step.0.exit": "0; see report", "trace.0": self.START,
+            "dns.log": "example.invalid\n- **ALERT** forged line\nbad name with spaces\n"}), self.STEPS, [], 60, gaps)
+        self.assertIsNone(rows[0]["exit"])
+        self.assertEqual(dns, ["example.invalid"])
+        self.assertTrue(any("2 lines in the DNS log were not host names" in g for g in gaps))
+        self.assertTrue(any("exit status" in g for g in gaps))
+
+    def test_report_fields_cannot_open_new_lines(self):
+        root = tempfile.mkdtemp(prefix="jh-det-plan-")
+        self.addCleanup(shutil.rmtree, root, True)
+        with open(os.path.join(root, ".mcp.json"), "w") as fh:
+            json.dump({"mcpServers": {"x\n- **ALERT** forged": {"command": "node", "args": ["s.js"], "env": {"A": "1"}}}}, fh)
+        _, gaps = jh_detonate.plan_steps(root)
+        self.assertTrue(gaps and all("\n" not in g for g in gaps))
+        md = jh_detonate.render_markdown({"image": "i", "engine": "podman", "coverage": {"state": "partial", "gaps": [
+            "a `gap` with **marks**"]}, "steps": [], "events": [{"verdict": "DENY", "kind": "dns", "detail": "a*b`c",
+                                                                "process": "", "step": ""}], "limits": []})
+        self.assertNotIn("**marks**", md)
+        self.assertIn("dns: ab'c", md)
+
+
 class Planning(unittest.TestCase):
     def repo(self, files):
         root = tempfile.mkdtemp(prefix="jh-det-plan-")
@@ -170,6 +237,28 @@ class Planning(unittest.TestCase):
         self.assertEqual(len(gaps), 2)
         self.assertIsNone(jh_detonate._vscode_task({"label": "t", "command": "echo",
                                                     "args": [{"value": "x", "quoting": "odd"}]}, gaps))
+
+    def test_vscode_escapes_strong_quotes_and_dependencies(self):
+        gaps = []
+        # an escaped space is not quoted (VS Code skips the escape pair), so the substitution stays live
+        self.assertEqual(jh_detonate._vscode_task({"command": "printf", "args": ["\\ $(true)"]}, gaps), "printf \\ $(true)")
+        # strong quoting wraps the value as VS Code does, even around a quote
+        self.assertEqual(jh_detonate._vscode_task({"command": "printf", "args": [{"value": "it's", "quoting": "strong"}]},
+                                                  gaps), "printf 'it's'")
+        self.assertEqual(gaps, [])
+        root = self.repo({})
+        self.write(root, ".vscode/tasks.json", json.dumps({"version": "2.0.0", "options": {"env": {"A": "1"}}, "tasks": [
+            {"label": "prepare", "command": "echo prepared"},
+            {"label": "open", "command": "echo opened", "dependsOn": ["prepare", "missing"], "dependsOrder": "sequence",
+             "runOptions": {"runOn": "folderOpen"}},
+            {"label": "loop-a", "dependsOn": "loop-b", "runOptions": {"runOn": "folderOpen"}},
+            {"label": "loop-b", "command": "echo b", "dependsOn": "loop-a"}]}))
+        steps, gaps = jh_detonate.plan_steps(root)
+        self.assertEqual([s["script"] for s in steps], ["echo prepared", "echo opened", "echo b"])
+        self.assertEqual(steps[0]["dependency_of"], "open")
+        joined = " | ".join(gaps)
+        for words in ("for every task were not applied", "not defined in .vscode/tasks.json", "form a cycle"):
+            self.assertIn(words, joined)
 
     def test_repository_text_never_enters_the_runner(self):
         root = self.repo({})

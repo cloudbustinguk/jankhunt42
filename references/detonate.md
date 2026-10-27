@@ -40,9 +40,18 @@ detonate runs each of them once:
 - **VS Code tasks** that run on folder open (`runOptions.runOn:
   folderOpen`), written the way VS Code writes them for a POSIX shell. An
   argument is quoted only when it has an unquoted space, so `$VAR` and
-  `$(...)` stay live, as they are in the editor. `${workspaceFolder}` becomes
-  the repository. A task's shell, environment and working-folder options,
-  and any other `${...}` variable, are not applied, and coverage says so.
+  `$(...)` stay live, as they are in the editor; an escaped space (`\ `) is
+  left alone, and strong quoting wraps the value as VS Code does.
+  `${workspaceFolder}` becomes the repository.
+
+  **Dependencies:** the tasks a folder-open task `dependsOn` run first, in
+  order, and the report marks each one. Dependencies VS Code would run in
+  parallel run one after another here, and coverage says so.
+
+  **Not applied:** shell, environment and working-folder options (for one
+  task or for the whole file), other `${...}` variables, an old-format file
+  with a global command, and a dependency that is not defined in the file.
+  Each is a coverage gap.
 - **MCP stdio servers** from the project's MCP configuration files. Each
   gets one `initialize` request and is stopped after 20 seconds, because a
   server runs until it is stopped. Its configured environment is not
@@ -74,6 +83,15 @@ report, commands are shown redacted and cut to one line.
   carries a `JH42CANARY` marker.
 - **Afterwards,** the sandbox, the snapshot and the canaries are deleted.
   Only the report is kept.
+- **Untrusted output:** the sandbox's output folder is writable by the code
+  under test, so everything in it is read as untrusted:
+  - through the folder's descriptor, never through a link;
+  - regular files with a single link only;
+  - traces capped at 64 MB, and the DNS log at 1 MB;
+  - an exit status must be a plain number, and every DNS line a host name;
+  - a step counts as observed only if its trace shows the step starting.
+
+  Anything else makes coverage partial.
 
 ## The audit log
 
@@ -101,7 +119,7 @@ never refutes them:
   missing, a command timed out, a trace is missing, or a hook needed more
   than a synthetic event.
 - The tracer runs as the same user as the code it watches, so code written
-  to evade tracing can hide.
+  to evade tracing can hide, and it can alter its own trace and DNS log.
 - An encrypted or transformed canary is not recognised when sent.
 - The network is off, so behaviour that depends on a server's reply is not
   reached.

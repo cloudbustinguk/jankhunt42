@@ -24,6 +24,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,6 +61,10 @@ DEVCONTAINER_COMMANDS = ("initializeCommand", "onCreateCommand", "updateContentC
 MCP_SECONDS = 20          # a server runs until stopped; this long is enough to see what it does at start
 MAX_OPEN_STEPS = 40
 MAX_CONFIG_BYTES = 1000000
+# what the sandbox writes is untrusted: read only regular files, never through a link, and only this much
+MAX_TRACE_BYTES = 64 * 1024 * 1024
+MAX_DNS_BYTES = 1024 * 1024
+_HOSTNAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}\Z")
 _MCP_INIT = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
     "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "jankhunt42-detonate", "version": "1"}}})
 
@@ -175,10 +180,14 @@ def _command_text(value: Any) -> Optional[str]:
 
 
 def _unquoted_space(value: str) -> bool:
-    quote = ""
+    quote, escaped = "", False
     for ch in value:
-        if quote:
+        if escaped:
+            escaped = False
+        elif quote:
             quote = "" if ch == quote else quote
+        elif ch == "\\":
+            escaped = True              # VS Code skips an escaped character, so "\ " is not a space to quote
         elif ch in "'\"":
             quote = ch
         elif ch == " ":
@@ -190,7 +199,7 @@ def _vscode_token(value: str, quoting: Optional[str] = None) -> str:
     """One shell-task token as VS Code writes it for a POSIX shell: quoted only when it has an unquoted space (so
     $VAR and $(...) stay live, as they do in VS Code), or as the task asks."""
     if quoting == "strong":
-        return "'" + value.replace("'", "'\\''") + "'"
+        return "'" + value + "'"        # as VS Code writes it, even when the value holds a quote
     if quoting == "weak":
         return '"' + value + '"'
     if quoting == "escape":
@@ -237,6 +246,31 @@ def _vscode_task(task: Dict[str, Any], gaps: List[str]) -> Optional[str]:
     return line
 
 
+def _vscode_chain(task: Dict[str, Any], by_label: Dict[str, Dict[str, Any]], gaps: List[str],
+                  stack: Tuple[str, ...] = ()) -> List[Tuple[Dict[str, Any], str]]:
+    """A folder-open task with what VS Code runs before it: its dependsOn tasks first, in order, depth first."""
+    label = str(task.get("label", "?"))
+    shown_label = jh_graph.sanitize_text(label, 40)
+    if label in stack or len(stack) > 5:
+        gaps.append("folder-open task %s: its dependencies nest too deep or form a cycle" % shown_label)
+        return []
+    out: List[Tuple[Dict[str, Any], str]] = []
+    deps = task.get("dependsOn")
+    for dep in [deps] if isinstance(deps, str) else deps if isinstance(deps, list) else []:
+        if isinstance(dep, str) and dep in by_label:
+            out.extend(_vscode_chain(by_label[dep], by_label, gaps, stack + (label,)))
+        else:
+            gaps.append("folder-open task %s depends on a task not defined in .vscode/tasks.json; it was not run"
+                        % shown_label)
+    if deps and task.get("dependsOrder") != "sequence":
+        gaps.append("folder-open task %s: dependencies VS Code runs in parallel ran one after another" % shown_label)
+    if "command" in task or not deps:   # a task may only gather its dependencies
+        script = _vscode_task(task, gaps)
+        if script is not None:
+            out.append((task, script))
+    return out
+
+
 def _devcontainer_files(root: str) -> List[str]:
     out = [rel for rel in (".devcontainer/devcontainer.json", ".devcontainer.json")
            if os.path.lexists(os.path.join(root, rel))]
@@ -278,15 +312,27 @@ def _plan_open(root: str, steps: List[Dict[str, Any]], gaps: List[str]) -> None:
                 if command:
                     found.append(_step("devcontainer %s%s" % (key, ":" + str(label)[:40] if label else ""), "open",
                                        command, rel, host=key == "initializeCommand"))
-    data = _read_settings(root, ".vscode/tasks.json", gaps)
-    for task in (data or {}).get("tasks") if isinstance((data or {}).get("tasks"), list) else []:
-        opts = task.get("runOptions") if isinstance(task, dict) else None
+    data = _read_settings(root, ".vscode/tasks.json", gaps) or {}
+    tasks = [t for t in data.get("tasks") if isinstance(t, dict)] if isinstance(data.get("tasks"), list) else []
+    if isinstance(data.get("options"), dict) and set(data["options"]) & {"shell", "env", "cwd"}:
+        gaps.append(".vscode/tasks.json: the shell, environment or working folder options for every task were not applied")
+    if any(k in data for k in ("command", "args")):
+        gaps.append(".vscode/tasks.json: an old-format file with a global command is not modelled")
+    by_label: Dict[str, Dict[str, Any]] = {}
+    for task in tasks:
+        if isinstance(task.get("label"), str):
+            by_label.setdefault(task["label"], task)
+    ran: set = set()
+    for root_task in tasks:
+        opts = root_task.get("runOptions")
         if not (isinstance(opts, dict) and opts.get("runOn") == "folderOpen"):
             continue
-        script = _vscode_task(task, gaps)
-        if script is None:
-            continue
-        found.append(_step("vscode task %s" % str(task.get("label", "?"))[:40], "open", script, ".vscode/tasks.json"))
+        for task, script in _vscode_chain(root_task, by_label, gaps):
+            if id(task) in ran:
+                continue
+            ran.add(id(task))
+            found.append(_step("vscode task %s" % str(task.get("label", "?"))[:40], "open", script, ".vscode/tasks.json",
+                               **({"dependency_of": str(root_task.get("label", "?"))[:40]} if task is not root_task else {})))
     for rel in MCP_CONFIG_FILES:
         text = _read_config(root, rel, gaps)
         if text is None:
@@ -302,7 +348,8 @@ def _plan_open(root: str, steps: List[Dict[str, Any]], gaps: List[str]) -> None:
             found.append(_step("mcp server %s" % server.name[:40], "open", shlex.join([server.command] + list(server.args or [])),
                                rel, _MCP_INIT + "\n", limit=MCP_SECONDS, server=True))
             if server.env:
-                gaps.append("MCP server %s started without its configured environment" % server.name[:40])
+                gaps.append("MCP server %s started without its configured environment"
+                            % jh_graph.sanitize_text(server.name, 40))
     if len(found) > MAX_OPEN_STEPS:
         gaps.append("%d more commands that run on open were not run (limit %d)" % (len(found) - MAX_OPEN_STEPS,
                                                                                   MAX_OPEN_STEPS))
@@ -474,7 +521,9 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
                               "steps": [], "events": [], "dns": [], "canaries": [], "coverage": {}, "limits": [
                                   "absence of an event is not evidence of safety: only the commands listed ran",
                                   "the tracer runs as the same user as the code it watches; deliberate evasion is possible",
-                                  "encrypted or transformed sends of a canary are not recognised"]}
+                                  "encrypted or transformed sends of a canary are not recognised",
+                                  "the code under test can alter its own trace and DNS log; they are read as untrusted "
+                                  "(regular files only, never through a link, bounded), not as proof"]}
     engine = find_engine(engine)
     if not engine:
         raise RuntimeError("no container engine (podman or docker) is installed")
@@ -518,44 +567,111 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
             except subprocess.TimeoutExpired:
                 timed_out = True
                 gaps.append("the run exceeded its time limit")
-        out = os.path.join(run_dir, "out")
-        values = [(c["id"], v) for c in canaries for v in c["values"]]
-        for i, step in enumerate(steps):
-            exit_path = os.path.join(out, "step.%d.exit" % i)
-            code = open(exit_path).read().strip() if os.path.exists(exit_path) else None
-            trace_path = os.path.join(out, "trace.%d" % i)
-            traced = os.path.exists(trace_path)
-            row = {"name": step["name"], "surface": step["surface"], "source": step["source"],
-                   "command": shown(step["script"], values), "exit": code, "traced": traced}
-            if step.get("host"):
-                row["note"] = "in real use this runs on the host machine, outside any container"
-            if step.get("server"):
-                row["note"] = "a server runs until stopped; it was stopped after %d seconds" % step_limit(step, int(timeout))
-            result["steps"].append(row)
-            if code == "124" and not step.get("server"):
-                gaps.append("%s hit its time limit" % step["name"])
-            if not traced:
-                gaps.append("%s left no trace" % step["name"])
-                continue
-            text = open(trace_path, encoding="utf-8", errors="replace").read()
-            result["events"].extend(parse_trace(text, canaries, step["name"]))
-        dns_path = os.path.join(out, "dns.log")
-        if os.path.exists(dns_path):
-            names = sorted({n.strip() for n in open(dns_path, encoding="ascii", errors="replace") if n.strip()})
-            result["dns"] = names[:200]
-            for name in names[:200]:
-                result["events"].append({"verdict": "DENY", "kind": "dns", "detail": name, "pid": "", "process": "",
-                                         "step": ""})
+        rows, events, dns = collect(os.path.join(run_dir, "out"), steps, canaries, int(timeout), gaps)
+        result["steps"], result["events"], result["dns"] = rows, events, dns
         result["timed_out"] = timed_out
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)       # the evidence is kept; the sandbox and canaries are not
     values = [(c["id"], v) for c in canaries for v in c["values"]]
     for e in result["events"]:
-        e["detail"], e["process"] = mask(e["detail"], values), mask(e["process"], values)
+        # trace text is written by the code under test: masked, redacted and one bounded line, like a command
+        e["detail"], e["process"] = shown(e["detail"], values), shown(e["process"], values)
     result["canaries"] = [{"id": c["id"], "kind": c["kind"], "path": c["path"]} for c in canaries]
+    gaps = [jh_graph.sanitize_text(g, 300) for g in gaps]
     result["coverage"] = {"state": "partial" if gaps else "complete", "gaps": gaps}
     result["counts"] = {v: sum(1 for e in result["events"] if e["verdict"] == v) for v in ("ALERT", "DENY")}
     return result
+
+
+def read_guest(dir_fd: int, name: str, limit: int) -> Tuple[Optional[bytes], str]:
+    """A file the sandbox wrote, read without trusting it: through the output directory's descriptor, never
+    through a link, only a regular file with a single link, at most limit bytes. (data, problem): problem is
+    "" when read whole, "missing", "unusable" (a link, a FIFO, a device, a hard link) or "truncated"."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0), dir_fd=dir_fd)
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError:
+        return None, "unusable"
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return None, "unusable"
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = os.read(fd, min(1 << 20, limit + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
+        return (bytes(data[:limit]), "truncated") if len(data) > limit else (bytes(data), "")
+    finally:
+        os.close(fd)
+
+
+def _started(text: str, i: int) -> bool:
+    """A step was observed only if its trace shows the runner starting it."""
+    return re.search(r'^\d+\s+execve\("[^"]*/sh", \["sh", "/jh/step\.%d\.sh"\].*= 0$' % i, text, re.M) is not None
+
+
+def collect(out: str, steps: List[Dict[str, Any]], canaries: List[Dict[str, Any]], timeout: int,
+            gaps: List[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
+    """Step rows, events and DNS names from the sandbox's output directory. Every file in it was writable by the
+    code under test, so each is read with read_guest, and anything unusable makes coverage partial."""
+    values = [(c["id"], v) for c in canaries for v in c["values"]]
+    rows: List[Dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
+    try:
+        dir_fd = os.open(out, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        gaps.append("the sandbox output could not be opened")
+        return rows, events, []
+    try:
+        for i, step in enumerate(steps):
+            raw, problem = read_guest(dir_fd, "step.%d.exit" % i, 16)
+            text = raw.decode("ascii", "replace").strip() if raw is not None else ""
+            code = text if re.fullmatch(r"\d{1,3}", text) else None
+            if problem == "unusable" or (raw is not None and code is None):
+                gaps.append("%s: its exit status was not a plain file the sandbox could have written honestly"
+                            % step["name"])
+            trace, problem = read_guest(dir_fd, "trace.%d" % i, MAX_TRACE_BYTES)
+            trace_text = trace.decode("utf-8", "replace") if trace is not None else ""
+            traced = trace is not None and problem != "unusable" and _started(trace_text, i)
+            row = {"name": step["name"], "surface": step["surface"], "source": step["source"],
+                   "command": shown(step["script"], values), "exit": code, "traced": traced}
+            if step.get("host"):
+                row["note"] = "in real use this runs on the host machine, outside any container"
+            if step.get("server"):
+                row["note"] = "a server runs until stopped; it was stopped after %d seconds" % step_limit(step, timeout)
+            if step.get("dependency_of"):
+                row["note"] = "VS Code runs it first, as a dependency of folder-open task %s" % jh_graph.sanitize_text(
+                    step["dependency_of"], 40)
+            rows.append(row)
+            if code == "124" and not step.get("server"):
+                gaps.append("%s hit its time limit" % step["name"])
+            if problem == "truncated":
+                gaps.append("%s: its trace was cut at %d MB" % (step["name"], MAX_TRACE_BYTES // (1024 * 1024)))
+            if not traced:
+                gaps.append("%s left no usable trace (missing, unusable, or not showing the step start)" % step["name"])
+                continue
+            events.extend(parse_trace(trace_text, canaries, step["name"]))
+        raw, problem = read_guest(dir_fd, "dns.log", MAX_DNS_BYTES)
+    finally:
+        os.close(dir_fd)
+    if problem in ("unusable", "truncated"):
+        gaps.append("the DNS log was %s, so the names looked up are incomplete"
+                    % ("not a plain file" if problem == "unusable" else "cut at 1 MB"))
+    lines = {n.strip() for n in (raw or b"").decode("ascii", "replace").splitlines() if n.strip()}
+    names = sorted(n for n in lines if _HOSTNAME.match(n))
+    if len(names) < len(lines):
+        gaps.append("%d lines in the DNS log were not host names and were ignored" % (len(lines) - len(names)))
+    for name in names[:200]:
+        events.append({"verdict": "DENY", "kind": "dns", "detail": name, "pid": "", "process": "", "step": ""})
+    return rows, events, names[:200]
+
+
+def _md(text: Any) -> str:
+    """A report field: one line, with no Markdown emphasis or code marks a field could use to look like another."""
+    return jh_graph.sanitize_text(str(text), 300).replace("`", "'").replace("*", "")
 
 
 def render_markdown(r: Dict[str, Any]) -> str:
@@ -563,7 +679,7 @@ def render_markdown(r: Dict[str, Any]) -> str:
            "Evidence tier: `sandbox-observed`. Image `%s` via %s. Coverage: **%s**." % (
                r["image"], r.get("engine", "?"), r["coverage"]["state"]), ""]
     for gap in r["coverage"]["gaps"]:
-        out.append("- coverage gap: %s" % gap)
+        out.append("- coverage gap: %s" % _md(gap))
     for surface, title in (("install", "When it is installed"), ("open", "When it is opened")):
         rows = [s for s in r["steps"] if s.get("surface", "install") == surface]
         if not rows:
@@ -571,14 +687,14 @@ def render_markdown(r: Dict[str, Any]) -> str:
         out += ["", "## %s" % title, ""]
         for s in rows:
             out.append("- **%s** (`%s`): `%s`, exit %s%s%s" % (
-                s["name"], s.get("source") or "?", s["command"].replace("`", "'"), s["exit"],
-                "" if s["traced"] else " (no trace)", "; %s" % s["note"] if s.get("note") else ""))
+                _md(s["name"]), _md(s.get("source") or "?"), _md(s["command"]), _md(s["exit"]),
+                "" if s["traced"] else " (no trace)", "; %s" % _md(s["note"]) if s.get("note") else ""))
     out += ["", "## Audit log", ""]
     if not r["events"]:
         out.append("No network attempts, canary access or persistence attempts were observed in the steps that ran.")
     for e in sorted(r["events"], key=lambda e: (e["verdict"] != "ALERT", e["kind"], e["detail"])):
-        who = " by `%s`" % e["process"] if e["process"] else ""
-        out.append("- **%s** %s: %s%s%s" % (e["verdict"], e["kind"], e["detail"], who,
-                                           " (%s)" % e["step"] if e["step"] else ""))
+        who = " by `%s`" % _md(e["process"]) if e["process"] else ""
+        out.append("- **%s** %s: %s%s%s" % (e["verdict"], e["kind"], _md(e["detail"]), who,
+                                           " (%s)" % _md(e["step"]) if e["step"] else ""))
     out += ["", "## Limits", ""] + ["- %s" % x for x in r["limits"]]
     return "\n".join(out) + "\n"
