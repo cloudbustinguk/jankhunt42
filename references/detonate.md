@@ -125,36 +125,62 @@ jankhunt42 detonate . --wheelhouse /path/outside/wheelhouse
 **npm:** with a cache and a `package-lock.json` (or `npm-shrinkwrap.json`),
 detonate runs one traced step:
 
-    npm ci --offline --cache /cache/npm --foreground-scripts
+    npm ci --offline --cache /cache/npm --foreground-scripts --ignore-scripts=false \
+           --include=dev --include=optional --include=peer
 
-- **Which hooks run:** the package's own hooks and every dependency's run
-  inside it, once, in place of the separate root-hook steps.
+Those command-line settings override the repository's own `.npmrc`. A
+repository cannot switch scripts off, or leave its dev dependencies, and
+their hooks, out of the install.
+
+- **Which hooks run:** the package's own hooks and those of every
+  dependency npm installs (dev, optional and peer included) run inside it,
+  once, in place of the separate root-hook steps.
 - **When something is missing:** a package missing from the cache, a git or
   URL dependency, or a missing lockfile makes coverage partial.
 
 **Python:** with a wheelhouse, `requirements.txt` installs offline into the
-sandbox (`pip install --no-index --find-links`), and a pyproject's build
-backend comes from the wheelhouse. A wheel runs no code when installed. Only
+sandbox (`python3 -I -m pip install --no-index --find-links`), and a
+pyproject's build backend comes from the wheelhouse. The `-I` keeps a
+`pip.py` in the repository from standing in for pip. A wheel runs no code when installed. Only
 source packages in the wheelhouse are built, so only their setup code runs.
 
 **The copy:** each cache must be a real directory outside the repository,
-with no link in its path, of at most 768 MB. detonate copies it into the
-run's private folder, so your directory is never written to or relabeled.
+with no link in its path. detonate copies it into the run's private
+folder, so your directory is never written to or relabeled. The copy can't
+be steered while it runs:
+- every folder is opened from its parent, and never through a link;
+- every file is opened without following links, and must be a regular file;
+- the 768 MB limit counts the bytes actually copied.
 
-**Making a cache is a fetch: do it deliberately.** The lockfile decides what
-is downloaded, and from where.
-1. Check the package sources first, for example with
-   `jankhunt42 passport . --policy POLICY` and `allowed_registries`.
-2. Then fetch on a machine that is allowed to reach your registry, without
-   running anything:
+Links, FIFOs and devices are left out. An unreadable cache, or a temporary
+folder inside the cache, stops the run.
+
+**Making a cache is a fetch, and it can run code.** The repository's
+lockfile and requirements decide what is downloaded, and from where. Some
+downloads also run package code on the machine doing them:
+- **pip:** a requirements file can switch a package to source
+  (`--no-binary :all:`), even against `--only-binary` on the command line,
+  and building a source package's metadata runs its setup code;
+- **npm:** a git dependency is packed by running its own scripts.
+
+So treat making a cache like running the repository:
+1. **Check the sources first,** for example with
+   `jankhunt42 passport . --policy POLICY` and `allowed_registries`. That
+   tells you where packages come from, not that fetching them is safe.
+2. **Fetch in a disposable environment:** a throwaway container or VM with
+   no credentials, whose network reaches only your registry or proxy, and
+   never your workstation. Copy only the resulting cache out.
+3. **Fetch from a list you control:** a normalized, hash-locked list of
+   exact wheels, not the repository's own requirements file:
 
 ```sh
-npm ci --ignore-scripts --cache /path/outside/npm-cache          # in a clean checkout
-pip download --only-binary=:all: -d /path/outside/wheelhouse -r requirements.txt
+# inside the disposable environment
+npm ci --ignore-scripts --cache /cache/npm                # in a clean checkout of the repository
+pip download --only-binary=:all: --no-deps --require-hashes -d /cache/wheels -r /reviewed/wheels.lock
 ```
 
-`--only-binary` avoids building source packages while downloading, because
-a build runs the package's setup code.
+A cache made this way is the one input detonate trusts you for. It still
+never fetches anything itself.
 
 ## Use it in a passport
 
@@ -167,15 +193,18 @@ jankhunt42 passport . --detonation /path/outside/run.json --md
 ```
 
 **When it counts:** every result records a digest of the tree it ran on:
-each file's content and executable bits, and each link's target, without
-`.git`. The passport compares that digest with the tree it assesses:
+each file's content, whether it is executable (as git records it), and
+each link's target, without `.git`. The passport compares that digest
+with the tree it assesses:
 - **The same tree:** the run counts, and the passport shows a "Sandbox run"
   section with its ALERTs.
 - **Any other tree:** if a file changed since the run, or the run was on
   another checkout, it is shown as not used and changes nothing.
 
-With `--base`, the assessed tree is the committed `HEAD`, so run detonate on
-a clean checkout of that commit.
+With `--base`, the assessed tree is the committed `HEAD`. Its digest comes
+from the commit's own objects, so run detonate on a clean checkout of that
+commit. A tree, or a commit, that cannot be read in full matches no run.
+Results made before 3.6.1 use an older digest and must be re-run.
 
 **What it can change:** sandbox evidence can only add an outcome.
 - An ALERT makes `P-RUN-001` review (block in the citizen profile), as a

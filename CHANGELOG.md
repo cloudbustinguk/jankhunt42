@@ -4,6 +4,45 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.6.1] — 2026-10-27
+
+### Security
+
+Fixes from Codex's audit of `passport --detonation`. The audit found no way
+for a run to relieve anything, so these concern which run counts:
+- **`--base` now binds a run to the commit itself.** The passport used to
+  compare against a filtered copy of the commit that dropped executable
+  modes. A run on the real tree read as stale, while a run on a stripped,
+  different tree could match. The digest now comes from the commit's own
+  objects: modes, link targets and bytes (M114).
+- **A tree that cannot be read whole matches nothing.** An unreadable
+  folder used to count as empty, so a different tree could match (M113).
+- **Result files must be re-run.** The digest now records git's executable
+  bit over sorted entries (format 2). Results from 3.5.0 and 3.6.0 say
+  "re-run detonate" instead of failing to match silently.
+- **Shared passports alias sandbox step names** (task labels, server names)
+  (M115). Alert kinds outside the known set read "other", including in
+  `P-RUN-001`'s message.
+
+Fixes from Codex's audit of the dependency caches (3.6.0):
+- **The cache copy can't be steered.** It is one pass:
+  - folders are opened from their parent's descriptor, never through a
+    link (M116);
+  - files are opened without following links and must be regular files;
+  - the 768 MB limit counts the bytes actually copied (M119).
+
+  A cache that changes while it is read, or holds the run's own temporary
+  folder, can no longer grow the copy or slip in a linked file.
+- **A repository can't quietly skip the installs.** pip runs as
+  `python3 -I -m pip`, so a `pip.py` in the repository is not used (M117).
+  `npm ci` installs dev, optional and peer dependencies whatever the
+  repository's `.npmrc` says (M118).
+- **Corrected advice:** making a cache can run package code (a source
+  build, a git dependency's scripts). The docs now say to make it in a
+  disposable, credential-free environment with registry-only network, from
+  a hash-locked list you control. The earlier "without running anything"
+  was wrong.
+
 ## [3.6.0] — 2026-10-27
 
 ### Added

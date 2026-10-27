@@ -363,20 +363,46 @@ class DependencyCaches(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "outside the repository"):
             jh_detonate.check_cache(os.path.join(root, "cache"), root, "--npm-cache")
         outside = self.tree({"index/a": "12345"})
-        self.assertEqual(jh_detonate.check_cache(outside, root, "--npm-cache"), {"files": 1, "bytes": 5})
+        self.assertIsNone(jh_detonate.check_cache(outside, root, "--npm-cache"))
         link = os.path.join(self.tree({}), "link")
         os.symlink(outside, link)
         with self.assertRaisesRegex(RuntimeError, "without links"):
             jh_detonate.check_cache(link, root, "--npm-cache")
         with self.assertRaisesRegex(RuntimeError, "not a directory"):
             jh_detonate.check_cache(os.path.join(outside, "missing"), root, "--npm-cache")
-        old = jh_detonate.MAX_CACHE_BYTES
-        jh_detonate.MAX_CACHE_BYTES = 4
-        try:
-            with self.assertRaisesRegex(RuntimeError, "larger than"):
-                jh_detonate.check_cache(outside, root, "--npm-cache")
-        finally:
-            jh_detonate.MAX_CACHE_BYTES = old
+
+    def test_the_copy_cannot_be_steered(self):
+        # found by Codex: the size check and the copy were separate looks at a cache that can change
+        marker = self.tree({"secret.txt": "outside-marker-value\n"})
+        src = self.tree({"index/a": "12345", "content/b": "67\n"})
+        os.symlink(os.path.join(marker, "secret.txt"), os.path.join(src, "index", "leaf-link"))
+        os.symlink(marker, os.path.join(src, "dir-link"))
+        os.mkfifo(os.path.join(src, "fifo"))
+        dest = os.path.join(self.tree({}), "copy")
+        counts = jh_detonate.copy_cache(src, dest, writable=True)
+        self.assertEqual(counts, {"files": 2, "bytes": 8})
+        copied = [os.path.join(b, n) for b, _, names in os.walk(dest) for n in names]
+        self.assertEqual(sorted(os.path.relpath(c, dest) for c in copied), ["content/b", "index/a"])
+        self.assertNotIn("outside-marker-value", "".join(open(c).read() for c in copied))
+        with self.assertRaisesRegex(RuntimeError, "larger than"):
+            jh_detonate.copy_cache(src, os.path.join(self.tree({}), "copy"), writable=False, budget=4)
+        link = os.path.join(self.tree({}), "root-link")
+        os.symlink(src, link)
+        with self.assertRaisesRegex(RuntimeError, "could not be read whole"):
+            jh_detonate.copy_cache(link, os.path.join(self.tree({}), "copy"), writable=False)
+        with self.assertRaisesRegex(RuntimeError, "temporary folder is inside"):
+            jh_detonate.copy_cache(src, os.path.join(src, "run", "cache"), writable=False)
+
+    def test_the_repository_cannot_quietly_skip_installs(self):
+        # found by Codex: a pip.py in the repository stood in for pip, and .npmrc omit=dev skipped dev hooks
+        root = self.tree({"package.json": self.PKG, "package-lock.json": "{}", "requirements.txt": "x==1\n",
+                          "pyproject.toml": "[project]\nname='x'\n"})
+        steps, _ = jh_detonate.plan_steps(root, ("install",), ("npm", "wheels"))
+        by_name = {s["name"]: s["script"] for s in steps}
+        for flag in ("--include=dev", "--include=optional", "--include=peer", "--ignore-scripts=false"):
+            self.assertIn(flag, by_name["npm ci (offline, with dependencies)"])
+        self.assertTrue(by_name["pip install requirements (offline)"].startswith("python3 -I -m pip"))
+        self.assertTrue(by_name["python build backend"].startswith("python3 -I -m pip"))
 
     def test_caches_are_copies_mounted_with_the_network_still_off(self):
         argv = jh_detonate.container_argv("podman", "img", "/tmp/run", "/src", ("npm", "wheels"))
@@ -421,6 +447,93 @@ class PassportEvidence(unittest.TestCase):
                 else:
                     os.symlink("a.txt", os.path.join(root2, "link"))
                 self.assertNotEqual(jh_detonate.tree_digest(root2)["digest"], base["digest"])
+
+    def test_a_read_error_matches_nothing(self):
+        # the same property where permissions cannot be taken away (as root in the Python matrix)
+        from unittest import mock
+        root = self.tree({"a.txt": "one\n", "locked/b.txt": "two\n"})
+        doc = self.result(root)
+        real = os.listdir
+
+        def listdir(path):
+            if str(path).endswith("locked"):
+                raise PermissionError("invented")
+            return real(path)
+        with mock.patch.object(jh_detonate.os, "listdir", listdir):
+            with self.assertRaises(OSError):
+                jh_detonate.tree_digest(root)
+            self.assertEqual(jh_detonate.passport_evidence(doc, root)["state"], "stale")
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root can read a folder without permissions")
+    def test_a_tree_that_cannot_be_read_matches_nothing(self):
+        # found by Codex: an unreadable folder used to count as empty, so another tree could match
+        root = self.tree({"a.txt": "one\n", "locked/b.txt": "two\n"})
+        doc = self.result(root)
+        os.chmod(os.path.join(root, "locked"), 0)
+        self.addCleanup(os.chmod, os.path.join(root, "locked"), 0o755)
+        with self.assertRaises(OSError):
+            jh_detonate.tree_digest(root)
+        self.assertEqual(jh_detonate.passport_evidence(doc, root)["state"], "stale")
+
+    def test_the_digest_ignores_order_and_umask_but_not_the_exec_bit(self):
+        a = self.tree({"x/run.sh": "echo\n", "y.txt": "1\n"})
+        b = self.tree({"y.txt": "1\n", "x/run.sh": "echo\n"})
+        os.chmod(os.path.join(a, "x", "run.sh"), 0o744)
+        os.chmod(os.path.join(b, "x", "run.sh"), 0o755)
+        self.assertEqual(jh_detonate.tree_digest(a)["digest"], jh_detonate.tree_digest(b)["digest"])
+        os.chmod(os.path.join(b, "x", "run.sh"), 0o644)
+        self.assertNotEqual(jh_detonate.tree_digest(a)["digest"], jh_detonate.tree_digest(b)["digest"])
+
+    @unittest.skipUnless(shutil.which("git"), "git is not installed")
+    def test_base_binds_to_the_committed_tree(self):
+        # found by Codex: --base compared a filtered copy without modes, so the real tree was stale and a
+        # stripped tree could match
+        from _util import run_cli
+        repo = self.tree({"app.py": "print('hi')\n", "bin/run.sh": "echo run\n"})
+        os.chmod(os.path.join(repo, "bin", "run.sh"), 0o755)
+        os.symlink("app.py", os.path.join(repo, "link.py"))
+        with open(os.path.join(repo, "blob.bin"), "wb") as fh:
+            fh.write(bytes(range(256)))
+        git = lambda *a: subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                         *a], check=True, capture_output=True)
+        git("init", "-q")
+        git("add", "-A")
+        git("commit", "-qm", "base")
+        with open(os.path.join(repo, "app.py"), "a") as fh:
+            fh.write("# second\n")
+        git("commit", "-qam", "head")
+        head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        committed = jh_detonate.git_tree_digest(repo, head)
+        self.assertEqual(committed["digest"], jh_detonate.tree_digest(repo)["digest"])
+        stripped = self.tree({"app.py": "print('hi')\n# second\n", "bin/run.sh": "echo run\n"})
+        self.assertNotEqual(committed["digest"], jh_detonate.tree_digest(stripped)["digest"])
+        alert = {"verdict": "ALERT", "kind": "canary-read", "detail": "~/.npmrc (canary-npm)", "step": "npm postinstall",
+                 "pid": "", "process": "node x.js"}
+        clean = self.result(repo, [alert])
+        with open(os.path.join(repo, "app.py"), "a") as fh:
+            fh.write("# uncommitted\n")          # --base assesses the commit, so this does not matter
+        outside = self.tree({})
+        for name, doc in (("clean.json", clean), ("stripped.json", self.result(stripped, [alert]))):
+            with open(os.path.join(outside, name), "w") as fh:
+                json.dump(doc, fh)
+        states = {}
+        for name in ("clean.json", "stripped.json"):
+            r = run_cli("passport", repo, "--base", "HEAD~1", "--json", "--detonation", os.path.join(outside, name))
+            states[name] = json.loads(r.stdout)["sandbox_run"]["state"]
+        self.assertEqual(states, {"clean.json": "matched", "stripped.json": "stale"})
+
+    def test_redaction_aliases_steps_and_unknown_kinds(self):
+        from _util import run_cli
+        root = self.tree({"app.py": "print('hi')\n"})
+        doc = self.result(root, [{"verdict": "ALERT", "kind": "private-label-marker", "detail": "x",
+                                  "step": "vscode task private-task-marker", "pid": "", "process": ""}])
+        outside = os.path.join(self.tree({}), "det.json")
+        with open(outside, "w") as fh:
+            json.dump(doc, fh)
+        out = run_cli("passport", root, "--json", "--redact", "--detonation", outside).stdout
+        self.assertNotIn("private-task-marker", out)
+        self.assertNotIn("private-label-marker", out)
+        self.assertIn('"other"', out)
 
     def test_a_result_counts_only_on_its_own_tree(self):
         root = self.tree({"package.json": "{}\n"})
@@ -531,7 +644,7 @@ class Live(unittest.TestCase):
         reads = [e for e in r["events"] if (e["verdict"], e["kind"]) == ("ALERT", "canary-read")]
         self.assertTrue(reads, r["events"])
         self.assertNotIn("JH42CANARY", json.dumps(r))
-        self.assertEqual(r["dependency_caches"]["npm"]["files"] > 0, True)
+        self.assertGreater(r["dependency_caches"]["npm"]["files"], 0)
 
     def test_inert_open_surface(self):
         root = tempfile.mkdtemp(prefix="jh-det-live-")

@@ -643,8 +643,9 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     rep = json.loads(json.dumps(report))
     if rep.get('triggers'):
         rep['triggers'] = jh_n8n.trigger_counts(rep['triggers'])
-    for alert in (rep.get("sandbox_run") or {}).get("alerts", []):
+    for i, alert in enumerate((rep.get("sandbox_run") or {}).get("alerts", []), 1):
         alert["detail"] = "redacted"            # paths and hosts from the run
+        alert["step"] = "step-%d" % i           # step names carry task labels and server names
     approval = rep.get("capability_approval") or {}
     for key in ("approved_by", "subject_id", "rationale", "record"):
         if key in approval:

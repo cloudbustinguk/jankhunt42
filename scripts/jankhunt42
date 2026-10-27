@@ -982,7 +982,16 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if args.detonation is not None:
         try:
             doc = jh_ceiling.read_external_json(args.detonation, root, "detonation result", jh_detonate.MAX_RESULT_BYTES)
-            sandbox = jh_detonate.passport_evidence(doc, snapshot["frozen"] if snapshot else root)
+            digest = None
+            if snapshot:
+                # --base assesses the commit: bind to its own objects, never the filtered snapshot copy
+                top = jh_map.git_toplevel(root)
+                try:
+                    digest = jh_detonate.git_tree_digest(top, capability_delta["head_sha"], os.path.relpath(
+                        os.path.realpath(root), os.path.realpath(top)).replace(os.sep, "/"))
+                except (jh_map.GitError, ValueError, IndexError):
+                    digest = {"error": "unreadable"}
+            sandbox = jh_detonate.passport_evidence(doc, root, digest)
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2

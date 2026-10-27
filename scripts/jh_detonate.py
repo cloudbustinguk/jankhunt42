@@ -68,8 +68,11 @@ MAX_CONFIG_BYTES = 1000000
 MAX_CACHE_BYTES = 768 * 1024 * 1024
 CACHE_MOUNTS = {"npm": ("/cache/npm", "rw"), "wheels": ("/cache/wheels", "ro")}
 NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
-NPM_CI = "npm ci --offline --cache /cache/npm --foreground-scripts --no-audit --no-fund --ignore-scripts=false"
-PIP_OFFLINE = "python3 -m pip install --no-index --find-links /cache/wheels --no-cache-dir --disable-pip-version-check"
+# command-line settings override the repository's own .npmrc: scripts on, and every dependency type installed
+NPM_CI = ("npm ci --offline --cache /cache/npm --foreground-scripts --no-audit --no-fund --ignore-scripts=false "
+          "--include=dev --include=optional --include=peer")
+# -I: a pip.py in the repository cannot stand in for the installer
+PIP_OFFLINE = "python3 -I -m pip install --no-index --find-links /cache/wheels --no-cache-dir --disable-pip-version-check"
 MAX_TRACE_BYTES = 64 * 1024 * 1024
 MAX_DNS_BYTES = 1024 * 1024
 _HOSTNAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}\Z")
@@ -146,11 +149,11 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], cache
         if "wheels" in caches:
             # build isolation installs the build backend from the wheelhouse
             steps.append(_step("python build backend", "install",
-                               "python3 -m pip wheel --no-deps --no-index --find-links /cache/wheels "
+                               "python3 -I -m pip wheel --no-deps --no-index --find-links /cache/wheels "
                                "--disable-pip-version-check -w /tmp/wheel .", "pyproject.toml", pip=True))
         else:
             steps.append(_step("python build backend", "install",
-                               "python3 -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
+                               "python3 -I -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
                                "pyproject.toml"))
             gaps.append("a pyproject build backend that is not in the image cannot run (no --wheelhouse)")
 
@@ -546,45 +549,82 @@ def snapshot(root: str, dest: str) -> None:
     os.chmod(dest, 0o755)
 
 
+DIGEST_FORMAT = 2
+ALERT_KINDS = ("canary-read", "canary-passed", "canary-sent", "persistence")
+
+
+def _digest(entries: List[List[Any]]) -> Dict[str, Any]:
+    h = hashlib.sha256()
+    for entry in sorted(entries, key=lambda e: e[1]):
+        h.update((json.dumps(entry) + "\n").encode("utf-8"))
+    return {"format": DIGEST_FORMAT, "digest": h.hexdigest(), "entries": len(entries)}
+
+
 def tree_digest(root: str) -> Dict[str, Any]:
     """What a run was made on, as a digest a passport can match: every path except .git (at any depth, as the
-    snapshot leaves it out), its kind, its executable bits and its content or link target. Links are never followed."""
-    h = hashlib.sha256()
-    entries = 0
+    snapshot leaves it out), its kind, its user-executable bit (as git keeps it) and its content or link target.
+    Links are never followed. Anything unreadable raises: a tree that cannot be read whole matches nothing."""
+    entries: List[List[Any]] = []
     stack = [""]
     while stack:
         rel_dir = stack.pop()
         base = os.path.join(root, rel_dir) if rel_dir else root
-        try:
-            names = sorted(os.listdir(base))
-        except OSError:
-            names = []
-        for name in names:
+        for name in sorted(os.listdir(base)):
             if name == ".git":
                 continue
             rel = rel_dir + "/" + name if rel_dir else name
             path = os.path.join(base, name)
-            try:
-                st = os.lstat(path)
-                if stat.S_ISLNK(st.st_mode):
-                    entry: List[Any] = ["link", rel, os.readlink(path)]
-                elif stat.S_ISDIR(st.st_mode):
-                    entry = ["dir", rel]
-                    stack.append(rel)
-                elif stat.S_ISREG(st.st_mode):
-                    content = hashlib.sha256()
-                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                    with os.fdopen(fd, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(1 << 20), b""):
-                            content.update(chunk)
-                    entry = ["file", rel, st.st_mode & 0o111, content.hexdigest()]
-                else:
-                    entry = ["other", rel]
-            except OSError:
-                entry = ["unreadable", rel]
-            h.update((json.dumps(entry) + "\n").encode("utf-8"))
-            entries += 1
-    return {"digest": h.hexdigest(), "entries": entries}
+            st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode):
+                entries.append(["link", rel, os.readlink(path)])
+            elif stat.S_ISDIR(st.st_mode):
+                entries.append(["dir", rel])
+                stack.append(rel)
+            elif stat.S_ISREG(st.st_mode):
+                content = hashlib.sha256()
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        content.update(chunk)
+                entries.append(["file", rel, 1 if st.st_mode & 0o100 else 0, content.hexdigest()])
+            else:
+                entries.append(["other", rel])
+    return _digest(entries)
+
+
+def git_tree_digest(top: str, commit: str, prefix: str = "") -> Dict[str, Any]:
+    """The same digest from a commit's own objects (modes, link targets and bytes), so passport --base binds to
+    exactly what was committed, whatever its scan filters read. A submodule matches no checked-out tree."""
+    import jh_map
+    spec = commit if prefix in ("", ".") else "%s:%s" % (commit, prefix)
+    entries: List[List[Any]] = []
+    blobs: List[Tuple[bytes, bytes, str]] = []
+    for record in jh_map._git(top, ["ls-tree", "-r", "-t", "-z", spec], timeout=300).split(b"\0"):
+        if not record:
+            continue
+        meta, path = record.split(b"\t", 1)
+        mode, kind, oid = meta.split(b" ")
+        rel = path.decode("utf-8", "surrogateescape")
+        if kind == b"tree":
+            entries.append(["dir", rel])
+        elif kind == b"commit":
+            entries.append(["submodule", rel])
+        else:
+            blobs.append((mode, oid, rel))
+    for start in range(0, len(blobs), 256):
+        chunk = blobs[start:start + 256]
+        out = jh_map._git(top, ["cat-file", "--batch"], data=b"".join(oid + b"\n" for _, oid, _ in chunk), timeout=600)
+        pos = 0
+        for mode, oid, rel in chunk:
+            end = out.index(b"\n", pos)
+            size = int(out[pos:end].split(b" ")[2])
+            content = out[end + 1:end + 1 + size]
+            pos = end + 1 + size + 1
+            if mode == b"120000":
+                entries.append(["link", rel, content.decode("utf-8", "surrogateescape")])
+            else:
+                entries.append(["file", rel, 1 if mode == b"100755" else 0, hashlib.sha256(content).hexdigest()])
+    return _digest(entries)
 
 
 MAX_RESULT_BYTES = 4 * 1024 * 1024
@@ -597,6 +637,8 @@ def _result_problem(doc: Any) -> str:
     tree = doc.get("tree")
     if not isinstance(tree, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(tree.get("digest", ""))):
         return "no tree digest (made by a jankhunt42 older than 3.5.0?)"
+    if tree.get("format") != DIGEST_FORMAT:
+        return "its tree digest is an older format; re-run detonate with this version"
     events, cov = doc.get("events"), doc.get("coverage")
     if not isinstance(events, list) or len(events) > 20000 or not all(
             isinstance(e, dict) and e.get("verdict") in _VERDICTS and isinstance(e.get("kind"), str) and
@@ -608,18 +650,28 @@ def _result_problem(doc: Any) -> str:
     return ""
 
 
-def passport_evidence(doc: Optional[Dict[str, Any]], root: str) -> Dict[str, Any]:
-    """A detonate result as passport evidence. It counts only when it was made on exactly this tree, and it can
-    only add outcomes: an ALERT needs review, while a clean run proves nothing about paths it did not reach."""
+def passport_evidence(doc: Optional[Dict[str, Any]], root: str,
+                      digest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """A detonate result as passport evidence. It counts only when it was made on exactly this tree (digest: the
+    assessed tree's, computed from root when not given), and it can only add outcomes: an ALERT needs review, while a
+    clean run proves nothing about paths it did not reach."""
     if doc is None:
         return {"state": "not-supplied"}
     problem = _result_problem(doc)
     if problem:
         raise ValueError("detonation result: " + problem)
-    if doc["tree"]["digest"] != tree_digest(root)["digest"]:
+    if digest is None:
+        try:
+            digest = tree_digest(root)
+        except OSError:
+            return {"state": "stale", "reason": "the assessed tree could not be read whole, so no run can be matched"}
+    if digest.get("error"):
+        return {"state": "stale", "reason": "the assessed commit could not be read whole, so no run can be matched"}
+    if doc["tree"]["digest"] != digest["digest"]:
         return {"state": "stale", "reason": "the run was made on a different tree: files changed since, or another "
                                             "checkout"}
-    alerts = [{"kind": jh_graph.sanitize_text(e["kind"], 40), "detail": jh_graph.sanitize_text(e["detail"], 200),
+    # kinds from a known set only: a result file is operator input, and its words reach the decision message
+    alerts = [{"kind": e["kind"] if e["kind"] in ALERT_KINDS else "other", "detail": jh_graph.sanitize_text(e["detail"], 200),
                "step": jh_graph.sanitize_text(e.get("step", ""), 80)} for e in doc["events"] if e["verdict"] == "ALERT"]
     surfaces = [s for s in doc.get("surfaces") or [] if s in SURFACES] if isinstance(doc.get("surfaces"), list) else []
     return {"state": "matched", "evidence_tier": "sandbox-observed",
@@ -641,40 +693,74 @@ def passport_line(ev: Dict[str, Any]) -> str:
     return ""
 
 
-def check_cache(path: str, root: str, what: str) -> Dict[str, int]:
-    """An operator-supplied dependency cache: a real directory (no link anywhere in its path), outside the
-    repository, at most MAX_CACHE_BYTES of regular files. Its contents decide what the offline install can use."""
+def check_cache(path: str, root: str, what: str) -> None:
+    """An operator-supplied dependency cache: a real directory (no link anywhere in its path) outside the
+    repository. Its size is enforced while it is copied (copy_cache), never by an earlier, separate look."""
     if not os.path.isdir(path):
         raise RuntimeError("%s %s is not a directory" % (what, path))
     if os.path.abspath(path) != os.path.realpath(path):
         raise RuntimeError("%s must be a canonical path without links" % what)
     if jh_ceiling.inside_repository(path, root):
         raise RuntimeError("%s must be outside the repository: what a repository brings cannot be its own cache" % what)
-    files = size = 0
-    for base, dirs, names in os.walk(path):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(base, d))]
-        for name in names:
-            full = os.path.join(base, name)
-            if os.path.isfile(full) and not os.path.islink(full):
-                files += 1
-                size += os.path.getsize(full)
-                if size > MAX_CACHE_BYTES:
-                    raise RuntimeError("%s is larger than %d MB" % (what, MAX_CACHE_BYTES // (1024 * 1024)))
-    return {"files": files, "bytes": size}
 
 
-def copy_cache(src: str, dest: str, writable: bool) -> None:
-    """Regular files only (links are left out), readable, and writable when the package manager writes to it."""
-    for base, dirs, names in os.walk(src):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(base, d))]
-        target = os.path.join(dest, os.path.relpath(base, src))
+def _under(path: str, base: str) -> bool:
+    path, base = os.path.realpath(path), os.path.realpath(base)
+    return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
+
+
+def copy_cache(src: str, dest: str, writable: bool, what: str = "the cache",
+               budget: Optional[int] = None) -> Dict[str, int]:
+    """Copy a cache in one pass that cannot be steered: every folder is opened from its parent's descriptor and
+    never through a link, every file is opened without following links and must be a regular file, and the size
+    budget is counted on the bytes actually copied. Links, FIFOs and devices are left out; anything unreadable, or
+    a destination inside the source, stops the run."""
+    budget = MAX_CACHE_BYTES if budget is None else budget
+    if _under(dest, src):
+        raise RuntimeError("the run's temporary folder is inside %s; set TMPDIR elsewhere" % what)
+    counts = {"files": 0, "bytes": 0}
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+    def walk(dfd: int, target: str, depth: int) -> None:
+        if depth > 64:
+            raise RuntimeError("%s nests deeper than 64 folders" % what)
         os.makedirs(target, exist_ok=True)
         os.chmod(target, 0o777 if writable else 0o755)
-        for name in names:
-            full = os.path.join(base, name)
-            if os.path.isfile(full) and not os.path.islink(full):
-                shutil.copyfile(full, os.path.join(target, name))
-                os.chmod(os.path.join(target, name), 0o666 if writable else 0o644)
+        for name in sorted(os.listdir(dfd)):
+            st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if stat.S_ISDIR(st.st_mode):
+                sub = os.open(name, dir_flags, dir_fd=dfd)
+                try:
+                    walk(sub, os.path.join(target, name), depth + 1)
+                finally:
+                    os.close(sub)
+            elif stat.S_ISREG(st.st_mode):
+                fd = os.open(name, file_flags, dir_fd=dfd)
+                with os.fdopen(fd, "rb") as fh:
+                    if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                        continue
+                    out_path = os.path.join(target, name)
+                    with open(out_path, "wb") as out:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            counts["bytes"] += len(chunk)
+                            if counts["bytes"] > budget:
+                                raise RuntimeError("%s is larger than %d MB" % (what, budget // (1024 * 1024)))
+                            out.write(chunk)
+                os.chmod(out_path, 0o666 if writable else 0o644)
+                counts["files"] += 1
+
+    try:
+        root_fd = os.open(src, dir_flags)
+    except OSError as exc:
+        raise RuntimeError("%s could not be read whole: %s" % (what, exc))
+    try:
+        walk(root_fd, dest, 0)
+    except OSError as exc:
+        raise RuntimeError("%s could not be read whole: %s" % (what, exc))
+    finally:
+        os.close(root_fd)
+    return counts
 
 
 def find_engine(prefer: Optional[str] = None) -> Optional[str]:
@@ -688,8 +774,10 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         surfaces: Tuple[str, ...] = SURFACES, npm_cache: Optional[str] = None,
         wheelhouse: Optional[str] = None) -> Dict[str, Any]:
     root = os.path.abspath(root)
-    supplied = {name: (path, check_cache(path, root, label)) for name, path, label in
+    supplied = {name: (path, label) for name, path, label in
                 (("npm", npm_cache, "--npm-cache"), ("wheels", wheelhouse, "--wheelhouse")) if path}
+    for path, label in supplied.values():
+        check_cache(path, root, label)
     result: Dict[str, Any] = {"schema": SCHEMA, "root": root, "image": image, "evidence_tier": "sandbox-observed",
                               "surfaces": [s for s in SURFACES if s in surfaces],
                               "steps": [], "events": [], "dns": [], "canaries": [], "coverage": {}, "limits": [
@@ -706,7 +794,6 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         raise RuntimeError("image %s is not present; build it once with: %s build -t %s -f "
                            "templates/detonate.Containerfile templates" % (image, engine, image))
     result["engine"], result["image_id"] = engine, probe.stdout.strip()[:80]
-    result["dependency_caches"] = {name: counts for name, (_, counts) in supplied.items()}
     canaries = make_canaries()
     run_dir = tempfile.mkdtemp(prefix="jh-detonate-")
     try:
@@ -721,9 +808,13 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         except OSError as exc:
             raise RuntimeError("could not snapshot %s: %s" % (root, exc))
         # plan from the snapshot, so what runs is exactly what was read; its digest lets a passport match the run
-        result["tree"] = tree_digest(snap)
-        for name, (path, _) in supplied.items():
-            copy_cache(path, os.path.join(run_dir, "cache", name), writable=CACHE_MOUNTS[name][1] == "rw")
+        try:
+            result["tree"] = tree_digest(snap)
+        except OSError as exc:
+            raise RuntimeError("could not read the snapshot whole: %s" % exc)
+        result["dependency_caches"] = {
+            name: copy_cache(path, os.path.join(run_dir, "cache", name), CACHE_MOUNTS[name][1] == "rw", label)
+            for name, (path, label) in supplied.items()}
         steps, gaps = plan_steps(snap, surfaces, tuple(supplied))
         if not steps:
             gaps.append("nothing to run was found (package hooks, or commands that run when the repository is opened)")
