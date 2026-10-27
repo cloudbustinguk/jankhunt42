@@ -138,6 +138,7 @@ def _wrap(text: str, width: int, indent: str) -> List[str]:
 
 
 def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
+    import jh_n8n
     import jh_map
     import jh_graph as G
     t = Theme(color, ascii_only, view_width(columns))
@@ -160,6 +161,9 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
                                                         c.grey("(informational, never blocks)"))),
     ]
     out += [""] + t.box(card, "cyan", "what can it hurt?")
+    trigger_text = jh_n8n.trigger_line(report.get('triggers'))
+    if trigger_text:
+        out += [''] + _wrap(clean('Declared triggers: ' + trigger_text), t.width, '')
     out += ["", c.bold("connected systems")]
     if s["by_kind"]:
         out.append("  " + "   ".join("%s %s" % (c.bold(str(v)), k) for k, v in s["by_kind"].items()))
@@ -248,6 +252,10 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
         t.kv("lifecycle", "%s  ·  acceptance %s" % (p["lifecycle"]["state"], t.label("not-supplied" if p["lifecycle"]["acceptance"]["state"] == "not-supplied" else "declared"))),
     ]
     out += [""] + t.box(card, "cyan", "can we responsibly ship it?")
+    import jh_n8n
+    trigger_text = jh_n8n.trigger_line(p.get('triggers'))
+    if trigger_text:
+        out += [''] + _wrap(clean('Declared triggers: ' + trigger_text), t.width, '')
     if p.get("capability_delta", {}).get("state", "not-requested") != "not-requested":
         out += [""]
         for line in jh_capabilities.approver_lines(p["capability_delta"]):
@@ -255,6 +263,10 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
         approval_line = jh_capability_approval.approver_line(p.get("capability_approval") or {})
         if approval_line:
             out += _wrap(clean(approval_line), t.width, "")
+    import jh_detonate
+    sandbox_line = jh_detonate.passport_line(p.get("sandbox_run") or {})
+    if sandbox_line:
+        out += [""] + _wrap(clean(sandbox_line), t.width, "")
     gov = p.get("governance") or {}
     if gov.get("profile") == "citizen":
         plain: List[str] = []

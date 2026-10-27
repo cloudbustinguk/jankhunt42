@@ -162,7 +162,7 @@ class N8nMapping(unittest.TestCase):
     def test_unknown_http_code_trigger_and_community(self):
         for n in (node(params={'url': '={{$json.url}}'}), node(params={'url': 'https://' + '.'.join(('endpoint', 'invalid')), 'method': 'COPY'}),
                   node('code', 2, {'jsCode': 'return [];'}), node('function', 1), node('functionItem', 1),
-                  node('webhook', 2), node('scheduleTrigger', 1), node('unfamiliar', 1)):
+                  node('unfamiliar', 1)):
             with self.subTest(typ=n['type']):
                 r = report(workflow(n))
                 rows, unknowns, _ = C.inventory(r, [])

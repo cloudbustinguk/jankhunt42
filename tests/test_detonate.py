@@ -118,6 +118,16 @@ class Collector(unittest.TestCase):
         self.assertTrue(rows[0]["traced"])
         self.assertEqual(gaps, [])
 
+    def test_a_missing_or_cut_exit_status_is_a_gap(self):
+        # found by Codex: a valid trace with no exit file, or "0" padded past 16 bytes, read as complete
+        for files in ({"trace.0": self.START, "dns.log": ""},
+                      {"trace.0": self.START, "dns.log": "", "step.0.exit": "0" + " " * 16}):
+            with self.subTest(exit=files.get("step.0.exit")):
+                gaps = []
+                rows, _, _ = jh_detonate.collect(self.out(files), self.STEPS, [], 60, gaps)
+                self.assertIsNone(rows[0]["exit"])
+                self.assertTrue(any("no usable exit status" in g for g in gaps))
+
     def test_exit_codes_and_dns_lines_must_look_honest(self):
         gaps = []
         rows, events, dns = jh_detonate.collect(self.out({
@@ -126,7 +136,7 @@ class Collector(unittest.TestCase):
         self.assertIsNone(rows[0]["exit"])
         self.assertEqual(dns, ["example.invalid"])
         self.assertTrue(any("2 lines in the DNS log were not host names" in g for g in gaps))
-        self.assertTrue(any("exit status" in g for g in gaps))
+        self.assertTrue(any("no usable exit status" in g for g in gaps))
 
     def test_report_fields_cannot_open_new_lines(self):
         root = tempfile.mkdtemp(prefix="jh-det-plan-")
@@ -305,6 +315,98 @@ class Planning(unittest.TestCase):
         a, b = jh_detonate.make_canaries(), jh_detonate.make_canaries()
         self.assertNotEqual(a[0]["text"], b[0]["text"])
         self.assertTrue(all(any("JH42CANARY" in v for v in c["values"]) for c in a))
+
+
+class PassportEvidence(unittest.TestCase):
+    """A detonate result in the passport: invented trees and results, nothing run."""
+
+    def tree(self, files):
+        root = tempfile.mkdtemp(prefix="jh-det-tree-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel, text in files.items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write(text)
+        return root
+
+    def result(self, root, events=(), state="complete"):
+        return {"schema": jh_detonate.SCHEMA, "tree": jh_detonate.tree_digest(root), "surfaces": ["install", "open"],
+                "events": list(events), "coverage": {"state": state, "gaps": []}, "version": "3.5.0"}
+
+    def test_the_digest_sees_content_mode_and_links_but_not_git(self):
+        root = self.tree({"a.txt": "one\n", "sub/b.sh": "echo\n", ".git/HEAD": "ref\n", "sub/.git": "gitdir: x\n"})
+        first = jh_detonate.tree_digest(root)
+        with open(os.path.join(root, ".git", "HEAD"), "w") as fh:
+            fh.write("other\n")
+        self.assertEqual(jh_detonate.tree_digest(root), first)
+        for change in ("content", "mode", "link"):
+            with self.subTest(change=change):
+                root2 = self.tree({"a.txt": "one\n", "sub/b.sh": "echo\n"})
+                base = jh_detonate.tree_digest(root2)
+                if change == "content":
+                    with open(os.path.join(root2, "a.txt"), "w") as fh:
+                        fh.write("two\n")
+                elif change == "mode":
+                    os.chmod(os.path.join(root2, "sub", "b.sh"), 0o755)
+                else:
+                    os.symlink("a.txt", os.path.join(root2, "link"))
+                self.assertNotEqual(jh_detonate.tree_digest(root2)["digest"], base["digest"])
+
+    def test_a_result_counts_only_on_its_own_tree(self):
+        root = self.tree({"package.json": "{}\n"})
+        alert = {"verdict": "ALERT", "kind": "canary-read", "detail": "~/.aws/credentials (canary-aws)",
+                 "step": "npm postinstall", "pid": "", "process": "node x.js"}
+        doc = self.result(root, [alert])
+        ev = jh_detonate.passport_evidence(doc, root)
+        self.assertEqual((ev["state"], ev["counts"]["ALERT"]), ("matched", 1))
+        with open(os.path.join(root, "package.json"), "w") as fh:
+            fh.write('{"name": "changed"}\n')
+        self.assertEqual(jh_detonate.passport_evidence(doc, root)["state"], "stale")
+        self.assertEqual(jh_detonate.passport_evidence(None, root), {"state": "not-supplied"})
+        for bad in ({}, dict(doc, tree={}), dict(doc, events=[{"verdict": "MAYBE"}])):
+            with self.assertRaises(ValueError):
+                jh_detonate.passport_evidence(bad, root)
+
+    def test_p_run_only_adds_outcomes(self):
+        import jh_policy
+        eff = jh_policy.merge(None, [], [], None)
+        def outcome(sandbox, profile_eff=eff):
+            facts = {"sandbox": sandbox, "files_scanned": 1, "map_files_inspected": 1}
+            rule = [r for r in jh_policy.evaluate(profile_eff, facts, None)["rules"] if r["rule"] == "P-RUN-001"][0]
+            return rule["outcome"], rule["hard_floor"]
+        matched = {"state": "matched", "counts": {"ALERT": 1, "DENY": 0}, "alerts": [{"kind": "persistence"}]}
+        self.assertEqual(outcome(matched), ("review", True))
+        self.assertEqual(outcome(dict(matched, counts={"ALERT": 0, "DENY": 3}, alerts=[])), ("pass", False))
+        self.assertEqual(outcome(dict(matched, state="stale")), ("pass", False))
+        self.assertEqual(outcome({"state": "not-supplied"}), ("pass", False))
+        citizen = jh_policy.merge(None, [], [], "citizen")
+        self.assertEqual(outcome(matched, citizen)[0], "block")
+
+    def test_the_passport_command_takes_a_result_from_outside_only(self):
+        from _util import run_cli
+        root = self.tree({"app.py": "print('hi')\n"})
+        doc = self.result(root, [{"verdict": "ALERT", "kind": "canary-read", "detail": "~/.npmrc (canary-npm)",
+                                  "step": "npm postinstall", "pid": "", "process": "node x.js"}])
+        inside = os.path.join(root, "det.json")
+        with open(inside, "w") as fh:
+            json.dump(doc, fh)
+        r = run_cli("passport", root, "--json", "--detonation", inside)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("outside the scanned repository", r.stderr)
+        os.remove(inside)
+        outside = os.path.join(self.tree({}), "det.json")
+        with open(outside, "w") as fh:
+            json.dump(doc, fh)
+        r = run_cli("passport", root, "--json", "--detonation", outside)
+        p = json.loads(r.stdout)
+        self.assertEqual(p["sandbox_run"]["state"], "matched")
+        rule = [x for x in p["assessment"]["decision"]["rules"] if x["rule"] == "P-RUN-001"][0]
+        self.assertEqual(rule["outcome"], "review")
+        r = run_cli("passport", root, "--json", "--redact", "--detonation", outside)
+        self.assertNotIn(".npmrc", r.stdout)
+        md = run_cli("passport", root, "--md", "--detonation", outside).stdout
+        self.assertIn("## Sandbox run", md)
 
 
 @unittest.skipUnless(os.environ.get("JH_DETONATE_LIVE") == "1" and shutil.which("podman") and

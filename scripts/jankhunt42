@@ -978,6 +978,14 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         warnings.append("--base assesses committed HEAD; working-tree and untracked changes are excluded")
         if args.capability_approval is not None:
             capability_approval_record = jh_capability_approval.load(args.capability_approval, root)
+    sandbox = None
+    if args.detonation is not None:
+        try:
+            doc = jh_ceiling.read_external_json(args.detonation, root, "detonation result", jh_detonate.MAX_RESULT_BYTES)
+            sandbox = jh_detonate.passport_evidence(doc, snapshot["frozen"] if snapshot else root)
+        except ValueError as exc:
+            print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",
@@ -992,7 +1000,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
         package_sources=package_sources, capability_delta=capability_delta,
         capability_approval_record=capability_approval_record,
-        capability_approval_label=os.path.basename(args.capability_approval or ""))
+        capability_approval_label=os.path.basename(args.capability_approval or ""), sandbox=sandbox)
     if args.emit_capability_approval:
         decision_policy = passport["assessment"]["decision"]["policy"]
         print(json.dumps(jh_capability_approval.template(capability_delta, decision_policy["effective"],
@@ -1275,6 +1283,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_map_inputs(sp)
     sp.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
     sp.add_argument("--capability-approval", metavar="PATH", help="external operator record for this exact concrete access change")
+    sp.add_argument("--detonation", metavar="PATH",
+                    help="a `detonate --json` result kept outside the repository; used only if made on this exact tree, "
+                         "and it can only add outcomes (P-RUN-001)")
     sp.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
     sp.add_argument("--policy", metavar="PATH",
                     help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")

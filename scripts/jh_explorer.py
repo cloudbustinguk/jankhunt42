@@ -175,6 +175,7 @@ const cards=document.getElementById('cards');
 card(cards,'exposure',ass.exposure.class,'qualitative; a path is a possibility','lvl-'+ass.exposure.class);
 card(cards,'coverage',cov.status,cov.files_inspected+' / '+cov.files_considered+' files inspected');
 card(cards,'nodes / edges',nodes.length+' / '+edges.length,Object.keys(cov.by_adapter).length+' adapters');
+const triggers=(DATA.triggers||{}).counts;if(triggers&&triggers.total)card(cards,'declared triggers',triggers.inbound+' inbound / '+triggers.unattended+' unattended','deployment and activation unverified');
 const t=ass.evidence_tiers;card(cards,'edge evidence',t.verified+' verified',t.supported+' supported · '+t.inferred+' inferred · '+t.unknown+' unknown');
 card(cards,'unknown capability',ass.unknown_capability_edges,'treated as possibly write or destructive');
 card(cards,'breadth',ass.breadth.indicator.toFixed(3),ass.breadth.distinct_trust_domains+' trust domains (informational)');
@@ -340,6 +341,7 @@ card(cards,'technical jank score',A.jank.score+'/100','grade '+A.jank.grade+' ·
 card(cards,'exposure',A.exposure.class,'separate from the Jank Score','lvl-'+A.exposure.class);
 card(cards,'evidence coverage',C.evidence_areas_present+'/'+C.evidence_areas_total,'areas observed, declared, or inferred');
 card(cards,'lifecycle',P.lifecycle.state,'acceptance: '+P.lifecycle.acceptance.state);
+const triggers=(P.triggers||{}).counts;if(triggers&&triggers.total)card(cards,'declared triggers',triggers.inbound+' inbound / '+triggers.unattended+' unattended','deployment and activation unverified');
 const G=P.governance||{profile:'standard',custodians:[],brief:[],agent:{servers:[]}};
 if(G.profile==='citizen')card(cards,'profile','citizen','custodian: '+(G.custodians.join(', ')||'not named'),G.custodians.length?'out-pass':'out-block');
 const doc=document.getElementById('doc');

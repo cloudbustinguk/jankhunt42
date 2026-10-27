@@ -2096,12 +2096,21 @@ def adapt_n8n(ctx: Ctx, item: Item) -> None:
                 attributes={'platform': 'n8n', 'n8n_key': nk, 'credential_refs': refs,
                             'disabled': raw.get('disabled') is True})
             node_ids[raw['id']] = principal
+            trigger = jh_n8n.trigger(raw, flow['active'], flow['settings'])
+            if principal and trigger:
+                old = g.nodes[principal]['attributes'].get('trigger')
+                if old and old != trigger:
+                    ctx.parse_failures.append({'path': item.rel, 'reason': 'conflicting n8n trigger declarations for one identity'})
+                else:
+                    g.nodes[principal]['attributes']['trigger'] = trigger
             g.add_edge(workflow, principal, 'depends-on', 'none', 'declared', 'high', evidence=ev)
             for typ, ref in n['credentials'].items():
                 identity = g.add_node('identity', ['n8n', typ, ref['id']], typ + ':' + ref['name'],
                     attributes={'platform': 'n8n', 'credential_refs': [G.sanitize_text(typ + ':' + ref['name'])]}, evidence=ev)
                 g.add_edge(principal, identity, 'authenticates-as', 'none', 'declared', 'high', evidence=ev)
             engine, cap, scope = jh_n8n.operation(raw)
+            if trigger:
+                continue  # inbound/unattended declaration, not an outbound permission
             if engine == 'http':
                 url = jh_n8n.http_url(scope.get('url'))
                 ep = G.parse_endpoint(url) if url else None
@@ -2463,6 +2472,7 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
         "unknowns": [u for u in _unknowns(g, ctx) if not (bound and u["id"] == "code-to-workload-binding")],
         "evidence": g.evidence_list(),
         "graph": graph,
+        "triggers": jh_n8n.trigger_summary(graph['nodes']),
         "assessment": assessment,
         "egress": jh_egress.compare(jh_egress.boundaries(col.items), {"graph": graph, "assessment": assessment}),
         "truncation": {"truncated": bool(g.truncated or assessment["truncated_reachability"]),
@@ -2664,6 +2674,9 @@ def markdown(report: Dict[str, Any]) -> str:
                                                     ", heuristic strength %.3f" % d["strength"] if "strength" in d else "",
                                                     d["why"]))
         lines.append("  - `%s`" % path_text(report, d["principal"], d["path"]).replace("`", "'"))
+    trigger_text = jh_n8n.trigger_line(report.get('triggers'))
+    if trigger_text:
+        lines += ['', '## Declared triggers', '', trigger_text, jh_n8n.TRIGGER_NOTE]
     creds = credential_rows(report)
     if creds:
         lines += ["", "## Credential blast radius", "",

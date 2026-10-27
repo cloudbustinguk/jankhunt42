@@ -110,6 +110,37 @@ Each event names the command that caused it and the step it ran under.
 `canary-aws`. Exit code 1 means at least one ALERT; 2 means the sandbox
 could not run.
 
+## Use it in a passport
+
+A run can become passport evidence. Save the result outside the repository,
+then pass it to `passport`:
+
+```sh
+jankhunt42 detonate . --json > /path/outside/run.json
+jankhunt42 passport . --detonation /path/outside/run.json --md
+```
+
+**When it counts:** every result records a digest of the tree it ran on:
+each file's content and executable bits, and each link's target, without
+`.git`. The passport compares that digest with the tree it assesses:
+- **The same tree:** the run counts, and the passport shows a "Sandbox run"
+  section with its ALERTs.
+- **Any other tree:** if a file changed since the run, or the run was on
+  another checkout, it is shown as not used and changes nothing.
+
+With `--base`, the assessed tree is the committed `HEAD`, so run detonate on
+a clean checkout of that commit.
+
+**What it can change:** sandbox evidence can only add an outcome.
+- An ALERT makes `P-RUN-001` review (block in the citizen profile), as a
+  hard floor.
+- A clean run passes `P-RUN-001` but never relieves any other rule, and
+  adds no assurance about paths it did not reach.
+
+**The file itself:** it must be a regular file outside the repository, of
+at most 4 MB, with no links, read like the other operator inputs.
+`--redact` removes alert details.
+
 ## Evidence and limits
 
 The evidence tier is `sandbox-observed`. It adds to static findings and

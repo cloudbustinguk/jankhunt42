@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`).
 
-**Version:** 3.4.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 3.5.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -152,6 +152,7 @@ jankhunt42 report . --logs app.log --out report.md
 jankhunt42 hunt . --focus security --panel 6 --json > hunt.json   # opt-in deep hunt plan
 jankhunt42 merge panel-*.json --md
 jankhunt42 detonate . --json             # opt-in sandbox run of the install hooks and what runs on open (references/detonate.md)
+jankhunt42 passport . --detonation /path/outside/run.json   # carry that run into the passport (P-RUN-001)
 
 # What can it hurt?
 jankhunt42 map . --json                        # jankhunt.map.v1 (templates/map.schema.json)

@@ -23,6 +23,7 @@ SKIP = [
     ("selftest", "selftest runs this suite; executing it here would recurse"),
     ("--online", "lets --verify fetch from GitHub; the suite is offline"),
     ("detonate", "needs a container engine and the detonate image; tests/test_detonate.py covers it"),
+    ("--detonation", "needs a detonate result kept outside the repository; tests/test_detonate.py covers it"),
     ("--emit-capability-approval", "needs an operator policy outside the repository; tests/test_capability_approval.py "
                                    "covers it"),
     ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "

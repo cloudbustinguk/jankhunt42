@@ -1096,6 +1096,9 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
     deterministic for a given graph.
     """
     rep = json.loads(json.dumps(report))
+    if rep.get('triggers'):
+        from jh_n8n import trigger_counts
+        rep['triggers'] = trigger_counts(rep['triggers'])
     nodes = rep["graph"]["nodes"]
     counters: Dict[str, int] = {}
     alias: Dict[str, str] = {}

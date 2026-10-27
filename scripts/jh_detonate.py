@@ -18,6 +18,7 @@ Canary values never leave the run: reports name canaries by id only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -506,6 +507,101 @@ def snapshot(root: str, dest: str) -> None:
     os.chmod(dest, 0o755)
 
 
+def tree_digest(root: str) -> Dict[str, Any]:
+    """What a run was made on, as a digest a passport can match: every path except .git (at any depth, as the
+    snapshot leaves it out), its kind, its executable bits and its content or link target. Links are never followed."""
+    h = hashlib.sha256()
+    entries = 0
+    stack = [""]
+    while stack:
+        rel_dir = stack.pop()
+        base = os.path.join(root, rel_dir) if rel_dir else root
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            names = []
+        for name in names:
+            if name == ".git":
+                continue
+            rel = rel_dir + "/" + name if rel_dir else name
+            path = os.path.join(base, name)
+            try:
+                st = os.lstat(path)
+                if stat.S_ISLNK(st.st_mode):
+                    entry: List[Any] = ["link", rel, os.readlink(path)]
+                elif stat.S_ISDIR(st.st_mode):
+                    entry = ["dir", rel]
+                    stack.append(rel)
+                elif stat.S_ISREG(st.st_mode):
+                    content = hashlib.sha256()
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(fd, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            content.update(chunk)
+                    entry = ["file", rel, st.st_mode & 0o111, content.hexdigest()]
+                else:
+                    entry = ["other", rel]
+            except OSError:
+                entry = ["unreadable", rel]
+            h.update((json.dumps(entry) + "\n").encode("utf-8"))
+            entries += 1
+    return {"digest": h.hexdigest(), "entries": entries}
+
+
+MAX_RESULT_BYTES = 4 * 1024 * 1024
+_VERDICTS = ("ALERT", "DENY", "INFO")
+
+
+def _result_problem(doc: Any) -> str:
+    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+        return "not a %s result" % SCHEMA
+    tree = doc.get("tree")
+    if not isinstance(tree, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(tree.get("digest", ""))):
+        return "no tree digest (made by a jankhunt42 older than 3.5.0?)"
+    events, cov = doc.get("events"), doc.get("coverage")
+    if not isinstance(events, list) or len(events) > 20000 or not all(
+            isinstance(e, dict) and e.get("verdict") in _VERDICTS and isinstance(e.get("kind"), str) and
+            isinstance(e.get("detail"), str) and isinstance(e.get("step", ""), str) for e in events):
+        return "events are malformed"
+    if not isinstance(cov, dict) or cov.get("state") not in ("complete", "partial") or \
+            not isinstance(cov.get("gaps"), list):
+        return "coverage is malformed"
+    return ""
+
+
+def passport_evidence(doc: Optional[Dict[str, Any]], root: str) -> Dict[str, Any]:
+    """A detonate result as passport evidence. It counts only when it was made on exactly this tree, and it can
+    only add outcomes: an ALERT needs review, while a clean run proves nothing about paths it did not reach."""
+    if doc is None:
+        return {"state": "not-supplied"}
+    problem = _result_problem(doc)
+    if problem:
+        raise ValueError("detonation result: " + problem)
+    if doc["tree"]["digest"] != tree_digest(root)["digest"]:
+        return {"state": "stale", "reason": "the run was made on a different tree: files changed since, or another "
+                                            "checkout"}
+    alerts = [{"kind": jh_graph.sanitize_text(e["kind"], 40), "detail": jh_graph.sanitize_text(e["detail"], 200),
+               "step": jh_graph.sanitize_text(e.get("step", ""), 80)} for e in doc["events"] if e["verdict"] == "ALERT"]
+    surfaces = [s for s in doc.get("surfaces") or [] if s in SURFACES] if isinstance(doc.get("surfaces"), list) else []
+    return {"state": "matched", "evidence_tier": "sandbox-observed",
+            "tool_version": jh_graph.sanitize_text(str(doc.get("version", "?")), 20), "surfaces": surfaces,
+            "counts": {"ALERT": len(alerts), "DENY": sum(1 for e in doc["events"] if e["verdict"] == "DENY")},
+            "alerts": alerts[:50],
+            "coverage": {"state": doc["coverage"]["state"], "gaps": len(doc["coverage"]["gaps"])}}
+
+
+def passport_line(ev: Dict[str, Any]) -> str:
+    """One plain line for the passport's approver view."""
+    state = ev.get("state", "not-supplied")
+    if state == "matched":
+        return "Sandbox run (sandbox-observed, coverage %s): %d ALERT(s), %d blocked network attempt(s)%s." % (
+            ev["coverage"]["state"], ev["counts"]["ALERT"], ev["counts"]["DENY"],
+            "" if ev["counts"]["ALERT"] else "; a clean run says nothing about what it did not reach")
+    if state == "stale":
+        return "Sandbox run supplied but not used: " + ev.get("reason", "made on a different tree") + "."
+    return ""
+
+
 def find_engine(prefer: Optional[str] = None) -> Optional[str]:
     for engine in ([prefer] if prefer else ["podman", "docker"]):
         if engine and shutil.which(engine):
@@ -545,7 +641,8 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
             snapshot(root, snap)
         except OSError as exc:
             raise RuntimeError("could not snapshot %s: %s" % (root, exc))
-        # plan from the snapshot, so what runs is exactly what was read
+        # plan from the snapshot, so what runs is exactly what was read; its digest lets a passport match the run
+        result["tree"] = tree_digest(snap)
         steps, gaps = plan_steps(snap, surfaces)
         if not steps:
             gaps.append("nothing to run was found (package hooks, or commands that run when the repository is opened)")
@@ -628,11 +725,11 @@ def collect(out: str, steps: List[Dict[str, Any]], canaries: List[Dict[str, Any]
     try:
         for i, step in enumerate(steps):
             raw, problem = read_guest(dir_fd, "step.%d.exit" % i, 16)
-            text = raw.decode("ascii", "replace").strip() if raw is not None else ""
+            text = raw.decode("ascii", "replace").strip() if raw is not None and not problem else ""
             code = text if re.fullmatch(r"\d{1,3}", text) else None
-            if problem == "unusable" or (raw is not None and code is None):
-                gaps.append("%s: its exit status was not a plain file the sandbox could have written honestly"
-                            % step["name"])
+            if code is None:
+                # missing, unusable, cut short or not a number: the step's receipt is incomplete
+                gaps.append("%s: no usable exit status (%s)" % (step["name"], problem or "not a plain number"))
             trace, problem = read_guest(dir_fd, "trace.%d" % i, MAX_TRACE_BYTES)
             trace_text = trace.decode("utf-8", "replace") if trace is not None else ""
             traced = trace is not None and problem != "unusable" and _started(trace_text, i)

@@ -58,6 +58,7 @@ RULES = {
     "P-EXP-001": "exposure class above the policy maximum",
     "P-CHG-001": "agent or citizen code can reach the default branch without an independent human review",
     "P-SUP-001": "package managers may resolve from a registry outside the allowed list",
+    "P-RUN-001": "the sandbox run saw a canary credential read, passed on or sent, or a persistence attempt",
 }
 PROFILES = ("standard", "citizen")
 
@@ -70,7 +71,8 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
-                "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review"},
+                "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review",
+                "P-RUN-001": "review"},
     # Registry URL prefixes or host names packages may come from (operator policy only).
     "allowed_registries": [],
     "capability_approvals": {},
@@ -87,7 +89,7 @@ CITIZEN_PRESET: Dict[str, Any] = {
     "actions": {"P-OWN-001": "block", "P-CUS-001": "block", "P-DAT-001": "block", "P-DAT-002": "block",
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
                 "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block",
-                "P-CHG-001": "block", "P-SUP-001": "block"},
+                "P-CHG-001": "block", "P-SUP-001": "block", "P-RUN-001": "block"},
     "max_exposure": "Moderate",
     "static_leads": "block",
 }
@@ -337,6 +339,15 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
         "new or unresolved requested access: review the committed comparison" if needs_review else
         "access change covered by a declared-by-operator record" if approved else
         "access comparison " + delta.get("state", "not-requested"), floor=needs_review)
+    # P-RUN-001: sandbox evidence only ever adds an outcome; it is used only when made on this exact tree
+    sandbox = facts.get("sandbox") or {}
+    alerts = (sandbox.get("counts") or {}).get("ALERT", 0) if sandbox.get("state") == "matched" else 0
+    add("P-RUN-001", max("review", _outcome_for(acts["P-RUN-001"]), key=OUTCOME_RANK.get) if alerts else "pass",
+        "%d ALERT(s) in the sandbox run (sandbox-observed): %s" % (alerts, ", ".join(sorted({
+            a["kind"] for a in sandbox.get("alerts", [])}))) if alerts else
+        {"matched": "the sandbox run raised no ALERT; that adds no assurance about paths it did not reach",
+         "stale": "a sandbox run was supplied for a different tree and was not used"}.get(
+            sandbox.get("state"), "no sandbox run supplied"), floor=bool(alerts))
 
     exposure = facts.get("exposure", "Unknown")
     # P-OWN-001

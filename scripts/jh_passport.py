@@ -20,7 +20,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_change
 import jh_capabilities
+import jh_n8n
 import jh_capability_approval
+import jh_detonate
 import jh_graph as G
 import jh_map
 import jh_frameworks
@@ -445,7 +447,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           package_sources: Optional[Dict[str, Any]] = None,
           capability_delta: Optional[Dict[str, Any]] = None,
           capability_approval_record: Optional[Dict[str, Any]] = None,
-          capability_approval_label: str = "") -> Dict[str, Any]:
+          capability_approval_label: str = "",
+          sandbox: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -494,7 +497,11 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     reg = jh_registry.assess(pkg, eff.get("allowed_registries") or [])
     approval = jh_capability_approval.evaluate(capability_approval_record,
         capability_delta or jh_capabilities.not_requested(), eff, jh_policy.policy_hash(eff), capability_approval_label)
+    sandbox = sandbox or {"state": "not-supplied"}
+    if sandbox["state"] == "stale":
+        warns.append("the sandbox run (--detonation) was made on a different tree and was not used")
     facts = {
+        "sandbox": sandbox,
         "capability_approval": approval,
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "files_scanned": scan_files,
@@ -548,6 +555,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "schema_version": PASSPORT_SCHEMA,
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "capability_approval": approval,
+        "sandbox_run": sandbox,
+        "triggers": jh_n8n.trigger_counts((map_report or {}).get('triggers') or jh_n8n.trigger_summary([])),
         "tool": TOOL,
         "tool_version": VERSION,
         "source_revision": source_revision,
@@ -632,6 +641,10 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
     """Shareable passport: no hostnames, labels, owners, or snippets."""
     import json
     rep = json.loads(json.dumps(report))
+    if rep.get('triggers'):
+        rep['triggers'] = jh_n8n.trigger_counts(rep['triggers'])
+    for alert in (rep.get("sandbox_run") or {}).get("alerts", []):
+        alert["detail"] = "redacted"            # paths and hosts from the run
     approval = rep.get("capability_approval") or {}
     for key in ("approved_by", "subject_id", "rationale", "record"):
         if key in approval:
@@ -761,12 +774,21 @@ def markdown(p: Dict[str, Any]) -> str:
                                    " (working tree dirty)" if p["subject"].get("working_tree_dirty") else ""),
              ""]
     gov = p.get("governance") or {}
+    trigger_text = jh_n8n.trigger_line(p.get('triggers'))
+    if trigger_text:
+        lines += ['## Declared triggers', '', trigger_text, jh_n8n.TRIGGER_NOTE, '']
     if p.get("capability_delta", {}).get("state", "not-requested") != "not-requested":
         lines += ["## Requested access changes", ""] + ["- " + jh_capabilities.markdown_line(line) for line in
                   jh_capabilities.approver_lines(p["capability_delta"])] + [""]
         approval_line = jh_capability_approval.approver_line(p.get("capability_approval") or {})
         if approval_line:
             lines += [jh_capabilities.markdown_line(approval_line), ""]
+    sandbox_line = jh_detonate.passport_line(p.get("sandbox_run") or {})
+    if sandbox_line:
+        lines += ["## Sandbox run", "", jh_capabilities.markdown_line(sandbox_line), ""]
+        for a in (p.get("sandbox_run") or {}).get("alerts", [])[:20]:
+            lines.append("- " + jh_capabilities.markdown_line("ALERT %s: %s (%s)" % (a["kind"], a["detail"], a["step"])))
+        lines += [""] if (p.get("sandbox_run") or {}).get("alerts") else []
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
     lines += ["## Why this decision", ""]

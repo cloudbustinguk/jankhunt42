@@ -44,7 +44,7 @@ def _endpoint(row: Any) -> Tuple[str, int]:
     return host, port
 
 
-def read_external_json(path: str, root: str, description: str = "network ceiling") -> Any:
+def read_external_json(path: str, root: str, description: str = "network ceiling", limit: int = MAX_BYTES) -> Any:
     """Read a bounded regular file outside both root spellings; no stdin."""
     absolute, resolved = os.path.abspath(path), os.path.realpath(path)
     roots = {os.path.abspath(root), os.path.realpath(root)}
@@ -70,16 +70,16 @@ def read_external_json(path: str, root: str, description: str = "network ceiling
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
                 raise ValueError(description + " requires a regular file without hard links")
-            if info.st_size > MAX_BYTES:
+            if info.st_size > limit:
                 raise ValueError(description + " exceeds the size limit")
-            raw = stream.read(MAX_BYTES + 1)
+            raw = stream.read(limit + 1)
             after = os.fstat(stream.fileno())
             fingerprint = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns, s.st_nlink)
             if fingerprint(info) != fingerprint(after):
                 raise ValueError(description + " changed while it was read")
     except OSError as exc:
         raise ValueError("cannot read operator " + description) from exc
-    if len(raw) > MAX_BYTES:
+    if len(raw) > limit:
         raise ValueError(description + " exceeds the size limit")
     try:
         doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique)

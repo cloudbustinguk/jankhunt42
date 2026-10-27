@@ -123,6 +123,10 @@ def inventory(report, items):
         if principal["kind"] not in ("application", "workload", "identity"):
             continue
         sid, subject = principal["id"], _subject(principal)
+        trigger = principal['attributes'].get('trigger')
+        if trigger:
+            add('trigger', subject, dict(trigger), 'receive' if trigger['direction'] == 'inbound' else 'run-unattended',
+                principal['evidence_refs'], uncertain=True)
         reaches, mutation_reach = {}, {}
         for impact in ("confidentiality", "integrity", "availability"):
             reach, depth_capped = G.reach(edges, sid, impact, report["scope"]["max_depth"], adjacency[impact])
@@ -332,7 +336,7 @@ def compare(base, head, base_items, head_items, ceiling, context):
     persisting = sorted([hu[k] for k in hu.keys() & bu.keys()], key=lambda u: u["id"])
     reasons = sorted(set(br + hr))
     counts = {kind: sum(r["kind"] == kind for r in requests) for kind in
-              ("network", "credential", "authority", "production", "agent", "binding")}
+              ("network", "credential", "authority", "production", "agent", "binding", "trigger")}
     counts.update(total=len(requests), lower_bound=bool(reasons), needs_approval=sum(r["approval"] == "needs-approval" for r in requests),
                   unknown=len(unknowns), unchanged_unknown=len(persisting), before=len(before), after=len(after))
     context_hash = digest(context)

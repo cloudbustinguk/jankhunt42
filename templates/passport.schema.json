@@ -29,6 +29,21 @@
     "graph_ref"
   ],
   "properties": {
+    "sandbox_run": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["not-supplied", "stale", "matched"]},
+        "evidence_tier": {"const": "sandbox-observed"},
+        "reason": {"type": "string"},
+        "tool_version": {"type": "string"},
+        "surfaces": {"type": "array", "items": {"enum": ["install", "open"]}},
+        "counts": {"type": "object", "properties": {"ALERT": {"type": "integer"}, "DENY": {"type": "integer"}}},
+        "alerts": {"type": "array", "maxItems": 50, "items": {"type": "object", "properties": {
+          "kind": {"type": "string"}, "detail": {"type": "string"}, "step": {"type": "string"}}}},
+        "coverage": {"type": "object", "properties": {"state": {"enum": ["complete", "partial"]}, "gaps": {"type": "integer"}}}
+      }
+    },
     "capability_approval": {
       "type": "object",
       "required": ["schema", "state", "assurance", "reasons"],
@@ -763,6 +778,66 @@
             },
             "allowed_registries": {
               "type": "array"
+            }
+          }
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "required": [
+        "counts",
+        "note"
+      ],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "required": [
+            "total",
+            "inbound",
+            "unattended",
+            "anonymous_inbound",
+            "auth_unknown"
+          ],
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "note": {
+          "type": "string"
+        },
+        "entries_withheld": {
+          "type": "boolean"
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "node",
+              "declaration",
+              "evidence_refs"
+            ],
+            "properties": {
+              "node": {
+                "type": "string"
+              },
+              "declaration": {
+                "type": "object"
+              },
+              "evidence_refs": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

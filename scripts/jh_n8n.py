@@ -239,6 +239,7 @@ def parse(path, text):
         comparable = all(_normalized(n['raw']['parameters']) == n['raw']['parameters'] for n in nodes)
         comparable = comparable and _normalized(root.get('settings', {})) == root.get('settings', {})
         out.append(dict(key=workflow_key, name=root.get('name', 'workflow'), nodes=nodes, links=links,
+                        active=root.get('active'), settings=root.get('settings', {}),
                         definition=json.dumps(context, sort_keys=True) if comparable else None))
     return out
 
@@ -256,6 +257,85 @@ def definitions(items):
             for node in flow['nodes']:
                 out.setdefault(node['key'], []).append(flow['definition'])
     return {k: sorted(v) for k, v in out.items()}
+
+
+TRIGGER_VERSIONS = {'webhook': (1, 1.1, 2, 2.1, 2.2), 'scheduleTrigger': (1, 1.1, 1.2, 1.3, 1.4)}
+TRIGGER_LIMIT = 100
+TRIGGER_NOTE = 'Declared triggers; deployment, public reach and actual activation are unverified.'
+
+
+def trigger(node, active=None, settings=None):
+    """Value-free facts from exact upstream parameter names; no path/cron hashes.
+
+    Other parameters remain in private workflow equivalence. Authentication
+    is a mode declaration, never proof of an effective grant.
+    """
+    typ = node['type'].removeprefix('n8n-nodes-base.')
+    if node['type'] != 'n8n-nodes-base.' + typ or typ not in TRIGGER_VERSIONS:
+        return None
+    p, version = node['parameters'], node.get('typeVersion')
+    known = not isinstance(version, bool) and version in TRIGGER_VERSIONS[typ]
+    fact = dict(kind='webhook' if typ == 'webhook' else 'schedule',
+                direction='inbound' if typ == 'webhook' else 'unattended', verification='declared',
+                activation='unverified', known_version=known, disabled=node.get('disabled') is True,
+                exported_active=active if isinstance(active, bool) else None)
+    if typ == 'webhook':
+        multiple = p.get('multipleMethods', node.get('multipleMethods', False)) is True
+        method = p.get('httpMethod', ['GET', 'POST'] if multiple else 'GET') if known else None
+        methods = method if isinstance(method, list) else [method]
+        allowed = ('GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE')
+        fact['methods'] = sorted(set(methods)) if methods and all(isinstance(m, str) and m in allowed for m in methods) else []
+        auth = p.get('authentication', 'none') if known else None
+        fact['authentication'] = auth if auth in ('none', 'basicAuth', 'headerAuth', 'jwtAuth', 'n8nOAuth2') else 'unknown'
+        path = p.get('path')
+        fact['route'] = 'expression' if dynamic(path) else 'literal-withheld' if isinstance(path, str) and path else 'missing'
+        options = p.get('options') if isinstance(p.get('options'), dict) else {}
+        fact['ip_filter_declared'] = bool(options.get('ipWhitelist'))
+        fact['request_filter_declared'] = bool(options.get('onlyRunIf'))
+        if fact['authentication'] == 'n8nOAuth2':
+            access = p.get('requireExecuteAccess', True)
+            fact['require_execute_access'] = access if isinstance(access, bool) else None
+            fact['trusted_source'] = 'declared' if p.get('trustedSource') else 'instance-unverified'
+    else:
+        rule = p.get('rule') if isinstance(p.get('rule'), dict) else {}
+        intervals = rule.get('interval') if isinstance(rule.get('interval'), list) and known else []
+        fields = ('seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'cronExpression')
+        fact['rule_count'] = len(intervals)
+        fact['interval_fields'] = sorted({r['field'] if isinstance(r, dict) and r.get('field') in fields else 'unknown'
+                                          for r in intervals})
+        zone = settings.get('timezone') if isinstance(settings, dict) else None
+        fact['timezone_source'] = 'expression' if dynamic(zone) else 'workflow-declared' if isinstance(zone, str) and zone else 'instance-unverified'
+    return fact
+
+
+def trigger_summary(nodes):
+    entries, counts = [], dict(total=0, inbound=0, unattended=0, anonymous_inbound=0, auth_unknown=0)
+    for node in sorted(nodes, key=lambda n: n['id']):
+        fact = node['attributes'].get('trigger')
+        if not fact:
+            continue
+        counts['total'] += 1
+        counts[fact['direction']] += 1
+        counts['anonymous_inbound'] += fact.get('authentication') == 'none'
+        counts['auth_unknown'] += fact.get('authentication') == 'unknown'
+        if len(entries) < TRIGGER_LIMIT:
+            entries.append(dict(node=node['id'], declaration=fact, evidence_refs=node['evidence_refs'][:10]))
+    return dict(counts=counts, entries=entries, omitted=counts['total'] - len(entries), note=TRIGGER_NOTE)
+
+
+def trigger_counts(summary):
+    counts = summary.get('counts', {})
+    return dict(counts={k: counts.get(k, 0) if isinstance(counts.get(k, 0), int) else 0
+                        for k in ('total', 'inbound', 'unattended', 'anonymous_inbound', 'auth_unknown')},
+                note=TRIGGER_NOTE, entries_withheld=True)
+
+
+def trigger_line(summary):
+    c = (summary or {}).get('counts') or {}
+    if not c.get('total'):
+        return ''
+    return '%d inbound (%d declared without authentication, %d unknown auth), %d unattended; activation unverified.' % (
+        c['inbound'], c['anonymous_inbound'], c['auth_unknown'], c['unattended'])
 
 
 # Explicit version sets: future and legacy nodes outside these tables stay opaque.

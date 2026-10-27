@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "3.4.1"
+  version: "3.5.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -146,7 +146,7 @@ How to use it:
 - Never upgrade a connection string to a grant, an import to a data flow, or a `secretKeyRef` to a disclosed secret.
 - For a diff, `--base` compares committed trees only; mention escalations and newly reachable sensitive assets first.
 - What-if results are hypothetical. Present them as "under this assumption", never as the current state.
-- **n8n workflows** (exported JSON) are mapped too: HTTP calls, databases and sheets with their operation, and credentials by name. Expressions and Code nodes stay unknown; nothing is run. Details: `references/n8n.md`.
+- **n8n workflows** (exported JSON) are mapped too: HTTP calls, databases and sheets with their operation, credentials by name, and Webhook and Schedule triggers (a new trigger needs review under `--base`). Expressions and Code nodes stay unknown; nothing is run. Details: `references/n8n.md`.
 
 Details, edge semantics, adapters, inventory format, and limitations: `references/connectivity.md`.
 
@@ -163,7 +163,7 @@ jankhunt42 passport . --branch-rules ../rules/app.json   # an operator's ruleset
 
 How to use it:
 
-- Lead with the decision **and its rule reasons** (`P-COV-001`, `P-OWN-001`, `P-CUS-001`, `P-DAT-00x`, `P-SEC-001`, `P-AGT-001`, `P-AI-001`, `P-OPS-001`, `P-EVD-001`, `P-JNK-001`, `P-EXP-001`, `P-CHG-001`, `P-SUP-001`). Never summarize it as a score.
+- Lead with the decision **and its rule reasons** (`P-COV-001`, `P-OWN-001`, `P-CUS-001`, `P-DAT-00x`, `P-SEC-001`, `P-AGT-001`, `P-AI-001`, `P-OPS-001`, `P-EVD-001`, `P-JNK-001`, `P-EXP-001`, `P-CHG-001`, `P-SUP-001`, `P-CAP-001`, `P-RUN-001`). Never summarize it as a score.
 - `change_control` is provider-verified only from a ruleset export outside the repository; Terraform in the repository is a declaration. `package_sources` lists where each package manager resolves from; a manager with no committed registry config is unknown, not "public".
 - The `alignment` section and the "framework orientation" view map rules to NIST AI RMF subcategories and AIGP domains. Present it as orientation for a governance programme, never as compliance or certification (`references/ai-governance.md`).
 - `insufficient-evidence` is a real outcome: coverage was partial, mandatory evidence is missing, or nothing could be assessed. It never becomes a pass.
@@ -198,7 +198,7 @@ Failure classes, the agent blast radius, the profile table, and limits: `referen
 
 `jankhunt42 detonate PATH` runs the repository's own install hooks (npm `preinstall`/`install`/`postinstall`/`prepare`, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks and helper commands, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. `--surface install|open|all` picks which (default all). The network is off, the root filesystem read-only, every capability dropped, and fresh canary credentials sit in a throwaway home. It reports what the hooks *try*: network attempts and DNS names (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Evidence tier `sandbox-observed`: it adds to static findings and never refutes them.
 
-**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. Details: `references/detonate.md`.
+**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`; if either is missing, say so and stop rather than run the code any other way. Never run the hooks outside the sandbox. Report ALERTs first, then the coverage state and its gaps; never print canary values. To carry a run into a passport, save `detonate --json` outside the repository and pass `passport --detonation PATH`: it counts only if made on the exact same tree, and its ALERTs make `P-RUN-001` review (block in the citizen profile); a clean run never relieves another rule. Details: `references/detonate.md`.
 
 ## Deep hunt (opt-in)
 

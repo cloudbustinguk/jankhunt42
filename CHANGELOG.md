@@ -4,6 +4,48 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [3.5.0] — 2026-10-27
+
+### Added
+
+- **A sandbox run becomes passport evidence.** Save `detonate --json`
+  outside the repository and pass `passport --detonation PATH`.
+  - The run counts only if it was made on exactly the tree the passport
+    assesses: every result now records a digest of its tree's files,
+    executable bits and links. A run on any other tree is shown as not
+    used.
+  - Its ALERTs (a canary credential read, passed on or sent, or a
+    persistence attempt) make the new rule `P-RUN-001` review, or block in
+    the citizen profile, as a hard floor.
+  - Sandbox evidence only ever adds an outcome. A clean run relieves
+    nothing and proves nothing about paths it did not reach.
+
+  The passport gains `sandbox_run` and a "Sandbox run" section, and
+  `--redact` removes alert details. Mutants M110 to M112.
+
+- **n8n triggers.** Webhook and Schedule Trigger nodes now show how a
+  workflow starts: from an outside request, or unattended.
+  - With `passport --base`, a new or changed trigger is a request for IT to
+    review, even when the export marks the workflow inactive.
+  - Only facts are reported: the methods, the authentication mode, whether
+    a filter is declared, and the schedule's units. Routes and cron text
+    never appear.
+
+  Designed and built by Codex (proposal A11b, mutants M100 to M105), with
+  every matched n8n parameter name checked against the upstream node
+  descriptions.
+
+### Security
+
+- detonate: a missing exit status, or one cut short, now makes coverage
+  partial. Before, a valid trace with no usable exit status still read as
+  complete. Found by Codex while verifying 3.4.1.
+
+### Documentation
+
+- The passport rule table now lists `P-CAP-001` (missing since 3.1.0) and
+  `P-RUN-001`.
+
 ## [3.4.1] — 2026-10-27
 
 ### Security

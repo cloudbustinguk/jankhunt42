@@ -91,6 +91,8 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
 | `P-CHG-001` | `require.change_control` and code can reach the default branch without an independent human review: no pull-request rule with an approval, or a GitHub App or deploy key that can bypass the rules (weaker gaps such as no last-push approval or no required checks: review) | pass unless required; then review (unknown → insufficient-evidence) |
 | `P-SUP-001` | `allowed_registries` is set and a declared or lockfile-recorded package source is outside it (a manager with no committed registry config: insufficient-evidence when `require.registry_pinning`) | pass unless registries are listed; then review |
+| `P-CAP-001` | `--base REF` and the change asks for new, expanded or unresolved access (see `references/capability-delta.md`); a matching operator record can cover concrete requests (`references/capability-approval.md`) | pass without `--base`; otherwise review (hard floor) |
+| `P-RUN-001` | `--detonation PATH` was made on this exact tree and its sandbox run raised an ALERT: a canary credential read, passed on or sent, or a persistence attempt (`references/detonate.md`) | pass when not supplied, made on another tree, or clean; otherwise review (hard floor) |
 
 Under the default `static_leads: review`, static leads never block on their
 own: an observed `DELETE` or a declared connection asks for grant

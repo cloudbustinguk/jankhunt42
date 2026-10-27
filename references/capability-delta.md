@@ -77,3 +77,10 @@ Not yet covered:
 - (recorded approvals of a delta are in `references/capability-approval.md`).
 
 A passport acceptance record is separate from approving a change.
+
+
+**n8n triggers:** a Webhook or Schedule Trigger in an n8n workflow is a
+`trigger` request, separate from outbound network access. A new or changed
+trigger needs review under `P-CAP-001`, even when the export marks it
+inactive or disabled. Routes and schedules are compared in full, but never
+published. See [n8n triggers](n8n.md#inbound-and-unattended-triggers).
