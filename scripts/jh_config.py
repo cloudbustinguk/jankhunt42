@@ -111,14 +111,14 @@ def _parse_raw(path: str, contents: Optional[str] = None) -> Tuple[Optional[dict
                 return tomllib.loads(contents), None
             with open(path, "rb") as fh:
                 return tomllib.load(fh), None
-        except (OSError, tomllib.TOMLDecodeError) as exc:  # type: ignore[attr-defined]
+        except (OSError, tomllib.TOMLDecodeError, RecursionError) as exc:  # type: ignore[attr-defined]
             return None, "could not parse %s: %s" % (path, exc)
     try:
         if contents is not None:
             return json.loads(contents), None
         with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh), None
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         return None, "could not parse %s: %s" % (path, exc)
 
 

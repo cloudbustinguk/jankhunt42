@@ -71,6 +71,10 @@ RULES: List[Rule] = [
           r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b",
           r"https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}",
           r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
+          # a database connection string (appsettings.json, web.config, a DSN in code) with its password inline
+          r"(?i)\b(?:server|host|data\s+source)\s*=[^\"'\n]*?\b(?:password|pwd)\s*[:=]\s*['\"]?[^;\"'\s${%<]{6,}",
+          # a JWT whose payload grants a privileged role (a Supabase service-role key)
+          r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
           r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])(?:(?!\1)[^\n]){8,}\1",
           # a quoted key ("db_password": "...") or a prefixed name (DB_PASSWORD = "..."): the value must look
           # like a credential (no spaces, a letter and a digit), so UI text ("password": "Mot de passe") is not
@@ -141,6 +145,11 @@ RULES: List[Rule] = [
           r"\bssl\._create_unverified_context\b",
           r"\bInsecureSkipVerify\s*:\s*true\b",
           r"\bcurl\b[^\n]*(?:\s-k\b|\s--insecure\b)",
+          r"\bverify_mode\s*=\s*(?:ssl\.)?CERT_NONE\b",
+          r"\bcheck_hostname\s*=\s*False\b",
+          r"\bcert_reqs\s*=\s*ssl\.CERT_NONE\b",       # the code view blanks strings: "CERT_NONE" is not seen
+          r"\bServerCertificate(?:Custom)?ValidationCallback\s*\+?=\s*[^;\n]*=>\s*true\b",
+          r"\bDangerousAcceptAnyServerCertificateValidator\b",
       )),
     R("JH106", "Unsafe deserialization", "critical", "security",
       "Native deserializers can execute code or construct arbitrary objects when fed hostile data.",
@@ -181,7 +190,7 @@ RULES: List[Rule] = [
     R("JH111", "Remote script piped to shell", "critical", "security",
       "curl/wget piped to a shell executes whatever the remote server returns, with no integrity check.",
       "Download, verify a checksum/signature, inspect, then execute; pin the version and URL.",
-      confidence="high", target="nocomment", langs=SCRIPT + ("yaml", "docker"),
+      confidence="high", target="nocomment", langs=SCRIPT + ("yaml", "docker", "json"),
       patterns=(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b",)),
     R("JH112", "Insecure RNG for secrets", "minor", "security",
       "random/Math.random are predictable and must not generate tokens, salts, keys, or nonces.",
@@ -1005,6 +1014,33 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             pats = _COMPILED.get(rule.id) or []
             if not pats:
                 continue
+            if rule.id == "JH111" and sf.lang == "json":
+                # in JSON only package.json scripts run: each one checked on its own, at the line that holds it
+                try:
+                    scripts = _npm_scripts(sf)
+                except (RecursionError, ValueError, IndexError):
+                    scripts = []                # never let one odd package.json stop the scan
+                for line_no, script in scripts:
+                    for pat in pats:
+                        m = pat.search(script)
+                        if not m:
+                            continue
+                        severity = _pipe_to_shell_severity(script, m.group(0))
+                        if severity is None:
+                            break
+                        confidence = message = None
+                        if severity != rule.severity:
+                            message = rule.message + " The script comes from an official installer over TLS: the " \
+                                                     "publisher is known, but the content is still unpinned and unverified."
+                        if "test" in sf.kinds or is_test_path(sf.rel):
+                            severity, confidence = "minor", "low"
+                            message = rule.message + " It is in test code, where it is usually test data."
+                        f = make_finding(rule, sf, line_no, severity=severity, confidence=confidence, message=message)
+                        _example_context(f)
+                        if acceptor.accept(f):
+                            result.findings.append(f)
+                        break
+                continue
             lines = getattr(sf, rule.target)
             ignore = _IGNORES.get(rule.id)
             for idx, line in enumerate(lines, 1):
@@ -1132,6 +1168,20 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             m = pat.search(line, m.end())
                         if not m:
                             continue
+                        if "data\\s+source" in pat.pattern:
+                            host = _CONN_HOST_RE.search(m.group(0))
+                            if host and _local_db_host(host.group(1)):
+                                severity, confidence = "minor", "low"
+                                message = ("A database password in a connection string for a database on this machine "
+                                           "or in a local container (%s): usually a development default. Keep it to "
+                                           "local work, and make sure it is used nowhere else." % host.group(1)[:40])
+                        if pat.pattern.startswith(r"\beyJ"):
+                            while m and _jwt_role(m.group(0)) not in _PRIVILEGED_JWT_ROLES:
+                                m = pat.search(line, m.end())   # an anon or user token: public by design
+                            if not m:
+                                continue
+                            message = ("A Supabase service-role key is in the code. It bypasses row-level security "
+                                       "and gives full access to the database; in front-end code every visitor has it.")
                         provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
                         if provider and _inside_base64_blob(line, m.start(), m.end()):
                             continue    # a provider-shaped run by chance inside embedded binary (a font, an image)
@@ -1190,6 +1240,121 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule
     return result
+
+
+def _npm_scripts(sf: SourceFile) -> List[Tuple[int, str]]:
+    """A package.json's top-level scripts as (line, decoded command): npm runs them, the lifecycle hooks (preinstall,
+    install, postinstall, prepare) on every install. The file is walked as JSON (members of the top-level object
+    only, any white space), and each string is decoded by the JSON decoder itself. Anything else, or JSON that does
+    not parse, has none."""
+    import json
+    if "package_json" not in sf.kinds:
+        return []
+    text = sf.text[1:] if sf.text.startswith("\ufeff") else sf.text
+    try:
+        json.loads(text)
+    except RecursionError:
+        pass                                # deeper than this Python's decoder goes (npm reads it); the walk has no limit
+    except ValueError:
+        return []
+    n = len(text)
+
+    def ws(i: int) -> int:
+        while i < n and text[i] in " \t\n\r":
+            i += 1
+        return i
+
+    def string_end(i: int) -> int:          # i at an opening quote; the index after its closing quote
+        i += 1
+        while text[i] != '"':
+            i += 2 if text[i] == "\\" else 1
+        return i + 1
+
+    def value_end(i: int) -> int:           # i at a value; the index after it (no recursion: any depth)
+        depth = 0
+        while True:
+            c = text[i]
+            if c == '"':
+                i = string_end(i)
+            elif c in "{[":
+                depth, i = depth + 1, i + 1
+            elif c in "}]":
+                depth, i = depth - 1, i + 1
+            elif c in ",: \t\n\r":
+                i += 1
+            else:
+                while i < n and text[i] not in ",:}] \t\n\r":
+                    i += 1
+            if depth == 0:
+                return i
+
+    def members(i: int) -> List[Tuple[str, int, int]]:    # i at "{": (key, value start, value end)
+        out, i = [], ws(i + 1)
+        while text[i] != "}":
+            key_end = string_end(i)
+            key = json.loads(text[i:key_end])
+            start = ws(ws(key_end) + 1)
+            end = value_end(start)
+            out.append((key, start, end))
+            i = ws(end)
+            if text[i] == ",":
+                i = ws(i + 1)
+        return out
+
+    top = ws(0)
+    if top >= n or text[top] != "{":
+        return []
+    top_members = {key: (start, end) for key, start, end in members(top)}       # the last of each key, as json.loads
+    if "scripts" not in top_members or text[top_members["scripts"][0]] != "{":
+        return []
+    found = []
+    for start, end in {key: (s, e) for key, s, e in members(top_members["scripts"][0])}.values():
+        if text[start] == '"':
+            value = json.loads(text[start:end])
+            if value:
+                found.append((text.count("\n", 0, start) + 1, value))
+    return found
+
+
+_CONN_HOST_RE = re.compile(r"(?i)\b(?:server|host|data\s+source)\s*=\s*(?:tcp:)?([^;\"'\s,]+)")
+_LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "(local)", ".", "(localdb)",
+                   "host.docker.internal"}
+
+
+def _loopback_address(host: str) -> bool:
+    import ipaddress
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_db_host(host: str) -> bool:
+    """localhost, loopback, SQL Server's local names, or a single-label name (a container or compose service)."""
+    h = host.lower().split("\\")[0]
+    h = h.rsplit(":", 1)[0] if h.count(":") == 1 else h        # host:port, not an IPv6 address
+    if h in _LOCAL_DB_HOSTS or h.startswith("(localdb)") or _loopback_address(h):
+        return True
+    return "." not in h and ":" not in h and not h.replace("_", "").replace("-", "").isdigit()
+
+
+def _jwt_role(token: str) -> Optional[str]:
+    """The `role` claim of a JWT's payload, or None when it is not a readable JWT."""
+    import base64
+    import json
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    except (ValueError, TypeError, RecursionError):
+        return None
+    role = payload.get("role") if isinstance(payload, dict) else None
+    return role if isinstance(role, str) else None
+
+
+# Supabase keys are JWTs: `anon` is public by design, these bypass row-level security
+_PRIVILEGED_JWT_ROLES = {"service_role", "supabase_admin"}
 
 
 # Pattern rules whose matches in test code are usually test data.

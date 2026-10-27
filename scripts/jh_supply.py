@@ -65,7 +65,7 @@ def _read_text(path: str, limit: int = MAX_EVIDENCE_BYTES) -> Optional[str]:
 def _json(text: str) -> Optional[Any]:
     try:
         return json.loads(text)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return None
 
 
@@ -725,7 +725,7 @@ def _decode_payload(payload: Any) -> Optional[Dict[str, Any]]:
         return None
     try:
         value = json.loads(raw.decode("utf-8", "replace"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return value if isinstance(value, dict) else None
 

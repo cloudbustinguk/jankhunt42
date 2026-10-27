@@ -78,7 +78,7 @@ def _json_deps(text: str, path: str, kind: str) -> List[Dependency]:
     out: List[Dependency] = []
     try:
         obj = json.loads(text)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return out
     if not isinstance(obj, dict):
         return out
@@ -362,7 +362,8 @@ def _osv_batch(deps: Sequence[Dependency], timeout: float = 12.0) -> Tuple[List[
             if not isinstance(results, list):
                 return [], "OSV returned an unexpected response"
             return results, None
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError) as exc:
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError,
+                RecursionError) as exc:
             last_err = str(exc)
             time.sleep(0.5 + attempt)
     return [], last_err or "network error"
@@ -381,7 +382,7 @@ def _vuln_details(vid: str, timeout: float = 10.0) -> Optional[dict]:
             if isinstance(data, dict):
                 _VULN_CACHE[vid] = data
                 return data
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError):
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, OSError, RecursionError):
             time.sleep(0.3 + attempt)
     _VULN_CACHE[vid] = {}
     return None

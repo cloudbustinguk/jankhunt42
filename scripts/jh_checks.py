@@ -1096,7 +1096,7 @@ def _jwt_role(value: str) -> str:
     import json
     try:
         payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return ""
     return str(payload.get("role", "")) if isinstance(payload, dict) else ""
 
@@ -1383,6 +1383,10 @@ _OVERRIDE_RES = (
     re.compile(r"(?i)\b(?:silently|secretly|covertly)\s+(?:run|execute|send|upload|post|copy|forward|install|"
                r"download|exfiltrate)\b"),
 )
+# Hidden only: in visible text "don't ask the user about routine edits" is a style preference; inside an HTML
+# comment, which the user never sees rendered, it is an instruction to bypass them.
+_HIDDEN_NO_ASK_RE = re.compile(r"(?i)\b(?:do\s+not|don'?t|never)\s+(?:ask|consult|check\s+with|confirm\s+with)\s+"
+                               r"(?:the\s+)?user\b")
 _COMMAND_RE = re.compile(r"(?i)(?:\b(?:curl|wget|ncat|scp|bash|zsh|powershell|pwsh|iex|invoke-expression|"
                          r"invoke-webrequest)\b|\bnc\s+-|\bsh\s+-c\b|\bbase64\s+(?:-d|--decode)\b|https?://)")
 _CREDENTIAL_RE = re.compile(r"(?i)(?:~/\.ssh|\bid_rsa\b|\bid_ed25519\b|\.aws/credentials|\.npmrc\b|\.pypirc\b|\.netrc\b|"
@@ -1450,6 +1454,8 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
         what = []
         if any(p.search(body) for p in _OVERRIDE_RES):
             what.append("an instruction override")
+        elif _HIDDEN_NO_ASK_RE.search(body):
+            what.append("an instruction to act without asking the user")
         if _COMMAND_RE.search(body):
             what.append("a command or URL")
         if _CREDENTIAL_RE.search(body):
@@ -1909,7 +1915,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
 def _mcp(sf: SourceFile) -> List[jh_agent.McpServer]:
     try:
         return [s for s in jh_agent.mcp_servers(sf.rel, sf.text) if not s.disabled]
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
 
 
@@ -2522,6 +2528,28 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
+_SERVER_TLS_RE = re.compile(r"\bPROTOCOL_TLS_SERVER\b|\bPurpose\.CLIENT_AUTH\b|\bserver_side\s*=\s*True\b")
+
+
+def _server_tls_context(code: Sequence[str], i: int) -> bool:
+    """True when the setting on line i belongs to a server's TLS context: `X.verify_mode = ...` where X was made as
+    a server context above (within 40 lines), or a call on this line with server_side=True."""
+    if re.search(r"\bserver_side\s*=\s*True\b", code[i]):
+        return True
+    m = re.match(r"\s*([A-Za-z_][\w.]*)\.(?:verify_mode|check_hostname)\s*=", code[i])
+    if not m:
+        return False
+    made = re.compile(r"(?:^|[^\w.])%s\s*=\s*[^=\n]*?\b(?:SSLContext|create_default_context)\s*\(" % re.escape(m.group(1)))
+    for j in range(i - 1, max(-1, i - 40), -1):
+        if made.search(code[j]):
+            expr, k = code[j], j                    # the constructor, until its parentheses close
+            while expr.count("(") > expr.count(")") and k + 1 < min(i, j + 8):
+                k += 1
+                expr += " " + code[k]
+            return bool(_SERVER_TLS_RE.search(expr))
+    return False
+
+
 @check("tls_verify_disabled")
 def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
     """JH105. `verify=False` is a TLS setting only for HTTP clients; on any
@@ -2535,7 +2563,9 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             if "insecure" in pat.pattern and re.search(r"\b(?:expect|assert\w*)\s*\(|\.to[A-Z]\w*\s*\(", line):
                 break                       # an expected value in a test (toMatchObject({insecure: true}))
-            if "verify" in pat.pattern:
+            if ("CERT_NONE" in pat.pattern or "check_hostname" in pat.pattern) and _server_tls_context(sf.code, i):
+                break                       # a server not asking clients for certificates: the default, not a hole
+            if pat.pattern.startswith(r"\bverify\s*="):
                 callee = _enclosing_callee(sf.code, i, m.start())
                 if callee is None:
                     # `session.verify = False` is the TLS switch of a client object

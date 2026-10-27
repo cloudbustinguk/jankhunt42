@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.0.0"
+VERSION = "4.0.1"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -824,9 +824,9 @@ def load_source(path: Path, root: Path) -> Optional[SourceFile]:
 
 # wider than JH101's detection on purpose: prefixed names (AWS_SECRET_ACCESS_KEY) and quoted keys
 # ("db_password": ...) are redacted whatever the value looks like
-_SECRET_LINE_RE = re.compile(
-    r"(?i)(\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b"
-    r"['\"]?\s*[:=]\s*['\"])([^'\"\n]{4,})(['\"])"
+_SECRET_KEY_RE = re.compile(
+    r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b"
+    r"['\"]?\s*[:=]\s*(?=['\"])"
 )
 _TOKEN_RES = [
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
@@ -847,14 +847,87 @@ _TOKEN_RES = [
     re.compile(r"\bdop_v1_[a-f0-9]{64}\b"),
     re.compile(r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b"),
     re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"),
+    # any JWT: a service-role key is a credential, and an anon key gains nothing from being shown
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),
 ]
+# the password inside a connection string or DSN: Password=...; or Pwd=...;
+_CONN_PASSWORD_RE = re.compile(r"(?i)\b(?:password|pwd)\s*=\s*")
+_BARE_VALUE_END_RE = re.compile(r"[;\"'\s]")
+
+
+def _closing_quote(text: str, quote: str, start: int, stop: int) -> int:
+    """Where a quoted value opened just before start closes; stop when it does not close before stop. Inside it a
+    doubled delimiter is an escaped quote (the DSN rule), whichever way the source spells the delimiter, and a
+    one-character delimiter after a backslash is escaped too (libpq's rule and most languages'; also \\\\' as source
+    spells it, so a value read either way is redacted whole, or more)."""
+    i = start
+    while True:
+        end = text.find(quote, i, stop)
+        if end < 0:
+            return stop
+        if len(quote) == 1 and end > start and text[end - 1] == "\\":
+            i = end + 1                     # \' or \\' inside the value
+            continue
+        if text.startswith(quote, end + len(quote)):
+            i = end + 2 * len(quote)        # a doubled delimiter inside the value: "", '', """" or \"\"
+            continue
+        return end
+
+
+def _value_spans(text: str, key_re: "re.Pattern[str]", quotes: Tuple[str, ...], bare: bool, shortest: int,
+                 line: bool) -> List[Tuple[int, int]]:
+    """Where each value after a key_re match lies, each found on its own. A quoted value runs to its own closing quote
+    (_closing_quote), spaces and semicolons included; with bare, an unquoted one runs to the next ; or white space.
+    With line, a value that does not close ends with its line. Values shorter than shortest are skipped."""
+    spans = []
+    for m in key_re.finditer(text):
+        start = m.end()
+        quote = next((q for q in quotes if text.startswith(q, start)), "")
+        if not quote and not bare:
+            continue
+        start += len(quote)
+        stop = text.find("\n", start) if line else -1
+        stop = len(text) if stop < 0 else stop
+        if quote:
+            end = _closing_quote(text, quote, start, stop)
+        else:
+            m_end = _BARE_VALUE_END_RE.search(text, start, stop)
+            end = m_end.start() if m_end else stop
+        if end - start >= shortest:
+            spans.append((start, end))
+    return spans
+
+
+def _conn_password_spans(text: str) -> List[Tuple[int, int]]:
+    """The value after Password= or Pwd=, whole: '...', "...", \\"...\\" (escaped in source), ""..."" (a C# verbatim
+    string) or bare."""
+    return _value_spans(text, _CONN_PASSWORD_RE, ('\\"', '""', "''", '"', "'"), True, 1, False)
+
+
+def _secret_assignment_spans(text: str) -> List[Tuple[int, int]]:
+    """A quoted value assigned to a secret-looking name (api_key = '...', "db_password": "..."), whole."""
+    return _value_spans(text, _SECRET_KEY_RE, ("'", '"'), False, 4, True)
 
 
 def redact_secrets(text: str) -> str:
-    out = _SECRET_LINE_RE.sub(r"\1***REDACTED***\3", text)
-    for pat in _TOKEN_RES:
-        out = pat.sub("***REDACTED-TOKEN***", out)
-    return out
+    """text with every secret masked: connection-string passwords, values assigned to secret-looking names, and known
+    token formats. Each is found in the original text and their union is masked, so a value read too far (a quote
+    taken as escaped) can only hide more, never uncover the next secret."""
+    spans = [(s, e, "***REDACTED***") for s, e in _conn_password_spans(text) + _secret_assignment_spans(text)]
+    spans += [(m.start(), m.end(), "***REDACTED-TOKEN***") for pat in _TOKEN_RES for m in pat.finditer(text)]
+    if not spans:
+        return text
+    spans.sort()
+    out, pos = [], 0
+    start, end, label = spans[0]
+    for s, e, lab in spans[1:]:
+        if s < end:                         # overlapping: one mask over both
+            end, label = max(end, e), label if lab == label else "***REDACTED***"
+            continue
+        out += [text[pos:start], label]
+        pos, (start, end, label) = end, (s, e, lab)
+    out += [text[pos:start], label]
+    return "".join(out) + text[end:]
 
 
 def make_finding(
@@ -881,7 +954,7 @@ def make_finding(
         line=line,
         column=max(1, column),
         end_line=end_line,
-        evidence=trim(visible_text(ev or ""), 200),
+        evidence=trim(visible_text(redact_secrets(ev or "")), 200),     # every rule: a line can hold a secret
         message=message or rule.message,
         fix=rule.fix,
         confidence=confidence or rule.confidence,

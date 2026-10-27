@@ -39,7 +39,7 @@ def _string(value: str) -> Optional[str]:
         return value[1:-1]
     try:
         parsed = json.loads(value)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return parsed if isinstance(parsed, str) else None
 

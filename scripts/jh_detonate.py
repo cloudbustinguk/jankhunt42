@@ -115,7 +115,7 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], cache
         try:
             with open(pkg, encoding="utf-8") as fh:
                 doc = json.load(fh)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             doc = {}
             gaps.append("package.json could not be read")
         scripts = doc.get("scripts") if isinstance(doc.get("scripts"), dict) else {}
@@ -743,7 +743,9 @@ def compare_declared(ev: Dict[str, Any], map_report: Optional[Dict[str, Any]],
         return ports[host] is None or port is None or port in ports[host]
 
     attempts = ev.get("attempts", [])
-    undeclared = [a["target"] for a in attempts if not declared(a)]
+    for a in attempts:
+        a["declared"] = declared(a)                 # kept by --redact, which renames the targets
+    undeclared = [a["target"] for a in attempts if a.get("declared") is False]
     ev["attempts"] = attempts[:MAX_ATTEMPTS]
     ev["undeclared"] = undeclared[:MAX_ATTEMPTS]
     ev["counts"]["UNDECLARED"] = len(undeclared)

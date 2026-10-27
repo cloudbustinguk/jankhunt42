@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `detonate --fetch`).
 
-**Version:** 4.0.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.0.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -124,6 +124,13 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
   <tr>
     <td><img src="assets/readme/terminal-citizen.png" alt="Terminal citizen passport: release assessment BLOCK, Jank Score 80 out of 100, exposure High, and an in-plain-terms box listing eight blocking reasons, what the software can reach, the AI service it uses, and an unpinned database tool server reaching a production host"></td>
     <td><img src="assets/readme/citizen-passport.png" alt="HTML citizen passport: release assessment block under the citizen profile with no custodian named, exposure High, and the plain-language brief with the blocking reasons and what the software and its agent set-up can reach"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><b>Run it in a sandbox (opt-in).</b> <code>jankhunt42 detonate .</code> runs the install hooks and what runs when the folder is opened, in a disposable container with the network off and canary credentials, and reads like a firewall log. <code>passport --detonation</code> sets what it tried against what the code declares.</td>
+  </tr>
+  <tr>
+    <td><img src="assets/readme/terminal-sandbox.png" alt="Terminal sandbox run: 3 ALERT and 3 DENY with complete coverage; an npm postinstall and a VS Code folder-open task ran; the audit log shows canary reads of ~/.aws/credentials and ~/.npmrc, a persistence attempt on ~/.bashrc, two DNS lookups and a blocked connection to 203.0.113.9:443."></td>
+    <td><img src="assets/readme/sandbox-passport.png" alt="HTML passport with the sandbox run: review on P-RUN-001 for 3 ALERTs and P-RUN-002 for 2 destinations the repository does not declare; a table marks api.invoices.example.com declared, and collector.telemetry-cdn.example and 203.0.113.9:443 undeclared."></td>
   </tr>
 </table>
 

@@ -60,7 +60,7 @@ def load_ledger(root: str) -> Dict[str, object]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {"version": 1, "rules": {}}
     if not isinstance(data, dict):
         return {"version": 1, "rules": {}}

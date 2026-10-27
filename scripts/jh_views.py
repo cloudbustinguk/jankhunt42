@@ -240,6 +240,80 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     return asciify(text) if ascii_only else text
 
 
+def detonate_tty(r, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
+    """A sandbox run read like a firewall audit log: what the code tried, what stopped it, and how much of it ran."""
+    t = Theme(color, ascii_only, view_width(columns))
+    c = t.c
+    counts, cov = r.get("counts") or {}, r.get("coverage") or {}
+    alerts, denies = counts.get("ALERT", 0), counts.get("DENY", 0)
+    name = os.path.basename(str(r.get("root") or "").rstrip("/\\")) or "repository"
+    out = t.banner("sandbox run", "%s  ·  %s  ·  %s" % (name, r.get("engine", "?"), r.get("image", "?")))
+    if alerts:
+        verdict = c.bold(c.magenta("%d ALERT" % alerts)) + c.grey("  canaries touched or persistence attempted")
+    elif denies:
+        verdict = c.bold(c.yellow("%d DENY" % denies)) + c.grey("  it tried to reach the network; nothing got out")
+    else:
+        verdict = c.bold(c.green("nothing tried")) + c.grey("  in the steps that ran; a clean run proves little")
+    card = [
+        t.kv("VERDICT", verdict),
+        t.kv("audit log", "%s ALERT  ·  %s DENY  ·  %d events" % (
+            c.magenta(str(alerts)) if alerts else "0", c.yellow(str(denies)) if denies else "0", len(r.get("events") or []))),
+        t.kv("coverage", "%s%s" % (c.bold(str(cov.get("state", "?"))),
+                                   c.yellow("  %d gap(s)" % len(cov.get("gaps") or [])) if cov.get("gaps") else "")),
+        t.kv("surfaces", ", ".join(r.get("surfaces") or []) or "none"),
+        t.kv("sandbox", c.grey("network off · read-only root · no capabilities · canary credentials")),
+        t.kv("evidence", t.label("observed") + c.grey("  adds to the static findings; never refutes them")),
+    ]
+    fetched = r.get("fetch")
+    if fetched:
+        fc = fetched.get("counts") or {}
+        card.append(t.kv("fetched", "%s of %s pinned packages verified%s" % (
+            fc.get("fetched", 0), fc.get("pinned", 0),
+            c.yellow("  %d refused" % fc.get("refused", 0)) if fc.get("refused") else "")))
+    out += [""] + t.box(card, "magenta" if alerts else "yellow" if denies else "green", "what did it try?")
+    out += ["", c.bold("what ran")]
+    surface_name = {"install": "install", "open": "on open"}
+    for s in r.get("steps") or []:
+        ok = str(s.get("exit")) == "0"
+        head = "  %s %s " % (c.grey(_pad(surface_name.get(s.get("surface", "install"), "?"), 8)),
+                             c.bold(clean(s.get("name", "?"))))
+        tail = "%s%s" % ((c.green if ok else c.yellow)("exit %s" % clean(s.get("exit", "?"))),
+                         "" if s.get("traced") else c.yellow("  no trace"))
+        out.append(head + c.grey(" · ") + tail)
+        if s.get("note"):
+            out += [c.grey("    " + ln.strip()) for ln in _wrap(clean(s["note"]), t.width - 6, "    ")]
+    if not r.get("steps"):
+        out.append("  nothing to run " + c.grey("(no install hooks or open-time commands found)"))
+    out += ["", c.bold("audit log") + c.grey("  (every attempt the sandbox saw, most serious first)")]
+    events = sorted(r.get("events") or [], key=lambda e: (e.get("verdict") != "ALERT", e.get("verdict") != "DENY",
+                                                          e.get("kind", ""), e.get("detail", "")))
+    if not events:
+        out.append("  no network attempts, canary reads or persistence attempts " + c.grey("in the steps that ran"))
+    paint = {"ALERT": lambda x: c.bold(c.magenta(x)), "DENY": c.yellow, "INFO": c.grey}
+    for e in events[:30]:
+        verdict = e.get("verdict", "INFO")
+        who = clean(e.get("process") or "")
+        where = clean(e.get("step") or "")
+        line = "  %s %s %s" % (paint.get(verdict, c.grey)(_pad(verdict, 5)), c.cyan(_pad(clean(e.get("kind", "")), 13)),
+                               clean(e.get("detail", "")))
+        out.append(_truncate(line, t.width))
+        if who or where:
+            out.append(c.grey("        " + _truncate(" · ".join(x for x in (who, where) if x), t.width - 8)))
+    if len(events) > 30:
+        out.append(c.grey("  +%d more in --json" % (len(events) - 30)))
+    if cov.get("gaps"):
+        out += ["", c.bold("coverage gaps") + c.grey("  (what the sandbox could not see)")]
+        for g in cov["gaps"][:8]:
+            for i, ln in enumerate(_wrap(clean(g), t.width - 6, "    ")):
+                out.append(("  %s %s" % (c.yellow("?"), ln)) if i == 0 else "  " + ln)
+    out += [""] + [c.grey(ln) for ln in _wrap("  limits: " + "; ".join(clean(x) for x in (r.get("limits") or [])[:2]),
+                                              t.width, "    ")]
+    out += ["", c.grey("  data: --json   ·   into a passport: save --json outside the repository, "
+                       "then passport --detonation FILE")]
+    text = "\n".join(out)
+    return asciify(text) if ascii_only else text
+
+
 def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
     import jh_capabilities
     import jh_capability_approval

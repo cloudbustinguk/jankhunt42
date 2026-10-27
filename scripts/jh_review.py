@@ -545,7 +545,7 @@ def load_baseline(path: str) -> Dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise ReviewError("baseline unreadable: %s" % exc)
     findings: Any = []
     score: Optional[int] = None

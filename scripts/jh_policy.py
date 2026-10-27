@@ -583,7 +583,7 @@ def load_policy_file(path: str) -> Dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise PolicyError("cannot read policy %s: %s" % (path, exc))
     if not isinstance(data, dict):
         raise PolicyError("policy must be a JSON object")

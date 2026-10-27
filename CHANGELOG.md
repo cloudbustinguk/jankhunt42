@@ -4,6 +4,71 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.0.1] — 2026-10-27
+
+What the citizen-developer trials found. A local model wrote eight small
+apps the way an AI agent writes them for someone who is not a software
+engineer (.NET 10 APIs, Python 3.12, Node/TypeScript APIs, Vite/React
+UIs), with an answer key. 4.0.0 caught 9 of their 17 planted problems
+and raised no real false alarm on 17 decoys. This release closes five of
+the misses and makes the citizen brief say what is wrong.
+
+### Added
+
+- **The citizen brief names the problems.** Under the decision, "The
+  most serious problems found" lists up to three, one per kind, in plain
+  words with the file and line to open ("A secret key or password is
+  written into the code: src/supabase.ts, line 5."). The passport keeps
+  them in `governance.top_problems`; `--redact` hides the paths. The
+  sandbox rules (`P-RUN-001`, `P-RUN-002`) now have plain wording too.
+- **Sandbox views.** `detonate` has a terminal view that reads like a
+  firewall audit log: the verdict, what ran, and every attempt, ALERTs
+  first. Piped, or with `--md`, it prints Markdown as before; `--no-color`
+  is new. The HTML passport shows the sandbox run right under the
+  decision: each ALERT, and every destination the run tried, marked
+  declared or undeclared; each attempt carries `declared`, which the
+  shareable copy keeps. The README has screenshots of both.
+
+### Changed
+
+- **JH101** reads a database password inside a connection string
+  (`Server=...;Password=...` in `appsettings.json`, `web.config` or a
+  DSN in code), and a Supabase service-role key: a JWT whose payload has
+  `role: service_role`. The public anon key stays quiet. A password for
+  a database on localhost or in a local container is minor: usually a
+  development default. Both are redacted in the evidence, a quoted
+  password whole however the source quotes it (`\"...\"` in C#, `""...""`
+  in a verbatim string, `'...'` with doubled or backslash-escaped quotes
+  inside), and so is
+  any other secret on a line that another rule reports: every finding's
+  evidence now goes through the redactor.
+- **JH105** reads TLS checks turned off through Python's `ssl` module
+  (`verify_mode = ssl.CERT_NONE`, `check_hostname = False`,
+  `cert_reqs=ssl.CERT_NONE`) and .NET's certificate callbacks
+  (`ServerCertificateCustomValidationCallback = ... => true`,
+  `DangerousAcceptAnyServerCertificateValidator`). A TLS server that
+  does not ask clients for certificates stays quiet: that is the default.
+- **JH111** reads npm scripts: `"postinstall": "curl ... | sh"` in
+  `package.json` runs on every install. Each script is checked on its
+  own, read as npm reads the file: the top-level `scripts` only, every
+  JSON escape decoded, the last of a duplicated key. Other text in JSON
+  stays quiet.
+- **JH701** reports a hidden HTML comment in an agent instruction file
+  that tells the agent not to ask the user. The same words in visible
+  text are a style preference and stay quiet.
+
+### Fixed
+
+- **Deeply nested JSON no longer stops a run.** In 4.0.0 a
+  `.jankhunt42.json` nested past Python's JSON decoder limit (about 1,000
+  levels on Python 3.9 to 3.11, more on newer ones) stopped `scan`, and
+  a deeply nested `package.json`, `.mcp.json` or `.jankhunt42.json`
+  stopped `passport`, with a traceback and no report. Every parse of a
+  repository, network or user file now treats such a file as unreadable,
+  and the npm script reader walks any depth, as npm does.
+
+Mutants M146 to M158.
+
 ## [4.0.0] — 2026-10-27
 
 A smaller jankhunt42, and the first release audited whole before it was

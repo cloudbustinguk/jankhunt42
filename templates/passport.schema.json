@@ -44,7 +44,7 @@
           "kind": {"type": "string"}, "detail": {"type": "string"}, "step": {"type": "string"}}}},
         "coverage": {"type": "object", "properties": {"state": {"enum": ["complete", "partial"]}, "gaps": {"type": "integer"}}},
         "attempts": {"type": "array", "maxItems": 100, "items": {"type": "object", "properties": {
-          "kind": {"enum": ["dns", "connect"]}, "target": {"type": "string"}}}},
+          "kind": {"enum": ["dns", "connect"]}, "target": {"type": "string"}, "declared": {"type": "boolean"}}}},
         "attempts_total": {"type": "integer"},
         "undeclared": {"type": "array", "maxItems": 100, "items": {"type": "string"}}
       }
@@ -362,6 +362,21 @@
               "items": {
                 "type": "object"
               }
+            }
+          }
+        },
+        "top_problems": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "Added in 4.0.1: the most serious scanner findings, one per rule, in plain words for the citizen brief.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {"type": "string"},
+              "severity": {"enum": ["blocker", "critical", "major"]},
+              "path": {"type": "string"},
+              "line": {"type": "integer"},
+              "plain": {"type": "string"}
             }
           }
         },

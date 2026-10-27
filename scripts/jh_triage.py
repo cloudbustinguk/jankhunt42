@@ -128,7 +128,7 @@ def _json_event(line: str) -> Optional[Tuple[str, str, Optional[str], List[str],
         return None
     try:
         obj = json.loads(stripped)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return None
     if not isinstance(obj, dict):
         return None

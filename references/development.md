@@ -25,7 +25,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- mutants that the tests must kill (141 in 4.0.0), each with an unmutated control;
+- mutants that the tests must kill (156 in 4.0.1), each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
@@ -94,6 +94,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 3.6.1: the detonate `tree` gains `format` (2): sorted entries and the user-executable bit only, so results from 3.5.0 and 3.6.0 must be re-run. `passport --base --detonation` binds to the commit's own objects (`git_tree_digest`).
 - 3.6.2 changes no options or fields.
 - 4.0.0 removes `hunt`, `merge` and `report` (each name exits 2 with a pointer), `scripts/jh_hunt.py` and the deep-hunt templates. `score` becomes `scan --score` (the old name works through 4.0, with a notice on stderr); `triage` and `doctor` still work but leave the main help. `detonate --fetch URL` downloads the npm packages the lockfile pins from approved origins (`scripts/jh_acquire.py`) and adds `fetch` to `jankhunt.detonate.v1`. n8n Code-node JavaScript (`scripts/jh_n8n_code.py`): map evidence may carry `json_pointer` and `code_line`. The policy rule `P-RUN-002` (declared versus attempted; standard review, citizen block) and the passport fields `sandbox_run.attempts`, `attempts_total` and `undeclared`; `--sandbox-network-ceiling` is also accepted with `--detonation`. JSON and SARIF of `scan`, `scan --score`, `review` and `rules` are unchanged.
+- 4.0.1 adds the passport field `governance.top_problems` (rule, severity, path, line, plain text; at most three) and its lines in the citizen brief. JH101, JH105, JH111 and JH701 find more (see CHANGELOG); evidence now redacts connection-string passwords and JWTs. `detonate` gains a terminal view and `--no-color`; each `sandbox_run.attempts` entry gains `declared` (additive).
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

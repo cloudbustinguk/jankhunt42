@@ -661,6 +661,64 @@ class PassportEvidence(unittest.TestCase):
         self.assertIn("## Sandbox run", md)
 
 
+class Views(unittest.TestCase):
+    """detonate's terminal view and the passport HTML's sandbox section: invented results, nothing run."""
+
+    RUN = {"schema": jh_detonate.SCHEMA, "root": "/somewhere/invoice-helper", "image": "jankhunt42-detonate:0.1",
+           "engine": "podman", "evidence_tier": "sandbox-observed", "surfaces": ["install", "open"],
+           "counts": {"ALERT": 1, "DENY": 2},
+           "coverage": {"state": "partial", "gaps": ["a step timed out"]},
+           "steps": [{"name": "npm postinstall", "command": "node x.js", "exit": "0", "traced": True,
+                      "surface": "install", "source": "package.json"}],
+           "events": [{"verdict": "DENY", "kind": "dns", "detail": "collector.example.invalid", "step": "npm postinstall",
+                       "pid": "", "process": "node x.js"},
+                      {"verdict": "DENY", "kind": "network", "detail": "203.0.113.9:443\x1b[2J", "step": "npm postinstall",
+                       "pid": "", "process": "node x.js"},
+                      {"verdict": "ALERT", "kind": "canary-read", "detail": "~/.aws/credentials (canary-aws)",
+                       "step": "npm postinstall", "pid": "", "process": "node x.js"}],
+           "limits": ["absence of an event is not evidence of safety"]}
+
+    def test_the_terminal_view_leads_with_alerts_and_shows_nothing_hostile(self):
+        import jh_views
+        text = jh_views.detonate_tty(self.RUN, color=False, columns=100)
+        self.assertIn("1 ALERT", text)
+        self.assertLess(text.index("ALERT canary-read"), text.index("DENY  dns"))
+        self.assertIn("invoice-helper", text)
+        self.assertNotIn("/somewhere", text)                 # the folder name only, never the host path
+        self.assertNotIn("\x1b", text)                       # a repository string cannot drive the terminal
+        self.assertIn("a step timed out", text)
+        ascii_text = jh_views.detonate_tty(self.RUN, color=False, ascii_only=True, columns=100)
+        self.assertTrue(all(ord(ch) < 128 for ch in ascii_text))
+
+    def test_a_clean_run_says_how_little_it_proves(self):
+        import jh_views
+        clean = dict(self.RUN, counts={"ALERT": 0, "DENY": 0}, events=[], coverage={"state": "complete", "gaps": []})
+        text = jh_views.detonate_tty(clean, color=False, columns=100)
+        self.assertIn("nothing tried", text)
+        self.assertIn("a clean run proves little", text)
+
+    def test_the_html_passport_shows_the_sandbox_run(self):
+        from _util import run_cli
+        root, outside = tempfile.mkdtemp(prefix="jh-det-view-"), tempfile.mkdtemp(prefix="jh-det-out-")
+        self.addCleanup(shutil.rmtree, root, True)
+        self.addCleanup(shutil.rmtree, outside, True)
+        with open(os.path.join(root, "app.py"), "w") as fh:
+            fh.write("import requests\nrequests.get('https://api.example.invalid/v1')\n")
+        events = [{"verdict": "DENY", "kind": "dns", "detail": name, "pid": "", "process": "", "step": ""}
+                  for name in ("api.example.invalid", "evil.example.invalid")]
+        det = os.path.join(outside, "det.json")
+        with open(det, "w") as fh:
+            json.dump({"schema": jh_detonate.SCHEMA, "tree": jh_detonate.tree_digest(root), "surfaces": ["install"],
+                       "events": events, "coverage": {"state": "complete", "gaps": []}, "version": "4.0.1"}, fh)
+        html = run_cli("passport", root, "--html", "--detonation", det).stdout
+        self.assertIn("sandbox run (detonate)", html)
+        self.assertIn("evil.example.invalid", html)
+        shared = json.loads(run_cli("passport", root, "--json", "--redact", "--detonation", det).stdout)["sandbox_run"]
+        # the names are gone, but each attempt still says whether it was declared
+        self.assertEqual(sorted(a["declared"] for a in shared["attempts"]), [False, True])
+        self.assertNotIn("evil.example.invalid", json.dumps(shared))
+
+
 @unittest.skipUnless(os.environ.get("JH_DETONATE_LIVE") == "1" and shutil.which("podman") and
                      subprocess.run(["podman", "image", "exists", jh_detonate.DEFAULT_IMAGE]).returncode == 0,
                      "set JH_DETONATE_LIVE=1 with podman and the detonate image to run the live sandbox test")

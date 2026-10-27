@@ -168,6 +168,8 @@ _PLAIN = {
     "P-EXP-001": "It can reach more than this policy allows.",
     "P-CHG-001": "Changes can reach the main branch without another person approving them.",
     "P-SUP-001": "It may download packages from places your organization has not allowed.",
+    "P-RUN-001": "When it was installed or opened in a sandbox, it read credentials or tried to make itself permanent.",
+    "P-RUN-002": "When it ran in a sandbox, it tried to reach places it does not say it uses.",
 }
 _VERDICT = {
     "block": "Not ready to ship. Fix every blocking item below; then an engineering custodian must review and sign off.",
@@ -178,6 +180,46 @@ _VERDICT = {
 }
 
 
+# What a scanner rule means, for someone who is not a software engineer
+_PLAIN_FINDING = {
+    "JH101": "A secret key or password is written into the code",
+    "JH103": "A system command is built from text, so someone could slip in a command of their own",
+    "JH104": "A database query is built from text, which can let someone read or change your data",
+    "JH105": "The check that a server is genuine is turned off, so its traffic can be intercepted",
+    "JH106": "Uploaded data is turned straight into program objects, which can let an attacker run code",
+    "JH111": "A script is downloaded from the internet and run straight away, unchecked",
+    "JH132": "A secret key is sent to every visitor's browser",
+    "JH133": "An AI service key is used from the browser, where every visitor can take it",
+    "JH134": "A data store is open to anyone on the internet",
+    "JH401": "A file of secrets is stored with the code",
+    "JH418": "The automatic build runs code from outside contributors with access to your secrets",
+    "JH701": "A file your AI agent reads tells it to do something without you knowing",
+    "JH702": "Your AI agent is started with its safety approvals turned off",
+    "JH703": "Your AI agent is set to act without asking you first",
+    "JH704": "A command runs as soon as the project is opened in an editor or AI agent",
+    "JH705": "An AI tool server is loaded without a fixed version, so it can change without notice",
+    "JH706": "A password or key is written into your AI agent's tool settings",
+}
+
+
+def top_problems(findings: Sequence[Any], limit: int = 3) -> List[Dict[str, Any]]:
+    """The most serious scanner findings, one per rule, for the plain-language brief."""
+    rank = {"blocker": 0, "critical": 1, "major": 2}
+    conf = {"high": 0, "medium": 1, "low": 2}
+    picked: List[Dict[str, Any]] = []
+    seen = set()
+    for f in sorted((f for f in findings if getattr(f, "severity", "") in rank),
+                    key=lambda f: (rank[f.severity], conf.get(f.confidence, 3), f.path, f.line)):
+        if f.rule in seen:
+            continue
+        seen.add(f.rule)
+        picked.append({"rule": f.rule, "severity": f.severity, "path": safe_text(f.path), "line": f.line,
+                       "plain": _PLAIN_FINDING.get(f.rule, f.title)})
+        if len(picked) >= limit:
+            break
+    return picked
+
+
 def plain_brief(p: Dict[str, Any]) -> List[str]:
     """The decision in plain language, for the person who built the software
     and the custodian who answers for it."""
@@ -186,6 +228,10 @@ def plain_brief(p: Dict[str, Any]) -> List[str]:
     lines = [_VERDICT[d["result"]]]
     for r in d["reasons"]:
         lines.append("- %s" % _PLAIN.get(r["rule"], r["title"]))
+    problems = gov.get("top_problems") or []
+    if problems:
+        lines.append("The most serious problems found:")
+        lines += ["- %s: %s, line %d." % (t["plain"], t["path"], t["line"]) for t in problems]
     services = (p.get("ai") or {}).get("model_services", [])
     servers = gov.get("agent", {}).get("servers", [])
     agent_only = {label for sv in servers for label in sv.get("reaches", [])}
@@ -598,6 +644,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             "agent_leads": agent_leads[:50],
             "repository_suppressed_leads": suppressed,
             "agent": agent,
+            "top_problems": top_problems(findings),
             "brief": [],
             "note": ("the citizen profile governs software built by people who are not software engineers: "
                      "it requires a named engineering custodian and blocks on unverified authority"
@@ -755,7 +802,7 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
             sv["credentials"] = ["credential-%d" % j for j, _ in enumerate(sv["credentials"], 1)]
             sv["reaches"] = ["endpoint-%d" % j for j, _ in enumerate(sv["reaches"], 1)]
         gov["agent"]["configs"] = ["config-%d" % i for i, _ in enumerate(gov["agent"]["configs"], 1)]
-        for lead in gov["public_exposure_leads"] + gov["agent_leads"]:
+        for lead in gov["public_exposure_leads"] + gov["agent_leads"] + gov.get("top_problems", []):
             lead["path"] = "file"
         gov["brief"] = plain_brief(rep)
     rep["scope"]["redaction"] = "share"

@@ -126,7 +126,7 @@ def load_plan(path: str, root: str) -> Dict[str, Any]:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise PlanError("cannot read verification plan %s: %s" % (os.path.basename(path), exc))
     data = _strict(data, _PLAN_KEYS, "plan")
     if data.get("schema_version") != PLAN_SCHEMA:
@@ -296,7 +296,7 @@ class _Net:
 def _json_body(body: bytes, what: str) -> Any:
     try:
         return json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise FetchError("%s returned invalid JSON" % what)
 
 
