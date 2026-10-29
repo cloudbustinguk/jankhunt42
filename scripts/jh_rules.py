@@ -293,6 +293,43 @@ RULES: List[Rule] = [
       "Require authentication and per-user conditions in rules and policies, enable row-level security on every exposed table, keep buckets private, and keep databases off the public internet.",
       confidence="high", check="public_data_store"),
 
+    # --------------------------------------------------------------- ASP.NET Core
+    R("JH135", "ASP.NET data endpoint without authorization", "major", "security",
+      "An endpoint appears to change or return application data without visible authorization metadata.",
+      "Require an authorization policy on the endpoint/controller or a global fallback; review data ownership too.",
+      confidence="medium", langs=("csharp",), check="dotnet_auth", tags=("dotnet",)),
+    R("JH136", "ASP.NET credentialed CORS allows any origin", "major", "security",
+      "An all-origin policy is combined with credentials; this is unsafe or rejected by ASP.NET Core.",
+      "Use exact trusted origins and keep credentialed policies separate from public anonymous CORS.",
+      confidence="high", langs=("csharp",), check="dotnet_cors", tags=("dotnet",)),
+    R("JH137", "ASP.NET developer errors outside a development guard", "major", "security",
+      "Detailed development errors can expose request data and stack traces outside local development.",
+      "Guard developer errors with Environment.IsDevelopment and use a production exception handler elsewhere.",
+      confidence="high", langs=("csharp",), check="dotnet_errors", tags=("dotnet",)),
+    R("JH138", "Kestrel accepts public cleartext HTTP", "major", "security",
+      "An HTTP listener accepts nonlocal traffic and no HTTPS redirection is visible; confirm TLS termination.",
+      "Use HTTPS or a verified TLS-terminating proxy, and restrict interfaces that should remain local.",
+      confidence="medium", langs=("csharp", "json"), check="dotnet_http", tags=("dotnet",)),
+    R("JH139", "Interpolated SQL passed to a .NET database API", "major", "security",
+      "C# interpolation creates SQL text before the database API can bind its values as parameters.",
+      "Use Dapper/ADO.NET parameters or EF FromSql/FromSqlInterpolated; never interpolate into FromSqlRaw.",
+      confidence="high", langs=("csharp",), check="dotnet_sql", tags=("dotnet",)),
+    R("JH140", "Untrusted .NET object type deserialization", "critical", "security",
+      "Deserialization accepts type metadata that can instantiate unexpected objects with side effects.",
+      "Use TypeNameHandling.None/data-only models; otherwise enforce a narrow reviewed serialization binder.",
+      confidence="high", langs=("csharp",), check="dotnet_types", tags=("dotnet",)),
+    R("JH141", "Personal request data sent to an AI client", "major", "security",
+      "Personal request fields are passed to an AI client without visible redaction at the call.",
+      "Remove personal fields before sending, establish consent/purpose, and review the provider's data policy.",
+      confidence="medium", langs=("csharp",), check="dotnet_ai", tags=("dotnet",)),
+    R("JH142", "Floating NuGet package version", "major", "supply-chain",
+      "A wildcard PackageReference/PackageVersion can resolve to different dependency code on a later restore.",
+      "Pin the version and commit a hash-pinned lock file; restore in locked mode.",
+      confidence="high", files=("*.csproj", "*.props", "*.targets"), check="dotnet_packages", tags=("dotnet",)),
+    R("JH143", "MSBuild downloads content during build", "major", "supply-chain",
+      "An MSBuild Exec command downloads remote content during the build, outside a separate verified acquisition step.",
+      "Acquire and verify fixed artifacts separately, then restore and build from a local feed without network access.",
+      confidence="high", files=("*.csproj", "*.props", "*.targets"), check="dotnet_exec", tags=("dotnet",)),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",
@@ -1008,6 +1045,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     _compile_rules()
     result = ScanResult(files=len(sources), loc=sum(s.loc for s in sources))
     acceptor = _FindingAcceptor(opts, _collect_suppressions(sources))
+    import jh_dotnet
+    dotnet_context = jh_dotnet.context(sources)
 
     for sf in sources:
         for rule in RULES:
@@ -1015,7 +1054,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue
             if "test-exclude" in rule.tags and "test" in sf.kinds:
                 continue
-            if "minified" in sf.kinds and "secret" not in rule.tags and rule.category != "agent" and rule.id != "JH131":
+            if "minified" in sf.kinds and "secret" not in rule.tags and rule.category != "agent" and rule.id != "JH131" and "dotnet" not in rule.tags:
                 continue                # a build bundle: a leaked key, hidden Unicode or agent hazard still counts
             if opts.rule_ids and rule.id not in opts.rule_ids:
                 continue
@@ -1038,10 +1077,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         result.findings.append(f)
             if rule.check:
                 fn = CHECKS.get(rule.check)
-                if not fn:
+                if not fn and not rule.check.startswith("dotnet_"):
                     continue
                 try:
-                    found = fn(sf, rule)
+                    found = jh_dotnet.findings(sf, rule, dotnet_context) if rule.check.startswith("dotnet_") else fn(sf, rule)
                 except Exception as exc:  # jankhunt42: ignore JH202  (a broken check must not kill the scan)
                     print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue

@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.1.0"
+  version: "4.2.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -19,7 +19,7 @@ metadata:
 jankhunt42 is a workflow plus a stdlib-only CLI (`scripts/jankhunt42`). The workflow is mandatory; the CLI is an accelerant. Everything runs locally and offline, with three opt-in exceptions:
 - `scan --cve` sends package names and versions to OSV.dev;
 - `--verify PLAN --online` sends the repository name and artifact digests to the GitHub API, and lets the named verifiers go online;
-- `sandbox --fetch URL` downloads the npm packages the lockfile pins from the origin named.
+- `sandbox --fetch URL` downloads hash-pinned npm, Python and NuGet artifacts from the origins named.
 
 Never add `--online` or `--fetch` unless the user asked for it.
 
@@ -30,7 +30,7 @@ Never add `--online` or `--fetch` unless the user asked for it.
 | The user wants… | Run | Then read |
 |---|---|---|
 | a bug fixed, a crash or hang explained, "why is this broken" | the **workflow** below, plus `scan` | `references/method.md`, `references/playbooks.md` |
-| a code-quality or security pass, a score | `jankhunt42 scan .`, `jankhunt42 scan . --score` | `references/scoring.md` |
+| a code-quality or security pass, a score | `jankhunt42 scan .`, `jankhunt42 scan . --score` | `references/scoring.md`; for ASP.NET Core, `references/dotnet.md` |
 | a PR or diff reviewed | `jankhunt42 review . --base <ref> --brief` | `references/review.md` |
 | SBOM, attestation or provenance evidence | `jankhunt42 supply-chain . --require-sbom-minimum` | `references/supply-chain.md` |
 | "what does this talk to", data exposure, blast radius | `jankhunt42 map .`, `jankhunt42 map . --base <ref>` | `references/connectivity.md` |

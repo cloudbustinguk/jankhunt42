@@ -4,6 +4,40 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.2.0] — 2026-10-29
+
+ASP.NET Core review and a sandbox for .NET restore/build.
+
+### Added
+
+- Nine static leads (`JH135`–`JH143`) cover data endpoints without visible authorization,
+  credentialed all-origin CORS, developer errors outside a development guard, public
+  cleartext Kestrel listeners, C# interpolation at raw database APIs, type metadata
+  deserialization, personal fields passed to AI clients, floating NuGet versions,
+  and MSBuild network downloads. Public constant health responses, authorized route
+  groups/controllers, guarded developer pages, parameterized EF/Dapper calls and
+  comment/string examples have explicit negative tests. Development comparisons and
+  production controls are scoped to their branches; reassigned groups cannot pass
+  authorization to child routes. These are structural leads,
+  with project-local context, not a C# compiler or proof of deployment behavior.
+- `JH135` and `JH136` join the citizen profile's public-exposure leads (`P-SEC-001`).
+- NuGet `sandbox --fetch`: default `packages.lock.json` v1/v2, a literal unconditional
+  locked-mode project, normalized package identities, and verified SHA512 content
+  hashes. Existing HTTPS/origin/address restrictions and the shared download budget
+  apply. Downloaded archives stay unopened on the host. Conflicting pins and linked,
+  conditional or unsupported inputs produce explicit gaps/refusals.
+- `sandbox --nuget-cache DIR` supplies a read-only folder feed. The separate .NET 10
+  SDK image runs traced `dotnet restore --locked-mode` and `dotnet build --no-restore`
+  offline, with telemetry disabled. Missing SDKs/caches and failed commands produce
+  partial coverage. A live invented NuGet build target proves canary reads are seen.
+- Offline regression tests and mutants M200–M232 (224 mutants in total).
+
+### Compatibility
+
+- Existing JSON/SARIF schemas and sandbox isolation remain; NuGet receipts/cache counts
+  are additive. The hidden `detonate`/`--detonation` aliases remain accepted through
+  4.2, extending the previous transition period.
+
 ## [4.1.0] — 2026-10-29
 
 Deeper into the sandbox, and a scan your team can make its own.

@@ -142,7 +142,7 @@ Each event names the command that caused it and the step it ran under.
 `canary-aws`. Exit code 1 means at least one ALERT; 2 means the sandbox
 could not run.
 
-## Dependencies (`--fetch`, `--npm-cache`, `--wheelhouse`)
+## Dependencies (`--fetch`, `--npm-cache`, `--wheelhouse`, `--nuget-cache`)
 
 Most install-time attacks hide in a dependency's install hook, not in the
 repository itself. To run those hooks too, the sandbox needs the
@@ -345,3 +345,48 @@ never refutes them:
 - An encrypted or transformed canary is not recognised when sent.
 - The network is off, so behaviour that depends on a server's reply is not
   reached.
+
+
+## .NET and NuGet
+
+For a .NET repository, `sandbox` selects `localhost/jankhunt42-sandbox-dotnet:0.1`
+when that image exists. Build it once from the trusted template:
+
+```sh
+podman build -t localhost/jankhunt42-sandbox-dotnet:0.1 -f templates/sandbox-dotnet.Containerfile templates
+jankhunt42 sandbox . --fetch https://api.nuget.org/ --json
+jankhunt42 sandbox . --nuget-cache /path/outside/nuget-feed --json
+```
+
+The SDK image uses .NET 10 and also contains Python, the distribution's Node/npm,
+strace, curl and wget. Non-.NET repositories continue to use the normal runner.
+If the SDK is unavailable, .NET restore/build is skipped and coverage is partial.
+
+NuGet acquisition reads each project's default `packages.lock.json` (format 1 or 2).
+It requires a literal, unconditional `RestoreLockedMode=true` in the project or
+nearest `Directory.Build.props`/`Directory.Build.targets`; missing locks, conditional
+settings, custom imports and custom lock paths are refused with reasons. Project
+references are skipped; direct and transitive packages across target frameworks
+are deduplicated by normalized id/version. Conflicting hashes are refused.
+Discovery is bounded to 100 projects and 20,000 entries, excludes build/cache
+folders, and does not follow links. No MSBuild evaluation happens on the host.
+
+The flat-container path is constructed beneath an explicitly approved origin:
+`v3-flatcontainer/<lower-id>/<normalized-lower-version>/<id>.<version>.nupkg`.
+Downloads use the existing checked HTTPS transport, public-address restrictions
+and wire-byte caps. npm, Python metadata/wheels and NuGet share one allowance.
+The archive's sha512 must match the lock's base64 `contentHash`. No downloaded
+archive is opened on the host. Packages are kept in a hierarchical folder feed
+for this run, avoiding ambiguous flat filenames.
+
+With `--nuget-cache` or a fetched feed, each discovered C# project (or a solution
+when no project is discoverable) gets traced install steps: `dotnet restore
+--locked-mode --source /cache/nuget`, followed by `dotnet build --no-restore`.
+The source feed is read-only, restored packages live in `/work`, and network
+access remains disabled. Build/restore failures make coverage partial.
+SDK telemetry is disabled. The canary home remains read-only except for an
+empty, ephemeral `.dotnet` tmpfs required by .NET's named mutexes; credential
+files stay read-only. SDK cache/state also uses `/tmp` and `/work`.
+
+Pins establish byte identity, not package safety or a build's success. SDKs,
+workloads and platforms missing from this image are not fetched during the run.

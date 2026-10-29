@@ -404,11 +404,15 @@ def run(root: str, origins: List[str], out: str, image: str = jh_sandbox.DEFAULT
     if jh_ceiling.inside_repository(out, root):
         raise AcquireError("the cache folder must be outside the repository (set TMPDIR to a folder outside it)")
     import jh_pyfetch
+    import jh_nuget
+    dotnet_tree = jh_nuget.discover(root)
+    nuget_plan = jh_nuget.plan(root, dotnet_tree) if any(dotnet_tree[k] for k in ("projects", "solutions", "locks")) else None
     python_plan = jh_pyfetch.plan_requirements(root) if os.path.lexists(os.path.join(root, "requirements.txt")) else None
     has_npm = any(os.path.lexists(os.path.join(root, f)) for f in jh_sandbox.NPM_LOCKFILES)
-    plan = plan_npm(root) if has_npm or python_plan is None else dict(python_plan, artifacts=[], refused=[])
-    engine = jh_sandbox.find_engine(engine) if has_npm or python_plan is None else None
-    if (has_npm or python_plan is None) and not engine:
+    needs_npm = has_npm or (python_plan is None and nuget_plan is None)
+    plan = plan_npm(root) if needs_npm else dict(python_plan or nuget_plan, artifacts=[], refused=[])
+    engine = jh_sandbox.find_engine(engine) if needs_npm else None
+    if needs_npm and not engine:
         raise AcquireError("no container engine (podman or docker) is installed for the offline cache step")
     result: Dict[str, Any] = {"schema": SCHEMA, "ecosystem": "npm", "lockfile": plan["lockfile"],
                               "lockfile_sha256": plan["lockfile_sha256"],
@@ -460,8 +464,22 @@ def run(root: str, origins: List[str], out: str, image: str = jh_sandbox.DEFAULT
             result["source_builds"] = [a["package"] for a in python_result["fetched"] if a["kind"] == "sdist"]
             received += python_result["downloaded"]
             total += python_result["bytes"]
+        nuget_result = None
+        if nuget_plan is not None:
+            nuget_result = jh_nuget.acquire(nuget_plan, approved_origins, os.path.join(stage, "out", "nuget"),
+                                            MAX_TOTAL_BYTES - received, stream)
+            result["fetched"].extend(nuget_result["fetched"])
+            result["refused"].extend(nuget_result["refused"])
+            received += nuget_result["downloaded"]
+            total += nuget_result["bytes"]
+            result["ecosystem"] = "+".join(e for e, yes in (("npm", needs_npm), ("python", python_plan is not None),
+                                                             ("nuget", True)) if yes)
+            result["lockfiles"] = ([{"path": plan["lockfile"], "sha256": plan["lockfile_sha256"]}] if needs_npm else []) + \
+                ([{"path": python_plan["lockfile"], "sha256": python_plan["lockfile_sha256"]}] if python_plan else []) + \
+                nuget_plan["lockfiles"]
         receipt = os.path.join(stage, "out", "receipt.json")
-        result["counts"] = {"pinned": len(plan["artifacts"]) + (python_result["pinned"] if python_result else 0),
+        result["counts"] = {"pinned": len(plan["artifacts"]) + (python_result["pinned"] if python_result else 0) +
+                                      (nuget_result["pinned"] if nuget_result else 0),
                             "fetched": len(result["fetched"]),
                             "refused": len(result["refused"]), "bytes": total, "downloaded": received}
         result["state"] = "complete" if not result["refused"] else "partial"
@@ -473,9 +491,11 @@ def run(root: str, origins: List[str], out: str, image: str = jh_sandbox.DEFAULT
     finally:
         _own(stage, engine)
         shutil.rmtree(stage, ignore_errors=True)
-    result["cache"] = os.path.join(out, "npm") if has_npm or python_plan is None else None
+    result["cache"] = os.path.join(out, "npm") if needs_npm else None
     if python_plan is not None:
         result["wheelhouse"] = os.path.join(out, "wheels")
+    if nuget_plan is not None:
+        result["nuget_cache"] = os.path.join(out, "nuget")
     return result
 
 

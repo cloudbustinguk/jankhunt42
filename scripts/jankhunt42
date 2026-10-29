@@ -970,28 +970,29 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
     if not os.path.isdir(args.path):
         print("jankhunt42: sandbox: %s is not a directory" % jh_core_safe(args.path), file=sys.stderr)
         return 2
-    if args.fetch and (args.npm_cache or args.wheelhouse):
+    if args.fetch and (args.npm_cache or args.wheelhouse or args.nuget_cache):
         print("jankhunt42: sandbox: --fetch makes dependency caches; it cannot combine with --npm-cache or "
-              "--wheelhouse", file=sys.stderr)
+              "--wheelhouse or --nuget-cache", file=sys.stderr)
         return 2
     import shutil
     import tempfile
     import jh_acquire
     fetched, workdir = None, None
     try:
-        npm_cache, wheelhouse = args.npm_cache, args.wheelhouse
+        npm_cache, wheelhouse, nuget_cache = args.npm_cache, args.wheelhouse, args.nuget_cache
         if args.fetch:
             # the pinned packages, fetched and verified into a private folder for this run only
             workdir = os.path.realpath(tempfile.mkdtemp(prefix="jh-fetch-"))
-            args.image = jh_sandbox.resolve_image(args.engine, args.image)     # the fetch and the run, alike
+            args.image = jh_sandbox.resolve_image(args.engine, args.image, args.path)     # the fetch and the run, alike
             fetched = jh_acquire.run(args.path, args.fetch, os.path.join(workdir, "acq"), image=args.image,
                                      engine=args.engine)
             npm_cache, wheelhouse = fetched["cache"], fetched.get("wheelhouse")
+            nuget_cache = fetched.get("nuget_cache")
         # dependencies load only once installed, so the import surface brings the install steps with it
         surfaces = jh_sandbox.SURFACES if args.surface == "all" else \
             ("install", "import") if args.surface == "import" else (args.surface,)
         result = jh_sandbox.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
-                                 surfaces=surfaces, npm_cache=npm_cache, wheelhouse=wheelhouse)
+                                 surfaces=surfaces, npm_cache=npm_cache, wheelhouse=wheelhouse, nuget_cache=nuget_cache)
     except (RuntimeError, jh_acquire.AcquireError, OSError, subprocess.SubprocessError) as exc:
         print("jankhunt42: sandbox: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -1283,7 +1284,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
         sp.add_argument("--fetch", action="append", metavar="URL",
                         help="fetch the npm packages a lockfile pins and the files a hash-pinned requirements.txt "
-                             "pins, from this approved https origin (repeatable), verified, into caches for this run; "
+                             "pins, and locked NuGet packages, from this approved https origin (repeatable), verified into caches; "
                              "the only sandbox option that uses the network (references/sandbox.md)")
         sp.add_argument("--npm-cache", metavar="DIR",
                         help="an npm cache made outside the repository (npm ci --ignore-scripts --cache DIR): with a "
@@ -1291,6 +1292,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--wheelhouse", metavar="DIR",
                         help="Python wheels and source packages made outside the repository: requirements and the build "
                              "backend install offline from it")
+        sp.add_argument("--nuget-cache", metavar="DIR",
+                        help="a NuGet folder feed outside the repository: .NET restore runs locked and offline, "
+                             "then build runs without restoring")
         sp.add_argument("--surface", choices=("install", "import", "open", "all"), default="all",
                         help="install: package hooks; import: install, then load each direct dependency; open: what an "
                              "agent or editor runs when the repository is opened (default: all)")

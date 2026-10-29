@@ -838,9 +838,10 @@ PY
 "$PY" - "$TMP/rules.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d) == 100, len(d)
+assert len(d) == 109, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" in ids and "JH101" in ids, ids
+assert {"JH%d" % n for n in range(135, 144)} <= ids, ids
 assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711"}, ids
 print("rules: %d" % len(d))
 PY
@@ -1040,6 +1041,32 @@ set -e
 [ "$rc" = 1 ] || fail "citizen gate should fail when change control is unknown (exit $rc)"
 grep -q 'P-CHG-001' "$TMP/gate-unknown.md" || fail "the unknown gate run does not name P-CHG-001"
 note "citizen gate: template command passes the compliant fixture, fails an unapproved registry and unknown change control"
+
+# ASP.NET Core leads run through the public CLI too.
+DOTNET_FIX="$TMP/dotnet"
+mkdir -p "$DOTNET_FIX"
+cat > "$DOTNET_FIX/Program.cs" <<'CS'
+app.MapGet("/patients", (Db db) => Results.Ok(db.Patients));
+app.UseCors(p => p.SetIsOriginAllowed(_ => true).AllowCredentials());
+app.UseDeveloperExceptionPage();
+builder.WebHost.UseUrls("http://0.0.0.0:5000");
+conn.QueryAsync($"SELECT * FROM patients WHERE id={id}");
+var settings = new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All };
+JsonConvert.DeserializeObject<object>(input, settings);
+client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", new { input.Email });
+CS
+cat > "$DOTNET_FIX/app.csproj" <<'XML'
+<Project><ItemGroup><PackageReference Include="Library" Version="*"/></ItemGroup>
+<Target Name="Prepare"><Exec Command="curl https://build.example.invalid/file -o file"/></Target></Project>
+XML
+"$PY" "$JH" scan "$DOTNET_FIX" --json > "$TMP/dotnet.json"
+"$PY" - "$TMP/dotnet.json" <<'PYTEST'
+import json, sys
+with open(sys.argv[1]) as stream:
+    rules = {f["rule"] for f in json.load(stream)["findings"]}
+assert {"JH%d" % n for n in range(135, 144)} <= rules, rules
+PYTEST
+note "ASP.NET Core: all nine leads through the CLI"
 
 # ---------------------------------------------------------------------------
 # Docs and packaging sanity

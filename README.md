@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `sandbox --fetch`).
 
-**Version:** 4.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.2.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -76,6 +76,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - `dangerouslyAllowBrowser` LLM clients;
   - open Firebase rules, disabled row-level security, and public buckets;
   - invisible Unicode.
+- **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.
 - **The citizen profile** will not pass a release without:
   - an owner, and an engineering custodian named by the operator;
   - observed tests and CI;
@@ -147,7 +148,7 @@ jankhunt42 scan . --html > jankhunt42.html
 jankhunt42 scan . --fail-on critical     # explicit CI gate
 jankhunt42 scan . --since HEAD           # whole-tree plus new-code score
 jankhunt42 scan . --score --json         # Jank Score 2.0 breakdown
-jankhunt42 rules --category security     # the catalog of 100 rules
+jankhunt42 rules --category security     # the rule catalog
 jankhunt42 review . --base HEAD~1 --json # committed changes, with receipts
 jankhunt42 review . --staged --md
 jankhunt42 review . --commit HEAD --brief            # handoff for a semantic reviewer
@@ -336,6 +337,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
 | [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |
 | [`references/sandbox.md`](references/sandbox.md) | `sandbox`: running the install hooks, the dependencies as they load, and what runs on open in a sandbox, the audit log, canaries and limits |
+| [`references/dotnet.md`](references/dotnet.md) | ASP.NET Core leads, their limits, and offline NuGet restore/build |
 | [`references/rulesets.md`](references/rulesets.md) | site rulesets (`--ruleset`) and `--ignore-rule`: your own rules, shipped rules set aside or re-rated, and trust |
 | [`references/development.md`](references/development.md) | Architecture, development workflow, self-assurance, compatibility and migration notes |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release |

@@ -42,6 +42,7 @@ SCHEMA = "jankhunt.sandbox.v1"
 OLD_SCHEMAS = ("jankhunt.detonate.v1",)           # results saved before the rename
 OLD_IMAGE = "localhost/jankhunt42-detonate:0.1"   # an image built before the rename
 DEFAULT_IMAGE = "localhost/jankhunt42-sandbox:0.1"
+DOTNET_IMAGE = "localhost/jankhunt42-sandbox-dotnet:0.1"
 NPM_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 HOME = "/home/canary"
 
@@ -84,7 +85,7 @@ MAX_CONFIG_BYTES = 1000000
 # what the sandbox writes is untrusted: read only regular files, never through a link, and only this much
 # operator-supplied dependency caches: made outside the sandbox, copied into the run, never fetched by it
 MAX_CACHE_BYTES = 768 * 1024 * 1024
-CACHE_MOUNTS = {"npm": ("/cache/npm", "rw"), "wheels": ("/cache/wheels", "ro")}
+CACHE_MOUNTS = {"npm": ("/cache/npm", "rw"), "wheels": ("/cache/wheels", "ro"), "nuget": ("/cache/nuget", "ro")}
 NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
 # command-line settings override the repository's own .npmrc: scripts on, and every dependency type installed
 NPM_CI = ("npm ci --offline --cache /cache/npm --foreground-scripts --no-audit --no-fund --ignore-scripts=false "
@@ -109,13 +110,14 @@ def make_canaries() -> List[Dict[str, Any]]:
 
 
 def plan_steps(root: str, surfaces: Tuple[str, ...] = SURFACES,
-               caches: Tuple[str, ...] = ()) -> Tuple[List[Dict[str, Any]], List[str]]:
+               caches: Tuple[str, ...] = (), dotnet_ready: bool = True) -> Tuple[List[Dict[str, Any]], List[str]]:
     """The commands to run, and why coverage is partial before anything runs. caches names the operator-supplied
     dependency caches ("npm", "wheels") the sandbox will hold."""
     steps: List[Dict[str, Any]] = []
     gaps: List[str] = []
     if "install" in surfaces:
         _plan_install(root, steps, gaps, caches)
+        _plan_dotnet(root, steps, gaps, caches, dotnet_ready)
     if "import" in surfaces:
         _plan_import(root, steps, gaps)
     if "open" in surfaces:
@@ -184,6 +186,31 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], cache
                                "python3 -I -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
                                "pyproject.toml"))
             gaps.append("a pyproject build backend that is not in the image cannot run (no --wheelhouse)")
+
+
+def _plan_dotnet(root: str, steps: List[Dict[str, Any]], gaps: List[str], caches: Tuple[str, ...], ready: bool) -> None:
+    import jh_nuget
+    tree = jh_nuget.discover(root)
+    if not tree["projects"] and not tree["solutions"]:
+        return
+    gaps.extend(tree["issues"])
+    if not ready:
+        gaps.append(".NET restore/build did not run: the SDK image %s is not available; build it from "
+                    "templates/sandbox-dotnet.Containerfile" % DOTNET_IMAGE)
+        return
+    if "nuget" not in caches:
+        gaps.append(".NET restore/build did not run (no --nuget-cache or fetched NuGet feed)")
+        return
+    targets = tree["projects"] or tree["solutions"]
+    for target in targets[:jh_nuget.MAX_PROJECTS]:
+        arg = shlex.quote("./" + target)              # one filename, never a shell fragment or a dotnet option
+        source = jh_graph.sanitize_text(target, 200)
+        steps.append(_step("dotnet restore %s (locked, offline)" % target, "install",
+                           "dotnet restore --locked-mode --source /cache/nuget --packages /work/nuget-packages "
+                           "--no-http-cache --disable-build-servers -p:NuGetAudit=false " + arg, source, nuget=True))
+        steps.append(_step("dotnet build %s (offline)" % target, "install",
+                           "dotnet build --no-restore --disable-build-servers -p:NuGetAudit=false " + arg,
+                           source, nuget=True))
 
 
 def pyproject_dependencies(root: str) -> List[str]:
@@ -559,6 +586,10 @@ def shown(text: str, values: List[Tuple[str, str]] = ()) -> str:
 def container_argv(engine: str, image: str, run_dir: str, src: str, caches: Tuple[str, ...] = ()) -> List[str]:
     z = ",Z" if engine == "podman" else ""
     mounts = []
+    if image == DOTNET_IMAGE or "nuget" in caches:
+        # .NET 10 named mutexes use HOME/.dotnet despite DOTNET_CLI_HOME. Only this SDK scratch is writable;
+        # the parent canary home and all credential files stay read-only, and nothing is written back to the host.
+        mounts += ["--tmpfs", HOME + "/.dotnet:rw,size=64m,mode=1777"]
     for name in sorted(caches):
         target, mode = CACHE_MOUNTS[name]
         # the run's own copy of the operator's cache, never the operator's directory itself
@@ -570,6 +601,10 @@ def container_argv(engine: str, image: str, run_dir: str, src: str, caches: Tupl
             "-v", "%s/jh:/jh:ro%s" % (run_dir, z), "-v", "%s/out:/out:rw%s" % (run_dir, z),
             "-v", "%s/jh/resolv.conf:/etc/resolv.conf:ro%s" % (run_dir, z),
             "-e", "HOME=" + HOME, "-e", "CLAUDE_PROJECT_DIR=/work/repo", "-e", "npm_config_cache=/tmp/npm", "-e", "npm_config_update_notifier=false", "-e", "PIP_NO_INDEX=1",
+            "-e", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "-e", "DOTNET_NOLOGO=1", "-e", "NUGET_XMLDOC_MODE=skip",
+            "-e", "DOTNET_CLI_HOME=/tmp/dotnet", "-e", "NUGET_PACKAGES=/work/nuget-packages",
+            "-e", "NUGET_HTTP_CACHE_PATH=/tmp/nuget-http", "-e", "MSBUILDDISABLENODEREUSE=1",
+            "-e", "DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1",
             image, "sh", "/jh/run.sh"]
 
 
@@ -965,7 +1000,7 @@ def copy_cache(src: str, dest: str, writable: bool, what: str = "the cache",
     return counts
 
 
-def resolve_image(engine: Optional[str], image: str) -> str:
+def resolve_image(engine: Optional[str], image: str, root: Optional[str] = None) -> str:
     """The image to use: the one named, or, for the default name when only an image built before the rename exists,
     that one. Settled once, before the fetch and the run, so both use the same image."""
     engine = find_engine(engine)
@@ -974,6 +1009,10 @@ def resolve_image(engine: Optional[str], image: str) -> str:
     def present(name: str) -> bool:
         return subprocess.run([engine, "image", "inspect", "--format", "{{.Id}}", name], capture_output=True,
                               text=True).returncode == 0
+    if root:
+        import jh_nuget
+        if jh_nuget.is_dotnet(root) and present(DOTNET_IMAGE):
+            return DOTNET_IMAGE
     return OLD_IMAGE if not present(DEFAULT_IMAGE) and present(OLD_IMAGE) else image
 
 
@@ -986,10 +1025,11 @@ def find_engine(prefer: Optional[str] = None) -> Optional[str]:
 
 def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, timeout: int = 120,
         surfaces: Tuple[str, ...] = SURFACES, npm_cache: Optional[str] = None,
-        wheelhouse: Optional[str] = None) -> Dict[str, Any]:
+        wheelhouse: Optional[str] = None, nuget_cache: Optional[str] = None) -> Dict[str, Any]:
     root = os.path.abspath(root)
     supplied = {name: (path, label) for name, path, label in
-                (("npm", npm_cache, "--npm-cache"), ("wheels", wheelhouse, "--wheelhouse")) if path}
+                (("npm", npm_cache, "--npm-cache"), ("wheels", wheelhouse, "--wheelhouse"),
+                 ("nuget", nuget_cache, "--nuget-cache")) if path}
     for path, label in supplied.values():
         check_cache(path, root, label)
     result: Dict[str, Any] = {"schema": SCHEMA, "root": root, "image": image, "evidence_tier": "sandbox-observed",
@@ -1000,14 +1040,18 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
                                   "encrypted or transformed sends of a canary are not recognised",
                                   "the code under test can alter its own trace and DNS log; they are read as untrusted "
                                   "(regular files only, never through a link, bounded), not as proof"]}
+    import jh_nuget
+    dotnet = jh_nuget.is_dotnet(root)
     engine = find_engine(engine)
-    if not engine:
+    if not engine and not dotnet:
         raise RuntimeError("no container engine (podman or docker) is installed")
-    image = resolve_image(engine, image)
+    image = resolve_image(engine, image, root)
     result["image"] = image
     old_image = image == OLD_IMAGE
-    probe = subprocess.run([engine, "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True)
-    if probe.returncode != 0:
+    probe = subprocess.run([engine, "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True) \
+        if engine else subprocess.CompletedProcess([], 1, "", "no engine")
+    runnable = probe.returncode == 0
+    if not runnable and not (dotnet and image in (DEFAULT_IMAGE, OLD_IMAGE, DOTNET_IMAGE)):
         raise RuntimeError("image %s is not present; build it once with: %s build -t %s -f "
                            "templates/sandbox.Containerfile templates" % (image, engine, image))
     result["engine"], result["image_id"] = engine, probe.stdout.strip()[:80]
@@ -1019,6 +1063,8 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as fh:
                 fh.write(c["text"])
+        if dotnet or "nuget" in supplied:
+            os.makedirs(os.path.join(run_dir, "home", ".dotnet"), exist_ok=True)
         snap = os.path.join(run_dir, "src")
         try:
             snapshot(root, snap)
@@ -1032,7 +1078,11 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
         result["dependency_caches"] = {
             name: copy_cache(path, os.path.join(run_dir, "cache", name), CACHE_MOUNTS[name][1] == "rw", label)
             for name, (path, label) in supplied.items()}
-        steps, gaps = plan_steps(snap, surfaces, tuple(supplied))
+        dotnet_ready = runnable and image not in (DEFAULT_IMAGE, OLD_IMAGE)
+        steps, gaps = plan_steps(snap, surfaces, tuple(supplied), dotnet_ready=dotnet_ready)
+        if not runnable:
+            gaps.append("no usable runner image/engine: no sandbox commands ran")
+            steps = []
         if old_image:
             gaps.append("the image was built before 4.1.0 (%s), without curl or wget, so commands that use them fail; "
                         "build %s from templates/sandbox.Containerfile" % (OLD_IMAGE, DEFAULT_IMAGE))
@@ -1059,7 +1109,7 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
                 gaps.append("the run exceeded its time limit")
         rows, events, dns = collect(os.path.join(run_dir, "out"), steps, canaries, int(timeout), gaps)
         for step, row in zip(steps, rows):
-            if (step.get("npm_ci") or step.get("pip")) and row["exit"] not in ("0", None):
+            if (step.get("npm_ci") or step.get("pip") or step.get("nuget")) and row["exit"] not in ("0", None):
                 gaps.append("%s failed (exit %s): a package missing from the cache, a git or URL dependency, or "
                             "another error; not every install hook may have run" % (step["name"], row["exit"]))
         result["steps"], result["events"], result["dns"] = rows, events, dns

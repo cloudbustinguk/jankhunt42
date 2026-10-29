@@ -46,7 +46,7 @@ AREAS = ("ownership", "provenance", "data_inventory", "ci", "tests", "observabil
          "health_checks", "runbook", "security_policy", "change_control")
 
 # Scanner leads that put credentials or data in front of the public.
-EXPOSURE_RULES = {"JH132", "JH133", "JH134"}
+EXPOSURE_RULES = {"JH132", "JH133", "JH134", "JH135", "JH136"}
 SECRET_RULES = {"JH101", "JH401", "JH415"}
 # agent guardrails, sandboxes and dev containers, and CI that runs agent branches with secrets
 AGENT_RULES = {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711", "JH432"}
@@ -191,6 +191,15 @@ _PLAIN_FINDING = {
     "JH132": "A secret key is sent to every visitor's browser",
     "JH133": "An AI service key is used from the browser, where every visitor can take it",
     "JH134": "A data store is open to anyone on the internet",
+    "JH135": "An API changes or returns application data without a visible sign-in requirement",
+    "JH136": "Any website can be allowed to make requests with a user's credentials",
+    "JH137": "Development error details can be shown outside local development",
+    "JH138": "The web service accepts unencrypted traffic from other machines",
+    "JH139": "Text from a request is inserted directly into a database query",
+    "JH140": "Uploaded data can choose which program objects are created",
+    "JH141": "Personal request fields are sent to an AI service without visible redaction",
+    "JH142": "A NuGet dependency can change version during a later restore",
+    "JH143": "The build downloads remote content before it is checked",
     "JH401": "A file of secrets is stored with the code",
     "JH418": "The automatic build runs code from outside contributors with access to your secrets",
     "JH701": "A file your AI agent reads tells it to do something without you knowing",
