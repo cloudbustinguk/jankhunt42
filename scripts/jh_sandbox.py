@@ -1,5 +1,5 @@
-"""detonate: run a repository's own install hooks, and the commands that run when it is opened, in a disposable
-sandbox, and report what they try to do.
+"""sandbox: run a repository's own install hooks, its dependencies as they load, and the commands that run when it
+is opened, in a disposable sandbox, and report what they try to do.
 
 Opt-in only. jankhunt42 stays stdlib: it orchestrates an external rootless container engine (podman, or docker)
 and an operator-built image that holds strace. The repository is copied in read-only, the network is off, the
@@ -7,9 +7,11 @@ root filesystem is read-only, every capability is dropped, and resources and tim
 credentials sit in a throwaway HOME. strace, started as the parent of each hook, records file, network and
 process activity; a loopback DNS sink records the names looked up.
 
-Two surfaces: `install` (package hooks) and `open` (what an agent or editor runs because the repository was opened:
-project hooks and helper commands, dev container commands, folder-open tasks, MCP servers). Each command is written
-to its own file and run by `sh` under the tracer, so text from the repository never becomes part of the runner.
+Three surfaces: `install` (package hooks), `import` (each direct dependency the install put in place, loaded the
+way the application loads it, so code that runs only when a package is loaded runs too), and `open` (what an agent
+or editor runs because the repository was opened: project hooks and helper commands, dev container commands,
+folder-open tasks, MCP servers). Each command is written to its own file and run by `sh` under the tracer, so text
+from the repository never becomes part of the runner.
 
 The result is a firewall-style log: DENY for each attempted connection or lookup (nothing can leave), ALERT for a
 canary read, a canary passed on, or a persistence attempt. It is evidence of the tier `sandbox-observed`: it adds
@@ -36,8 +38,10 @@ import jh_checks
 import jh_graph
 from jh_core import MCP_CONFIG_FILES, redact_secrets
 
-SCHEMA = "jankhunt.detonate.v1"
-DEFAULT_IMAGE = "localhost/jankhunt42-detonate:0.1"
+SCHEMA = "jankhunt.sandbox.v1"
+OLD_SCHEMAS = ("jankhunt.detonate.v1",)           # results saved before the rename
+OLD_IMAGE = "localhost/jankhunt42-detonate:0.1"   # an image built before the rename
+DEFAULT_IMAGE = "localhost/jankhunt42-sandbox:0.1"
 NPM_HOOKS = ("preinstall", "install", "postinstall", "prepare")
 HOME = "/home/canary"
 
@@ -48,12 +52,16 @@ CANARY_FILES = (
     ("npm", ".npmrc", "//registry.npmjs.org/:_authToken=npm_JH42CANARY{h26}\n"),
     ("ssh", ".ssh/id_ed25519", "-----BEGIN OPENSSH PRIVATE KEY-----\nJH42CANARY{h32}\n-----END OPENSSH PRIVATE KEY-----\n"),
     ("env", ".env", "API_TOKEN=JH42CANARY{h32}\nDATABASE_URL=postgres://canary:JH42CANARY{h16}@db.invalid/app\n"),
+    ("gh", ".config/gh/hosts.yml", "github.com:\n    oauth_token: gho_JH42CANARY{h26}\n    user: canary\n"),
+    ("docker", ".docker/config.json", '{{"auths": {{"https://index.docker.io/v1/": {{"auth": "JH42CANARY{h32}"}}}}}}\n'),
+    ("kube", ".kube/config", "apiVersion: v1\nkind: Config\nusers:\n- name: canary\n  user:\n    token: JH42CANARY{h32}\n"),
+    ("pypi", ".pypirc", "[pypi]\nusername = __token__\npassword = pypi-JH42CANARY{h32}\n"),
 )
 # a write or rename into one of these is a persistence attempt
 PERSISTENCE = (".bashrc", ".profile", ".bash_profile", ".zshrc", ".ssh/authorized_keys", ".config/autostart/",
                ".config/systemd/user/", "/etc/cron", "/var/spool/cron", ".local/share/applications/")
 LIMITS = ("--pids-limit=256", "--memory=1g", "--cpus=2")
-SURFACES = ("install", "open")
+SURFACES = ("install", "import", "open")
 
 # what an agent or editor runs because the repository was opened, read only from these fixed paths
 AGENT_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".gemini/settings.json")
@@ -62,6 +70,16 @@ DEVCONTAINER_COMMANDS = ("initializeCommand", "onCreateCommand", "updateContentC
                          "postStartCommand", "postAttachCommand")
 MCP_SECONDS = 20          # a server runs until stopped; this long is enough to see what it does at start
 MAX_OPEN_STEPS = 40
+MAX_IMPORT_STEPS = 40
+IMPORT_SECONDS = 20       # loading a module takes a moment; one that is still busy after this is reported
+SETTLE_SECONDS = 2        # after a load, time for what it deferred (a timer, a thread) to run where it is seen
+# a dependency name reaches a step only as an argument, quoted, and only if it is a package name
+_NPM_NAME = re.compile(r"(?:@[A-Za-z0-9][\w.~-]{0,100}/)?[A-Za-z0-9][\w.~-]{0,213}\Z")
+_PY_REQUIREMENT = re.compile(r"([A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?)\s*(?:\[[^\]]*\])?\s*(?:[=<>!~;@ ]|$)")
+NODE_LOAD = ("node -e 'import(process.argv[1]).then(() => new Promise((r) => setTimeout(r, %d)), (e) => { "
+             "console.error(\"jankhunt42: not loadable: \" + ((e && e.code) || e)); process.exitCode = 3 })' -- %%s"
+             % (SETTLE_SECONDS * 1000))
+PYTHON_LOAD = "python3 -I /jh/load.py %s"
 MAX_CONFIG_BYTES = 1000000
 # what the sandbox writes is untrusted: read only regular files, never through a link, and only this much
 # operator-supplied dependency caches: made outside the sandbox, copied into the run, never fetched by it
@@ -77,7 +95,7 @@ MAX_TRACE_BYTES = 64 * 1024 * 1024
 MAX_DNS_BYTES = 1024 * 1024
 _HOSTNAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}\Z")
 _MCP_INIT = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-    "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "jankhunt42-detonate", "version": "1"}}})
+    "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "jankhunt42-sandbox", "version": "1"}}})
 
 
 def make_canaries() -> List[Dict[str, Any]]:
@@ -98,6 +116,8 @@ def plan_steps(root: str, surfaces: Tuple[str, ...] = SURFACES,
     gaps: List[str] = []
     if "install" in surfaces:
         _plan_install(root, steps, gaps, caches)
+    if "import" in surfaces:
+        _plan_import(root, steps, gaps)
     if "open" in surfaces:
         _plan_open(root, steps, gaps)
     return steps, gaps
@@ -135,6 +155,14 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], cache
             elif deps:
                 gaps.append("npm dependencies are not installed (no --npm-cache), so their install hooks did not run")
     requirements = os.path.isfile(os.path.join(root, "requirements.txt"))
+    declared = [] if requirements else pyproject_dependencies(root)
+    if declared and "wheels" in caches:
+        # a modern project declares its dependencies in pyproject.toml; each goes to pip as one quoted argument
+        steps.append(_step("pip install pyproject dependencies (offline)", "install",
+                           PIP_OFFLINE + " --target /work/pydeps " + " ".join(shlex.quote(d) for d in declared),
+                           "pyproject.toml", pip=True))
+    elif declared:
+        gaps.append("pyproject.toml dependencies are not installed (no --wheelhouse), so they did not run or load")
     if requirements and "wheels" in caches:
         steps.append(_step("pip install requirements (offline)", "install",
                            PIP_OFFLINE + " --target /work/pydeps -r requirements.txt", "requirements.txt", pip=True))
@@ -156,6 +184,107 @@ def _plan_install(root: str, steps: List[Dict[str, Any]], gaps: List[str], cache
                                "python3 -I -m pip wheel --no-deps --no-build-isolation --no-index -w /tmp/wheel .",
                                "pyproject.toml"))
             gaps.append("a pyproject build backend that is not in the image cannot run (no --wheelhouse)")
+
+
+def pyproject_dependencies(root: str) -> List[str]:
+    """The [project] dependencies a pyproject.toml declares, each a requirement that starts with a package name (so
+    none can pass for a pip option) and names no URL. tomllib where Python has it; else a strict reading of that one
+    array."""
+    path = os.path.join(root, "pyproject.toml")
+    if not os.path.isfile(path) or os.path.islink(path):
+        return []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(MAX_CONFIG_BYTES)
+    except OSError:
+        return []
+    try:
+        import tomllib                      # Python 3.11+
+        project = tomllib.loads(text).get("project")
+        deps = project.get("dependencies") if isinstance(project, dict) else None
+    except ImportError:
+        m = re.search(r"(?ms)^\[project\]\s*$(.*?)(?=^\[|\Z)", text)
+        start = re.search(r"(?m)^dependencies\s*=\s*\[", m.group(1)) if m else None
+        deps = []
+        if start:
+            # the quoted strings until the ] that closes the array, read outside quotes ("requests[socks]>=2")
+            for q in re.finditer(r"\"([^\"\n]*)\"|'([^'\n]*)'|(\])", m.group(1)[start.end():]):
+                if q.group(3):
+                    break
+                deps.append(q.group(1) if q.group(1) is not None else q.group(2))
+    except (ValueError, RecursionError):
+        return []
+    if not isinstance(deps, list):
+        return []
+    return [d.strip() for d in deps if isinstance(d, str) and _PY_REQUIREMENT.match(d.strip())
+            and "@" not in d and "://" not in d][:MAX_IMPORT_STEPS * 2]
+
+
+def _plan_import(root: str, steps: List[Dict[str, Any]], gaps: List[str]) -> None:
+    """Load each direct dependency that an install step already planned put in place: npm packages after npm ci,
+    Python requirements after the offline pip install. One step per dependency, so each event names the package
+    that caused it."""
+    loads: List[Tuple[str, str, str, str]] = []
+    bad = 0
+    pkg = os.path.join(root, "package.json")
+    if os.path.isfile(pkg) and not os.path.islink(pkg):
+        try:
+            with open(pkg, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError, RecursionError):
+            doc = {}
+        doc = doc if isinstance(doc, dict) else {}
+        names = sorted({n for k in ("dependencies", "optionalDependencies", "devDependencies")
+                        if isinstance(doc.get(k), dict) for n in doc[k]})
+        if names and not any(s.get("npm_ci") for s in steps):
+            gaps.append("npm dependencies were not loaded, because they were not installed (that needs a lockfile "
+                        "and --fetch or --npm-cache)")
+        elif names:
+            for name in names:
+                if not _NPM_NAME.match(name):
+                    bad += 1
+                elif not name.startswith("@types/"):         # type declarations only: nothing to load
+                    loads.append(("load %s" % name, NODE_LOAD % shlex.quote(name), "package.json", name))
+    req = os.path.join(root, "requirements.txt")
+    declared = [] if os.path.isfile(req) else pyproject_dependencies(root)
+    if declared:
+        names = list(dict.fromkeys(_PY_REQUIREMENT.match(d).group(1) for d in declared))
+        if not any(s.get("pip") and s.get("source") == "pyproject.toml" for s in steps):
+            gaps.append("pyproject.toml dependencies were not loaded, because they were not installed (that needs "
+                        "--wheelhouse)")
+        else:
+            loads += [("import %s" % n, PYTHON_LOAD % shlex.quote(n), "pyproject.toml", n) for n in names]
+    if os.path.isfile(req) and not os.path.islink(req):
+        names = []
+        try:
+            with open(req, encoding="utf-8", errors="replace") as fh:
+                lines = fh.read(MAX_CONFIG_BYTES).splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            line = re.sub(r"(^|\s)#.*", "", line).strip()
+            if not line or line.startswith(("-", ".", "/")) or "://" in line:
+                continue                    # options, includes, paths and URLs: not a named requirement
+            m = _PY_REQUIREMENT.match(line)
+            if not m:
+                bad += 1
+            elif m.group(1) not in names:
+                names.append(m.group(1))
+        if names and not any(s.get("pip") and s.get("source") == "requirements.txt" for s in steps):
+            gaps.append("Python requirements were not loaded, because they were not installed (that needs "
+                        "--wheelhouse)")
+        elif names:
+            loads += [("import %s" % n, PYTHON_LOAD % shlex.quote(n), "requirements.txt", n) for n in names]
+    if any(source != "package.json" for _, _, source, _ in loads):
+        # a real install runs every .pth file in site-packages at each Python start: once, as its own step
+        loads.insert(0, ("python startup (.pth files)", "python3 -I /jh/load.py --pth", "site-packages", ""))
+    if bad:
+        gaps.append("%d dependency names are not package names, so they were not loaded" % bad)
+    if len(loads) > MAX_IMPORT_STEPS:
+        gaps.append("%d more direct dependencies were not loaded (the first %d were)"
+                    % (len(loads) - MAX_IMPORT_STEPS, MAX_IMPORT_STEPS))
+    for name, script, source, dep in loads[:MAX_IMPORT_STEPS]:
+        steps.append(_step(name, "import", script, source, limit=IMPORT_SECONDS, import_of=dep))
 
 
 def _inside(root: str, rel: str) -> bool:
@@ -197,7 +326,7 @@ def _read_settings(root: str, rel: str, gaps: List[str]) -> Optional[Dict[str, A
 
 def _hook_input(event: str) -> str:
     """A synthetic event for a hook's standard input; nothing from a real session."""
-    doc: Dict[str, Any] = {"session_id": "jankhunt42-detonate", "transcript_path": "/tmp/transcript.jsonl",
+    doc: Dict[str, Any] = {"session_id": "jankhunt42-sandbox", "transcript_path": "/tmp/transcript.jsonl",
                            "cwd": "/work/repo", "hook_event_name": event}
     if event in ("PreToolUse", "PostToolUse", "PermissionRequest"):
         doc.update(tool_name="Bash", tool_input={"command": "ls"})
@@ -632,13 +761,13 @@ _VERDICTS = ("ALERT", "DENY", "INFO")
 
 
 def _result_problem(doc: Any) -> str:
-    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+    if not isinstance(doc, dict) or (doc.get("schema") != SCHEMA and doc.get("schema") not in OLD_SCHEMAS):
         return "not a %s result" % SCHEMA
     tree = doc.get("tree")
     if not isinstance(tree, dict) or not re.fullmatch(r"[0-9a-f]{64}", str(tree.get("digest", ""))):
         return "no tree digest (made by a jankhunt42 older than 3.5.0?)"
     if tree.get("format") != DIGEST_FORMAT:
-        return "its tree digest is an older format; re-run detonate with this version"
+        return "its tree digest is an older format; re-run the sandbox with this version"
     events, cov = doc.get("events"), doc.get("coverage")
     if not isinstance(events, list) or len(events) > 20000 or not all(
             isinstance(e, dict) and e.get("verdict") in _VERDICTS and isinstance(e.get("kind"), str) and
@@ -652,14 +781,14 @@ def _result_problem(doc: Any) -> str:
 
 def passport_evidence(doc: Optional[Dict[str, Any]], root: str,
                       digest: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """A detonate result as passport evidence. It counts only when it was made on exactly this tree (digest: the
+    """A sandbox result as passport evidence. It counts only when it was made on exactly this tree (digest: the
     assessed tree's, computed from root when not given), and it can only add outcomes: an ALERT needs review, while a
     clean run proves nothing about paths it did not reach."""
     if doc is None:
         return {"state": "not-supplied"}
     problem = _result_problem(doc)
     if problem:
-        raise ValueError("detonation result: " + problem)
+        raise ValueError("sandbox result: " + problem)
     if digest is None:
         try:
             digest = tree_digest(root)
@@ -836,6 +965,18 @@ def copy_cache(src: str, dest: str, writable: bool, what: str = "the cache",
     return counts
 
 
+def resolve_image(engine: Optional[str], image: str) -> str:
+    """The image to use: the one named, or, for the default name when only an image built before the rename exists,
+    that one. Settled once, before the fetch and the run, so both use the same image."""
+    engine = find_engine(engine)
+    if not engine or image != DEFAULT_IMAGE:
+        return image
+    def present(name: str) -> bool:
+        return subprocess.run([engine, "image", "inspect", "--format", "{{.Id}}", name], capture_output=True,
+                              text=True).returncode == 0
+    return OLD_IMAGE if not present(DEFAULT_IMAGE) and present(OLD_IMAGE) else image
+
+
 def find_engine(prefer: Optional[str] = None) -> Optional[str]:
     for engine in ([prefer] if prefer else ["podman", "docker"]):
         if engine and shutil.which(engine):
@@ -862,13 +1003,16 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
     engine = find_engine(engine)
     if not engine:
         raise RuntimeError("no container engine (podman or docker) is installed")
+    image = resolve_image(engine, image)
+    result["image"] = image
+    old_image = image == OLD_IMAGE
     probe = subprocess.run([engine, "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True)
     if probe.returncode != 0:
         raise RuntimeError("image %s is not present; build it once with: %s build -t %s -f "
-                           "templates/detonate.Containerfile templates" % (image, engine, image))
+                           "templates/sandbox.Containerfile templates" % (image, engine, image))
     result["engine"], result["image_id"] = engine, probe.stdout.strip()[:80]
     canaries = make_canaries()
-    run_dir = tempfile.mkdtemp(prefix="jh-detonate-")
+    run_dir = tempfile.mkdtemp(prefix="jh-sandbox-")
     try:
         for c in canaries:
             path = os.path.join(run_dir, "home", c["path"][len(HOME) + 1:])
@@ -889,13 +1033,17 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
             name: copy_cache(path, os.path.join(run_dir, "cache", name), CACHE_MOUNTS[name][1] == "rw", label)
             for name, (path, label) in supplied.items()}
         steps, gaps = plan_steps(snap, surfaces, tuple(supplied))
+        if old_image:
+            gaps.append("the image was built before 4.1.0 (%s), without curl or wget, so commands that use them fail; "
+                        "build %s from templates/sandbox.Containerfile" % (OLD_IMAGE, DEFAULT_IMAGE))
         if not steps:
             gaps.append("nothing to run was found (package hooks, or commands that run when the repository is opened)")
         os.makedirs(os.path.join(run_dir, "jh"))
         os.makedirs(os.path.join(run_dir, "out"))
         os.chmod(os.path.join(run_dir, "out"), 0o777)
-        shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), "jh_detonate_sink.py"),
-                    os.path.join(run_dir, "jh", "sink.py"))
+        for helper, name in (("jh_sandbox_sink.py", "sink.py"), ("jh_sandbox_load.py", "load.py")):
+            shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), helper),
+                        os.path.join(run_dir, "jh", name))
         with open(os.path.join(run_dir, "jh", "resolv.conf"), "w") as fh:
             fh.write("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n")
         with open(os.path.join(run_dir, "jh", "run.sh"), "w") as fh:
@@ -988,6 +1136,9 @@ def collect(out: str, steps: List[Dict[str, Any]], canaries: List[Dict[str, Any]
                 row["note"] = "in real use this runs on the host machine, outside any container"
             if step.get("server"):
                 row["note"] = "a server runs until stopped; it was stopped after %d seconds" % step_limit(step, timeout)
+            if step.get("import_of") and code not in ("0", "124", None):
+                row["note"] = "it did not load as a module: a command-line tool or type declarations only, or its " \
+                              "load failed"
             if step.get("dependency_of"):
                 row["note"] = "VS Code runs it first, as a dependency of folder-open task %s" % jh_graph.sanitize_text(
                     step["dependency_of"], 40)
@@ -1021,12 +1172,13 @@ def _md(text: Any) -> str:
 
 
 def render_markdown(r: Dict[str, Any]) -> str:
-    out = ["# jankhunt42 detonate", "",
+    out = ["# jankhunt42 sandbox", "",
            "Evidence tier: `sandbox-observed`. Image `%s` via %s. Coverage: **%s**." % (
                r["image"], r.get("engine", "?"), r["coverage"]["state"]), ""]
     for gap in r["coverage"]["gaps"]:
         out.append("- coverage gap: %s" % _md(gap))
-    for surface, title in (("install", "When it is installed"), ("open", "When it is opened")):
+    for surface, title in (("install", "When it is installed"), ("import", "When its dependencies are loaded"),
+                           ("open", "When it is opened")):
         rows = [s for s in r["steps"] if s.get("surface", "install") == surface]
         if not rows:
             continue

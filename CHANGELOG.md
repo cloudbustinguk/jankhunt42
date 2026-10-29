@@ -4,6 +4,85 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.1.0] — 2026-10-29
+
+Deeper into the sandbox, and a scan your team can make its own.
+
+### Changed
+
+- **`detonate` is now `sandbox`.** The command runs a repository's code in a
+  disposable sandbox and records what it tries; "detonate" presumed the
+  code was hostile. `jankhunt42 sandbox .` replaces it, `passport
+  --sandbox-run FILE` replaces `--detonation`, results carry the schema
+  `jankhunt.sandbox.v1`, the image is `localhost/jankhunt42-sandbox:0.1`
+  (built from `templates/sandbox.Containerfile`), and the guide is
+  `references/sandbox.md`. The old command and flag still work, hidden,
+  until 4.2; the passport still reads results saved as
+  `jankhunt.detonate.v1`; and an image built under the old name is used
+  when the new one is absent.
+
+### Added
+
+- **The sandbox loads each dependency (`--surface import`).** A package can
+  wait until it is loaded: code at the top of its `index.js` or
+  `__init__.py` runs when the application imports it, with no install hook
+  at all. After the install step, the sandbox loads each direct dependency
+  once, as the application would (Node's `import()` for npm packages, so
+  CommonJS and ES modules both load; a small loader for Python packages,
+  which imports the modules the distribution installed). Each load is its
+  own step, so every event names the package that caused it. Installed
+  `.pth` files, which a real install runs at every Python start, run in a
+  step of their own. After each load the sandbox waits two seconds, so a
+  timer or thread the package deferred (even one that would let the
+  process exit first) runs where it is seen. It needs the dependencies installed, and coverage
+  says so when they are not. At most 40 dependencies load, 20 seconds
+  each; names reach the runner only as quoted arguments, and only when
+  they are package names. The default run now covers install, import and
+  open.
+- **`--fetch` for Python.** `sandbox --fetch https://pypi.org/ --fetch
+  https://files.pythonhosted.org/` also fetches what a hash-pinned
+  `requirements.txt` pins (`name==version --hash=sha256:...`, nothing
+  looser), through the index's JSON API, verified against the pinned
+  hashes, into a wheelhouse for that run, under the same HTTPS, address
+  and size rules as the npm fetch. Wheels come first; a source package is
+  fetched only when no pinned wheel exists, and the receipt marks that its
+  build runs code. Designed and built by Codex (mutants M170 to M183).
+- **Python dependencies declared in `pyproject.toml`** install and load
+  when there is no `requirements.txt` (modern projects often have none).
+  Each requirement goes to pip as one quoted argument, and only when it
+  starts with a package name, so none can pass for a pip option.
+- **curl and wget in the image,** because a real machine has them: code
+  that shells out to them now tries, and is seen trying. Rebuild the image
+  once (`templates/sandbox.Containerfile`); until then an image built under
+  the old name is used, and coverage says it lacks them.
+- **Four more canaries:** the GitHub CLI's `hosts.yml`, a Docker
+  `config.json`, a kube config and a `.pypirc`, the credential files
+  attackers sweep for. The sandbox trials found the first: a dependency
+  that read the GitHub CLI's token went unseen.
+- **`--ignore-rule JH417`** on `scan`, `review` and `passport` sets a rule
+  aside for one run, for a rule your team owns the answer to (whether a
+  trusted publisher's tag is good enough is a policy choice). Its findings
+  are not reported, scored or gated on; the JSON lists it in
+  `ignored_rules`, and the passport in `scope.ignored_rules`. An unknown
+  id is refused.
+- **Site rulesets (`--ruleset FILE.json`).** Your site policy in one file
+  (`jankhunt.ruleset.v1`): rules of your own, on the same engine as the
+  shipped ones, plus shipped rules set aside or re-rated. Every site rule
+  carries match and no-match examples, and a ruleset whose rule fails its
+  own examples is refused. Ids starting with `JH` stay reserved. A ruleset
+  outside the repository is the operator's policy and applies everywhere;
+  one inside it is treated like `.jankhunt42.toml`, so its ignores do not
+  reach the citizen profile's governance scans. Reports record each
+  ruleset's name, sha256 and trust. See `references/rulesets.md` and
+  `templates/site-ruleset.example.json`.
+
+### Removed
+
+- **The `score` alias,** as 4.0.0 said: use `jankhunt42 scan --score`. The
+  old name exits 2 and says so.
+
+Mutants M161 to M195.
+
 ## [4.0.1] — 2026-10-27
 
 What the citizen-developer trials found. A local model wrote eight small

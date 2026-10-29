@@ -1,4 +1,4 @@
-"""A loopback DNS sink for `detonate`: logs each query name and answers NXDOMAIN, so nothing resolves.
+"""A loopback DNS sink for the sandbox: logs each query name and answers NXDOMAIN, so nothing resolves.
 
 Runs inside the sandbox on 127.0.0.1:53 (the run sets net.ipv4.ip_unprivileged_port_start=0). stdlib only.
 """

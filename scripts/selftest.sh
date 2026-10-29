@@ -846,7 +846,7 @@ print("rules: %d" % len(d))
 PY
 
 "$PY" "$JH" --help >/dev/null
-for cmd in scan review supply-chain map passport detonate selftest rules score triage doctor; do
+for cmd in scan review supply-chain map passport sandbox selftest rules triage doctor; do
   "$PY" "$JH" "$cmd" --help >/dev/null || fail "help failed for $cmd"
 done
 for cmd in hunt merge report; do

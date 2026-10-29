@@ -1,0 +1,29 @@
+{
+  "schema_version": "jankhunt.ruleset.v1",
+  "name": "example-site-policy",
+  "description": "A starting point: set aside the rules your team owns, re-rate others, add your own.",
+  "ignore": [],
+  "severity": {},
+  "rules": [
+    {
+      "id": "SITE001",
+      "title": "Internal hostname in code",
+      "severity": "major",
+      "category": "security",
+      "message": "An internal hostname is written into the code; it ties the code to one network.",
+      "fix": "Read the host from configuration.",
+      "patterns": [
+        "\\b[a-z0-9-]+\\.corp\\.example\\.internal\\b"
+      ],
+      "target": "raw",
+      "examples": {
+        "match": [
+          "host = \"db1.corp.example.internal\""
+        ],
+        "no_match": [
+          "see example.com"
+        ]
+      }
+    }
+  ]
+}

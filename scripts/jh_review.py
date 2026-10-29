@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -444,10 +445,14 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
         min_severity=getattr(args, "min_severity", "minor"),
         categories=set(getattr(args, "category", ()) or ()) or None,
         rule_ids=set(getattr(args, "rule", ()) or ()) or None,
+        ignore_rule_ids=set(getattr(args, "ignore_rule_ids", None) or ()) or None,
         max_per_file_rule=getattr(args, "max_per_file_rule", 5),
         max_per_rule=getattr(args, "max_per_rule", 200),
     )
-    return scan_sources(sources, opts)
+    result = scan_sources(sources, opts)
+    for f in result.findings:                  # a ruleset's severity changes (prepare_rules)
+        f.severity = (getattr(args, "severity_map", None) or {}).get(f.rule, f.severity)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +662,10 @@ def run_review(args: Any) -> Dict[str, Any]:
     )
     diff_hash = hashlib.sha256(diff_material.encode("utf-8", "replace")).hexdigest()
     result = scan_review(sources, args)
+    overrun = ["site rule %s ran over its time budget and was switched off for this run; its findings are incomplete"
+               % rid for rid in sorted(result.site_overrun)]
+    for note in overrun:
+        print("jankhunt42: %s" % note, file=sys.stderr)
 
     new: List[Finding] = []
     contextual: List[Finding] = []
@@ -803,6 +812,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "warnings": list(dict.fromkeys(
             (supply or {}).get("warnings", [])
             + ([] if not diff_scope.warning else [diff_scope.warning])
+            + overrun
         )),
     }
     return data

@@ -83,6 +83,10 @@ recorded a successful verification, not that jankhunt42 verified a signature.
 reports `tool-verified` only when the verifier checked the signer identity;
 `--online` is the only switch that lets it fetch from GitHub.
 
+`--ignore-rule JH417` sets a rule aside for one run (in CI, for a rule your
+team owns), and `--ruleset FILE.json` applies a site policy: your own rules,
+and shipped rules set aside or re-rated (`references/rulesets.md`).
+
 `.jankhunt42.toml`/`.jankhunt42.json` (discovered upward from the scan root, like
 `.git`) can disable a rule, override its severity, scope either to a path
 glob, or ignore a subtree outright; `--no-config` bypasses discovery,

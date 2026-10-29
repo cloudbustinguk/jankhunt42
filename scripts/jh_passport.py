@@ -22,7 +22,7 @@ import jh_change
 import jh_capabilities
 import jh_n8n
 import jh_capability_approval
-import jh_detonate
+import jh_sandbox
 import jh_graph as G
 import jh_map
 import jh_frameworks
@@ -493,7 +493,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           package_sources: Optional[Dict[str, Any]] = None,
           capability_delta: Optional[Dict[str, Any]] = None,
           capability_approval_record: Optional[Dict[str, Any]] = None,
-          capability_approval_label: str = "",
+          capability_approval_label: str = "", ignored_rules: Sequence[str] = (),
+          rulesets: Sequence[Dict[str, Any]] = (),
           sandbox: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
@@ -545,7 +546,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         capability_delta or jh_capabilities.not_requested(), eff, jh_policy.policy_hash(eff), capability_approval_label)
     sandbox = sandbox or {"state": "not-supplied"}
     if sandbox["state"] == "stale":
-        warns.append("the sandbox run (--detonation) was made on a different tree and was not used")
+        warns.append("the sandbox run (--sandbox-run) was made on a different tree and was not used")
     facts = {
         "sandbox": sandbox,
         "capability_approval": approval,
@@ -611,7 +612,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "subject": {"name": safe_text(name), "revision": source_revision, "working_tree_dirty": dirty,
                     "artifact_digests": prov.get("artifact_digests", []),
                     "environment": passport_cfg.get("environment") if passport_cfg.get("environment") in G.ENVIRONMENTS else "unknown"},
-        "scope": {"root": ".", "files_scanned": scan_files, "loc": scan_loc, "redaction": "none"},
+        "scope": dict({"root": ".", "files_scanned": scan_files, "loc": scan_loc, "redaction": "none"},
+                      **({"ignored_rules": list(ignored_rules)} if ignored_rules else {}),
+                      **({"rulesets": [dict(r) for r in rulesets]} if rulesets else {})),
         "coverage": {
             "evidence_areas": completeness,
             "evidence_areas_present": present,
@@ -841,7 +844,7 @@ def markdown(p: Dict[str, Any]) -> str:
         approval_line = jh_capability_approval.approver_line(p.get("capability_approval") or {})
         if approval_line:
             lines += [jh_capabilities.markdown_line(approval_line), ""]
-    sandbox_line = jh_detonate.passport_line(p.get("sandbox_run") or {})
+    sandbox_line = jh_sandbox.passport_line(p.get("sandbox_run") or {})
     if sandbox_line:
         lines += ["## Sandbox run", "", jh_capabilities.markdown_line(sandbox_line), ""]
         for a in (p.get("sandbox_run") or {}).get("alerts", [])[:20]:

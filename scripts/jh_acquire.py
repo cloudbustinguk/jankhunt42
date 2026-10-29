@@ -1,16 +1,17 @@
-"""acquire: fetch exactly the dependency artifacts a lockfile pins, from origins the operator approves, then build a
-package-manager cache offline in the sandbox, for `detonate --npm-cache`.
+"""acquire: fetch pinned npm and Python artifacts from origins the operator approves. npm caches are built
+offline in the sandbox; Python artifacts go straight into a verified wheelhouse for the sandbox.
 
 No package manager and no package code touches the network. jankhunt42 itself downloads each artifact by the URL and
-integrity hash the lockfile records, and only when:
+integrity hash the lockfile or requirements.txt records, and only when:
 - the URL is HTTPS, has no credentials, and sits under an origin the operator approved (--origin);
 - the host resolves to a global address, and the connection goes to that checked address (no rebinding);
 - the server answers 200 without a redirect, within the size budget;
-- the bytes match the lockfile's sha512.
+- the bytes match the lockfile's sha512 (npm) or sha256 (Python requirements).
 
 The verified tarballs are then added to an npm cache by `npm cache add` inside the network-none sandbox. Nothing is
 extracted or run on the host. What the lockfile pins is still the repository's choice: acquire proves the bytes are
-the pinned ones from an approved origin, not that the packages are safe; detonate is how you find out what they do.
+the pinned ones from an approved origin, not that the packages are safe; the sandbox is how you find out what they do.
+Python simple-API metadata goes through the same checked transport; no package manager runs on the host.
 """
 from __future__ import annotations
 
@@ -31,13 +32,13 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import jh_ceiling
-import jh_detonate
+import jh_sandbox
 
 SCHEMA = "jankhunt.acquire.v1"
 MAX_LOCK_BYTES = 32 * 1024 * 1024
 MAX_ARTIFACTS = 5000
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
-MAX_TOTAL_BYTES = jh_detonate.MAX_CACHE_BYTES
+MAX_TOTAL_BYTES = jh_sandbox.MAX_CACHE_BYTES
 TIMEOUT = 60
 READ_BYTES = 1 << 20                          # one read's worth of body
 # the sandbox image is linux/x64: platform-specific optional packages for other systems are not needed offline
@@ -134,7 +135,7 @@ def _read_lockfile(path: str, name: str) -> bytes:
 def plan_npm(root: str) -> Dict[str, Any]:
     """What the npm lockfile pins: one artifact per registry tarball with a sha512 integrity. Everything that cannot
     be fetched that way (git, file and link sources, missing integrity, old lockfiles) is listed as refused."""
-    lock = next((f for f in jh_detonate.NPM_LOCKFILES if os.path.lexists(os.path.join(root, f))), None)
+    lock = next((f for f in jh_sandbox.NPM_LOCKFILES if os.path.lexists(os.path.join(root, f))), None)
     if lock is None:
         raise AcquireError("no package-lock.json or npm-shrinkwrap.json")
     raw = _read_lockfile(os.path.join(root, lock), lock)
@@ -277,7 +278,7 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
-def _stream(url: str, limit: int, usage: Dict[str, int]) -> Iterator[bytes]:
+def _stream(url: str, limit: int, usage: Dict[str, int], accept: str = "*/*") -> Iterator[bytes]:
     """The artifact's bytes. usage["received"] is kept current with every byte the connection has received (headers,
     framing and read-ahead included) before each yield and on every way out, so the budget can charge it all."""
     u = urlsplit(url)
@@ -293,7 +294,7 @@ def _stream(url: str, limit: int, usage: Dict[str, int]) -> Iterator[bytes]:
     # a malformed status line, header or chunk size can surface from the parser as a ValueError
     failures = (OSError, http.client.HTTPException, ValueError)
     try:
-        conn.request("GET", u.path or "/", headers={"User-Agent": "jankhunt42-acquire", "Accept": "*/*"})
+        conn.request("GET", u.path or "/", headers={"User-Agent": "jankhunt42-acquire", "Accept": accept})
         try:
             resp = conn.getresponse()
         except failures as exc:
@@ -327,12 +328,12 @@ def _stream(url: str, limit: int, usage: Dict[str, int]) -> Iterator[bytes]:
 
 def fetch(artifact: Dict[str, Any], origins: List[Tuple[str, str, int, str]], dest: str, limit: int,
           stream: Callable[[str, int, Dict[str, int]], Iterator[bytes]] = _stream) -> Tuple[int, int]:
-    """Download one artifact to dest, verifying its sha512 as it arrives; nothing is kept unless it matches. Returns
+    """Download one artifact to dest, verifying its pinned hash as it arrives; nothing is kept unless it matches. Returns
     the bytes kept and the bytes received; a failure carries the bytes received as `received`. The budget charges
     bytes received, kept or not."""
     if not approved(artifact["url"], origins):
         raise AcquireError("refused: the URL is not under an approved origin")
-    digest, size, usage = hashlib.sha512(), 0, {"received": 0}
+    digest, size, usage = (hashlib.sha256() if "sha256" in artifact else hashlib.sha512()), 0, {"received": 0}
     part = dest + ".part"
     chunks = None
     try:
@@ -344,8 +345,12 @@ def fetch(artifact: Dict[str, Any], origins: List[Tuple[str, str, int, str]], de
                     raise AcquireError("larger than the size limit")
                 digest.update(chunk)
                 out.write(chunk)
-        if digest.hexdigest() != artifact["sha512"]:
-            raise AcquireError("the bytes do not match the lockfile's sha512")
+        if "sha256" in artifact:
+            if digest.hexdigest() != artifact["sha256"]:
+                raise AcquireError("the bytes do not match requirements.txt's sha256")
+        else:
+            if digest.hexdigest() != artifact["sha512"]:
+                raise AcquireError("the bytes do not match the lockfile's sha512")
         os.replace(part, dest)
     except (AcquireError, OSError, http.client.HTTPException, ValueError) as exc:
         close_stream(chunks)                      # the stream's own cleanup records its last bytes first
@@ -372,7 +377,7 @@ def build_npm_cache(tarballs: str, cache: str, engine: str, image: str) -> None:
               'npm cache add --cache /cache --ignore-scripts --offline --no-audit --no-fund >/dev/null')
     user = [] if engine == "podman" else ["--user", "%d:%d" % (os.getuid(), os.getgid())]
     proc = subprocess.run([engine, "run", "--rm", "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
-                           "--security-opt=no-new-privileges", *jh_detonate.LIMITS, *user,
+                           "--security-opt=no-new-privileges", *jh_sandbox.LIMITS, *user,
                            "--tmpfs", "/tmp:rw,size=256m,mode=1777", "-e", "HOME=/tmp",
                            "-e", "npm_config_update_notifier=false",
                            "-v", "%s:/in:ro%s" % (tarballs, z), "-v", "%s:/cache:rw%s" % (cache, z),
@@ -382,24 +387,28 @@ def build_npm_cache(tarballs: str, cache: str, engine: str, image: str) -> None:
         raise AcquireError("npm cache add failed in the sandbox: %s" % (proc.stderr.strip().splitlines() or ["?"])[-1][:200])
 
 
-def _own(path: str, engine: str) -> None:
+def _own(path: str, engine: Optional[str]) -> None:
     """Files written in rootless podman belong to a mapped user; hand them back to the caller."""
     if engine == "podman" and os.path.exists(path):
         subprocess.run(["podman", "unshare", "chown", "-R", "0:0", path], capture_output=True, timeout=600)
 
 
-def run(root: str, origins: List[str], out: str, image: str = jh_detonate.DEFAULT_IMAGE,
+def run(root: str, origins: List[str], out: str, image: str = jh_sandbox.DEFAULT_IMAGE,
         engine: Optional[str] = None, stream: Callable[[str, int, Dict[str, int]], Iterator[bytes]] = _stream,
-        build: Callable[[str, str, str, str], None] = build_npm_cache) -> Dict[str, Any]:
+        build: Callable[[str, str, str, str], None] = build_npm_cache,
+        index_stream: Any = None) -> Dict[str, Any]:
     root = os.path.abspath(root)
     approved_origins = parse_origins(origins)
     if os.path.lexists(out) and (not os.path.isdir(out) or os.listdir(out)):
         raise AcquireError("the cache folder must be new or empty")
     if jh_ceiling.inside_repository(out, root):
         raise AcquireError("the cache folder must be outside the repository (set TMPDIR to a folder outside it)")
-    plan = plan_npm(root)
-    engine = jh_detonate.find_engine(engine)
-    if not engine:
+    import jh_pyfetch
+    python_plan = jh_pyfetch.plan_requirements(root) if os.path.lexists(os.path.join(root, "requirements.txt")) else None
+    has_npm = any(os.path.lexists(os.path.join(root, f)) for f in jh_sandbox.NPM_LOCKFILES)
+    plan = plan_npm(root) if has_npm or python_plan is None else dict(python_plan, artifacts=[], refused=[])
+    engine = jh_sandbox.find_engine(engine) if has_npm or python_plan is None else None
+    if (has_npm or python_plan is None) and not engine:
         raise AcquireError("no container engine (podman or docker) is installed for the offline cache step")
     result: Dict[str, Any] = {"schema": SCHEMA, "ecosystem": "npm", "lockfile": plan["lockfile"],
                               "lockfile_sha256": plan["lockfile_sha256"],
@@ -438,8 +447,22 @@ def run(root: str, origins: List[str], out: str, image: str = jh_detonate.DEFAUL
                                       "sha512": artifact["sha512"], "bytes": size})
         if result["fetched"]:
             build(tarballs, cache, engine, image)
+        python_result = None
+        if python_plan is not None:
+            python_result = jh_pyfetch.acquire(python_plan, approved_origins, os.path.join(stage, "out", "wheels"),
+                                                MAX_TOTAL_BYTES - received, stream,
+                                                index_stream or jh_pyfetch.json_stream)
+            result["ecosystem"] = "npm+python" if has_npm else "python"
+            result["lockfiles"] = [{"path": p["lockfile"], "sha256": p["lockfile_sha256"]}
+                                   for p in ([plan] if has_npm else []) + [python_plan]]
+            result["fetched"].extend(python_result["fetched"])
+            result["refused"].extend(python_result["refused"])
+            result["source_builds"] = [a["package"] for a in python_result["fetched"] if a["kind"] == "sdist"]
+            received += python_result["downloaded"]
+            total += python_result["bytes"]
         receipt = os.path.join(stage, "out", "receipt.json")
-        result["counts"] = {"pinned": len(plan["artifacts"]), "fetched": len(result["fetched"]),
+        result["counts"] = {"pinned": len(plan["artifacts"]) + (python_result["pinned"] if python_result else 0),
+                            "fetched": len(result["fetched"]),
                             "refused": len(result["refused"]), "bytes": total, "downloaded": received}
         result["state"] = "complete" if not result["refused"] else "partial"
         with open(receipt, "w", encoding="utf-8") as fh:
@@ -450,11 +473,13 @@ def run(root: str, origins: List[str], out: str, image: str = jh_detonate.DEFAUL
     finally:
         _own(stage, engine)
         shutil.rmtree(stage, ignore_errors=True)
-    result["cache"] = os.path.join(out, "npm")
+    result["cache"] = os.path.join(out, "npm") if has_npm or python_plan is None else None
+    if python_plan is not None:
+        result["wheelhouse"] = os.path.join(out, "wheels")
     return result
 
 
 def summary(r: Dict[str, Any]) -> Dict[str, Any]:
-    """What detonate --fetch reports about the fetch: the receipt without the cache path."""
+    """What sandbox --fetch reports about the fetch: the receipt without the cache path."""
     return {k: r[k] for k in ("state", "counts", "origins", "lockfile", "lockfile_sha256", "skipped_platform")} | \
-        {"refused": r["refused"][:50]}
+        {k: r[k] for k in ("lockfiles", "source_builds") if k in r} | {"refused": r["refused"][:50]}

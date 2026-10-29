@@ -151,7 +151,7 @@ class HostileGitConfig(unittest.TestCase):
         env = {"GIT_EXTERNAL_DIFF": self.hooks["external-diff"]}
         commands = [("scan", self.repo, "--json"), ("map", self.repo, "--json"), ("passport", self.repo, "--json"),
                     ("review", self.repo, "--json"), ("review", self.repo, "--base", "HEAD~1", "--json"),
-                    ("doctor", self.repo, "--json"), ("score", self.repo, "--since", "HEAD~1", "--json"),
+                    ("doctor", self.repo, "--json"), ("scan", self.repo, "--score", "--since", "HEAD~1", "--json"),
                     ("map", self.repo, "--base", "HEAD~1", "--json")]
         for args in commands:
             self.dirty()

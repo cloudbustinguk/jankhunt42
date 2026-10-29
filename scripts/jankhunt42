@@ -13,7 +13,7 @@ import time
 import urllib.parse
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
@@ -24,6 +24,8 @@ from jh_core import (  # noqa: E402
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, discover_files, load_source,
     make_finding, sev_at_least,
 )
+import jh_rules  # noqa: E402
+import jh_ruleset  # noqa: E402
 from jh_rules import RULES, ScanOptions, ScanResult, scan_sources, rule_by_id  # noqa: E402
 import jh_fence  # noqa: E402
 import jh_ceiling  # noqa: E402
@@ -48,7 +50,7 @@ import jh_capabilities  # noqa: E402
 import jh_capability_approval  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
-import jh_detonate  # noqa: E402
+import jh_sandbox  # noqa: E402
 
 
 class Spinner:
@@ -138,6 +140,53 @@ def _globbed(rel: str, patterns: Sequence[str]) -> bool:
     return any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p) for p in patterns)
 
 
+def _rule_list(value: str) -> str:
+    """--ignore-rule's value: rule ids, comma-separated. Whether each exists is checked by prepare_rules, once any
+    site rules are loaded, so a typo cannot pass for an ignore that took effect."""
+    if not all(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{1,31}", p.strip()) for p in value.split(",") if p.strip()):
+        raise argparse.ArgumentTypeError("expected rule ids such as JH417, comma-separated")
+    return value
+
+
+def ignored_rules(args: argparse.Namespace) -> Set[str]:
+    """Every rule set aside for the main scan: --ignore-rule, and each ruleset's ignore list (prepare_rules)."""
+    return set(getattr(args, "ignore_rule_ids", None) or ())
+
+
+def prepare_rules(args: argparse.Namespace) -> Optional[str]:
+    """Load --ruleset files into this run's engine and settle what is ignored or re-rated. Two answers: one for
+    the main scan, and one for the citizen governance scans, which take only the operator's own say (--ignore-rule
+    and rulesets outside the repository). The error to print, or None."""
+    paths = getattr(args, "ruleset", None) or []
+    flags = {r.strip().upper() for v in (getattr(args, "ignore_rule", None) or ()) for r in v.split(",") if r.strip()}
+    if not paths and not flags:
+        return None
+    given = getattr(args, "paths", None) or [getattr(args, "path", None) or "."]
+    root = os.path.abspath(given[0] if os.path.isdir(given[0]) else os.path.dirname(os.path.abspath(given[0])))
+    try:
+        rulesets = jh_ruleset.load_all(paths, root, {r.id for r in RULES})
+    except jh_ruleset.RulesetError as exc:
+        return "ruleset: %s" % exc
+    for rs in rulesets:
+        jh_rules.register(rs.rules)
+    unknown = sorted(flags - {r.id for r in RULES})
+    if unknown:
+        return "--ignore-rule: no such rule: %s" % ", ".join(unknown)
+    args.rulesets = [rs.summary() for rs in rulesets]
+    args.ignore_rule_ids = flags.union(*(rs.ignore for rs in rulesets))
+    args.governance_ignore_ids = flags.union(*(rs.ignore for rs in rulesets if rs.trusted))
+    args.severity_map = {k: v for rs in rulesets for k, v in rs.severity.items()}
+    args.governance_severity_map = {k: v for rs in rulesets if rs.trusted for k, v in rs.severity.items()}
+    return None
+
+
+def rerate(findings: Sequence[Any], severity: Optional[Dict[str, str]]) -> None:
+    """A ruleset's severity changes, applied to findings in place."""
+    for f in findings:
+        if severity and f.rule in severity:
+            f.severity = severity[f.rule]
+
+
 def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
              preloaded: Optional[Tuple[Any, List[Any], int]] = None,
              cfg: Optional[Any] = None) -> Tuple[str, ScanResult, Dict[str, object]]:
@@ -163,11 +212,13 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         min_severity=args.min_severity,
         categories=set(args.category) if args.category else None,
         rule_ids=set(args.rule) if args.rule else None,
+        ignore_rule_ids=ignored_rules(args) or None,
         max_per_file_rule=args.max_per_file_rule,
         max_per_rule=args.max_per_rule,
         honor_suppressions=getattr(args, "honor_suppressions", True),
     )
     result = scan_sources(sources, opts)
+    rerate(result.findings, getattr(args, "severity_map", None))
     if cfg.source:
         result.findings = jh_config.apply_to_findings(cfg, result.findings)
         result.findings.sort(key=lambda f: f.sort_key())
@@ -179,6 +230,15 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     }
     if cfg.source:
         meta["config"] = cfg.source
+    if ignored_rules(args):
+        meta["ignored_rules"] = sorted(ignored_rules(args))
+    if getattr(args, "rulesets", None):
+        meta["rulesets"] = args.rulesets
+    for rid in sorted(result.site_overrun):
+        note = "site rule %s ran over its %g-second budget and was switched off for this run; its findings are " \
+               "incomplete" % (rid, jh_rules.SITE_BUDGET)
+        meta.setdefault("site_warnings", []).append(note)
+        print("jankhunt42: %s" % note, file=sys.stderr)
     meta["cross_file_duplicates"] = [c.to_dict() for c in jh_dedup.find_cross_file_duplicates(result.findings)]
     meta["minified"] = sorted(sf.rel for sf in sources if "minified" in sf.kinds)
     if getattr(args, "calibrate", False):
@@ -241,13 +301,16 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
             "cve": meta.get("cve", False),
             "cve_packages": meta.get("cve_packages", 0),
         },
-        "warnings": meta.get("cve_warnings", []),
+        "warnings": meta.get("cve_warnings", []) + meta.get("site_warnings", []),
         "config": meta.get("config"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         "minified": meta.get("minified", []),
         "calibration": meta.get("calibration"),
         "findings": [asdict(f) for f in result.findings],
     }
+    for key in ("ignored_rules", "rulesets"):          # only when used, so a default report is unchanged
+        if meta.get(key):
+            data[key] = meta[key]
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
@@ -473,8 +536,9 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
-# 4.0.0 removed these commands; the old name says where to go, for one release
+# removed commands; the old name says where to go
 _REMOVED = {
+    "score": "`score` was removed in 4.1.0, as 4.0.0 said: use `jankhunt42 scan --score`.",
     "hunt": "`hunt` was removed in 4.0.0: use `jankhunt42 scan` and `jankhunt42 review`.",
     "merge": "`merge` was removed in 4.0.0, with `hunt`.",
     "report": "`report` was removed in 4.0.0: use `jankhunt42 scan --md` (and `doctor` or `triage` if you need them).",
@@ -486,9 +550,9 @@ def cmd_removed(args: argparse.Namespace) -> int:
     return 2
 
 
-def cmd_score_alias(args: argparse.Namespace) -> int:
-    print("jankhunt42: `score` is now `scan --score`; the old name goes in 4.1.", file=sys.stderr)
-    return cmd_score(args)
+def cmd_sandbox_alias(args: argparse.Namespace) -> int:
+    print("jankhunt42: `detonate` is now `sandbox`; the old name goes in 4.2.", file=sys.stderr)
+    return cmd_sandbox(args)
 
 
 def cmd_triage(args: argparse.Namespace) -> int:
@@ -683,10 +747,10 @@ def cmd_passport(args: argparse.Namespace) -> int:
 def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
-    if args.sandbox_network_ceiling is not None and not args.base and args.detonation is None and \
+    if args.sandbox_network_ceiling is not None and not args.base and args.sandbox_run is None and \
             args.emit_sandbox_policy not in ("openshell", "claude-code"):
         print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code, "
-              "--base, or --detonation", file=sys.stderr)
+              "--base, or --sandbox-run", file=sys.stderr)
         return 2
     if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
         print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
@@ -738,7 +802,10 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     scan_args = argparse.Namespace(
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
         min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
-        since=None, config=args.config, no_config=args.no_config, calibrate=False)
+        since=None, config=args.config, no_config=args.no_config, calibrate=False,
+        ignore_rule_ids=ignored_rules(args), severity_map=getattr(args, "severity_map", None),
+        rulesets=getattr(args, "rulesets", None))
+    ignored = set(getattr(args, "governance_ignore_ids", None) or ()) or None
     # Files are read once: the main scan sees the repository's tuning (its
     # ignore globs filter the same sources in memory), and the governance
     # scans run in memory on the governance rules only. Only when the
@@ -764,10 +831,16 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     # citizen profile uses so the repository cannot opt out. Tuned: the same
     # rules as the repository configures them, to count what tuning hides.
     gov_rules = set(jh_passport.GOVERNANCE_RULES)
+    # an operator's --ignore-rule is the operator's own call, so it applies to the governance scans too, and the
+    # passport records it (scope.ignored_rules)
     raw = scan_sources(raw_pre[1], ScanOptions(min_severity="major", rule_ids=gov_rules, max_per_file_rule=1000,
-                                               max_per_rule=100000, honor_suppressions=False)).findings
+                                               max_per_rule=100000, honor_suppressions=False,
+                                               ignore_rule_ids=ignored)).findings
     tuned = jh_config.apply_to_findings(scan_cfg, scan_sources(main_pre[1], ScanOptions(
-        min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000, max_per_rule=100000)).findings)
+        min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000, max_per_rule=100000,
+        ignore_rule_ids=ignored)).findings)
+    rerate(raw, getattr(args, "governance_severity_map", None))
+    rerate(tuned, getattr(args, "governance_severity_map", None))
     counts: Dict[str, int] = {}
     for f in result.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -829,19 +902,19 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         if args.capability_approval is not None:
             capability_approval_record = jh_capability_approval.load(args.capability_approval, root)
     sandbox = None
-    if args.detonation is not None:
+    if args.sandbox_run is not None:
         try:
-            doc = jh_ceiling.read_external_json(args.detonation, root, "detonation result", jh_detonate.MAX_RESULT_BYTES)
+            doc = jh_ceiling.read_external_json(args.sandbox_run, root, "sandbox result", jh_sandbox.MAX_RESULT_BYTES)
             digest = None
             if snapshot:
                 # --base assesses the commit: bind to its own objects, never the filtered snapshot copy
                 top = jh_map.git_toplevel(root)
                 try:
-                    digest = jh_detonate.git_tree_digest(top, capability_delta["head_sha"], os.path.relpath(
+                    digest = jh_sandbox.git_tree_digest(top, capability_delta["head_sha"], os.path.relpath(
                         os.path.realpath(root), os.path.realpath(top)).replace(os.sep, "/"))
                 except (jh_map.GitError, ValueError, IndexError):
                     digest = {"error": "unreadable"}
-            sandbox = jh_detonate.compare_declared(jh_detonate.passport_evidence(doc, root, digest), map_report,
+            sandbox = jh_sandbox.compare_declared(jh_sandbox.passport_evidence(doc, root, digest), map_report,
                                                    network_ceiling)
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
@@ -856,6 +929,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         config_path=os.path.basename(cfg.source) if cfg.source else None,
         operator_policy=operator, operator_policy_label=op_label, repo_policy_paths=repo_paths,
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
+        ignored_rules=sorted(ignored_rules(args)),
+        rulesets=getattr(args, "rulesets", None) or [],
         findings=result.findings, governance_findings=raw, governance_tuned=tuned,
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
         package_sources=package_sources, capability_delta=capability_delta,
@@ -889,32 +964,36 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     return 1 if jh_policy.fails(passport["assessment"]["decision"]["result"], args.fail_on) else 0
 
 
-def cmd_detonate(args: argparse.Namespace) -> int:
+def cmd_sandbox(args: argparse.Namespace) -> int:
     """Opt-in: run the repository's install hooks and the commands that run when it is opened, in a disposable
     sandbox, and report what they try to do."""
     if not os.path.isdir(args.path):
-        print("jankhunt42: detonate: %s is not a directory" % jh_core_safe(args.path), file=sys.stderr)
+        print("jankhunt42: sandbox: %s is not a directory" % jh_core_safe(args.path), file=sys.stderr)
         return 2
-    if args.fetch and args.npm_cache:
-        print("jankhunt42: detonate: --fetch makes the npm cache; it cannot combine with --npm-cache", file=sys.stderr)
+    if args.fetch and (args.npm_cache or args.wheelhouse):
+        print("jankhunt42: sandbox: --fetch makes dependency caches; it cannot combine with --npm-cache or "
+              "--wheelhouse", file=sys.stderr)
         return 2
     import shutil
     import tempfile
     import jh_acquire
     fetched, workdir = None, None
     try:
-        npm_cache = args.npm_cache
+        npm_cache, wheelhouse = args.npm_cache, args.wheelhouse
         if args.fetch:
             # the pinned packages, fetched and verified into a private folder for this run only
             workdir = os.path.realpath(tempfile.mkdtemp(prefix="jh-fetch-"))
+            args.image = jh_sandbox.resolve_image(args.engine, args.image)     # the fetch and the run, alike
             fetched = jh_acquire.run(args.path, args.fetch, os.path.join(workdir, "acq"), image=args.image,
                                      engine=args.engine)
-            npm_cache = fetched["cache"]
-        surfaces = jh_detonate.SURFACES if args.surface == "all" else (args.surface,)
-        result = jh_detonate.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
-                                 surfaces=surfaces, npm_cache=npm_cache, wheelhouse=args.wheelhouse)
+            npm_cache, wheelhouse = fetched["cache"], fetched.get("wheelhouse")
+        # dependencies load only once installed, so the import surface brings the install steps with it
+        surfaces = jh_sandbox.SURFACES if args.surface == "all" else \
+            ("install", "import") if args.surface == "import" else (args.surface,)
+        result = jh_sandbox.run(args.path, image=args.image, engine=args.engine, timeout=args.timeout,
+                                 surfaces=surfaces, npm_cache=npm_cache, wheelhouse=wheelhouse)
     except (RuntimeError, jh_acquire.AcquireError, OSError, subprocess.SubprocessError) as exc:
-        print("jankhunt42: detonate: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        print("jankhunt42: sandbox: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
     finally:
         if workdir:
@@ -929,9 +1008,9 @@ def cmd_detonate(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif args.md or not sys.stdout.isatty():
-        print(jh_detonate.render_markdown(result), end="")
+        print(jh_sandbox.render_markdown(result), end="")
     else:
-        print(jh_views.detonate_tty(result, color=jh_render.color_enabled(args.no_color),
+        print(jh_views.sandbox_tty(result, color=jh_render.color_enabled(args.no_color),
                                     ascii_only=jh_views.want_ascii()))
     return 1 if result["counts"]["ALERT"] else 0
 
@@ -946,7 +1025,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="jankhunt42",
         description="What's broken? What can it hurt? Can we responsibly ship it? "
                     "Scans (scan, review), blast-radius maps (map), software passports (passport) and an opt-in "
-                    "sandbox (detonate).",
+                    "sandbox.",
     )
     p.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     # hidden commands (no help=) still parse: the debugging helpers, the score alias and the removed names
@@ -960,6 +1039,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--min-severity", choices=SEVERITIES, default="minor")
         sp.add_argument("--category", action="append", help="filter category (repeatable)")
         sp.add_argument("--rule", action="append", help="filter rule id (repeatable)")
+        sp.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
+                        help="set a rule aside for this run (repeatable, or comma-separated): its findings are not "
+                             "reported, scored or gated on, and the report lists it as ignored")
+        sp.add_argument("--ruleset", action="append", metavar="FILE.json",
+                        help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
+                             "re-rated (repeatable; references/rulesets.md)")
         sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
         sp.add_argument("--max-files", type=int, default=20000)
         sp.add_argument("--max-file-bytes", type=int, default=1500000)
@@ -995,14 +1080,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_scan_opts(sp)
     sp.set_defaults(func=cmd_scan)
 
-    sp = sub.add_parser("score")      # 4.0.0: an alias of `scan --score`, hidden, for one release
-    sp.add_argument("paths", nargs="*", help="files or directories (default: .)")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    add_common_scan_inputs(sp, "include OSV.dev advisories (network)")
-    sp.add_argument("--fail-policy", action="store_true",
-                    help="exit 1 when the advisory policy is 'fail' (not a substitute for --fail-on)")
-    sp.set_defaults(func=cmd_score_alias)
 
     sp = sub.add_parser("review", help="diff-aware review with receipts, coverage, and baseline deltas")
     sp.add_argument("paths", nargs="*", help="repository root or path filter (default: .)")
@@ -1029,6 +1106,11 @@ def build_parser() -> argparse.ArgumentParser:
     filters.add_argument("--min-severity", choices=SEVERITIES, default="minor")
     filters.add_argument("--category", action="append", help="filter category (repeatable)")
     filters.add_argument("--rule", action="append", help="filter rule id (repeatable)")
+    filters.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
+                         help="set a rule aside (repeatable, or comma-separated): not reported or gated on")
+    filters.add_argument("--ruleset", action="append", metavar="FILE.json",
+                         help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
+                              "re-rated (repeatable; references/rulesets.md)")
     filters.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
     limits.add_argument("--max-files", type=int, default=20000)
     limits.add_argument("--max-file-bytes", type=int, default=1500000)
@@ -1152,11 +1234,18 @@ def build_parser() -> argparse.ArgumentParser:
     inputs = sp.add_argument_group("inputs")
     limits = sp.add_argument_group("advanced: limits")
     add_map_inputs(sp, out, inputs, limits)
+    inputs.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
+                        help="set a scan rule aside (repeatable, or comma-separated): it adds no lead or reason, and "
+                             "the passport records it in scope.ignored_rules")
+    inputs.add_argument("--ruleset", action="append", metavar="FILE.json",
+                        help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
+                             "re-rated (repeatable; references/rulesets.md)")
     change.add_argument("--base", metavar="REF", help="compare requested access at REF with committed HEAD (excludes dirty files)")
     change.add_argument("--capability-approval", metavar="PATH", help="external operator record for this exact concrete access change")
-    sandbox.add_argument("--detonation", metavar="PATH",
-                         help="a `detonate --json` result kept outside the repository; used only if made on this exact "
+    sandbox.add_argument("--sandbox-run", metavar="PATH",
+                         help="a `sandbox --json` result kept outside the repository; used only if made on this exact "
                               "tree, and it can only add outcomes (P-RUN-001, P-RUN-002)")
+    sandbox.add_argument("--detonation", dest="sandbox_run", metavar="PATH", help=argparse.SUPPRESS)   # 4.0 name
     change.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
     decision.add_argument("--policy", metavar="PATH",
                           help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
@@ -1181,35 +1270,41 @@ def build_parser() -> argparse.ArgumentParser:
                               "jankhunt42 never applies it")
     sandbox.add_argument("--sandbox-network-ceiling", metavar="PATH",
                          help="an operator's JSON list of approved host/port pairs, kept outside the repository: it "
-                              "narrows an emitted policy, and counts as declared for --detonation "
+                              "narrows an emitted policy, and counts as declared for --sandbox-run "
                               "(references/network-ceiling.md)")
     add_verify_inputs(supply)
     sp.set_defaults(func=cmd_passport)
 
-    sp = sub.add_parser("detonate", help="opt-in: run the install hooks and what runs on open in a disposable sandbox, "
-                                         "and log what they try")
-    sp.add_argument("path", nargs="?", default=".")
-    sp.add_argument("--image", default=jh_detonate.DEFAULT_IMAGE,
-                    help="the runner image, built once from templates/detonate.Containerfile (never pulled)")
-    sp.add_argument("--engine", choices=("podman", "docker"), help="container engine (default: podman, else docker)")
-    sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
-    sp.add_argument("--fetch", action="append", metavar="URL",
-                    help="fetch the npm packages the lockfile pins from this approved https origin (repeatable), "
-                         "verified against the lockfile, into a cache for this run; the only detonate option that "
-                         "uses the network (references/detonate.md)")
-    sp.add_argument("--npm-cache", metavar="DIR",
-                    help="an npm cache made outside the repository (npm ci --ignore-scripts --cache DIR): with a "
-                         "lockfile, npm ci runs offline from it, so dependencies' install hooks run too")
-    sp.add_argument("--wheelhouse", metavar="DIR",
-                    help="Python wheels and source packages made outside the repository: requirements and the build "
-                         "backend install offline from it")
-    sp.add_argument("--surface", choices=("install", "open", "all"), default="all",
-                    help="install: package hooks; open: what an agent or editor runs when the repository is opened "
-                         "(default: all)")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    sp.add_argument("--no-color", action="store_true")
-    sp.set_defaults(func=cmd_detonate)
+    def add_sandbox_opts(sp):
+        sp.add_argument("path", nargs="?", default=".")
+        sp.add_argument("--image", default=jh_sandbox.DEFAULT_IMAGE,
+                        help="the runner image, built once from templates/sandbox.Containerfile (never pulled)")
+        sp.add_argument("--engine", choices=("podman", "docker"), help="container engine (default: podman, else docker)")
+        sp.add_argument("--timeout", type=int, default=120, help="seconds per command (default 120)")
+        sp.add_argument("--fetch", action="append", metavar="URL",
+                        help="fetch the npm packages a lockfile pins and the files a hash-pinned requirements.txt "
+                             "pins, from this approved https origin (repeatable), verified, into caches for this run; "
+                             "the only sandbox option that uses the network (references/sandbox.md)")
+        sp.add_argument("--npm-cache", metavar="DIR",
+                        help="an npm cache made outside the repository (npm ci --ignore-scripts --cache DIR): with a "
+                             "lockfile, npm ci runs offline from it, so dependencies' install hooks run too")
+        sp.add_argument("--wheelhouse", metavar="DIR",
+                        help="Python wheels and source packages made outside the repository: requirements and the build "
+                             "backend install offline from it")
+        sp.add_argument("--surface", choices=("install", "import", "open", "all"), default="all",
+                        help="install: package hooks; import: install, then load each direct dependency; open: what an "
+                             "agent or editor runs when the repository is opened (default: all)")
+        sp.add_argument("--json", action="store_true")
+        sp.add_argument("--md", action="store_true")
+        sp.add_argument("--no-color", action="store_true")
+
+    sp = sub.add_parser("sandbox", help="opt-in: run the install hooks, the dependencies as they load, and what runs "
+                                        "on open in a disposable sandbox, and log what they try")
+    add_sandbox_opts(sp)
+    sp.set_defaults(func=cmd_sandbox)
+    sp = sub.add_parser("detonate")    # 4.1.0: the old name of `sandbox`, hidden, for one release
+    add_sandbox_opts(sp)
+    sp.set_defaults(func=cmd_sandbox_alias)
 
     sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")
     sp.add_argument("--full", action="store_true",
@@ -1232,7 +1327,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 # commands whose positional arguments are files or directories to read
 # (review's are path filters, which may name a deleted file)
-_PATH_COMMANDS = ("scan", "score", "supply-chain", "doctor", "map", "passport")
+_PATH_COMMANDS = ("scan", "supply-chain", "doctor", "map", "passport")
 
 
 def _unreadable(path: str) -> str:
@@ -1257,6 +1352,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if unreadable:
             print("jankhunt42: cannot read %s" % "; ".join(unreadable), file=sys.stderr)
             return 2
+    problem = prepare_rules(args)
+    if problem:
+        print("jankhunt42: %s" % jh_core_safe(problem), file=sys.stderr)
+        return 2
     try:
         return int(args.func(args))
     except KeyboardInterrupt:

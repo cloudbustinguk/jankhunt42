@@ -1,16 +1,17 @@
-# detonate: run what a repository runs, in a sandbox
+# sandbox: run what a repository runs, and watch what it tries
 
-Static analysis says what code *could* do. `jankhunt42 detonate` runs the
-commands a repository runs by itself, both when it is installed and when it
-is opened, in a disposable sandbox. It reports what they *try* to do:
+Static analysis says what code *could* do. `jankhunt42 sandbox` runs the
+commands a repository runs by itself, when it is installed, when its
+dependencies are loaded, and when it is opened, in a disposable sandbox. It reports what they *try* to do:
 connect to the network, read credentials, start programs, or change startup
 files. It is opt-in and never runs as part of `scan`, `map` or `passport`.
 
 ```sh
-podman build -t localhost/jankhunt42-detonate:0.1 -f templates/detonate.Containerfile templates   # once
-jankhunt42 detonate .                   # Markdown audit log
-jankhunt42 detonate . --json            # schema jankhunt.detonate.v1
-jankhunt42 detonate . --surface open    # only what runs when the repository is opened
+podman build -t localhost/jankhunt42-sandbox:0.1 -f templates/sandbox.Containerfile templates   # once
+jankhunt42 sandbox .                   # Markdown audit log
+jankhunt42 sandbox . --json            # schema jankhunt.sandbox.v1
+jankhunt42 sandbox . --surface open    # only what runs when the repository is opened
+jankhunt42 sandbox . --surface import --fetch https://registry.npmjs.org/   # install, then load each dependency
 ```
 
 ## What runs when it is installed (`--surface install`)
@@ -23,11 +24,40 @@ jankhunt42 detonate . --surface open    # only what runs when the repository is 
   network is off. Without one, their install hooks do not run, and coverage
   says so. See "Dependencies" below.
 
+## What runs when its dependencies are loaded (`--surface import`)
+
+A package can wait until it is loaded: code at the top of its `index.js`
+or `__init__.py` runs when the application first imports it, with no
+install hook at all. After the install step, the sandbox loads each direct
+dependency once, as the application would, and logs what it tries under
+that dependency's own step:
+
+- **npm:** every package in `dependencies`, `optionalDependencies` and
+  `devDependencies`, loaded with Node's `import()` from the repository, so
+  CommonJS and ES modules both load. Type packages (`@types/...`) hold no
+  code and are skipped.
+- **Python:** every named requirement in `requirements.txt`. A small
+  loader shipped with jankhunt42 finds the modules the distribution
+  installed (from its `top_level.txt` or `RECORD`) and imports each.
+- **Only what was installed loads,** so this needs the dependencies on
+  disk (`--fetch` or `--npm-cache` with a lockfile, or `--wheelhouse`).
+  Without them, coverage says the dependencies were not loaded.
+  `--surface import` runs the install steps first.
+- After each load the sandbox waits two seconds, so a timer or thread the
+  package deferred runs where it is seen, even one that would let the
+  process exit first. Installed `.pth` files, which a real install runs at
+  every Python start, run once in a step of their own.
+- Each load has 20 seconds, and at most 40 dependencies load. A package
+  that is a command-line tool, or fails to load, is marked in the report;
+  what it tried before that is still logged.
+- Package names reach the runner only as quoted arguments, and only when
+  they are valid package names; anything else is a coverage gap.
+
 ## What runs when it is opened (`--surface open`)
 
 Opening a repository in an agent or an editor can run commands once the
 folder is trusted (VS Code also asks before it runs automatic tasks).
-detonate runs each of them once:
+the sandbox runs each of them once:
 
 - **Agent hooks and helpers:** command hooks in `.claude/settings.json`,
   `.claude/settings.local.json` and `.gemini/settings.json`. Each hook gets
@@ -80,7 +110,8 @@ report, commands are shown redacted and cut to one line.
   inside the sandbox. What runs is planned from the snapshot, so it is
   exactly what was read.
 - **Canary credentials:** a throwaway, read-only home holds fresh, never
-  issued AWS, GitHub, npm, SSH and `.env` values for each run. Each value
+  issued AWS, GitHub (Git credentials and the GitHub CLI), npm, SSH, Docker,
+  Kubernetes, PyPI and `.env` values for each run. Each value
   carries a `JH42CANARY` marker.
 - **Afterwards,** the sandbox, the snapshot and the canaries are deleted.
   Only the report is kept.
@@ -115,18 +146,19 @@ could not run.
 
 Most install-time attacks hide in a dependency's install hook, not in the
 repository itself. To run those hooks too, the sandbox needs the
-dependencies on disk. `--fetch` gets the npm ones for you; or you supply a
-cache.
+dependencies on disk. `--fetch` gets npm lockfile packages and hash-pinned
+Python requirements for you; or you supply a cache.
 
 ```sh
-jankhunt42 detonate . --fetch https://registry.npmjs.org/    # fetch the pinned npm packages, verified
-jankhunt42 detonate . --npm-cache /path/outside/npm-cache     # or bring your own cache
-jankhunt42 detonate . --wheelhouse /path/outside/wheelhouse   # Python
+jankhunt42 sandbox . --fetch https://registry.npmjs.org/    # fetch the pinned npm packages, verified
+jankhunt42 sandbox . --fetch https://pypi.org/ --fetch https://files.pythonhosted.org/  # Python
+jankhunt42 sandbox . --npm-cache /path/outside/npm-cache     # or bring your own cache
+jankhunt42 sandbox . --wheelhouse /path/outside/wheelhouse   # Python
 ```
 
 ### Fetching npm dependencies (`--fetch`)
 
-`--fetch URL` is the only detonate option that uses the network, and only to
+`--fetch URL` is the only sandbox option that uses the network, and only to
 download from the origins you name. The usual way to fetch dependencies,
 `npm install`, runs the package manager online, and it can run package code
 while it fetches. `--fetch` never does:
@@ -164,12 +196,48 @@ while it fetches. `--fetch` never does:
 - **Fetch packages for other platforms.** The sandbox is linux/x64.
 - **Use a proxy or a registry login** (not yet). Use a public registry, or
   a mirror that needs no credentials.
-- **Fetch Python packages** (not yet). Supply a wheelhouse, as below.
+### Fetching Python dependencies (`--fetch`)
+
+The Python path reads `requirements.txt` itself. It never invokes pip or
+opens downloaded archives on the host. Each requirement must be
+`name==version` with one or more `--hash=sha256:<64 hex digits>` options.
+Comments, backslash continuations and `--require-hashes` are supported.
+URLs, paths, editable installs, includes, constraints, unhashed or unpinned
+entries, markers, extras and other pip options are refused with a reason;
+refusals make the run's coverage partial.
+
+For each normalized name, it requests `/simple/<name>/` using the
+[PEP 691 JSON simple API](https://packaging.python.org/en/latest/specifications/simple-repository-api/).
+An approved URL ending in `/simple/` is used directly as the API base;
+otherwise `simple/` is appended. Index metadata and downloads share the
+npm path's origin, public-address and wire-byte limits; each index also
+has a 32 MB limit. If npm and Python are both present, their downloads
+share one 768 MB allowance.
+
+Only files matching the pinned name, exact version and sha256 are chosen.
+Pinned wheels take priority. All matching wheels from the first index
+with pinned wheels are fetched, so the sandbox's pip can choose its own
+compatible tags without assuming the host's interpreter matches it.
+Only when no queried index lists a pinned wheel is one pinned source
+archive chosen. A failed or unapproved wheel download does not authorize
+falling back to a source build. Source archives are marked `kind: sdist`
+and `build_runs_code: true` in the receipt, and listed in the result's
+`fetch.source_builds`: their build code runs inside the sandbox.
+
+The bytes are sha256-verified before they enter a wheelhouse, mounted
+read-only at `/cache/wheels` for this run and deleted afterwards. PyPI
+hosts its files on `files.pythonhosted.org`, so approve both origins as
+shown above; approving the index never implicitly approves its file host.
+No transitive or build dependency is fetched unless it has its own pin.
+An incompatible wheel or a missing build backend can still make the
+offline install fail; the fetch receipt establishes byte identity, not
+installability. `--fetch` cannot combine with a supplied `--npm-cache` or
+`--wheelhouse`.
 
 ### Using a cache
 
 **npm:** with a cache and a `package-lock.json` (or `npm-shrinkwrap.json`),
-detonate runs one traced step:
+the sandbox runs one traced step:
 
     npm ci --offline --cache /cache/npm --foreground-scripts --ignore-scripts=false \
            --include=dev --include=optional --include=peer
@@ -191,7 +259,7 @@ pyproject's build backend comes from the wheelhouse. The `-I` keeps a
 source packages in the wheelhouse are built, so only their setup code runs.
 
 **The copy:** each cache must be a real directory outside the repository,
-with no link in its path. detonate copies it into the run's private
+with no link in its path. The sandbox copies it into the run's private
 folder, so your directory is never written to or relabeled. The copy can't
 be steered while it runs:
 - every folder is opened from its parent, and never through a link;
@@ -221,8 +289,8 @@ A run can become passport evidence. Save the result outside the repository,
 then pass it to `passport`:
 
 ```sh
-jankhunt42 detonate . --json > /path/outside/run.json
-jankhunt42 passport . --detonation /path/outside/run.json --md
+jankhunt42 sandbox . --json > /path/outside/run.json
+jankhunt42 passport . --sandbox-run /path/outside/run.json --md
 ```
 
 **When it counts:** every result records a digest of the tree it ran on:
@@ -235,7 +303,7 @@ with the tree it assesses:
   another checkout, it is shown as not used and changes nothing.
 
 With `--base`, the assessed tree is the committed `HEAD`. Its digest comes
-from the commit's own objects, so run detonate on a clean checkout of that
+from the commit's own objects, so run the sandbox on a clean checkout of that
 commit. A tree, or a commit, that cannot be read in full matches no run.
 Results made before 3.6.1 use an older digest and must be re-run.
 

@@ -110,10 +110,12 @@ class CrossVersion(unittest.TestCase):
             self.skipTest("previous release %s not available locally (not fetched)" % PREVIOUS)
 
     def test_scan_score_rules_sarif_identical(self):
-        for args in (("scan", self.root, "--json"), ("score", self.root, "--json"), ("rules", "--json"),
-                     ("scan", self.root, "--sarif")):
+        # the previous release says `score`; since 4.1.0 that is `scan --score`
+        for args, new_args in ((("scan", self.root, "--json"),) * 2,
+                               (("score", self.root, "--json"), ("scan", self.root, "--score", "--json")),
+                               (("rules", "--json"),) * 2, (("scan", self.root, "--sarif"),) * 2):
             old = json.loads(self.run_old(*args).stdout)
-            new = json.loads(run_cli(*args).stdout)
+            new = json.loads(run_cli(*new_args).stdout)
             if args == ("rules", "--json"):
                 self.assertEqual({r["id"] for r in new} - {r["id"] for r in old}, ADDED_RULES)
                 new = [r for r in new if r["id"] not in ADDED_RULES]

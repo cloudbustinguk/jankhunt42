@@ -672,12 +672,45 @@ class ScanOptions:
     min_severity: str = "info"
     categories: Optional[Set[str]] = None
     rule_ids: Optional[Set[str]] = None
+    # rules the operator set aside (--ignore-rule): never reported, scored or gated on
+    ignore_rule_ids: Optional[Set[str]] = None
     max_per_file_rule: int = 5
     max_per_rule: int = 200
     include_cve: bool = False
     # False for governance scans: repository pragmas cannot hide what the
     # citizen profile must see.
     honor_suppressions: bool = True
+
+
+SITE_BUDGET = 10.0        # seconds one site rule may spend in a run; a rule that runs over is switched off
+_SITE_SPENT: Dict[str, float] = {}
+
+
+def _site_rule(rule: Rule, sf: SourceFile, pats: List["re.Pattern[str]"], acceptor: Any, result: Any) -> None:
+    """A site rule (jh_ruleset) on one file, inside its time budget. Its patterns come from a policy file, not this
+    code, so one that runs away is stopped by the timer, switched off for the rest of the run, and named in
+    result.site_overrun, so the scan still ends with a report."""
+    import time
+    import jh_ruleset
+    spent = _SITE_SPENT.get(rule.id, 0.0)
+    if spent >= SITE_BUDGET:
+        return
+    start = time.monotonic()
+    ignore = _IGNORES.get(rule.id)
+    try:
+        with jh_ruleset.bounded(SITE_BUDGET - spent):
+            for idx, line in enumerate(getattr(sf, rule.target), 1):
+                if not line.strip() or (ignore and ignore.search(line)):
+                    continue
+                if any(p.search(line) for p in pats):
+                    f = make_finding(rule, sf, idx)
+                    if acceptor.accept(f):
+                        result.findings.append(f)
+    except jh_ruleset._Overrun:
+        _SITE_SPENT[rule.id] = SITE_BUDGET
+        result.site_overrun.add(rule.id)
+        return
+    _SITE_SPENT[rule.id] = spent + time.monotonic() - start
 
 
 @dataclass
@@ -693,6 +726,8 @@ class ScanResult:
     # `# jankhunt42: ignore` pragma. Consumed by --calibrate (jh_calibrate.py).
     fired_by_rule: Dict[str, int] = field(default_factory=dict)
     suppressed_by_rule: Dict[str, int] = field(default_factory=dict)
+    # site rules switched off for running over their time budget (_site_rule)
+    site_overrun: Set[str] = field(default_factory=set)
 
 
 _COMPILED: Dict[str, List[re.Pattern]] = {}
@@ -952,6 +987,8 @@ class _FindingAcceptor:
             return False
         if opts.rule_ids and finding.rule not in opts.rule_ids:
             return False
+        if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
+            return False
         key = (finding.rule, finding.path, finding.line)
         if key in self.seen:
             return False
@@ -981,6 +1018,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             if "minified" in sf.kinds and "secret" not in rule.tags and rule.category != "agent" and rule.id != "JH131":
                 continue                # a build bundle: a leaked key, hidden Unicode or agent hazard still counts
             if opts.rule_ids and rule.id not in opts.rule_ids:
+                continue
+            if opts.ignore_rule_ids and rule.id in opts.ignore_rule_ids:
                 continue
             if rule.id == 'JH101' and sf.rel.lower().endswith('.json'):     # only a .json file can be an n8n export
                 import jh_n8n
@@ -1040,6 +1079,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if acceptor.accept(f):
                             result.findings.append(f)
                         break
+                continue
+            if "site" in rule.tags:
+                _site_rule(rule, sf, pats, acceptor, result)
                 continue
             lines = getattr(sf, rule.target)
             ignore = _IGNORES.get(rule.id)
@@ -1839,6 +1881,16 @@ def _firebase_web_config(sf: SourceFile, idx: int) -> bool:
         return True
     window = "\n".join(sf.raw[max(0, idx - 6):idx + 6])
     return bool(re.search(r"\b(?:authDomain|projectId|storageBucket|messagingSenderId|appId)\b|firebaseapp\.com", window))
+
+
+def register(rules: Sequence[Rule]) -> None:
+    """Add site rules (jh_ruleset) to this run's engine, compiled like the shipped ones."""
+    _compile_rules()
+    for rule in rules:
+        RULES.append(rule)
+        _COMPILED[rule.id] = [re.compile(p) for p in rule.patterns]
+        if rule.ignore:
+            _IGNORES[rule.id] = re.compile(rule.ignore)
 
 
 def rule_by_id(rid: str) -> Optional[Rule]:

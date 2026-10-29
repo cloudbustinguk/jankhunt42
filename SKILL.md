@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.0.1"
+  version: "4.1.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -19,7 +19,7 @@ metadata:
 jankhunt42 is a workflow plus a stdlib-only CLI (`scripts/jankhunt42`). The workflow is mandatory; the CLI is an accelerant. Everything runs locally and offline, with three opt-in exceptions:
 - `scan --cve` sends package names and versions to OSV.dev;
 - `--verify PLAN --online` sends the repository name and artifact digests to the GitHub API, and lets the named verifiers go online;
-- `detonate --fetch URL` downloads the npm packages the lockfile pins from the origin named.
+- `sandbox --fetch URL` downloads the npm packages the lockfile pins from the origin named.
 
 Never add `--online` or `--fetch` unless the user asked for it.
 
@@ -41,7 +41,8 @@ Never add `--online` or `--fetch` unless the user asked for it.
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
 | an n8n workflow export reviewed | `jankhunt42 map .` | `references/n8n.md` |
-| what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 detonate .` | `references/detonate.md` |
+| what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox .` | `references/sandbox.md` |
+| a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --ignore-rule JH417` | `references/rulesets.md` |
 | copy-paste commands for native tools | | `references/toolbox.md` |
 
 When a request spans several rows, answer in order: what's broken, then what it can hurt, then whether to ship. Keep each answer's evidence model separate: a Jank Score is not an exposure class, and neither is a release decision.
@@ -157,14 +158,14 @@ Failure classes, the profile table, and limits: `references/citizen.md`.
 
 ## Detonate: run it in a sandbox (opt-in)
 
-`jankhunt42 detonate PATH` runs the repository's install hooks (npm lifecycle scripts, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. The network is off, the root filesystem is read-only, every capability is dropped, and canary credentials sit in a throwaway home. It reports what the code *tries*, like a firewall audit log: network attempts (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Its evidence tier is `sandbox-observed`: it adds to static findings and never refutes them.
+`jankhunt42 sandbox PATH` runs the repository's install hooks (npm lifecycle scripts, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. The network is off, the root filesystem is read-only, every capability is dropped, and canary credentials sit in a throwaway home. It reports what the code *tries*, like a firewall audit log: network attempts (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Its evidence tier is `sandbox-observed`: it adds to static findings and never refutes them.
 
-**Permission gate.** Run it only when the user asks to run, detonate or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/detonate.Containerfile`. If either is missing, say so and stop; never run the hooks any other way. Report ALERTs first, then coverage and its gaps; never print canary values.
+**Permission gate.** Run it only when the user asks to run or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/sandbox.Containerfile`. If either is missing, say so and stop; never run the hooks any other way. Report ALERTs first, then coverage and its gaps; never print canary values.
 
-- **Dependencies' hooks** run only from a cache. `--fetch URL` downloads exactly the npm packages the lockfile pins, verified against its `sha512`, and builds the cache offline. It is the one detonate option that uses the network: use it only when the user asks to fetch dependencies, from origins they name or approve, and never fetch with a package manager instead. Otherwise pass `--npm-cache DIR` or `--wheelhouse DIR`, made outside the repository.
-- **Into a passport:** save `detonate --json` outside the repository and pass `passport --detonation PATH`. It counts only for the exact same tree. ALERTs make `P-RUN-001` review; a destination it tried that the map (or `--sandbox-network-ceiling`) does not declare makes `P-RUN-002` review. Both block in the citizen profile, and a clean run never relieves another rule.
+- **Dependencies' hooks** run only from a cache. `--fetch URL` downloads exactly the npm packages the lockfile pins, verified against its `sha512`, and builds the cache offline. It is the one sandbox option that uses the network: use it only when the user asks to fetch dependencies, from origins they name or approve, and never fetch with a package manager instead. Otherwise pass `--npm-cache DIR` or `--wheelhouse DIR`, made outside the repository.
+- **Into a passport:** save `sandbox --json` outside the repository and pass `passport --sandbox-run PATH`. It counts only for the exact same tree. ALERTs make `P-RUN-001` review; a destination it tried that the map (or `--sandbox-network-ceiling`) does not declare makes `P-RUN-002` review. Both block in the citizen profile, and a clean run never relieves another rule.
 
-Details: `references/detonate.md`.
+Details: `references/sandbox.md`.
 
 ## The CLI
 
@@ -178,12 +179,12 @@ python3 "$SKILL_DIR/scripts/jankhunt42" --help
 |---|---|
 | What's broken? | `scan`, `review`, `supply-chain`, `rules` (and, for debugging, `triage` and `doctor`) |
 | What can it hurt? | `map` |
-| Can we ship it? | `passport`, `detonate` |
+| Can we ship it? | `passport`, `sandbox` |
 | Is the tool itself trustworthy? | `selftest`, `selftest --full` |
 
 - An interactive terminal gets the rich views. Pipes, `--md`, `NO_COLOR`, and `TERM=dumb` get plain text or Markdown with no ANSI.
 - `--json` and `--sarif` put machine data alone on stdout; `--html` is one offline file. `map` and `passport` payloads are versioned (`jankhunt.map.v1`, `jankhunt.passport.v1`, schemas in `templates/`).
-- Exit codes: `0` ok, `1` an explicit gate tripped (`--fail-on`, review or supply-chain requirements, `--fail-policy`, a failing `selftest`, a detonate ALERT), `2` usage or IO error.
+- Exit codes: `0` ok, `1` an explicit gate tripped (`--fail-on`, review or supply-chain requirements, `--fail-policy`, a failing `selftest`, a sandbox ALERT), `2` usage or IO error.
 
 Suppress a confirmed false positive inline with a reason: `# jankhunt42: ignore JH201` (file level: `# jankhunt42: ignore-file JH305` in the first 12 lines). Never suppress a real defect. Full command list: `references/toolbox.md`.
 
@@ -195,4 +196,4 @@ Suppress a confirmed false positive inline with a reason: `# jankhunt42: ignore 
 - [ ] Regression test added (or exact repro documented); original repro, suite, build and lint pass.
 - [ ] No new warnings, debug artifacts, or secrets in output.
 - [ ] Report written with evidence and remaining unknowns. When blocked, report what is proven, what is ruled out, the best hypothesis, and the cheapest next experiment.
-- [ ] For map, passport and detonate answers: evidence states stated precisely, unknowns listed, no claim of verified access, effective privilege, or approval.
+- [ ] For map, passport and sandbox answers: evidence states stated precisely, unknowns listed, no claim of verified access, effective privilege, or approval.

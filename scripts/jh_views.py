@@ -240,7 +240,7 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     return asciify(text) if ascii_only else text
 
 
-def detonate_tty(r, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
+def sandbox_tty(r, color: bool = True, ascii_only: bool = False, columns: Optional[int] = None) -> str:
     """A sandbox run read like a firewall audit log: what the code tried, what stopped it, and how much of it ran."""
     t = Theme(color, ascii_only, view_width(columns))
     c = t.c
@@ -272,7 +272,7 @@ def detonate_tty(r, color: bool = True, ascii_only: bool = False, columns: Optio
             c.yellow("  %d refused" % fc.get("refused", 0)) if fc.get("refused") else "")))
     out += [""] + t.box(card, "magenta" if alerts else "yellow" if denies else "green", "what did it try?")
     out += ["", c.bold("what ran")]
-    surface_name = {"install": "install", "open": "on open"}
+    surface_name = {"install": "install", "import": "on load", "open": "on open"}
     for s in r.get("steps") or []:
         ok = str(s.get("exit")) == "0"
         head = "  %s %s " % (c.grey(_pad(surface_name.get(s.get("surface", "install"), "?"), 8)),
@@ -309,7 +309,7 @@ def detonate_tty(r, color: bool = True, ascii_only: bool = False, columns: Optio
     out += [""] + [c.grey(ln) for ln in _wrap("  limits: " + "; ".join(clean(x) for x in (r.get("limits") or [])[:2]),
                                               t.width, "    ")]
     out += ["", c.grey("  data: --json   ·   into a passport: save --json outside the repository, "
-                       "then passport --detonation FILE")]
+                       "then passport --sandbox-run FILE")]
     text = "\n".join(out)
     return asciify(text) if ascii_only else text
 
@@ -345,8 +345,8 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
         approval_line = jh_capability_approval.approver_line(p.get("capability_approval") or {})
         if approval_line:
             out += _wrap(clean(approval_line), t.width, "")
-    import jh_detonate
-    sandbox_line = jh_detonate.passport_line(p.get("sandbox_run") or {})
+    import jh_sandbox
+    sandbox_line = jh_sandbox.passport_line(p.get("sandbox_run") or {})
     if sandbox_line:
         out += [""] + _wrap(clean(sandbox_line), t.width, "")
     gov = p.get("governance") or {}

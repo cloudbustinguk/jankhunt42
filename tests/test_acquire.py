@@ -1,4 +1,4 @@
-"""detonate --fetch (jh_acquire): planning, origin and address checks, verified downloads and publishing, on invented
+"""sandbox --fetch (jh_acquire): planning, origin and address checks, verified downloads and publishing, on invented
 lockfiles with a fake network; one opt-in live run against the public npm registry."""
 import base64
 import gc
@@ -17,7 +17,7 @@ from unittest import mock
 
 import _util  # noqa: F401
 import jh_acquire as A
-import jh_detonate
+import jh_sandbox
 
 
 def sri(data):
@@ -133,7 +133,7 @@ class Publishing(Base):
         root, built = self.app(), []
         out = os.path.join(self.tree(), "acq")
         # no engine is needed: the cache build is faked, and docker needs no ownership hand-back
-        with mock.patch.object(jh_detonate, "find_engine", lambda engine=None: "docker"):
+        with mock.patch.object(jh_sandbox, "find_engine", lambda engine=None: "docker"):
             r = A.run(root, ["https://registry.npmjs.org/"], out, stream=lambda u, n, *_: iter([TARBALL]),
                       build=lambda t, c, e, i: built.append(sorted(os.listdir(t))))
         self.assertEqual(built, [["00000.tgz"]])          # our own names, never the lockfile's
@@ -162,7 +162,7 @@ class AuditFindings(Base):
         def stream(url, limit, usage):
             streamed.append(url)
             yield b"DATA"                                 # never the pinned bytes
-        with mock.patch.object(jh_detonate, "find_engine", lambda engine=None: "docker"), \
+        with mock.patch.object(jh_sandbox, "find_engine", lambda engine=None: "docker"), \
                 mock.patch.object(A, "MAX_TOTAL_BYTES", 6):
             r = A.run(root, ["https://registry.npmjs.org/"], os.path.join(self.tree(), "out"), stream=stream,
                       build=lambda *a: None)
@@ -204,7 +204,7 @@ class AuditFindings(Base):
         entries = {"node_modules/p%d" % i: {"version": "1.0.0", "resolved": "https://registry.npmjs.org/p%d.tgz" % i,
                                             "integrity": sri(b"expected-%d" % i)} for i in range(3)}
         root = self.tree({"package-lock.json": self.lock(entries)})
-        with mock.patch.object(jh_detonate, "find_engine", lambda engine=None: "docker"), \
+        with mock.patch.object(jh_sandbox, "find_engine", lambda engine=None: "docker"), \
                 mock.patch.object(A, "MAX_TOTAL_BYTES", 6), mock.patch.object(A, "_PinnedHTTPS", Connection), \
                 mock.patch.object(A, "resolve", lambda host, port: "192.0.2.1"):
             r = A.run(root, ["https://registry.npmjs.org/"], os.path.join(self.tree(), "out"), build=lambda *a: None)
@@ -265,7 +265,7 @@ class AuditFindings(Base):
                                                 "integrity": sri(b"expected-%d" % i)} for i in range(3)}
             root = self.tree({"package-lock.json": self.lock(entries)})
             with self.subTest(body=name), \
-                    mock.patch.object(jh_detonate, "find_engine", lambda engine=None: "docker"), \
+                    mock.patch.object(jh_sandbox, "find_engine", lambda engine=None: "docker"), \
                     mock.patch.object(A, "MAX_TOTAL_BYTES", 800000), \
                     mock.patch.object(A, "_PinnedHTTPS", Connection), \
                     mock.patch.object(A, "resolve", lambda host, port: "192.0.2.1"):
@@ -360,7 +360,7 @@ class AuditFindings(Base):
         entries = {"node_modules/p%d" % i: {"version": "1.0.0", "resolved": "https://registry.npmjs.org/p%d.tgz" % i,
                                             "integrity": sri(b"expected-%d" % i)} for i in range(3)}
         root = self.tree({"package-lock.json": self.lock(entries)})
-        with connect, mock.patch.object(jh_detonate, "find_engine", lambda engine=None: "docker"), \
+        with connect, mock.patch.object(jh_sandbox, "find_engine", lambda engine=None: "docker"), \
                 mock.patch.object(A, "MAX_TOTAL_BYTES", len(header) * 100), \
                 mock.patch.object(A, "resolve", lambda host, port: "192.0.2.1"):
             r = A.run(root, ["https://registry.npmjs.org/"], os.path.join(self.tree(), "out"), build=lambda *a: None)
@@ -440,7 +440,7 @@ class AuditFindings(Base):
 
 
 class DetonateFetch(Base):
-    """detonate --fetch: the fetch feeds this run's cache, is reported, and leaves nothing behind (no network)."""
+    """sandbox --fetch: the fetch feeds this run's cache, is reported, and leaves nothing behind (no network)."""
 
     def cli(self):
         loader = importlib.machinery.SourceFileLoader("jh_cli", _util.CLI)
@@ -448,7 +448,7 @@ class DetonateFetch(Base):
         loader.exec_module(module)
         return module
 
-    def detonate(self, *argv, refused=()):
+    def sandbox(self, *argv, refused=()):
         cli, seen = self.cli(), {}
 
         def fake_fetch(path, origins, out, image=None, engine=None):
@@ -464,14 +464,14 @@ class DetonateFetch(Base):
             seen["npm_cache"], seen["cache_there"] = kw["npm_cache"], os.path.isdir(kw["npm_cache"] or "")
             return {"counts": {"ALERT": 0}, "coverage": {"state": "complete", "gaps": []}}
 
-        args = cli.build_parser().parse_args(["detonate", self.tree({"x": "1"}), *argv])
-        with mock.patch.object(A, "run", fake_fetch), mock.patch.object(jh_detonate, "run", fake_run), \
+        args = cli.build_parser().parse_args(["sandbox", self.tree({"x": "1"}), *argv])
+        with mock.patch.object(A, "run", fake_fetch), mock.patch.object(jh_sandbox, "run", fake_run), \
                 mock.patch("sys.stdout", new_callable=io.StringIO) as out, mock.patch("sys.stderr", new_callable=io.StringIO):
-            code = cli.cmd_detonate(args)
+            code = cli.cmd_sandbox(args)
         return code, (json.loads(out.getvalue()) if out.getvalue() else None), seen
 
     def test_the_fetch_feeds_the_run_and_is_cleaned_up(self):
-        code, doc, seen = self.detonate("--fetch", "https://registry.npmjs.org/", "--json")
+        code, doc, seen = self.sandbox("--fetch", "https://registry.npmjs.org/", "--json")
         self.assertEqual(code, 0)
         self.assertEqual(seen["origins"], ["https://registry.npmjs.org/"])
         self.assertTrue(seen["cache_there"])                      # the run saw the fetched cache
@@ -483,22 +483,22 @@ class DetonateFetch(Base):
 
     def test_refused_packages_make_coverage_partial(self):
         refused = [{"package": "gitdep", "reason": "a git dependency"}]
-        code, doc, _ = self.detonate("--fetch", "https://registry.npmjs.org/", "--json", refused=refused)
+        code, doc, _ = self.sandbox("--fetch", "https://registry.npmjs.org/", "--json", refused=refused)
         self.assertEqual(code, 0)
         self.assertEqual(doc["fetch"]["refused"], refused)
         self.assertEqual(doc["coverage"]["state"], "partial")
         self.assertIn("pinned packages not fetched: 1", doc["coverage"]["gaps"][0])
 
     def test_fetch_and_a_supplied_cache_do_not_mix(self):
-        code, doc, seen = self.detonate("--fetch", "https://registry.npmjs.org/", "--npm-cache", self.tree())
+        code, doc, seen = self.sandbox("--fetch", "https://registry.npmjs.org/", "--npm-cache", self.tree())
         self.assertEqual((code, doc, seen), (2, None, {}))
 
 
 @unittest.skipUnless(os.environ.get("JH_ACQUIRE_LIVE") == "1" and shutil.which("podman") and
-                     subprocess.run(["podman", "image", "exists", jh_detonate.DEFAULT_IMAGE]).returncode == 0,
-                     "set JH_ACQUIRE_LIVE=1 with podman and the detonate image to fetch from the public npm registry")
+                     subprocess.run(["podman", "image", "exists", jh_sandbox.DEFAULT_IMAGE]).returncode == 0,
+                     "set JH_ACQUIRE_LIVE=1 with podman and the sandbox image to fetch from the public npm registry")
 class Live(Base):
-    def test_fetch_then_detonate_offline(self):
+    def test_fetch_then_sandbox_offline(self):
         # a tiny public package with no dependencies and no install scripts; its real integrity is fetched first
         meta = json.loads(subprocess.run(["python3", "-c", (
             "import json,urllib.request;print(json.dumps(json.load(urllib.request.urlopen("
@@ -507,7 +507,7 @@ class Live(Base):
         root = self.tree({"package.json": {"name": "app", "version": "1.0.0", "dependencies": {"is-number": "7.0.0"}},
                           "package-lock.json": self.lock({"node_modules/is-number": {
                               "version": "7.0.0", "resolved": meta["tarball"], "integrity": meta["integrity"]}})})
-        p = _util.run_cli("detonate", root, "--fetch", "https://registry.npmjs.org/", "--surface", "install",
+        p = _util.run_cli("sandbox", root, "--fetch", "https://registry.npmjs.org/", "--surface", "install",
                           "--timeout", "90", "--json")
         self.assertEqual(p.returncode, 0, p.stderr)
         d = json.loads(p.stdout)

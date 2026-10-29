@@ -37,7 +37,7 @@
         "evidence_tier": {"const": "sandbox-observed"},
         "reason": {"type": "string"},
         "tool_version": {"type": "string"},
-        "surfaces": {"type": "array", "items": {"enum": ["install", "open"]}},
+        "surfaces": {"type": "array", "items": {"enum": ["install", "import", "open"]}},
         "counts": {"type": "object", "properties": {"ALERT": {"type": "integer"}, "DENY": {"type": "integer"},
           "UNDECLARED": {"type": "integer"}}},
         "alerts": {"type": "array", "maxItems": 50, "items": {"type": "object", "properties": {

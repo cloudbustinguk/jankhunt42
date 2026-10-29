@@ -25,7 +25,7 @@ jankhunt42 selftest --full    # everything below, with a pass/fail/insufficient-
 - the end-to-end shell regression suite;
 - a self-map compared with a hand-maintained ground truth;
 - a self-scan and self-passport, reported but never self-approving;
-- mutants that the tests must kill (156 in 4.0.1), each with an unmutated control;
+- mutants that the tests must kill (191 in 4.1.0), each with an unmutated control;
 - a privacy scan of shipped files and generated artifacts;
 - a stdlib byte-compile of every script, plus ruff, pyflakes, bandit and shellcheck when they are already installed (never installed for you);
 - the suite on locally cached Python 3.9 to 3.14 container images (every minor version), which are never pulled.
@@ -40,13 +40,13 @@ Missing optional tools are reported as `skip`, never as a pass. A perfect self-s
 SKILL.md                 routing doctrine for agents (three questions, permission gates)
 references/              method, playbooks, toolbox, scoring, review, supply-chain,
                          connectivity (map), passport (passport, exposure, policy), change-review,
-                         citizen, ai-governance, n8n, network-ceiling, detonate, examples, development
+                         citizen, ai-governance, n8n, network-ceiling, sandbox, rulesets, examples, development
 templates/               report templates; review-receipt, map, and passport JSON Schemas
 scripts/jankhunt42       CLI entry point
 scripts/jh_core.py       types, discovery, sanitizer, safe_text      scripts/jh_rules.py, jh_checks.py  scanner rules
 scripts/jh_score.py      Jank Score 2.0                              scripts/jh_review.py   diff review and receipts
-scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_detonate.py opt-in sandbox runs
-scripts/jh_acquire.py    detonate --fetch: verified npm downloads    scripts/jh_n8n.py      n8n workflow reader
+scripts/jh_supply.py     SBOM/attestation/JFrog parsers              scripts/jh_sandbox.py  opt-in sandbox runs
+scripts/jh_acquire.py    sandbox --fetch: verified downloads     scripts/jh_n8n.py      n8n workflow reader
 scripts/jh_graph.py      graph model, sanitizing, reachability, exposure, diff, redaction
 scripts/jh_map.py        discovery adapters, coverage, map views    scripts/jh_yaml.py     bounded YAML subset reader
 scripts/jh_policy.py     passport rules, profiles, precedence       scripts/jh_passport.py passport assembly
@@ -95,6 +95,7 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 3.6.2 changes no options or fields.
 - 4.0.0 removes `hunt`, `merge` and `report` (each name exits 2 with a pointer), `scripts/jh_hunt.py` and the deep-hunt templates. `score` becomes `scan --score` (the old name works through 4.0, with a notice on stderr); `triage` and `doctor` still work but leave the main help. `detonate --fetch URL` downloads the npm packages the lockfile pins from approved origins (`scripts/jh_acquire.py`) and adds `fetch` to `jankhunt.detonate.v1`. n8n Code-node JavaScript (`scripts/jh_n8n_code.py`): map evidence may carry `json_pointer` and `code_line`. The policy rule `P-RUN-002` (declared versus attempted; standard review, citizen block) and the passport fields `sandbox_run.attempts`, `attempts_total` and `undeclared`; `--sandbox-network-ceiling` is also accepted with `--detonation`. JSON and SARIF of `scan`, `scan --score`, `review` and `rules` are unchanged.
 - 4.0.1 adds the passport field `governance.top_problems` (rule, severity, path, line, plain text; at most three) and its lines in the citizen brief. JH101, JH105, JH111 and JH701 find more (see CHANGELOG); evidence now redacts connection-string passwords and JWTs. `detonate` gains a terminal view and `--no-color`; each `sandbox_run.attempts` entry gains `declared` (additive).
+- 4.1.0 renames `detonate` to `sandbox` (the old name still works, hidden, until 4.2), `passport --detonation` to `--sandbox-run` (the old flag still works), the result schema `jankhunt.detonate.v1` to `jankhunt.sandbox.v1` (the passport reads both), `templates/detonate.Containerfile` to `templates/sandbox.Containerfile` and the image to `localhost/jankhunt42-sandbox:0.1` (an image built under the old name is used when the new one is absent), and `references/detonate.md` to `references/sandbox.md`. It adds `sandbox --surface import` (each direct dependency loaded after the install, plus one step for installed `.pth` files; steps carry `surface: import`; the passport's `sandbox_run.surfaces` may hold `import`), pyproject.toml dependencies installed and loaded, four canaries (`gh`, `docker`, `kube`, `pypi`), `--fetch` for hash-pinned requirements.txt (the fetch receipt gains Python artifacts), `--ignore-rule` and `--ruleset` (schema `jankhunt.ruleset.v1`) on `scan`, `review` and `passport`, the scan JSON keys `ignored_rules` and `rulesets` (present only when used), and the passport fields `scope.ignored_rules` and `scope.rulesets` (all additive). It removes the `score` alias, as 4.0.0 said it would: use `scan --score`.
 - New top-level commands: `map`, `passport`, `selftest`. The new payloads carry their own schema versions (`jankhunt.map.v1`, `jankhunt.passport.v1`).
 - The product name is written `jankhunt42` everywhere, including the `SKILL.md` `name` and the human-readable Markdown and HTML titles (`# jankhunt42 scan`). If you grepped human output for the old capitalization, update the pattern; machine formats were already lowercase.
 - Repository strings in terminal and Markdown output now have control and bidi characters replaced with `U+FFFD`, so a hostile repository cannot drive your terminal.

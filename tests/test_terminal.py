@@ -109,26 +109,24 @@ class CliModes(unittest.TestCase):
     def test_help_mentions_three_questions(self):
         r = run_cli("--help")
         self.assertIn("What's broken?", r.stdout)
-        for cmd in ("map", "passport", "selftest", "scan", "review", "supply-chain", "detonate"):
+        for cmd in ("map", "passport", "selftest", "scan", "review", "supply-chain", "sandbox"):
             self.assertIn(cmd, r.stdout)
             self.assertEqual(run_cli(cmd, "--help").returncode, 0)
 
     def test_the_4_0_command_surface(self):
         # the main help lists the kept commands only; the rest still parse
         listed = re.findall(r"^    (\S+)\s", run_cli("--help").stdout, re.M)
-        self.assertEqual(sorted(listed), sorted(("scan", "review", "supply-chain", "map", "passport", "detonate",
+        self.assertEqual(sorted(listed), sorted(("scan", "review", "supply-chain", "map", "passport", "sandbox",
                                                  "selftest", "rules")))
-        for name, pointer in (("hunt", "scan"), ("merge", "hunt"), ("report", "scan --md")):
+        for name, pointer, release in (("hunt", "scan", "4.0.0"), ("merge", "hunt", "4.0.0"),
+                                       ("report", "scan --md", "4.0.0"), ("score", "scan --score", "4.1.0")):
             r = run_cli(name, ".")
             self.assertEqual(r.returncode, 2, name)
-            self.assertIn("removed in 4.0.0", r.stderr)
+            self.assertIn("removed in " + release, r.stderr)
             self.assertIn(pointer, r.stderr)
         with tempfile.TemporaryDirectory() as root:
             with open(os.path.join(root, "a.py"), "w") as fh:
                 fh.write("x = 1\n")
-            alias = run_cli("score", root, "--json")
-            self.assertEqual(alias.returncode, 0)
-            self.assertIn("scan --score", alias.stderr)
             self.assertEqual(json.loads(run_cli("scan", root, "--score", "--json").stdout)["command"], "score")
             gated = run_cli("scan", root, "--score", "--fail-on", "info")    # a gate --score would not apply
             self.assertEqual(gated.returncode, 2)

@@ -8,9 +8,9 @@
 
 AI app builders and coding agents let anyone turn an idea into running software in an afternoon. That software inherits its builder's credentials, the tools their agent is wired to, and their access to production data, often without an engineer ever looking at it. jankhunt42 is the review that is missing. It reads a repository the way a security engineer would and explains what it finds in plain terms, both to the citizen developer who built it and to the team asked to approve it.
 
-jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `detonate --fetch`).
+jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `sandbox --fetch`).
 
-**Version:** 4.0.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.1.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -18,7 +18,7 @@ jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md
 |---|---|---|
 | **What's broken?** | `scan`, `review`, `supply-chain` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts |
 | **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, n8n workflows, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
-| **Can we responsibly ship it?** | `passport`, `detonate` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
+| **Can we responsibly ship it?** | `passport`, `sandbox` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
 
 Each answer keeps its own evidence model:
 
@@ -57,7 +57,7 @@ jankhunt42 map .                            # what the software and its agent's 
 jankhunt42 passport . --profile citizen     # a strict release decision, explained in plain terms
 jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell)
 jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceiling /etc/it/approved.json   # capped by IT's approved list
-jankhunt42 detonate .                    # opt-in: run the install hooks and what runs on open in a sandbox; log what they try
+jankhunt42 sandbox .                    # opt-in: run the install hooks, the dependencies as they load, and what runs on open in a sandbox
 jankhunt42 passport . --base <ref> --md   # what new access this change asks for (for IT to approve)
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
@@ -126,7 +126,7 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
     <td><img src="assets/readme/citizen-passport.png" alt="HTML citizen passport: release assessment block under the citizen profile with no custodian named, exposure High, and the plain-language brief with the blocking reasons and what the software and its agent set-up can reach"></td>
   </tr>
   <tr>
-    <td colspan="2"><b>Run it in a sandbox (opt-in).</b> <code>jankhunt42 detonate .</code> runs the install hooks and what runs when the folder is opened, in a disposable container with the network off and canary credentials, and reads like a firewall log. <code>passport --detonation</code> sets what it tried against what the code declares.</td>
+    <td colspan="2"><b>Run it in a sandbox (opt-in).</b> <code>jankhunt42 sandbox .</code> runs the install hooks and what runs when the folder is opened, in a disposable container with the network off and canary credentials, and reads like a firewall log. <code>passport --sandbox-run</code> sets what it tried against what the code declares.</td>
   </tr>
   <tr>
     <td><img src="assets/readme/terminal-sandbox.png" alt="Terminal sandbox run: 3 ALERT and 3 DENY with complete coverage; an npm postinstall and a VS Code folder-open task ran; the audit log shows canary reads of ~/.aws/credentials and ~/.npmrc, a persistence attempt on ~/.bashrc, two DNS lookups and a blocked connection to 203.0.113.9:443."></td>
@@ -173,9 +173,9 @@ jankhunt42 passport . --policy ../policy.json  # operator policy (outside the re
 jankhunt42 passport . --fail-on block          # opt-in enforcement: exit 1 at or above block
 jankhunt42 passport . --compare ../old-passport.json      # regressions since a stored passport
 jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance, bound to revision and policy
-jankhunt42 detonate . --json                   # opt-in sandbox run of the install hooks and what runs on open
-jankhunt42 detonate . --fetch https://registry.npmjs.org/ --json   # dependencies' hooks too: fetches the pinned npm packages, verified
-jankhunt42 passport . --detonation /path/outside/run.json   # carry a saved run into the passport (P-RUN-001, P-RUN-002)
+jankhunt42 sandbox . --json                   # opt-in sandbox run of the install hooks and what runs on open
+jankhunt42 sandbox . --fetch https://registry.npmjs.org/ --json   # dependencies' hooks too: fetches the pinned npm packages, verified
+jankhunt42 passport . --sandbox-run /path/outside/run.json   # carry a saved run into the passport (P-RUN-001, P-RUN-002)
 jankhunt42 passport . --branch-rules ../rules/app.json    # rulesets exported by an operator: is review enforced?
 jankhunt42 supply-chain . --json                          # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog
 jankhunt42 supply-chain . --require-sbom-minimum          # fail unless an SBOM has the NTIA minimum elements
@@ -307,7 +307,7 @@ Everything else is advisory.
 | Code | Meaning |
 |---|---|
 | `0` | Ran successfully and no explicit gate tripped (`map` and an advisory `passport` always exit 0) |
-| `1` | A gate tripped: `--fail-on`, a supply-chain requirement, `scan --score --fail-policy`, a failing `selftest`, or a detonate ALERT |
+| `1` | A gate tripped: `--fail-on`, a supply-chain requirement, `scan --score --fail-policy`, a failing `selftest`, or a sandbox ALERT |
 | `2` | Usage error, unreadable input, unresolvable git ref, or invalid inventory/policy file |
 | `130` | Interrupted |
 
@@ -335,7 +335,8 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
 | [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |
-| [`references/detonate.md`](references/detonate.md) | `detonate`: running the install hooks and what runs on open in a sandbox, the audit log, canaries and limits |
+| [`references/sandbox.md`](references/sandbox.md) | `sandbox`: running the install hooks, the dependencies as they load, and what runs on open in a sandbox, the audit log, canaries and limits |
+| [`references/rulesets.md`](references/rulesets.md) | site rulesets (`--ruleset`) and `--ignore-rule`: your own rules, shipped rules set aside or re-rated, and trust |
 | [`references/development.md`](references/development.md) | Architecture, development workflow, self-assurance, compatibility and migration notes |
 | [`CHANGELOG.md`](CHANGELOG.md) | Every release |
 

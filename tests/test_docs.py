@@ -22,8 +22,8 @@ SKIP = [
     ("--pr", "needs the GitHub CLI and a checked-out pull request"),
     ("selftest", "selftest runs this suite; executing it here would recurse"),
     ("--online", "lets --verify fetch from GitHub; the suite is offline"),
-    ("detonate", "needs a container engine and the detonate image; tests/test_detonate.py covers it"),
-    ("--detonation", "needs a detonate result kept outside the repository; tests/test_detonate.py covers it"),
+    ("sandbox", "needs a container engine and the sandbox image; tests/test_sandbox.py covers it"),
+    ("--sandbox-run", "needs a sandbox result kept outside the repository; tests/test_sandbox.py covers it"),
     ("--emit-capability-approval", "needs an operator policy outside the repository; tests/test_capability_approval.py "
                                    "covers it"),
     ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "
@@ -183,7 +183,7 @@ class SkillContract(unittest.TestCase):
         self.assertLessEqual(len(description), 700, "keep the description short enough to read at a glance")
         for key in ("name: jankhunt42", "description:", "license: MIT", "compatibility:", 'version: "'):
             self.assertIn(key, front)
-        for trigger in ("passport", "blast radius", "data exposure", "connectivity", "detonate", "sandbox"):
+        for trigger in ("passport", "blast radius", "data exposure", "connectivity", "sandbox"):
             self.assertIn(trigger, text.lower())
         self.assertIn("Permission gate", text)
 
