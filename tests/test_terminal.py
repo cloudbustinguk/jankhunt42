@@ -117,7 +117,7 @@ class CliModes(unittest.TestCase):
         # the main help lists the kept commands only; the rest still parse
         listed = re.findall(r"^    (\S+)\s", run_cli("--help").stdout, re.M)
         self.assertEqual(sorted(listed), sorted(("scan", "review", "supply-chain", "map", "passport", "sandbox",
-                                                 "selftest", "rules")))
+                                                 "agent-fuzz", "selftest", "rules")))
         for name, pointer, release in (("hunt", "scan", "4.0.0"), ("merge", "hunt", "4.0.0"),
                                        ("report", "scan --md", "4.0.0"), ("score", "scan --score", "4.1.0")):
             r = run_cli(name, ".")

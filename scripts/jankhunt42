@@ -51,6 +51,8 @@ import jh_capability_approval  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
 import jh_sandbox  # noqa: E402
+import jh_agent_fuzz  # noqa: E402
+import jh_agent_fuzz_eval  # noqa: E402
 
 
 class Spinner:
@@ -1016,6 +1018,59 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
     return 1 if result["counts"]["ALERT"] else 0
 
 
+def cmd_agent_fuzz_validate(args: argparse.Namespace) -> int:
+    """Validate a declarative policy-fuzz campaign without executing any of its text."""
+    try:
+        doc, digest = jh_agent_fuzz.load_campaign(args.campaign)
+        report = jh_agent_fuzz.validation_report(doc, digest)
+    except (jh_agent_fuzz.CampaignError, OSError) as exc:
+        message = "jankhunt42: agent-fuzz: %s" % jh_core_safe(str(exc))
+        if args.json:
+            print(json.dumps({"schema": jh_agent_fuzz.REPORT_SCHEMA, "valid": False,
+                              "errors": [jh_core_safe(str(exc))], "execution": "not-run"}, sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        summary = report["summary"]
+        print("campaign %s: valid · %d cases · %d probes · targets %s" %
+              (summary["id"], summary["cases"], summary["probes"], ", ".join(summary["targets"])))
+        print("campaign sha256: %s · execution not run" % digest)
+    return 0
+
+
+def cmd_agent_fuzz_evaluate(args: argparse.Namespace) -> int:
+    """Score bounded caller-provided observations; never describe them as a live run."""
+    try:
+        campaign, campaign_digest = jh_agent_fuzz.load_campaign(args.campaign)
+        observations, observations_digest = jh_agent_fuzz.load_observations(args.observations)
+        report = jh_agent_fuzz_eval.evaluate_campaign(campaign, observations)
+    except (jh_agent_fuzz.CampaignError, jh_agent_fuzz_eval.EvalError, OSError) as exc:
+        message = "jankhunt42: agent-fuzz evaluate: %s" % jh_core_safe(str(exc))
+        if args.json:
+            print(json.dumps({"schema": jh_agent_fuzz_eval.REPORT_SCHEMA, "valid": False,
+                              "errors": [jh_core_safe(str(exc))], "evaluation": "not-run"}, sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 2
+    report["campaign_sha256"] = campaign_digest
+    report["observations_sha256"] = observations_digest
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        counts = report["summary"]
+        print("campaign %s: %d pass · %d fail · %d inconclusive · %d policy-not-loaded" %
+              (report["campaign_id"], counts["pass"], counts["fail"], counts["inconclusive"],
+               counts["policy-not-loaded"]))
+        print("evaluation uses caller-provided observations; it did not run an agent")
+    counts = report["summary"]
+    if counts["fail"] or counts["policy-not-loaded"]:
+        return 1
+    return 2 if counts["inconclusive"] else 0
+
+
 def cmd_selftest(args: argparse.Namespace) -> int:
     import jh_selftest
     return jh_selftest.main(args)
@@ -1309,6 +1364,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("detonate")    # 4.1.0: the old name of `sandbox`, hidden, for one release
     add_sandbox_opts(sp)
     sp.set_defaults(func=cmd_sandbox_alias)
+
+    sp = sub.add_parser("agent-fuzz", help="validate policy-fuzz campaigns for sandboxed agent testing")
+    agent_fuzz_cmds = sp.add_subparsers(dest="agent_fuzz_command", required=True, metavar="ACTION")
+    validate = agent_fuzz_cmds.add_parser("validate", help="validate a declarative campaign; does not run an agent")
+    validate.add_argument("campaign", metavar="CAMPAIGN.json", help="versioned campaign file")
+    validate.add_argument("--json", action="store_true", help="versioned JSON validation report")
+    validate.set_defaults(func=cmd_agent_fuzz_validate)
+    evaluate = agent_fuzz_cmds.add_parser("evaluate", help="score per-case observations supplied by an adapter")
+    evaluate.add_argument("campaign", metavar="CAMPAIGN.json")
+    evaluate.add_argument("observations", metavar="OBSERVATIONS.json",
+                          help="adapter-provided case event map; this command does not run an agent")
+    evaluate.add_argument("--json", action="store_true", help="versioned JSON report without raw event data")
+    evaluate.set_defaults(func=cmd_agent_fuzz_evaluate)
 
     sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")
     sp.add_argument("--full", action="store_true",
