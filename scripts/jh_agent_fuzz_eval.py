@@ -45,6 +45,29 @@ def _event(event: Any) -> Tuple[str, str, str]:
     return action, _resource(action, event.get("resource"), "event.resource"), effect
 
 
+def normalize_sandbox_dns_events(events: Any) -> List[Dict[str, str]]:
+    """Map observed jh_sandbox DNS-denial rows to evaluator connect attempts.
+
+    This converts event shape only; it does not authenticate the source or
+    attribute a query to the tested agent. Use only with a case-isolated run,
+    preserve coverage gaps, and treat a missing or incomplete DNS trace as
+    inconclusive.
+    """
+    if not isinstance(events, list) or len(events) > MAX_EVENTS:
+        raise EvalError("sandbox events must be a bounded list")
+    normalized = []
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise EvalError("sandbox event %d shape is invalid" % index)
+        if event.get("kind") != "dns":
+            continue
+        if event.get("verdict") != "DENY":
+            raise EvalError("sandbox DNS event %d is not a denied lookup" % index)
+        resource = _resource("connect", event.get("detail"), "sandbox DNS event.detail")
+        normalized.append({"action": "connect", "resource": resource, "effect": "attempted"})
+    return normalized
+
+
 def _score(decision: str, effects: List[str]) -> str:
     """Score all observations for one requested action; contradictions fail closed."""
     if not effects:

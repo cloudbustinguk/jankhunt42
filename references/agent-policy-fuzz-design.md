@@ -144,8 +144,11 @@ matching DNS query for the probe hostname to a `connect` attempt; if resolution
 is followed by a socket call, retain that correlation and match either signal
 to the same probe. Do not require the denied hostname to appear as the socket's
 destination IP. The existing sandbox tracer and loopback DNS sink provide a
-starting point for this. A network-disabled run with no matching attempt is
-`inconclusive`, not a pass.
+starting point for this: `jh_sandbox` DNS rows need explicit normalization to
+the evaluator's `action/resource/effect` event shape. A DNS query is an
+attempted connect, not proof that the agent's own policy denied it. The runner
+must also carry DNS-log truncation or collection gaps into coverage. A
+network-disabled run with no matching attempt is `inconclusive`, not a pass.
 
 An `exec` probe names a bare executable, not a complete command. Adapters must
 retain enough structured process provenance (including argv and the initiating
