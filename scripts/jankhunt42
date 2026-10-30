@@ -1020,6 +1020,8 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
 
 def cmd_agent_fuzz_validate(args: argparse.Namespace) -> int:
     """Validate a declarative policy-fuzz campaign without executing any of its text."""
+    if not _one_format(args, ("json", "html")):
+        return 2
     try:
         doc, digest = jh_agent_fuzz.load_campaign(args.campaign)
         report = jh_agent_fuzz.validation_report(doc, digest)
@@ -1033,6 +1035,11 @@ def cmd_agent_fuzz_validate(args: argparse.Namespace) -> int:
         return 2
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.html:
+        print(jh_explorer.render_agent_fuzz(report))
+    elif sys.stdout.isatty():
+        print(jh_views.agent_fuzz_tty(report, color=jh_render.color_enabled(args.no_color),
+                                      ascii_only=jh_views.want_ascii()))
     else:
         summary = report["summary"]
         print("campaign %s: valid · %d cases · %d probes · targets %s" %
@@ -1043,6 +1050,8 @@ def cmd_agent_fuzz_validate(args: argparse.Namespace) -> int:
 
 def cmd_agent_fuzz_evaluate(args: argparse.Namespace) -> int:
     """Score bounded caller-provided observations; never describe them as a live run."""
+    if not _one_format(args, ("json", "html")):
+        return 2
     try:
         campaign, campaign_digest = jh_agent_fuzz.load_campaign(args.campaign)
         observations, observations_digest = jh_agent_fuzz.load_observations(args.observations)
@@ -1059,6 +1068,11 @@ def cmd_agent_fuzz_evaluate(args: argparse.Namespace) -> int:
     report["observations_sha256"] = observations_digest
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.html:
+        print(jh_explorer.render_agent_fuzz(report))
+    elif sys.stdout.isatty():
+        print(jh_views.agent_fuzz_tty(report, color=jh_render.color_enabled(args.no_color),
+                                      ascii_only=jh_views.want_ascii()))
     else:
         counts = report["summary"]
         print("campaign %s: %d pass · %d fail · %d inconclusive · %d policy-not-loaded" %
@@ -1370,12 +1384,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate = agent_fuzz_cmds.add_parser("validate", help="validate a declarative campaign; does not run an agent")
     validate.add_argument("campaign", metavar="CAMPAIGN.json", help="versioned campaign file")
     validate.add_argument("--json", action="store_true", help="versioned JSON validation report")
+    validate.add_argument("--html", action="store_true", help="self-contained offline HTML report")
+    validate.add_argument("--no-color", action="store_true")
     validate.set_defaults(func=cmd_agent_fuzz_validate)
     evaluate = agent_fuzz_cmds.add_parser("evaluate", help="score per-case observations supplied by an adapter")
     evaluate.add_argument("campaign", metavar="CAMPAIGN.json")
     evaluate.add_argument("observations", metavar="OBSERVATIONS.json",
                           help="adapter-provided case event map; this command does not run an agent")
     evaluate.add_argument("--json", action="store_true", help="versioned JSON report without raw event data")
+    evaluate.add_argument("--html", action="store_true", help="self-contained offline HTML report")
+    evaluate.add_argument("--no-color", action="store_true")
     evaluate.set_defaults(func=cmd_agent_fuzz_evaluate)
 
     sp = sub.add_parser("selftest", help="self-assurance: tests, oracles, fuzzing, dogfood map/passport")

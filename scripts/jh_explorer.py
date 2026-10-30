@@ -105,6 +105,64 @@ def render_passport(passport: Dict[str, Any]) -> str:
     return _page("jankhunt42 passport: %s" % passport.get("subject", {}).get("name", ""), body, passport, _PASSPORT_JS)
 
 
+def render_agent_fuzz(report: Dict[str, Any]) -> str:
+    """Render a self-contained policy-fuzz report without raw input/evidence."""
+    evaluating = report.get("evaluation") == "provided-observations"
+    title = "Policy fuzz evaluation" if evaluating else "Policy fuzz campaign validation"
+    summary = report.get("summary") or {}
+
+    def cell(value: Any, cls: str = "") -> str:
+        return '<td class="%s">%s</td>' % (escape(cls, quote=True), escape(str(value), quote=True))
+
+    cards = []
+    if evaluating:
+        labels = (("pass", "PASS"), ("fail", "FAIL"), ("inconclusive", "INCONCLUSIVE"),
+                  ("policy-not-loaded", "POLICY NOT LOADED"))
+        for key, label in labels:
+            cards.append('<article class="card"><small>%s</small><strong>%s</strong></article>' %
+                         (escape(label), escape(str(summary.get(key, 0)))))
+        rows = []
+        for case in report.get("cases") or []:
+            outcome = str(case.get("outcome", "unknown"))
+            probes = case.get("probes") or []
+            counts: Dict[str, int] = {}
+            for probe in probes:
+                state = str(probe.get("outcome", "unknown"))
+                counts[state] = counts.get(state, 0) + 1
+            breakdown = ", ".join("%s %s" % (count, state) for state, count in sorted(counts.items())) or "No probe detail"
+            rows.append("<tr>%s%s%s</tr>" % (cell(case.get("case_id", "case"), "mono"),
+                                             cell(outcome, "state " + outcome), cell(breakdown)))
+        table = ("<h2>Case outcomes</h2><div class=\"scroll\"><table><thead><tr><th>Case</th>"
+                 "<th>Outcome</th><th>Probe summary</th></tr></thead><tbody>%s</tbody></table></div>" % "".join(rows))
+        meta = "<p>Campaign <code>%s</code> · evaluation: <strong>caller-provided observations</strong>. No agent was run.</p>" % escape(str(report.get("campaign_id", "campaign")))
+        hashes = "<dl><dt>Campaign SHA-256</dt><dd>%s</dd><dt>Observations SHA-256</dt><dd>%s</dd></dl>" % (
+            escape(str(report.get("campaign_sha256", "unavailable"))),
+            escape(str(report.get("observations_sha256", "unavailable"))))
+    else:
+        cards = [('<article class="card"><small>STATUS</small><strong class="%s">%s</strong></article>' %
+                  ("pass" if report.get("valid") else "fail", "VALID" if report.get("valid") else "INVALID")),
+                 '<article class="card"><small>CASES / PROBES</small><strong>%s / %s</strong></article>' %
+                 (escape(str(summary.get("cases", 0))), escape(str(summary.get("probes", 0)))),
+                 '<article class="card"><small>ATTACK / CONTROL</small><strong>%s / %s</strong></article>' %
+                 (escape(str(summary.get("attack_cases", 0))), escape(str(summary.get("control_cases", 0))))]
+        table = "<h2>Targets</h2><p>%s</p>" % escape(", ".join(summary.get("targets") or []))
+        meta = "<p>Campaign <code>%s</code> · validation only: campaign text was not executed.</p>" % escape(str(summary.get("id", "campaign")))
+        hashes = "<dl><dt>Campaign SHA-256</dt><dd>%s</dd></dl>" % escape(str(report.get("campaign_sha256", "unavailable")))
+    body = """<header><p class="brand">jankhunt42 <span>/ policy fuzz</span></p><h1>%s</h1>%s</header>
+<main><section class="cards">%s</section><section>%s</section><section><h2>Evidence and scope</h2>%s
+<p class="note">Reports omit prompts, policy text, resources, raw events, and adapter notes. Hashes identify the input files but do not authenticate their source.</p></section></main>
+<footer>Generated offline. Static report; caller-provided observations are not an authenticated client run.</footer>""" % (
+        escape(title), meta, "".join(cards), table, hashes)
+    css = """<style>
+:root{color-scheme:dark light;--bg:#0a0d14;--panel:#121824;--line:#2b3546;--text:#e7edf7;--muted:#9aa8bb;--cyan:#48d9eb;--red:#ff7884;--green:#65d99a;--yellow:#ffd166;--violet:#c4a7ff}
+@media(prefers-color-scheme:light){:root{--bg:#f5f7fb;--panel:#fff;--line:#d9deea;--text:#18202d;--muted:#647084}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,sans-serif}header,main,footer{max-width:1050px;margin:auto;padding:22px}header{border-bottom:1px solid var(--line)}h1{font-size:clamp(1.7rem,4vw,2.5rem);margin:.3em 0}.brand{font-weight:800;letter-spacing:.1em;color:var(--cyan)}.brand span{color:var(--muted);font-weight:400}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.card,section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin:14px 0}.card small{display:block;color:var(--muted);letter-spacing:.08em}.card strong{display:block;font-size:1.6rem;margin-top:5px}.pass{color:var(--green)}.fail{color:var(--red)}.inconclusive{color:var(--yellow)}.policy-not-loaded{color:var(--violet)}h2{font-size:1.05rem;margin-top:0}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted)}.mono,dd{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.scroll{overflow-x:auto}dl{display:grid;grid-template-columns:minmax(140px,190px) 1fr;gap:8px}dt{color:var(--muted)}dd{margin:0}.note,footer{color:var(--muted)}footer{font-size:.85rem}@media print{body{background:white;color:black}section,.card{break-inside:avoid}}
+</style>"""
+    return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\"><title>%s</title>%s</head><body>%s</body></html>" % (
+        escape(title), css, body)
+
+
 _CSS = r"""
 :root{--bg:#07090e;--panel:#10141d;--panel2:#151a26;--line:#232a3a;--text:#e6e9f2;--muted:#8a93a8;
 --cyan:#38e1ff;--magenta:#ff4fd8;--green:#62d98b;--yellow:#ffd166;--red:#ff6b6b;--violet:#a78bfa;--grey:#6b7280}

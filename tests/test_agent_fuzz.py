@@ -7,6 +7,8 @@ import unittest
 
 import _util  # noqa: F401
 import jh_agent_fuzz
+import jh_explorer
+import jh_views
 
 
 FIXTURE = os.path.join(_util.FIXTURES, "agent-fuzz", "baseline.v1.json")
@@ -138,6 +140,41 @@ class CampaignValidation(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertFalse(json.loads(result.stdout)["valid"])
 
+    def test_html_and_tty_validation_reports_state_scope_without_campaign_text(self):
+        html = _util.run_cli("agent-fuzz", "validate", FIXTURE, "--html")
+        self.assertEqual(html.returncode, 0, html.stderr)
+        self.assertIn("Content-Security-Policy", html.stdout)
+        self.assertIn("validation only: campaign text was not executed", html.stdout)
+        self.assertIn("managed-policy-baseline", html.stdout)
+        report = jh_agent_fuzz.validation_report(self.doc, "a" * 64)
+        tty = jh_views.agent_fuzz_tty(report, color=False, columns=72)
+        self.assertIn("not run", tty)
+        self.assertIn("campaign sha256", tty)
+        self.assertNotIn("notes.txt", tty)
+
+    def test_html_report_escapes_untrusted_values_and_omits_raw_observation_data(self):
+        hostile = {"evaluation": "provided-observations", "campaign_id": "<script>&\"",
+                   "campaign_sha256": "a" * 64, "observations_sha256": "b" * 64,
+                   "summary": {"pass": 1, "fail": 0, "inconclusive": 0, "policy-not-loaded": 0},
+                   "cases": [{"case_id": "<img src=x onerror=alert(1)>", "outcome": "pass",
+                              "probes": [{"outcome": "pass"}]}],
+                   "raw": "private prompt and secret hostname"}
+        html = jh_explorer.render_agent_fuzz(hostile)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
+        self.assertNotIn("<img src=x", html)
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("private prompt", html)
+        self.assertIn("caller-provided observations", html)
+        tty = jh_views.agent_fuzz_tty(hostile, color=False, columns=72)
+        self.assertIn("case results", tty)
+        self.assertIn("PASS", tty)
+        self.assertNotIn("private prompt", tty)
+
+    def test_cli_rejects_multiple_agent_fuzz_output_formats(self):
+        result = _util.run_cli("agent-fuzz", "validate", FIXTURE, "--json", "--html")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("choose one output format", result.stderr)
+
     def test_cli_evaluates_caller_observations_without_echoing_events(self):
         observations = {}
         for case in self.doc["cases"]:
@@ -152,12 +189,18 @@ class CampaignValidation(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(observations, fh)
             result = _util.run_cli("agent-fuzz", "evaluate", FIXTURE, path, "--json")
+            html_result = _util.run_cli("agent-fuzz", "evaluate", FIXTURE, path, "--html")
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["evaluation"], "provided-observations")
         self.assertEqual(report["summary"]["pass"], 8)
         self.assertNotIn("resource", result.stdout)
         self.assertNotIn("notes.txt", result.stdout)
+        self.assertEqual(html_result.returncode, 0, html_result.stderr)
+        self.assertIn("Case outcomes", html_result.stdout)
+        self.assertIn("managed-secret-read", html_result.stdout)
+        self.assertIn("caller-provided observations", html_result.stdout)
+        self.assertNotIn("secrets/token.txt", html_result.stdout)
 
     def test_evaluation_does_not_pass_incomplete_or_contradictory_observations(self):
         observations = {"managed-secret-read": {"policy_loaded": True, "events": [
