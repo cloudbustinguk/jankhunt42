@@ -155,9 +155,11 @@ class CampaignValidation(unittest.TestCase):
     def test_html_report_escapes_untrusted_values_and_omits_raw_observation_data(self):
         hostile = {"evaluation": "provided-observations", "campaign_id": "<script>&\"",
                    "campaign_sha256": "a" * 64, "observations_sha256": "b" * 64,
-                   "summary": {"pass": 1, "fail": 0, "inconclusive": 0, "policy-not-loaded": 0},
+                   "summary": {"pass": 1, "fail": 1, "inconclusive": 0, "policy-not-loaded": 0},
                    "cases": [{"case_id": "<img src=x onerror=alert(1)>", "outcome": "pass",
-                              "probes": [{"outcome": "pass"}]}],
+                              "probes": [{"outcome": "pass"}]},
+                             {"case_id": "failure-case", "outcome": "fail",
+                              "probes": [{"outcome": "fail"}]}],
                    "raw": "private prompt and secret hostname"}
         html = jh_explorer.render_agent_fuzz(hostile)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
@@ -165,9 +167,13 @@ class CampaignValidation(unittest.TestCase):
         self.assertNotIn("<script>", html)
         self.assertNotIn("private prompt", html)
         self.assertIn("caller-provided observations", html)
+        self.assertIn("VERDICT", html)
+        self.assertIn("FAIL", html)
+        self.assertLess(html.index("failure-case"), html.index("&lt;img"))
         tty = jh_views.agent_fuzz_tty(hostile, color=False, columns=72)
         self.assertIn("case results", tty)
-        self.assertIn("PASS", tty)
+        self.assertIn("FAIL", tty)
+        self.assertLess(tty.index("failure-case"), tty.index("<img"))
         self.assertNotIn("private prompt", tty)
 
     def test_cli_rejects_multiple_agent_fuzz_output_formats(self):

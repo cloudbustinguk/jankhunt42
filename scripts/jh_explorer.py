@@ -116,13 +116,23 @@ def render_agent_fuzz(report: Dict[str, Any]) -> str:
 
     cards = []
     if evaluating:
+        if summary.get("fail", 0):
+            verdict = ("FAIL", "fail")
+        elif summary.get("policy-not-loaded", 0) or summary.get("inconclusive", 0):
+            verdict = ("REVIEW", "inconclusive")
+        else:
+            verdict = ("PASS", "pass")
+        cards.append('<article class="card"><small>VERDICT</small><strong class="%s">%s</strong></article>' %
+                     (verdict[1], verdict[0]))
         labels = (("pass", "PASS"), ("fail", "FAIL"), ("inconclusive", "INCONCLUSIVE"),
                   ("policy-not-loaded", "POLICY NOT LOADED"))
         for key, label in labels:
             cards.append('<article class="card"><small>%s</small><strong>%s</strong></article>' %
                          (escape(label), escape(str(summary.get(key, 0)))))
         rows = []
-        for case in report.get("cases") or []:
+        order = {"fail": 0, "policy-not-loaded": 1, "inconclusive": 2, "pass": 3}
+        cases = sorted(report.get("cases") or [], key=lambda case: order.get(case.get("outcome"), 4))
+        for case in cases:
             outcome = str(case.get("outcome", "unknown"))
             probes = case.get("probes") or []
             counts: Dict[str, int] = {}

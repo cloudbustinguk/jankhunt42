@@ -445,15 +445,23 @@ def agent_fuzz_tty(report, color: bool = True, ascii_only: bool = False,
         summary = report.get("summary") or {}
         title = "policy-fuzz evaluation"
         meta = "%s  ·  caller-provided observations" % report.get("campaign_id", "campaign")
+        if summary.get("fail", 0):
+            verdict, verdict_paint, accent = "FAIL", c.red, "magenta"
+        elif summary.get("policy-not-loaded", 0) or summary.get("inconclusive", 0):
+            verdict, verdict_paint, accent = "REVIEW", c.yellow, "yellow"
+        else:
+            verdict, verdict_paint, accent = "PASS", c.green, "green"
         counts = [("pass", c.green), ("fail", c.red), ("inconclusive", c.yellow),
                   ("policy-not-loaded", c.magenta)]
-        details = [t.kv("outcomes", "  ".join("%s %s" % (cfn(str(summary.get(k, 0))), k)
+        details = [t.kv("VERDICT", c.bold(verdict_paint(verdict))),
+                   t.kv("outcomes", "  ".join("%s %s" % (cfn(str(summary.get(k, 0))), k)
                                                   for k, cfn in counts)),
                     t.kv("evaluation", "provided observations; no agent was run"),
                     t.kv("campaign sha256", report.get("campaign_sha256", "unavailable")),
                     t.kv("observations sha256", report.get("observations_sha256", "unavailable"))]
-        rows = report.get("cases") or []
-    out = t.banner(title, meta) + [""] + t.box(details, "cyan", "summary")
+        order = {"fail": 0, "policy-not-loaded": 1, "inconclusive": 2, "pass": 3}
+        rows = sorted(report.get("cases") or [], key=lambda row: order.get(row.get("outcome"), 4))
+    out = t.banner(title, meta) + [""] + t.box(details, accent if evaluating else "cyan", "summary")
     if rows:
         out += ["", c.bold("case results")]
         for row in rows:
