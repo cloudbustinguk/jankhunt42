@@ -624,6 +624,18 @@ MUTANTS = [
     ('M231-dotnet-reassigned-group-inherited', 'a child route inherits authorization from a reassigned parent', 'jh_dotnet.py', '        if assignments.get(m[1], 0) <= 1 and _unconditional_in_production(m.start(), branches) and \\', '        if True and _unconditional_in_production(m.start(), branches) and \\', 'test_dotnet.py'),
     ('M232-dotnet-dev-only-auth-trusted', 'authorization applied only in development protects production routes in the scan', 'jh_dotnet.py', '        elif assignments.get(m[1], 0) <= 1 and _unconditional_in_production(m.start(), branches):', '        elif assignments.get(m[1], 0) <= 1:', 'test_dotnet.py'),
 
+    ('M233-python-docstring-called-hook', 'a literal Python docstring is called an executable install hook', 'jh_rules.py',
+     'while m and _in_python_docstring(sf, idx, m, python_docstrings):',
+     'while False and _in_python_docstring(sf, idx, m, python_docstrings):', 'test_report_precision.py'),
+    ('M234-regex-called-agent-launch', 'a JavaScript flag detector is called an agent launch', 'jh_rules.py',
+     'while m and _in_regex_spans(agent_regexes, m.end() - 1):',
+     'while False and _in_regex_spans(agent_regexes, m.end() - 1):', 'test_report_precision.py'),
+    ('M235-listing-citation-called-imperative', 'a quoted listing example is called a direct instruction', 'jh_checks.py',
+     '|(?:description|listing|message|input|document|text)\\s+contains?', '', 'test_report_precision.py'),
+    ('M236-citation-hides-stronger-instruction', 'a citation hides a later imperative on the same line', 'jh_checks.py',
+     'if old is None or SEV_RANK[severity] < SEV_RANK[old[0]]:',
+     'if old is None or severity == "critical":', 'test_report_precision.py'),
+
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
