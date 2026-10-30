@@ -1127,6 +1127,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             for idx, line in enumerate(lines, 1):
                 if not line or not line.strip():
                     continue
+                if rule.id == "JH205" and _is_http_route_comment(sf, idx):
+                    continue                # documented HTTP routes can contain example objects and assignments
                 # on a long (minified) line, an ignore word elsewhere on it must not hide a match
                 if ignore and len(line) <= 400 and ignore.search(line):
                     continue
@@ -1911,6 +1913,15 @@ def _in_doc_block(sf: SourceFile, idx: int) -> bool:
         if opener >= 0:
             return line.startswith("/**", opener) and not line.startswith("/**/", opener)
     return False
+
+
+def _is_http_route_comment(sf: SourceFile, idx: int) -> bool:
+    """Route examples in comments document an API; they are not disabled code."""
+    if idx <= 0 or idx > len(sf.raw):
+        return False
+    line = re.sub(r"^\s*(?://+|#+|--|/\*+|\*)\s*", "", sf.raw[idx - 1])
+    return bool(re.match(r"(?i)(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/\S*", line)
+                and re.search(r"(?:→|->|\breturns?\b|\bresponds?\b)", line, re.I))
 
 
 def _firebase_web_config(sf: SourceFile, idx: int) -> bool:
