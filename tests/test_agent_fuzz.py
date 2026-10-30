@@ -159,12 +159,16 @@ class CampaignValidation(unittest.TestCase):
                    "cases": [{"case_id": "<img src=x onerror=alert(1)>", "outcome": "pass",
                               "probes": [{"outcome": "pass"}]},
                              {"case_id": "failure-case", "outcome": "fail",
-                              "probes": [{"outcome": "fail"}]}],
+                              "probes": [{"outcome": "fail"}]},
+                             {"case_id": "class-injection", "outcome": 'pass"><script>alert(1)</script>',
+                              "probes": [{"outcome": "pass"}]}],
                    "raw": "private prompt and secret hostname"}
         html = jh_explorer.render_agent_fuzz(hostile)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html)
         self.assertNotIn("<img src=x", html)
         self.assertNotIn("<script>", html)
+        self.assertNotIn('class="state pass"><script>', html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
         self.assertNotIn("private prompt", html)
         self.assertIn("caller-provided observations", html)
         self.assertIn("VERDICT", html)
