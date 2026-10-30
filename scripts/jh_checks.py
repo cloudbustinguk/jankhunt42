@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from bisect import bisect_right
 import ipaddress
 import os
 import re
@@ -131,6 +132,7 @@ _CONSEQUENTIAL_RE = re.compile(r"(?i)\b(?:\w*verif\w*|\w*authenticat\w*|\w*autho
                                r"save\w*|insert\w*|upsert\w*|transfer\w*|withdraw\w*|grant\w*|revoke\w*|"
                                r"publish\w*|deploy\w*|migrat\w*|send(?:Mail|Email|Message)?\w*|pay\w*)\s*\(|"
                                r"\.(?:update|delete|insert|upsert|destroy|remove)\w*\s*\(|"
+                               r"\b(?:payment|billing|charge)\w*\.(?:\w+\.)*(?:process|capture|execute|submit|pay|refund)\w*\s*\(|"
                                r"\b(?:db|repo\w*|api|client|http|axios|supabase|prisma|knex|store|service|model)\."
                                r"(?:\w+\.)*(?:create|put|post|patch|write|save)\w*\s*\(")
 _SUCCESS_AFTER_RE = re.compile(r"(?i)\b(?:toast\.success|success(?:fully)?\b|verified\b|saved\b|return\s+true\b|"
@@ -198,8 +200,10 @@ def _except_only_import_error(clause: str) -> bool:
 def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
 
-    def add(line: int, end: int, message: Optional[str] = None) -> None:
+    def add(line: int, end: int, message: Optional[str] = None, explained: bool = False) -> None:
         severity, why = _handler_severity(sf, _try_body(sf, line, sf.lang == "python"), end + 1)
+        if explained and severity != "major":
+            return                      # documented cleanup/fallbacks stay quiet; comments cannot hide failed writes
         out.append(make_finding(rule, sf, line + 1, end_line=end + 1 if end != line else None, severity=severity,
                                 confidence="medium" if severity == "minor" else None,
                                 message=(message + " " + why).strip() if message and why else (why or message)))
@@ -214,32 +218,69 @@ def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
             if _except_only_import_error(m.group(2)):
                 continue           # ImportError/ModuleNotFoundError only: an empty handler here can't swallow the OSError a write raises
             if same:
-                if not _explains(sf.raw[i], "#"):          # a comment saying why makes it deliberate
-                    add(i, i, "The except block contains only '%s'." % same)
+                add(i, i, "The except block contains only '%s'." % same, explained=_explains(sf.raw[i], "#"))
                 continue
             j = i + 1
             while j < len(sf.code) and not sf.code[j].strip():
                 j += 1
-            if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]) \
-                    and not any(_explains(sf.raw[k], "#") for k in range(i, j + 1)):
-                add(i, j, "The except block contains only '%s'." % sf.code[j].strip())
+            if j < len(sf.code) and indent_of(sf.code[j]) > base and re.match(r"^\s*(?:pass|\.\.\.)\s*$", sf.code[j]):
+                add(i, j, "The except block contains only '%s'." % sf.code[j].strip(),
+                    explained=any(_explains(sf.raw[k], "#") for k in range(i, j + 1)))
     else:
         for i, line in enumerate(sf.code):
             if not re.search(r"\bcatch\b", line):
                 continue
-            # a block holding only a comment is deliberate (as ESLint's no-empty treats it)
+            # Comments can explain cleanup; a failed consequential operation still needs review.
             if re.search(r"\bcatch\b[^{]*\{\s*\}\s*;?\s*$", line):
-                if not _explains(sf.raw[i].split("catch", 1)[-1], "//"):
-                    add(i, i)
+                add(i, i, explained=_explains(sf.raw[i].split("catch", 1)[-1], "//"))
                 continue
             if re.search(r"\bcatch\b[^{]*\{\s*$", line):
                 j = i + 1
                 while j < len(sf.code) and not sf.code[j].strip():
                     j += 1
-                if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]) \
-                        and not _explains(sf.raw[i].split("catch", 1)[-1], "//") \
-                        and not any(_explains(sf.raw[k], "//") for k in range(i + 1, j)):
-                    add(i, j)
+                if j < len(sf.code) and re.match(r"^\s*\}\s*;?\s*$", sf.code[j]):
+                    add(i, j, explained=_explains(sf.raw[i].split("catch", 1)[-1], "//") or
+                        any(_explains(sf.raw[k], "//") for k in range(i + 1, j)))
+    return out
+
+
+_SECRET_GENERATOR_RE = re.compile(
+    r"(?i)^(?:(?:generate|create|make|issue|random|new|get)_?)?"
+    r"(?:password|passphrase|(?:access_?|refresh_?|auth_?)?token|secret|nonce|salt|otp|api_?key|session_?id)s?$")
+_JS_NAMED_FUNCTION_RE = re.compile(
+    r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^{}\n]{0,300}\)[^{};\n]{0,120}\{")
+_RETURN_WEAK_RNG_RE = re.compile(r"^[ \t]*return[ \t]*(?:\([ \t\n]*)*(?P<call>Math\.random\s*\()", re.M)
+
+
+@check("insecure_rng")
+def insecure_rng(sf: SourceFile, rule: Rule) -> List[Finding]:
+    out = []
+    seen = set()
+
+    def add(line: int) -> None:
+        if line not in seen:
+            seen.add(line)
+            out.append(make_finding(rule, sf, line))
+
+    # Preserve the existing line-local secret assignments in every supported language.
+    patterns = [re.compile(p) for p in rule.patterns]
+    for i, line in enumerate(sf.code):
+        if any(p.search(line) for p in patterns):
+            add(i + 1)
+    if sf.lang not in ("js", "ts", "vue", "svelte"):
+        return out
+    code = "\n".join(sf.code)
+    starts = [0] + [m.end() for m in re.finditer("\n", code)]
+    for function in _JS_NAMED_FUNCTION_RE.finditer(code):
+        if not _SECRET_GENERATOR_RE.fullmatch(function[1]):
+            continue
+        # Only a flat, bounded body: nested functions/objects need more context, not inherited trust.
+        body = code[function.end():function.end() + 4000]
+        close = re.search(r"[{}]", body)
+        if not close or close[0] != "}":
+            continue
+        for rng in _RETURN_WEAK_RNG_RE.finditer(body[:close.start()]):
+            add(bisect_right(starts, function.end() + rng.start("call")))
     return out
 
 

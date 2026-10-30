@@ -195,7 +195,7 @@ RULES: List[Rule] = [
     R("JH112", "Insecure RNG for secrets", "minor", "security",
       "random/Math.random are predictable and must not generate tokens, salts, keys, or nonces.",
       "Use the platform CSPRNG: secrets/os.urandom, crypto.randomBytes, crypto.getRandomValues.",
-      confidence="low", langs=PY + JS,
+      confidence="low", langs=PY + JS, check="insecure_rng",
       patterns=(
           # a bare `key` is usually a React or history key, not a secret
           r"(?i)(?:\brandom\.(?:random|randint|randrange|choice|choices|getrandbits|sample)\s*\(|\bMath\.random\s*\()"
