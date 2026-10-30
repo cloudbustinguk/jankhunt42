@@ -419,3 +419,68 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
     out += ["", c.grey("  export: jankhunt42 passport . --json | --html > passport.html   ·   shareable: --redact")]
     text = "\n".join(out)
     return asciify(text) if ascii_only else text
+
+
+def agent_fuzz_tty(report, color: bool = True, ascii_only: bool = False,
+                   columns: Optional[int] = None) -> str:
+    """Compact, case-oriented report for policy-fuzz validation/evaluation."""
+    t = Theme(color, ascii_only, view_width(columns))
+    c = t.c
+    validating = report.get("execution") == "not-run"
+    evaluating = report.get("evaluation") == "provided-observations"
+    if validating:
+        summary = report.get("summary") or {}
+        title = "policy-fuzz campaign validation"
+        meta = "%s  ·  %s cases  ·  %s probes" % (
+            summary.get("id", "campaign"), summary.get("cases", 0), summary.get("probes", 0))
+        details = [
+            t.kv("status", c.green("VALID") if report.get("valid") else c.red("INVALID")),
+            t.kv("targets", ", ".join(summary.get("targets") or []) or "none"),
+            t.kv("attack / control", "%s / %s" % (summary.get("attack_cases", 0), summary.get("control_cases", 0))),
+            t.kv("execution", "not run"),
+            t.kv("campaign sha256", report.get("campaign_sha256", "unavailable")),
+        ]
+        rows = []
+    else:
+        summary = report.get("summary") or {}
+        title = "policy-fuzz evaluation"
+        meta = "%s  ·  caller-provided observations" % report.get("campaign_id", "campaign")
+        if summary.get("fail", 0):
+            verdict, verdict_paint, accent = "FAIL", c.red, "magenta"
+        elif summary.get("policy-not-loaded", 0) or summary.get("inconclusive", 0):
+            verdict, verdict_paint, accent = "REVIEW", c.yellow, "yellow"
+        else:
+            verdict, verdict_paint, accent = "PASS", c.green, "green"
+        counts = [("pass", c.green), ("fail", c.red), ("inconclusive", c.yellow),
+                  ("policy-not-loaded", c.magenta)]
+        details = [t.kv("VERDICT", c.bold(verdict_paint(verdict))),
+                   t.kv("outcomes", "  ".join("%s %s" % (cfn(str(summary.get(k, 0))), k)
+                                                  for k, cfn in counts)),
+                    t.kv("evaluation", "provided observations; no agent was run"),
+                    t.kv("campaign sha256", report.get("campaign_sha256", "unavailable")),
+                    t.kv("observations sha256", report.get("observations_sha256", "unavailable"))]
+        order = {"fail": 0, "policy-not-loaded": 1, "inconclusive": 2, "pass": 3}
+        rows = sorted(report.get("cases") or [], key=lambda row: order.get(row.get("outcome"), 4))
+    out = t.banner(title, meta) + [""] + t.box(details, accent if evaluating else "cyan", "summary")
+    if rows:
+        out += ["", c.bold("case results")]
+        for row in rows:
+            outcome = str(row.get("outcome", "unknown"))
+            paint = {"pass": c.green, "fail": c.red, "inconclusive": c.yellow,
+                     "policy-not-loaded": c.magenta}.get(outcome, c.grey)
+            probes = row.get("probes") or []
+            counts = {}
+            for probe in probes:
+                state = str(probe.get("outcome", "unknown"))
+                counts[state] = counts.get(state, 0) + 1
+            probe_summary = ", ".join("%d %s" % (n, state) for state, n in sorted(counts.items())) or "no probe detail"
+            line = "%s  %s  %s" % (_pad(outcome.upper(), 18), clean(row.get("case_id", "case")),
+                                    clean(probe_summary))
+            wrapped = _wrap(line, t.width - 2, "    ")
+            out += [("  " + part) if index == 0 else part for index, part in enumerate(wrapped)]
+    elif validating:
+        out += ["", c.bold("ready for adapter execution"),
+                "  Campaign text remains declarative input; validation does not execute it."]
+    out += ["", c.grey("  HTML: add --html and redirect to a file   ·   machine-readable: --json")]
+    text = "\n".join(out)
+    return asciify(text) if ascii_only else text

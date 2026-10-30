@@ -28,6 +28,7 @@ SKIP = [
                                    "covers it"),
     ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "
                                   "covers it"),
+    ("agent-fuzz", "requires an explicitly supplied campaign file; tests/test_agent_fuzz.py covers validation"),
 ]
 GIT_ENV = {"GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
            "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
