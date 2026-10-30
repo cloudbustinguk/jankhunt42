@@ -2,8 +2,11 @@
 """Rule catalog and scanning engine for jankhunt42."""
 from __future__ import annotations
 
+import ast
+from bisect import bisect_right
 import re
 import sys
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -1049,6 +1052,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     dotnet_context = jh_dotnet.context(sources)
 
     for sf in sources:
+        python_docstrings = None
         for rule in RULES:
             if not path_matches(rule, sf):
                 continue
@@ -1131,8 +1135,19 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 if ignore and len(line) <= 400 and ignore.search(line):
                     continue
                 placeholders: List[str] = []
+                agent_regexes = None
                 for pat in pats:
                     m = pat.search(line)
+                    if m and rule.id == "JH111" and sf.lang == "python":
+                        if python_docstrings is None:
+                            python_docstrings = _python_docstring_spans(sf)
+                        while m and _in_python_docstring(sf, idx, m, python_docstrings):
+                            m = pat.search(line, m.end())
+                    if m and rule.id == "JH702" and sf.lang in JS:
+                        if agent_regexes is None:
+                            agent_regexes = _js_regex_spans(sf.code[idx - 1])
+                        while m and _in_regex_spans(agent_regexes, m.end() - 1):
+                            m = pat.search(line, m.end())
                     if not m:
                         continue
                     if ignore and len(line) > 400 and ignore.search(line[max(0, m.start() - 80):m.end() + 80]):
@@ -1578,6 +1593,37 @@ _HINT_WORDS = re.compile(r"(?i)^(?:echo|printf|print|say|msg|note|hint|tip|info|
                          r"log(?:_\w+)?|need\w*|require\w*|missing\w*|suggest\w*|usage)$")
 
 
+def _python_docstring_spans(sf: SourceFile) -> List[Tuple[int, int, int, int]]:
+    """Literal module/class/function docstrings, without treating assigned commands as documentation."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")       # compiler warnings must not echo unredacted source
+            tree = ast.parse(sf.text)
+    except (SyntaxError, ValueError, RecursionError):
+        return []                       # malformed or unsupported Python keeps its leads
+    spans = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:
+            continue
+        first = node.body[0]
+        if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Constant) \
+                or not isinstance(first.value.value, str):
+            continue
+        value = first.value
+        spans.append((value.lineno, value.col_offset, value.end_lineno, value.end_col_offset))
+    return sorted(spans)
+
+
+def _in_python_docstring(sf: SourceFile, idx: int, match: "re.Match[str]",
+                         spans: List[Tuple[int, int, int, int]]) -> bool:
+    # AST columns count UTF-8 bytes, whereas regex match positions count characters.
+    line = sf.raw[idx - 1]
+    start = len(line[:match.start()].encode("utf-8"))
+    end = len(line[:match.end()].encode("utf-8"))
+    i = bisect_right(spans, (idx, start, sys.maxsize, sys.maxsize)) - 1
+    return i >= 0 and (idx, end) <= spans[i][2:]
+
+
 def _quoted_hint(sf: SourceFile, line: str, m: "re.Match[str]") -> Optional[str]:
     """The command word when a shell script's curl|sh sits inside a quoted
     argument of a command that prints or reports it (`echo "..."`,
@@ -1898,6 +1944,23 @@ def _inside_regex_literal(line: str, col: int) -> bool:
             if end and end > col:
                 return True
     return False
+
+
+def _js_regex_spans(code: str) -> List[Tuple[int, int]]:
+    """Regex literals in a code view, where ordinary string contents are already blanked."""
+    spans = []
+    pos = code.find("/")
+    while pos >= 0:
+        end = _regex_literal_end(code, pos)
+        if end:
+            spans.append((pos, end))
+        pos = code.find("/", end if end else pos + 1)
+    return spans
+
+
+def _in_regex_spans(spans: List[Tuple[int, int]], pos: int) -> bool:
+    i = bisect_right(spans, (pos, sys.maxsize)) - 1
+    return i >= 0 and pos < spans[i][1]
 
 
 def _in_doc_block(sf: SourceFile, idx: int) -> bool:

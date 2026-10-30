@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import jh_agent
 import jh_yaml
-from jh_core import Finding, Rule, SourceFile, is_test_path, make_finding, redact_secrets, run_git, trim
+from jh_core import Finding, Rule, SourceFile, SEV_RANK, is_test_path, make_finding, redact_secrets, run_git, trim
 
 CHECKS: Dict[str, object] = {}
 
@@ -1419,7 +1419,7 @@ _CITED_RES = (re.compile(r'(?<!\w)"([^"\n]{1,200})"'), re.compile(r"(?<!\w)'([^'
 
 _CITE_FRAME_RE = re.compile(r"(?i)\b(?:refuse[sd]?|reject|never|do\s+not|don't|such\s+as|like|e\.g\.|for\s+example|example|"
                             r"attempts?|tries|try\s+to|says?|asks?|phrases?|prompts?|injections?|warn\w*|flag|"
-                            r"report|treat|watch\s+for)\b")
+                            r"report|treat|watch\s+for|(?:description|listing|message|input|document|text)\s+contains?)\b")
 
 
 def _is_cited(sf: SourceFile, text: str, start: int, end: int) -> bool:
@@ -1445,7 +1445,7 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
 
     def add(line_no: int, severity: str, message: str) -> None:
         old = found.get(line_no)
-        if old is None or ("critical" == severity and old[0] != "critical"):
+        if old is None or SEV_RANK[severity] < SEV_RANK[old[0]]:
             found[line_no] = (severity, message)
 
     for m in _HTML_COMMENT_RE.finditer(sf.text):
@@ -1471,17 +1471,14 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
                                 "unverified code.")
         if _CREDENTIAL_FILE_RE.search(line) and _NET_SEND_RE.search(line) and _SEND_DATA_RE.search(line):
             add(i + 1, "critical", "The file tells the agent to read a credential file and send it over the network.")
-        ov = None
-        for p in _OVERRIDE_RES:                     # first pattern that actually matches
-            m = p.search(line)
-            if m:
-                ov = m
-                break
-        if ov:
-            # a quoted phrase cites an example to refuse (minor); a bare imperative stays major
-            add(i + 1, "minor" if _is_cited(sf, line, ov.start(), ov.end()) else "major",
-                "The file asks the agent to override its instructions or to act without the "
-                "user's knowledge.")
+        for p in _OVERRIDE_RES:
+            for ov in p.finditer(line):
+                # A cited example stays visible, but cannot mask a later imperative on the same line.
+                cited = _is_cited(sf, line, ov.start(), ov.end())
+                add(i + 1, "minor" if cited else "major",
+                    "The file quotes a suspicious instruction as an example; confirm it is treated as data "
+                    "rather than followed." if cited else
+                    "The file asks the agent to override its instructions or to act without the user's knowledge.")
     out = []
     for line_no in sorted(found)[:10]:
         severity, message = found[line_no]
