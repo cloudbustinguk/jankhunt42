@@ -62,6 +62,10 @@ class Scanner(unittest.TestCase):
         "cache/.env": "REDIS_URL=redis://:s3cretpass@cache.internal:6379\n",
         "meta/.env": "AUTHOR=Example Person\nOAUTH_REDIRECT_URL=https://example.invalid/cb\n",
         "src/apiClient.ts": "export function call(x) {\n  console.log(x)\n  if (x) debugger;\n}\n",
+        "functions/api/billing.js": ("// GET /api/billing?config=1 → { url, anonKey, clientKey, plans }\n"
+                                     "// POST /api/billing {op:'me'} → returns subscription status\n"),
+        "functions/api/commented.js": ("// const billingConfig = loadConfig();\n"
+                                        "// fetch(url).then((response) => response.json());\n"),
         "test/widget_test.dart": "void main() {\n  test('adds', () {\n    add(1, 2);\n  });\n}\n",
         "tests/named.test.js": "const name = \"runs\"\nit(name, () => {\n  run()\n})\n",
         "tests/loop_test.rs": ("#[test]\nfn plain() -> Result<(), String> {\n    for i in 0..3 {\n        run(i);\n    }\n"
@@ -1140,6 +1144,10 @@ class Scanner(unittest.TestCase):
         self.assertEqual({f["rule"] for f in self.findings if f["path"] == "docs/assets/index-Qs7X.js"}, {"JH101"})
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH101", "data/tasks.jsonl")),
                          [(1, "minor"), (2, "critical")])
+
+    def test_jh205_skips_documented_http_route_examples(self):
+        self.assertEqual(self.hits("JH205", "functions/api/billing.js"), [])
+        self.assertEqual(self.lines("JH205", "functions/api/commented.js"), [1, 2])
 
     def test_soak_b04(self):
         self.assertEqual(self.lines("JH210", "svc/loop.py"), [5])
