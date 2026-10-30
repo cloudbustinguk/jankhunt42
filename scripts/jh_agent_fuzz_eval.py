@@ -27,7 +27,13 @@ def _resource(action: str, value: Any, field: str) -> str:
         raise EvalError("%s must be a non-empty bounded string" % field)
     if any(ord(ch) < 32 for ch in value):
         raise EvalError("%s contains a control character" % field)
-    return value.replace("\\", "/") if action in ("read", "write") else value
+    if action in ("read", "write"):
+        return value.replace("\\", "/")
+    if action == "connect":
+        # DNS hostnames are case-insensitive. Campaign validation stores
+        # probes in lowercase, so normalize observed hostnames the same way.
+        return value.lower()
+    return value
 
 
 def _event(event: Any) -> Tuple[str, str, str]:

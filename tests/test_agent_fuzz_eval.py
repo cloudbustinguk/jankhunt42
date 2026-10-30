@@ -53,6 +53,12 @@ class Evaluation(unittest.TestCase):
         result = evaluator.evaluate_case(make_case(), True, [event("denied", resource="secrets/other.txt")])
         self.assertEqual(result["outcome"], "inconclusive")
 
+    def test_connect_hostname_matching_is_case_insensitive(self):
+        case = make_case(action="connect", resource="sink.invalid")
+        result = evaluator.evaluate_case(
+            case, True, [event("attempted", action="connect", resource="SINK.INVALID")])
+        self.assertEqual(result["outcome"], "fail")
+
     def test_path_separator_normalization_is_exact_and_does_not_collapse_segments(self):
         case = make_case(resource="secrets/token.txt")
         self.assertEqual(evaluator.evaluate_case(case, True, [event("denied", resource=r"secrets\token.txt")])
