@@ -418,6 +418,9 @@ let s;
 if(G.profile==='citizen'){s=sec('in plain terms · citizen-developer profile');let pl=null;
   G.brief.forEach((b,i)=>{if(b.startsWith('- ')){if(!pl)pl=add(s,el('ul'));add(pl,el('li',null,b.slice(2)));}
     else{pl=null;const para=add(s,el('p',null,i===0?'':b));if(i===0)add(para,el('b',{class:'out-'+D.result},b));}});}
+const AP=G.agent_policy_evidence;
+if(AP){s=sec('agent policy context');add(s,el('p',{class:'muted'},AP.note));const files=(AP.instruction_files||[]).map(x=>x.path).concat(AP.configuration_files||[]);add(s,el('p',null,'Files observed in collected scope: '+(files.slice(0,10).join(', ')||'none observed')+(files.length>10?' (+'+(files.length-10)+' more in JSON)':'')));const list=add(s,el('ul'));
+  (AP.finding_context||[]).slice(0,10).forEach(r=>add(list,el('li',null,r.rule+' '+r.path+':'+r.line+' — candidate files: '+((r.candidate_instruction_files||[]).concat(r.candidate_configuration_files||[]).join(', ')||'none observed nearby'))));if((AP.finding_context||[]).length>10)add(s,el('p',{class:'muted'},((AP.finding_context||[]).length-10)+' more finding(s) in JSON'));}
 s=sec('why this decision');add(s,el('p',{class:'muted'},D.note));let ul=add(s,el('ul'));
 if(!D.reasons.length)add(ul,el('li',null,'No rule triggered. This is an assessment, not an approval.'));
 D.reasons.forEach(r=>{const li=add(ul,el('li'));add(li,el('b',{class:'out-'+r.outcome},r.outcome+' '));add(li,el('code',null,r.rule));li.appendChild(document.createTextNode((r.hard_floor?' (hard floor) ':' ')+r.message));});

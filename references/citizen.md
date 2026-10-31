@@ -231,3 +231,22 @@ The output is deterministic for a given repository and version.
   do not replace it.
 - The citizen profile governs the release decision. It is not a sandbox and
   does not stop an agent at runtime.
+
+### Agent policy context for findings
+
+Citizen-profile passports show repository instruction and configuration files
+near scan findings as candidate context. Directory proximity helps a reviewer
+find material to investigate; clients differ in discovery, file precedence,
+scope, and version. The passport does not infer that the agent which produced a
+finding read or followed a file. It reports the original agent identity,
+policy loading, enterprise-managed policy, and causal link as unknown. A file
+not shown may have been excluded or outside the collected scan scope. This
+section recognizes `AGENTS.md`, `AGENTS.override.md`, `CLAUDE.md`,
+`CLAUDE.local.md`, Claude and Codex project settings, and `opencode.json` or
+`opencode.jsonc`. It does not interpret those files, Cursor team rules,
+other instruction formats, or managed settings outside the repository.
+
+A supplied sandbox run describes that run; it does not establish what policy
+or guardrails were in effect when earlier repository changes were made. The
+policy-context section does not include policy file contents. Shareable
+passports replace the candidate file and finding paths with aliases.
