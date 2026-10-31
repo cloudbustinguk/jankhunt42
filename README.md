@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `sandbox --fetch`).
 
-**Version:** 4.3.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.3.1 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -332,6 +332,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/passport.md`](references/passport.md) | `passport`: sections, rules, policy precedence, declarations, acceptance, comparison |
 | [`references/citizen.md`](references/citizen.md) | The citizen profile, agent workspace checks, and the incidents they map to |
 | [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, and the NIST AI RMF / AIGP crosswalk |
+| [`references/agent-policy-corpus.md`](references/agent-policy-corpus.md) | Source-linked agent policy research and proposed fuzz experiments |
 | [`references/supply-chain.md`](references/supply-chain.md) | SBOMs and their minimum elements, attestations, JFrog evidence, `--verify` |
 | [`references/scoring.md`](references/scoring.md) | Jank Score 2.0 formula, weights, and limits |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |

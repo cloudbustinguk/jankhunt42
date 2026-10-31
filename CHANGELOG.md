@@ -4,6 +4,15 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.3.1] — 2026-10-31
+
+### Added
+
+- A source-linked research corpus covering enterprise controls, instruction
+  discovery, and proposed policy-fuzz experiments for Claude Code, Codex,
+  Cursor, and OpenCode. The corpus distinguishes documented behavior from
+  experiments that still need live-client verification.
+
 ## [4.3.0] — 2026-10-31
 
 An agent-policy fuzzing foundation, with more precise findings.
