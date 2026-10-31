@@ -4,6 +4,15 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- Citizen passports show repository instruction and agent configuration files
+  near findings as candidate context, with explicit unknowns for the original
+  agent, policy loading, managed guardrails, and causation. Shareable reports
+  alias the paths.
+
 ## [4.3.1] — 2026-10-31
 
 ### Added

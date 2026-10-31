@@ -72,6 +72,79 @@ def governance_leads(findings: Sequence[Any]) -> Tuple[List[Dict[str, Any]], Lis
     return [exposure[k] for k in sorted(exposure)], [agent[k] for k in sorted(agent)]
 
 
+def agent_policy_evidence(items: Sequence[jh_map.Item], findings: Sequence[Any]) -> Dict[str, Any]:
+    """Repository-local instruction files near findings, not evidence of agent history."""
+    names = {"AGENTS.md": "agents", "AGENTS.override.md": "agents",
+             "CLAUDE.md": "claude", "CLAUDE.local.md": "claude"}
+
+    def relative(value: str) -> Optional[str]:
+        path = value.replace(os.sep, "/")
+        parts = path.split("/")
+        if (not path or path.startswith("/") or re.match(r"^[A-Za-z]:", path) or
+                any(part in ("", ".", "..") for part in parts)):
+            return None
+        return path
+
+    found = set()
+    configs = set()
+    for item in items:
+        path = relative(item.rel)
+        if path and path.rsplit("/", 1)[-1] in names:
+            found.add(path)
+        if path and (("/" + path).endswith(("/.claude/settings.json", "/.claude/settings.local.json", "/.codex/config.toml"))
+                     or path.rsplit("/", 1)[-1] in ("opencode.json", "opencode.jsonc")):
+            configs.add(path)
+    all_configs = sorted(configs)
+    config_paths = all_configs[:200]
+    all_sources = sorted(found)
+    sources = all_sources[:200]
+    ordered = sorted(findings, key=lambda f: (SEV_RANK.get(f.severity, 99), f.path, f.line, f.rule))
+    seen = set()
+    selected = []
+    for finding in ordered:
+        key = (finding.path, finding.line, finding.rule)
+        if key not in seen:
+            seen.add(key)
+            selected.append(finding)
+    links = []
+    for finding in selected[:50]:
+        path = relative(finding.path)
+        if not path:
+            continue
+        candidates = []
+        for source in sources:
+            directory = source.rpartition("/")[0]
+            if not directory or path.startswith(directory + "/"):
+                candidates.append(source)
+        config_candidates = []
+        for config in config_paths:
+            directory = config.rpartition("/")[0]
+            if directory.rsplit("/", 1)[-1] in (".claude", ".codex"):
+                directory = directory.rpartition("/")[0]
+            if not directory or path.startswith(directory + "/"):
+                config_candidates.append(config)
+        links.append({"rule": finding.rule, "path": safe_text(path), "line": finding.line,
+                      "candidate_instruction_files": [safe_text(p) for p in candidates[:20]],
+                      "candidate_configuration_files": [safe_text(p) for p in config_candidates[:20]],
+                      "candidates_truncated": len(candidates) > 20 or len(config_candidates) > 20})
+    return {
+        "instruction_files": [{"path": safe_text(p), "kind": names[p.rsplit("/", 1)[-1]]} for p in sources],
+        "configuration_files": [safe_text(p) for p in config_paths],
+        "finding_context": links,
+        "configs_truncated": len(all_configs) > len(config_paths),
+        "sources_truncated": len(all_sources) > len(sources),
+        "findings_truncated": len(selected) > 50,
+        "agent_identity": "unknown", "policy_loaded": "unknown", "managed_policy": "unknown",
+        "causal_link": "unknown",
+        "note": ("Repository instruction and configuration files are shown by directory proximity only. "
+                 "The agent, applicable rules, managed policy, policy loading and influence on findings are unknown; "
+                 "the collected files may be incomplete." +
+                 (" Some candidate files or findings are omitted by report limits."
+                  if (len(all_sources) > 200 or len(all_configs) > 200 or len(selected) > 50 or
+                      any(row["candidates_truncated"] for row in links)) else "")),
+    }
+
+
 def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """What the repository's AI agent configuration wires an agent to."""
     if map_report is None:
@@ -688,6 +761,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "truncation": map_report["truncation"] if map_report else {"truncated": False, "reasons": []},
         "graph_ref": map_report["scan_id"] if map_report else None,
     }
+    if eff["profile"] == "citizen":
+        report["governance"]["agent_policy_evidence"] = agent_policy_evidence(
+            items, list(findings) + list(governance_findings or ()))
     report["governance"]["brief"] = plain_brief(report)
     return jh_map.finalize_report(report)
 
@@ -816,6 +892,19 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         gov["agent"]["configs"] = ["config-%d" % i for i, _ in enumerate(gov["agent"]["configs"], 1)]
         for lead in gov["public_exposure_leads"] + gov["agent_leads"] + gov.get("top_problems", []):
             lead["path"] = "file"
+        policy_context = gov.get("agent_policy_evidence")
+        if policy_context:
+            aliases = {source["path"]: "instruction-file-%d" % i
+                       for i, source in enumerate(policy_context["instruction_files"], 1)}
+            for source in policy_context["instruction_files"]:
+                source["path"] = aliases[source["path"]]
+            config_aliases = {path: "config-file-%d" % i for i, path in
+                              enumerate(policy_context["configuration_files"], 1)}
+            policy_context["configuration_files"] = list(config_aliases.values())
+            for i, row in enumerate(policy_context["finding_context"], 1):
+                row["path"] = "finding-file-%d" % i
+                row["candidate_instruction_files"] = [aliases[p] for p in row["candidate_instruction_files"]]
+                row["candidate_configuration_files"] = [config_aliases[p] for p in row["candidate_configuration_files"]]
         gov["brief"] = plain_brief(rep)
     rep["scope"]["redaction"] = "share"
     rep["unknowns"] = [{"id": u["id"], "count": u.get("count"), "detail": u["detail"]} for u in rep["unknowns"]]
@@ -863,6 +952,20 @@ def markdown(p: Dict[str, Any]) -> str:
         lines += [""] if (p.get("sandbox_run") or {}).get("alerts") else []
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
+    policy_context = gov.get("agent_policy_evidence")
+    if policy_context:
+        lines += ["## Agent policy context", "", jh_capabilities.markdown_line(policy_context["note"])]
+        paths = [source["path"] for source in policy_context["instruction_files"]] + policy_context["configuration_files"]
+        lines.append("- " + jh_capabilities.markdown_line("Files observed in collected scope: " +
+                     (", ".join(paths[:10]) or "none observed") +
+                     (" (+%d more in JSON)" % (len(paths) - 10) if len(paths) > 10 else "")))
+        for row in policy_context["finding_context"][:10]:
+            candidates = ", ".join(row["candidate_instruction_files"] + row["candidate_configuration_files"]) or "none observed nearby"
+            lines.append("- " + jh_capabilities.markdown_line("%s %s:%s — candidate files: %s" %
+                         (row["rule"], row["path"], row["line"], candidates)))
+        if len(policy_context["finding_context"]) > 10:
+            lines.append("- %d more finding(s) in JSON" % (len(policy_context["finding_context"]) - 10))
+        lines.append("")
     lines += ["## Why this decision", ""]
     if d["reasons"]:
         for r in d["reasons"]:

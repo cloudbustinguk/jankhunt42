@@ -356,6 +356,23 @@ def passport_tty(p, color: bool = True, ascii_only: bool = False, columns: Optio
             body = _wrap(clean(line), t.width - 6, "  " if line.startswith("- ") else "")
             plain += [c.bold(b) if i == 0 else b for b in body]
         out += [""] + t.box(plain, "magenta", "in plain terms  ·  citizen-developer profile")
+    policy_context = gov.get("agent_policy_evidence")
+    if policy_context:
+        out += ["", c.bold("agent policy context")]
+        out += _wrap(clean(policy_context.get("note", "")), t.width - 2, "  ")
+        paths = [source["path"] for source in policy_context.get("instruction_files", [])] + \
+                policy_context.get("configuration_files", [])
+        out += _wrap(clean("Files observed in collected scope: " + (", ".join(paths[:5]) or "none observed") +
+                           (" (+%d more in JSON)" % (len(paths) - 5) if len(paths) > 5 else "")),
+                     t.width - 2, "  ")
+        for row in policy_context.get("finding_context", [])[:5]:
+            candidates = ", ".join((row.get("candidate_instruction_files") or []) +
+                                   (row.get("candidate_configuration_files") or [])) or "none observed nearby"
+            text = "%s %s:%s — candidate files: %s" % (row.get("rule", ""), row.get("path", ""),
+                                                       row.get("line", 0), candidates)
+            out += _wrap(clean(text), t.width - 2, "  ")
+        if len(policy_context.get("finding_context", [])) > 5:
+            out.append("  %d more finding(s) in JSON" % (len(policy_context["finding_context"]) - 5))
     out += ["", c.bold("why") + c.grey("  (rule outcomes, not a weighted score)")]
     if not d["reasons"]:
         out.append("  no rule triggered " + c.grey("- an assessment, not an approval"))

@@ -11,6 +11,9 @@ import unittest
 import _util
 from _util import edge, node, run_cli
 import jh_agent
+import jh_core
+import jh_views
+import jh_explorer
 import jh_graph as G
 import jh_map
 import jh_passport
@@ -447,6 +450,8 @@ class CitizenPassport(unittest.TestCase):
             shutil.rmtree(os.path.dirname(env))
         self.assertNotIn("web/.env.production", {l["path"] for l in std["governance"]["public_exposure_leads"]})
         self.assertIn("web/.env.production", {l["path"] for l in cit["governance"]["public_exposure_leads"]})
+        self.assertIn("web/.env.production", {row["path"] for row in
+                      cit["governance"]["agent_policy_evidence"]["finding_context"]})
         self.assertTrue(any("reached --max-files" in w for w in capped["warnings"]))
         self.assertEqual({r["rule"]: r["outcome"] for r in capped["assessment"]["decision"]["reasons"]}["P-COV-001"],
                          "insufficient-evidence")
@@ -456,6 +461,87 @@ class CitizenPassport(unittest.TestCase):
         p["warnings"] = ["binding matched no workload: payments-prod.internal.example"]
         red = jh_passport.redact(p)
         self.assertNotIn("payments-prod", json.dumps(red["warnings"]))
+
+
+class CitizenPolicyEvidence(unittest.TestCase):
+    def test_candidates_are_proximity_only_and_never_claim_history(self):
+        items = [jh_map.Item(path, "PRIVATE POLICY CONTENT") for path in (
+            "AGENTS.md", "web/CLAUDE.md", "web/AGENTS.override.md", "web2/CLAUDE.md",
+            "web/.claude/settings.json", "other/.codex/config.toml", "notes/foo.claude/settings.json")]
+        findings = [jh_core.Finding("JH132", "lead", "major", "security", "web/app.py", 4),
+                    jh_core.Finding("JH101", "lead", "critical", "security", "web2/app.py", 2)]
+        evidence = jh_passport.agent_policy_evidence(items, findings)
+        rows = {row["path"]: row for row in evidence["finding_context"]}
+        self.assertEqual(rows["web/app.py"]["candidate_instruction_files"],
+                         ["AGENTS.md", "web/AGENTS.override.md", "web/CLAUDE.md"])
+        self.assertEqual(rows["web/app.py"]["candidate_configuration_files"], ["web/.claude/settings.json"])
+        self.assertEqual(rows["web2/app.py"]["candidate_instruction_files"], ["AGENTS.md", "web2/CLAUDE.md"])
+        self.assertEqual(rows["web2/app.py"]["candidate_configuration_files"], [])
+        duplicate = jh_passport.agent_policy_evidence(items, findings + findings)
+        self.assertEqual(len(duplicate["finding_context"]), 2)
+        for field in ("agent_identity", "policy_loaded", "managed_policy", "causal_link"):
+            self.assertEqual(evidence[field], "unknown")
+        self.assertNotIn("PRIVATE POLICY CONTENT", json.dumps(evidence))
+        self.assertNotIn("notes/foo.claude/settings.json", evidence["configuration_files"])
+
+    def test_hostile_names_are_safe_in_terminal_and_html(self):
+        with tempfile.TemporaryDirectory(prefix="jh-policy-html-") as root:
+            report = json.loads(run_cli("passport", root, "--profile", "citizen", "--json").stdout)
+        hostile = "<img src=x onerror=alert(1)>\x1b[31m"
+        context = jh_passport.agent_policy_evidence(
+            [jh_map.Item(hostile + "/AGENTS.md", "")],
+            [jh_core.Finding("JH101", "lead", "major", "security", hostile + "/a.py", 1)])
+        report["governance"]["agent_policy_evidence"] = context
+        html = jh_explorer.render_passport(report)
+        self.assertNotIn("<img src=x onerror=alert(1)>", html)
+        self.assertNotIn("\x1b", jh_views.passport_tty(report, color=False))
+
+    def test_empty_and_bounded_evidence_stays_unknown(self):
+        evidence = jh_passport.agent_policy_evidence([], [])
+        self.assertEqual(evidence["instruction_files"], [])
+        self.assertEqual(evidence["causal_link"], "unknown")
+        items = [jh_map.Item("d%03d/AGENTS.md" % i, "") for i in range(201)]
+        findings = [jh_core.Finding("JH101", "lead", "major", "security", "d%03d/a.py" % i, 1)
+                    for i in range(51)]
+        bounded = jh_passport.agent_policy_evidence(items, findings)
+        self.assertTrue(bounded["sources_truncated"])
+        self.assertTrue(bounded["findings_truncated"])
+        self.assertEqual(len(bounded["finding_context"]), 50)
+        self.assertIn("omitted by report limits", bounded["note"])
+        nested = [jh_map.Item("/".join(["x"] * i + ["AGENTS.md"]), "") for i in range(22)]
+        deep = jh_core.Finding("JH101", "lead", "major", "security", "/".join(["x"] * 22 + ["a.py"]), 1)
+        limited = jh_passport.agent_policy_evidence(nested, [deep])
+        self.assertTrue(limited["finding_context"][0]["candidates_truncated"])
+        self.assertEqual(len(limited["finding_context"][0]["candidate_instruction_files"]), 20)
+        self.assertIn("omitted by report limits", limited["note"])
+
+    def test_citizen_cli_views_and_share_redaction(self):
+        with tempfile.TemporaryDirectory(prefix="jh-policy-evidence-") as root:
+            os.makedirs(os.path.join(root, "web", ".claude"))
+            for rel, content in (("AGENTS.md", "TOP-SECRET-POLICY-TEXT"),
+                                 ("web/CLAUDE.md", "TOP-SECRET-POLICY-TEXT"),
+                                 ("web/AGENTS.override.md", "TOP-SECRET-POLICY-TEXT"),
+                                 ("web/.claude/settings.json", "{}"),
+                                 ("web/.env.production", "NEXT_PUBLIC_" + "OPENAI_API_KEY=\n")):
+                with open(os.path.join(root, rel), "w") as fh:
+                    fh.write(content)
+            result = run_cli("passport", root, "--profile", "citizen", "--json")
+            report = json.loads(result.stdout)
+            context = report["governance"]["agent_policy_evidence"]
+            row = next(row for row in context["finding_context"] if row["path"] == "web/.env.production")
+            self.assertIn("web/CLAUDE.md", row["candidate_instruction_files"])
+            self.assertIn("web/AGENTS.override.md", row["candidate_instruction_files"])
+            self.assertIn("web/.claude/settings.json", row["candidate_configuration_files"])
+            self.assertNotIn("TOP-SECRET-POLICY-TEXT", result.stdout)
+            self.assertIn("Agent policy context", jh_passport.markdown(report))
+            self.assertIn("agent policy context", jh_views.passport_tty(report, color=False))
+            self.assertIn("agent policy context", jh_explorer.render_passport(report))
+            share = jh_passport.redact(report)
+            payload = json.dumps(share["governance"]["agent_policy_evidence"])
+            self.assertNotIn("web/", payload)
+            self.assertNotIn("AGENTS.md", payload)
+            self.assertIn("instruction-file-", payload)
+
 
 
 if __name__ == "__main__":
