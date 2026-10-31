@@ -4,6 +4,31 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.3.0] — 2026-10-31
+
+An agent-policy fuzzing foundation, with more precise findings.
+
+### Added
+
+- `agent-fuzz validate` checks bounded, declarative campaigns for Claude Code,
+  Codex, Cursor and OpenCode. It does not run an agent.
+- `agent-fuzz evaluate` scores caller-provided, per-case observations. TUI and
+  self-contained offline HTML reports show case outcomes without copying raw
+  event resources or policy text. These observations are not authenticated
+  agent runs or proof that an organization-wide policy was effective.
+- A baseline campaign and design contract for safe future runner and adapter
+  work.
+
+### Changed
+
+- Tightened finding precision for embedded examples and agent flags, improved
+  recall for swallowed writes and generated credentials, and avoided `JH205`
+  leads for documented HTTP routes.
+
+### Compatibility
+
+- Existing scan and report schemas remain unchanged; `agent-fuzz` is additive.
+
 ## [4.2.0] — 2026-10-29
 
 ASP.NET Core review and a sandbox for .NET restore/build.
