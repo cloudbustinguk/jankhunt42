@@ -487,10 +487,10 @@ class CitizenPolicyEvidence(unittest.TestCase):
     def test_hostile_names_are_safe_in_terminal_and_html(self):
         with tempfile.TemporaryDirectory(prefix="jh-policy-html-") as root:
             report = json.loads(run_cli("passport", root, "--profile", "citizen", "--json").stdout)
+        hostile = "<img src=x onerror=alert(1)>\x1b[31m"
         context = jh_passport.agent_policy_evidence(
-            [jh_map.Item("<img src=x onerror=alert(1)>/AGENTS.md", "")],
-            [jh_core.Finding("JH101", "lead", "major", "security",
-                             "<img src=x onerror=alert(1)>/a.py", 1)])
+            [jh_map.Item(hostile + "/AGENTS.md", "")],
+            [jh_core.Finding("JH101", "lead", "major", "security", hostile + "/a.py", 1)])
         report["governance"]["agent_policy_evidence"] = context
         html = jh_explorer.render_passport(report)
         self.assertNotIn("<img src=x onerror=alert(1)>", html)
