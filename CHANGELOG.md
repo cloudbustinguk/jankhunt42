@@ -4,6 +4,15 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.4.1] — 2026-11-01
+
+### Changed
+
+- Add dark-mode terminal and HTML gallery captures for agent-fuzz evaluation. The
+  examples are synthetic caller-provided observations and do not represent a live
+  agent run or authenticated policy evidence.
+
+
 ## [4.4.0] — 2026-10-31
 
 ### Added
