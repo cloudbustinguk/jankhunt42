@@ -54,6 +54,19 @@ assert jh_dotnet.findings(source, rule, {}) == []
         for call in writes:
             code = 'app.MapPost("/notes", async (Db db, Note note) => { %s; return Results.Ok(); });' % call
             self.assertEqual(len(found(code,'JH135')),1,call)
+        # the same names on caches, queues, schedulers, UI state and files are not stored application data
+        for call in ['state.Update("dashboard", cfg)', 'scheduler.Delete(id)', 'queue.Insert(0, job)',
+                     'await bus.Execute(new SystemEvent())', 'svc.Delete("upload.tmp")']:
+            code = 'app.MapPost("/ui", async (Svc svc) => { %s; return Results.Ok(); });' % call
+            self.assertEqual(found(code,'JH135'),[],call)
+        # sign-in routes mounted under a prefix, and handlers that reject callers themselves
+        for code in ['app.MapPost("/api/auth/login", (Db db, LoginDto d) => { db.Update(d.Email); });',
+                     'app.MapPost("/api/users/register", async (Db db, Dto d) => { await db.SaveChangesAsync(); });',
+                     'app.MapPost("/api/webhooks/pay", async (Db db, HttpContext c) => { if (!Valid(c)) return '
+                     'Results.Unauthorized(); await db.SaveChangesAsync(); return Results.Ok(); });']:
+            self.assertEqual(found(code,'JH135'),[],code)
+        self.assertEqual(len(found('app.MapPost("/api/login/history", async (Db db) => { await db.SaveChangesAsync(); });',
+                                   'JH135')), 1)
         for code in ['app.MapPost("/notes", (Db db) => { db.Execute(sql); }).RequireAuthorization();',
                      'app.MapPost("/login", (Db db) => { db.Update(user); });',
                      'app.MapPost("/echo", (Note n) => Results.Ok(new {ok=true}));']:

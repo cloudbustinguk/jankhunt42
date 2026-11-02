@@ -219,16 +219,24 @@ def context(sources: Sequence[SourceFile]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-# Calls that change stored data: EF Core (SaveChanges, bulk ExecuteUpdate/ExecuteDelete, raw ExecuteSql), ADO.NET
-# (ExecuteNonQuery), Dapper (Execute), repository-style Insert/Update/Delete, and MongoDB's *One/*Many writes.
-_WRITES = re.compile(r'\.\s*(?:SaveChanges|ExecuteNonQuery|Execute|ExecuteUpdate|ExecuteDelete|ExecuteSql(?:Raw|Interpolated)?'
-                     r'|Insert|Update|Delete|InsertOne|InsertMany|ReplaceOne|UpdateOne|UpdateMany|DeleteOne|DeleteMany)'
-                     r'(?:Async)?\s*(?:<[^<>()]{0,200}>)?\s*\(')
+# Calls that change stored data. Unambiguous names count on any receiver: EF Core (SaveChanges, bulk
+# ExecuteUpdate/ExecuteDelete, raw ExecuteSql), ADO.NET ExecuteNonQuery, MongoDB *One/*Many, and the async names
+# 4.4.1 read. Bare Execute/Insert/Update/Delete (Dapper, repositories, NHibernate) are common on caches, queues,
+# schedulers and UI state too, so they count only on a receiver named like data access.
+_WRITES = re.compile(r'\.\s*(?:SaveChanges(?:Async)?|ExecuteNonQuery(?:Async)?|Execute(?:Update|Delete)(?:Async)?'
+                     r'|ExecuteSql(?:Raw|Interpolated)?(?:Async)?|InsertAsync|UpdateAsync|DeleteAsync|ExecuteAsync'
+                     r'|(?:Insert|Replace|Update|Delete)(?:One|Many)(?:Async)?)\s*(?:<[^<>()]{0,200}>)?\s*\(')
+_DATA_WRITES = re.compile(r'\b(\w*(?:db|conn|context|repo|repository|collection|table|session|unitofwork|uow)\w*)'
+                          r'\s*\.\s*(?:Execute|Insert|Update|Delete)\s*(?:<[^<>()]{0,200}>)?\s*\(', re.I)
+
+
+def _writes(body: str) -> bool:
+    return bool(_WRITES.search(body) or _DATA_WRITES.search(body))
 
 
 def _constant_response(body: str) -> bool:
     # Strings are blank in this view. Empty/constant health/metrics objects do not expose application data.
-    if _WRITES.search(body):
+    if _writes(body):
         return False
     if re.search(r'(?:\breturn|=>)\s*(?:Results\.)?(?:Ok|Json|File)\s*\(\s*[A-Za-z_]\w*(?!\w)\s*[,.)]', body) \
             and not re.search(r'\(\s*(?:true|false|null)\s*\)', body):
@@ -241,9 +249,14 @@ def _constant_response(body: str) -> bool:
 
 
 def _sensitive(verb: str, route: str, body: str) -> bool:
-    if route.lower().strip('/') in {'login', 'register', 'signup', 'token', 'forgot-password', 'reset-password'}:
+    # Sign-in and sign-up routes are public by design, wherever they are mounted (/api/auth/login).
+    if route.lower().strip('/').rsplit('/', 1)[-1] in {'login', 'register', 'signup', 'token', 'forgot-password',
+                                                       'reset-password'}:
         return False
-    if _WRITES.search(body):
+    # A handler that rejects callers itself (a webhook signature check, an API key) is visible authorization.
+    if re.search(r'\b(?:Results\s*\.\s*)?(?:Unauthorized|Forbid|Challenge)\s*\(', body):
+        return False
+    if _writes(body):
         return True
     return bool((_PRIVATE.search(route) or _PERSONAL.search(body)) and not _constant_response(body))
 
