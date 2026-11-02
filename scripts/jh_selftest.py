@@ -561,7 +561,7 @@ MUTANTS = [
     ('M195-url-credentials-printed', "a URL user:password in a site rule's text is printed in every report", 'jh_ruleset.py',
      '    return redact_secrets(value) != value or bool(_URL_CREDENTIALS.search(value))',
      '    return redact_secrets(value) != value', 'test_rulesets.py'),
-    ('M200-nuget-unlocked-fetched', 'a project not in locked mode authorizes NuGet downloads', 'jh_nuget.py',
+    ('M200-nuget-lock-settings-unchecked', 'a project whose restore would not honour its lock authorizes NuGet downloads', 'jh_nuget.py',
      "            if not _locked(root, project, tree['files']):",
      '            if False:', 'test_nuget.py'),
     ('M201-nuget-hash-unchecked', 'NuGet bytes are retained without verifying contentHash', 'jh_acquire.py',
@@ -607,6 +607,9 @@ MUTANTS = [
      '        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)',
      '        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK, dir_fd=fd)', 'test_nuget.py'),
 
+    ('M239-dotnet-ado-dapper-writes-missed', 'a minimal API that writes through ADO.NET or Dapper is not a data endpoint', 'jh_dotnet.py', "_WRITES = re.compile(r'\\.\\s*(?:SaveChanges|ExecuteNonQuery|Execute|ExecuteUpdate|ExecuteDelete|ExecuteSql(?:Raw|Interpolated)?'", "_WRITES = re.compile(r'\\.\\s*(?:SaveChanges|ExecuteUpdate|ExecuteDelete|ExecuteSql(?:Raw|Interpolated)?'", 'test_dotnet.py'),
+    ('M240-kestrel-run-url-missed', 'app.Run("http://0.0.0.0:...") and Urls.Add are not checked', 'jh_dotnet.py', "                             r'\\.UseUrls\\s*\\(|\\b\\w+\\s*\\.\\s*Run(?:Async)?\\s*\\(|\\.Urls\\s*\\.\\s*Add\\s*\\(', code):", "                             r'\\.UseUrls\\s*\\(', code):", 'test_dotnet.py'),
+    ('M241-kestrel-listen-any-missed', 'Listen(IPAddress.Any, ...) without UseHttps is not checked', 'jh_dotnet.py', "        for m in re.finditer(r'\\.ListenAnyIP\\s*\\(|\\.Listen\\s*\\(\\s*IPAddress\\s*\\.\\s*(?:Any|IPv6Any)\\b|'", "        for m in re.finditer(r'\\.ListenAnyIP\\s*\\(|'", 'test_dotnet.py'),
     ('M215-dotnet-data-route-skipped', 'minimal API data endpoints are never checked', 'jh_dotnet.py', '        if _sensitive(m[2], route, body):', '        if False:', 'test_dotnet.py'),
     ('M216-dotnet-anonymous-override-ignored', 'AllowAnonymous is ignored on a protected route group', 'jh_dotnet.py', "        anonymous = bool(re.search(r'\\.AllowAnonymous\\s*\\(', tail)) or m[1] in anonymous_vars or (assigned and assigned[1] in anonymous_vars)", '        anonymous = False', 'test_dotnet.py'),
     ('M217-dotnet-public-cors-flagged', 'anonymous public CORS is called credentialed', 'jh_dotnet.py', "        if re.search(r'\\.AllowCredentials\\s*\\(', code[begin:finish]):", '        if True:', 'test_dotnet.py'),

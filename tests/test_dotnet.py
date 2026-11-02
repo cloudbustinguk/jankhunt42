@@ -46,6 +46,19 @@ assert jh_dotnet.findings(source, rule, {}) == []
                'app.MapGet("/health", () => Results.Ok(new {status="ok"}));\n'
         self.assertEqual([f.line for f in found(code,'JH135')],[2,3])
 
+    def test_data_writes_through_ado_dapper_ef_bulk_and_mongo(self):
+        writes = ['cmd.ExecuteNonQuery()', 'await cmd.ExecuteNonQueryAsync()', 'conn.Execute(sql, row)',
+                  'await conn.ExecuteAsync(sql, row)', 'await db.Notes.Where(n=>n.Old).ExecuteDeleteAsync()',
+                  'db.Database.ExecuteSqlRaw(sql)', 'await notes.InsertOneAsync(note)', 'repo.Delete(id)',
+                  'await conn.ExecuteAsync<int>(sql)']
+        for call in writes:
+            code = 'app.MapPost("/notes", async (Db db, Note note) => { %s; return Results.Ok(); });' % call
+            self.assertEqual(len(found(code,'JH135')),1,call)
+        for code in ['app.MapPost("/notes", (Db db) => { db.Execute(sql); }).RequireAuthorization();',
+                     'app.MapPost("/login", (Db db) => { db.Update(user); });',
+                     'app.MapPost("/echo", (Note n) => Results.Ok(new {ok=true}));']:
+            self.assertEqual(found(code,'JH135'),[],code)
+
     def test_explicit_group_and_global_authorization(self):
         for text in [
             'app.MapGet("/users", (Db db)=>Results.Ok(db.Users)).RequireAuthorization();',
@@ -154,6 +167,17 @@ class Structural(unittest.TestCase):
         self.assertEqual(found('{"urls":"http://0.0.0.0:5000"}','JH138','appsettings.Development.json'),[])
         self.assertEqual(found('{"ExternalClient":{"Url":"http://0.0.0.0:5000"}}','JH138','appsettings.json'),[])
         self.assertEqual(len(found('{"Kestrel":{"Endpoints":{"Http":{"Url":"http://*:5000"}}}}','JH138','appsettings.Production.json')),1)
+
+    def test_run_urls_add_and_listen_any_address(self):
+        for text in ['app.Run("http://0.0.0.0:8080");', 'await app.RunAsync("http://+:80");',
+                     'app.Urls.Add("http://*:5000");', 'options.Listen(IPAddress.Any, 5000);',
+                     'options.Listen(IPAddress.IPv6Any, 5000);']:
+            self.assertEqual(len(found(text,'JH138')),1,text)
+        for text in ['app.Run();', 'app.Run("https://0.0.0.0:8443");', 'app.Urls.Add("http://localhost:5000");',
+                     'await Task.Run(() => Work());', 'options.Listen(IPAddress.Any, 5001, o=>o.UseHttps());',
+                     'options.Listen(IPAddress.Loopback, 5000);',
+                     'app.UseHttpsRedirection(); app.Run("http://0.0.0.0:8080");']:
+            self.assertEqual(found(text,'JH138'),[],text)
 
     def test_development_only_https_is_not_a_production_control(self):
         listener='builder.WebHost.UseUrls("http://*:5000");'

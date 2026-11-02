@@ -219,9 +219,16 @@ def context(sources: Sequence[SourceFile]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+# Calls that change stored data: EF Core (SaveChanges, bulk ExecuteUpdate/ExecuteDelete, raw ExecuteSql), ADO.NET
+# (ExecuteNonQuery), Dapper (Execute), repository-style Insert/Update/Delete, and MongoDB's *One/*Many writes.
+_WRITES = re.compile(r'\.\s*(?:SaveChanges|ExecuteNonQuery|Execute|ExecuteUpdate|ExecuteDelete|ExecuteSql(?:Raw|Interpolated)?'
+                     r'|Insert|Update|Delete|InsertOne|InsertMany|ReplaceOne|UpdateOne|UpdateMany|DeleteOne|DeleteMany)'
+                     r'(?:Async)?\s*(?:<[^<>()]{0,200}>)?\s*\(')
+
+
 def _constant_response(body: str) -> bool:
     # Strings are blank in this view. Empty/constant health/metrics objects do not expose application data.
-    if re.search(r'\b(?:SaveChanges|ExecuteAsync|InsertAsync|UpdateAsync|DeleteAsync)\s*\(', body):
+    if _WRITES.search(body):
         return False
     if re.search(r'(?:\breturn|=>)\s*(?:Results\.)?(?:Ok|Json|File)\s*\(\s*[A-Za-z_]\w*(?!\w)\s*[,.)]', body) \
             and not re.search(r'\(\s*(?:true|false|null)\s*\)', body):
@@ -236,8 +243,7 @@ def _constant_response(body: str) -> bool:
 def _sensitive(verb: str, route: str, body: str) -> bool:
     if route.lower().strip('/') in {'login', 'register', 'signup', 'token', 'forgot-password', 'reset-password'}:
         return False
-    writes = re.search(r'\.\s*(?:SaveChanges(?:Async)?|InsertAsync|UpdateAsync|DeleteAsync|ExecuteAsync)\s*\(', body)
-    if writes:
+    if _WRITES.search(body):
         return True
     return bool((_PRIVATE.search(route) or _PERSONAL.search(body)) and not _constant_response(body))
 
@@ -349,10 +355,12 @@ def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
     code, raw = _views(sf)
     if sf.lang == 'csharp':
         out = []
-        for m in re.finditer(r'\.ListenAnyIP\s*\(|\.UseUrls\s*\(', code):
+        # app.Run/RunAsync/Urls.Add take a URL like UseUrls; Listen(IPAddress.Any...) is ListenAnyIP spelled out.
+        for m in re.finditer(r'\.ListenAnyIP\s*\(|\.Listen\s*\(\s*IPAddress\s*\.\s*(?:Any|IPv6Any)\b|'
+                             r'\.UseUrls\s*\(|\b\w+\s*\.\s*Run(?:Async)?\s*\(|\.Urls\s*\.\s*Add\s*\(', code):
             end = _end(code, code.find('(', m.start()))
             text = raw[m.start():end]
-            if m[0].startswith('.ListenAnyIP'):
+            if m[0].startswith(('.ListenAnyIP', '.Listen')):
                 bad = not re.search(r'\.UseHttps\s*\(', code[m.start():end])
             else:
                 bad = bool(re.search(r'http://(?:0\.0\.0\.0|\*|\+|\[::\])(?=[:/"\s])', text, re.I))

@@ -4,6 +4,21 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.4.2] — 2026-11-02
+
+### Fixed
+
+- NuGet `--fetch` no longer refuses projects that use Microsoft's documented lock
+  setups (`RestorePackagesWithLockFile` alone, or `RestoreLockedMode` only in CI).
+  The sandbox's `--locked-mode` already forces a locked restore; acquisition now
+  refuses only what would make restore read a different lock or loosen it
+  (`TreatAsLocalProperty`, custom or computed `NuGetLockFilePath`, lock opt-out).
+- `JH135` recognizes data writes through ADO.NET (`ExecuteNonQuery`), Dapper
+  (`Execute`), EF Core bulk and raw SQL operations, repository-style
+  `Insert`/`Update`/`Delete`, and MongoDB writes.
+- `JH138` reads listener URLs given to `app.Run`/`RunAsync` and `Urls.Add`, and
+  `Listen(IPAddress.Any)` without `UseHttps`.
+
 ## [4.4.1] — 2026-11-01
 
 ### Changed

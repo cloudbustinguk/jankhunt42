@@ -53,15 +53,21 @@ class Planning(Base):
         for text in ['../1', '1.2/3', '1.*', 'https://evil.invalid', '1.2%2f3', '-p:Exec=x']:
             self.assertEqual(N.version(text), '')
 
-    def test_missing_lock_unlocked_conditional_and_custom_imports_never_fetch(self):
-        cases = [{'app.csproj': PROJECT},
-                 {'app.csproj': PROJECT.replace('true', 'false'), 'packages.lock.json': lock()},
-                 {'app.csproj': PROJECT.replace('<RestoreLockedMode>', '<RestoreLockedMode Condition="true">'),
+    def test_lock_settings_restore_would_not_honour_never_fetch(self):
+        local = '<Project TreatAsLocalProperty="Foo;RestoreLockedMode"><PropertyGroup>' \
+                '<RestoreLockedMode>false</RestoreLockedMode></PropertyGroup></Project>'
+        cases = [{'app.csproj': PROJECT},                                     # no lock beside the project
+                 {'app.csproj': local, 'packages.lock.json': lock()},
+                 {'app.csproj': PROJECT.replace('</PropertyGroup>', '<NuGetLockFilePath>other.json</NuGetLockFilePath>'
+                                                '</PropertyGroup>'), 'packages.lock.json': lock()},
+                 {'app.csproj': PROJECT.replace('</PropertyGroup>', '<NuGetLockFilePath>$(Dir)x.json</NuGetLockFilePath>'
+                                                '</PropertyGroup>'), 'packages.lock.json': lock()},
+                 {'app.csproj': PROJECT.replace('</PropertyGroup>', '<RestorePackagesWithLockFile>false'
+                                                '</RestorePackagesWithLockFile></PropertyGroup>'),
                   'packages.lock.json': lock()},
-                 {'app.csproj': PROJECT.replace('</Project>', '<Import Project="custom.props"/></Project>'),
-                  'packages.lock.json': lock()},
-                 {'app.csproj': '<Project><Target Name="x"><PropertyGroup><RestoreLockedMode>true</RestoreLockedMode>'
-                                '</PropertyGroup></Target></Project>', 'packages.lock.json': lock()},
+                 {'Directory.Build.props': '<Project><PropertyGroup><NuGetLockFilePath>a.json</NuGetLockFilePath>'
+                                           '</PropertyGroup></Project>',
+                  'src/app.csproj': '<Project/>', 'src/packages.lock.json': lock()},
                  {'only.sln': 'solution', 'packages.lock.json': lock()}]
         for files in cases:
             with self.subTest(files=files):
@@ -71,12 +77,26 @@ class Planning(Base):
                 self.assertEqual((r['state'], r['counts']['fetched']), ('partial', 0))
                 self.assertTrue(r['refused'])
 
-    def test_directory_props_are_inherited_and_project_false_wins(self):
-        props = '<Project><PropertyGroup><RestoreLockedMode>true</RestoreLockedMode></PropertyGroup></Project>'
-        root = self.tree({'Directory.Build.props': props, 'src/app.csproj': '<Project/>', 'src/packages.lock.json': lock()})
+    def test_documented_lock_setups_fetch_because_restore_forces_locked_mode(self):
+        # Microsoft's documented forms: the lock opt-in alone, and locked mode only in CI. The sandbox's
+        # --locked-mode is a global property, so neither a missing, false, conditional, imported nor
+        # target-level RestoreLockedMode can loosen the restore.
+        optin = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework>' \
+                '<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>%s</PropertyGroup>%s</Project>'
+        for extra, tail in [('', ''),
+                            ('<RestoreLockedMode Condition="\'$(ContinuousIntegrationBuild)\' == \'true\'">true'
+                             '</RestoreLockedMode>', ''),
+                            ('<RestoreLockedMode>false</RestoreLockedMode>', ''),
+                            ('', '<Import Project="custom.props"/>'),
+                            ('', '<Target Name="x"><PropertyGroup><RestoreLockedMode>false</RestoreLockedMode>'
+                                 '</PropertyGroup></Target>')]:
+            with self.subTest(extra=extra, tail=tail):
+                root = self.tree({'app.csproj': optin % (extra, tail), 'packages.lock.json': lock()})
+                p = N.plan(root)
+                self.assertEqual((p['refused'], len(p['artifacts'])), ([], 1))
+        root = self.tree({'Directory.Build.props': '<Project/>', 'src/app.csproj': '<Project/>',
+                          'src/packages.lock.json': lock()})
         self.assertEqual(len(N.plan(root)['artifacts']), 1)
-        Path(root, 'src/app.csproj').write_text(PROJECT.replace('true', 'false'))
-        self.assertEqual(N.plan(root)['artifacts'], [])
 
     def test_hostile_json_xml_names_hashes_and_conflicts_are_refused(self):
         bad = [dict(pin(), resolved='../../escape'), dict(pin(), contentHash='not base64'),
