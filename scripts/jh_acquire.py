@@ -349,7 +349,7 @@ def fetch(artifact: Dict[str, Any], origins: List[Tuple[str, str, int, str]], de
             if digest.hexdigest() != artifact["sha256"]:
                 raise AcquireError("the bytes do not match requirements.txt's sha256")
         else:
-            if digest.hexdigest() != artifact["sha512"]:
+            if digest.hexdigest() != artifact["sha512"] and not _nuget_signed(artifact, part):
                 raise AcquireError("the bytes do not match the lockfile's sha512")
         os.replace(part, dest)
     except (AcquireError, OSError, http.client.HTTPException, ValueError) as exc:
@@ -362,6 +362,16 @@ def fetch(artifact: Dict[str, Any], origins: List[Tuple[str, str, int, str]], de
         if os.path.exists(part):
             os.remove(part)
     return size, max(size, usage["received"])
+
+
+def _nuget_signed(artifact: Dict[str, Any], part: str) -> bool:
+    """A NuGet lock pins a signed package's hash without its repository signature (see jh_nuget.signed_content_hash).
+    The file is already bounded by the artifact's size limit."""
+    if artifact.get("ecosystem") != "nuget":
+        return False
+    import jh_nuget
+    with open(part, "rb") as fh:
+        return jh_nuget.signed_content_hash(fh.read()) == artifact["sha512"]
 
 
 def close_stream(chunks: Any) -> None:

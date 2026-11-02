@@ -8,6 +8,16 @@ semantic versioning.
 
 ### Fixed
 
+- NuGet `--fetch` now works against nuget.org. Two defects since 4.2.0 meant it
+  could not fetch a single real package:
+  - nuget.org signs every package, and `packages.lock.json` pins the hash of the
+    archive before the signature was added, so every real package was refused.
+    The fetch now computes that hash, reading only the zip directory (nothing is
+    unpacked on the host).
+  - Fetched packages were stored in a feed layout that `dotnet restore` cannot
+    read offline. They now use NuGet's `<id>/<id>.<version>.nupkg` layout.
+  - Live tests now fetch from nuget.org with a real lock hash, then restore and
+    build offline in the sandbox.
 - NuGet `--fetch` no longer refuses projects that use Microsoft's documented lock
   setups (`RestorePackagesWithLockFile` alone, or `RestoreLockedMode` only in CI).
   The sandbox's `--locked-mode` already forces a locked restore; acquisition now

@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import unittest
+import zipfile
 from unittest import mock
 
 import _util
@@ -154,13 +155,71 @@ class Acquisition(Base):
                 mock.patch('subprocess.run', side_effect=AssertionError('no host commands')):
             r = self.acquire()
         self.assertEqual((r['state'], r['counts']['fetched'], len(calls)), ('complete', 1, 1))
-        self.assertEqual(Path(r['nuget_cache'], 'demo.lib', '1.2.3', 'demo.lib.1.2.3.nupkg').read_bytes(), DATA)
+        self.assertEqual(Path(r['nuget_cache'], 'demo.lib', 'demo.lib.1.2.3.nupkg').read_bytes(), DATA)
         self.assertGreater(r['counts']['downloaded'], r['counts']['bytes'])
         self.assertIsNone(r['cache'])
         self.assertNotIn('nuget_cache', A.summary(r))
         self.assertEqual(r['fetched'][0]['sha512'], hashlib.sha512(DATA).hexdigest())
 
-    def test_hierarchical_feed_separates_ambiguous_basenames(self):
+    @staticmethod
+    def zipped(entries, appended=()):
+        """An archive, then the same archive with entries appended the way NuGet's repository signing appends
+        .signature.p7s: a new last local entry and a rewritten central directory."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as z:
+            for name, data in entries:
+                z.writestr(name, data)
+        unsigned = buf.getvalue()
+        with zipfile.ZipFile(buf, 'a') as z:
+            for name, data in appended:
+                z.writestr(name, data)
+        return unsigned, buf.getvalue()
+
+    def test_repository_signed_package_matches_lock_without_its_signature(self):
+        # nuget.org signs every package; packages.lock.json pins the hash of the archive before signing
+        unsigned, signed = self.zipped([('demo.nuspec', '<package/>'), ('lib/net10.0/Demo.dll', 'code')],
+                                       [('.signature.p7s', 'pkcs7')])
+        self.assertNotEqual(signed, unsigned)
+        self.assertEqual(N.signed_content_hash(signed), hashlib.sha512(unsigned).hexdigest())
+        root = self.tree({'app.csproj': PROJECT, 'packages.lock.json': lock({'Demo.Lib': pin(unsigned)})})
+        with self.server({self.PATH: (200, signed)}):
+            r = A.run(root, [ORIGIN], os.path.join(self.tree(), 'out'))
+        self.assertEqual((r['state'], r['counts']['fetched']), ('complete', 1))
+        self.assertEqual(Path(r['nuget_cache'], 'demo.lib', 'demo.lib.1.2.3.nupkg').read_bytes(), signed)
+        # tampered content, a non-signature last entry, a signature placed before content, a second signature
+        tampered = signed.replace(b'code', b'evil')
+        _, extra = self.zipped([('demo.nuspec', '<package/>'), ('lib/net10.0/Demo.dll', 'code')],
+                               [('lib/net10.0/Evil.dll', 'evil')])
+        _, early = self.zipped([('.signature.p7s', 'pkcs7'), ('demo.nuspec', '<package/>')],
+                               [('lib/net10.0/Demo.dll', 'code')])
+        _, twice = self.zipped([('demo.nuspec', '<package/>'), ('lib/net10.0/Demo.dll', 'code'),
+                                ('.SIGNATURE.P7S', 'x')], [('.signature.p7s', 'pkcs7')])
+        for body in (tampered, extra, early, twice, signed + b'trailing', signed[:-30], b'PK\x05\x06' + b'\0' * 18):
+            with self.subTest(body=body[-40:]):
+                self.assertNotEqual(N.signed_content_hash(body), hashlib.sha512(unsigned).hexdigest())
+                with self.server({self.PATH: (200, body)}):
+                    r = A.run(root, [ORIGIN], os.path.join(self.tree(), 'out'))
+                self.assertEqual(r['counts']['fetched'], 0)
+        self.assertEqual(N.signed_content_hash(early), '')
+        # the same archive with its directory reordered so the signature is listed last but stored first
+        import struct
+        i = early.rfind(b'PK\x05\x06')
+        cd_off = struct.unpack('<I', early[i + 16:i + 20])[0]
+        records, p = [], cd_off
+        while p < i:
+            n, e, c = struct.unpack('<HHH', early[p + 28:p + 34])
+            records.append(early[p:p + 46 + n + e + c]); p += 46 + n + e + c
+        listed_last = early[:cd_off] + b''.join(records[1:] + records[:1]) + early[i:]
+        self.assertEqual(N.signed_content_hash(listed_last), '')
+        # the signature allowance is NuGet's alone: an npm tarball must match its integrity byte for byte
+        part = os.path.join(self.tree(), 'x.part')
+        Path(part).write_bytes(signed)
+        artifact = {'sha512': hashlib.sha512(unsigned).hexdigest()}
+        self.assertTrue(A._nuget_signed(dict(artifact, ecosystem='nuget'), part))
+        self.assertFalse(A._nuget_signed(dict(artifact, ecosystem='npm'), part))
+        self.assertFalse(A._nuget_signed(artifact, part))
+
+    def test_id_folder_feed_separates_ambiguous_basenames(self):
         root = self.tree({'app.csproj': PROJECT, 'packages.lock.json': lock({'A.1': pin(DATA, '2.3.4'),
                           'A': pin(b'other', '1.2.3.4')})})
         routes = {'/v3-flatcontainer/a.1/2.3.4/a.1.2.3.4.nupkg': (200, DATA),
@@ -168,7 +227,8 @@ class Acquisition(Base):
         with self.server(routes):
             r = A.run(root, [ORIGIN], os.path.join(self.tree(), 'out'))
         self.assertEqual((r['state'], r['counts']['fetched']), ('complete', 2))
-        self.assertEqual(len(list(Path(r['nuget_cache']).rglob('*.nupkg'))), 2)
+        self.assertEqual(sorted(str(p.relative_to(r['nuget_cache'])) for p in Path(r['nuget_cache']).rglob('*.nupkg')),
+                         ['a.1/a.1.2.3.4.nupkg', 'a/a.1.2.3.4.nupkg'])
 
     def test_tamper_redirect_size_limits_private_dns_and_cleanup(self):
         for response, why in [((200, b'tampered'), 'do not match'),
@@ -260,7 +320,7 @@ class Sandbox(Base):
         seen = {}
         def run(path, **kw):
             seen['feed'] = kw['nuget_cache']
-            self.assertTrue(Path(kw['nuget_cache'], 'demo.lib', '1.2.3', 'demo.lib.1.2.3.nupkg').is_file())
+            self.assertTrue(Path(kw['nuget_cache'], 'demo.lib', 'demo.lib.1.2.3.nupkg').is_file())
             return {'coverage': {'state':'complete','gaps':[]}, 'counts':{'ALERT':0}}
         args = cli.build_parser().parse_args(['sandbox', root, '--fetch', ORIGIN, '--json'])
         with self.server({Acquisition.PATH:(200, DATA)}), mock.patch.object(S, 'resolve_image', return_value=S.DOTNET_IMAGE), \
@@ -278,13 +338,29 @@ class LiveAcquire(Base):
     def test_public_flat_container(self):
         origin = 'https://api.nuget.org/'
         path = 'v3-flatcontainer/newtonsoft.json/13.0.3/newtonsoft.json.13.0.3.nupkg'
-        # Fixed SHA512 published by NuGet's catalog (no registry metadata is trusted at test time):
-        # https://api.nuget.org/v3/catalog0/data/2023.03.08.07.46.17/newtonsoft.json.13.0.3.json
-        digest = 'mbJSvHfRxfX3tR/U6n1WU+mWHXswYc+SB/hkOpx8yZZe68hNZGfymJu0cjsaJEkVzCMqePiU6LdIyogqfIn7kg=='
+        # The contentHash real packages.lock.json files pin for this package: the archive before nuget.org's
+        # repository signature. (The catalog's packageHash is of the signed file, which no lock file holds.)
+        digest = 'HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=='
         root = self.tree({'app.csproj': PROJECT, 'packages.lock.json': lock({'Newtonsoft.Json': dict(pin(),
                          resolved='13.0.3', contentHash=digest)})})
         r = A.run(root, [origin], os.path.join(self.tree(), 'out'))
         self.assertEqual((r['state'], r['counts']['fetched']), ('complete', 1), r['refused'])
+
+    @unittest.skipUnless(os.environ.get('JH_SANDBOX_LIVE') == '1' and shutil.which('podman'),
+                         'also set JH_SANDBOX_LIVE=1 with podman and the dotnet runner image')
+    def test_fetched_feed_restores_and_builds_offline(self):
+        # End to end on the fetched feed itself: the layout restore must find, offline, in locked mode.
+        digest = 'HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=='
+        project = '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType>' \
+                  '<TargetFramework>net10.0</TargetFramework>' \
+                  '<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile></PropertyGroup><ItemGroup>' \
+                  '<PackageReference Include="Newtonsoft.Json" Version="13.0.3"/></ItemGroup></Project>'
+        root = self.tree({'app.csproj': project, 'Program.cs': 'System.Console.WriteLine(Newtonsoft.Json.JsonConvert.True);',
+                          'packages.lock.json': lock({'Newtonsoft.Json': dict(pin(version='13.0.3'), contentHash=digest)})})
+        r = A.run(root, ['https://api.nuget.org/'], os.path.join(self.tree(), 'out'))
+        self.assertEqual(r['state'], 'complete', r['refused'])
+        s = S.run(root, surfaces=('install',), nuget_cache=r['nuget_cache'], timeout=300)
+        self.assertEqual([x['exit'] for x in s['steps']], ['0', '0'], s['coverage'])
 
 
 @unittest.skipUnless(os.environ.get('JH_SANDBOX_LIVE') == '1' and shutil.which('podman'),

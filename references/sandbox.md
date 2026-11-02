@@ -381,9 +381,13 @@ The flat-container path is constructed beneath an explicitly approved origin:
 `v3-flatcontainer/<lower-id>/<normalized-lower-version>/<id>.<version>.nupkg`.
 Downloads use the existing checked HTTPS transport, public-address restrictions
 and wire-byte caps. npm, Python metadata/wheels and NuGet share one allowance.
-The archive's sha512 must match the lock's base64 `contentHash`. No downloaded
-archive is opened on the host. Packages are kept in a hierarchical folder feed
-for this run, avoiding ambiguous flat filenames.
+The archive's sha512 must match the lock's base64 `contentHash`. nuget.org signs
+every package, and NuGet pins a signed package by the hash of the archive before
+its `.signature.p7s` entry was appended; for that, the host reads only the zip
+directory (offsets checked, signature the single last entry) and never
+decompresses or extracts anything. Packages are kept in NuGet's id-folder feed
+layout (`<id>/<id>.<version>.nupkg`), which restore reads without unpacking and
+which keeps ambiguous names such as `a.1` 2.3.4 and `a` 1.2.3.4 apart.
 
 With `--nuget-cache` or a fetched feed, each discovered C# project (or a solution
 when no project is discoverable) gets traced install steps: `dotnet restore
