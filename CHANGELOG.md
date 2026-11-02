@@ -4,6 +4,35 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.4.3] — 2026-11-03
+
+### Fixed
+
+- JH101 (hardcoded secret) now finds credentials in the naming styles of C#,
+  TypeScript, Java and Go, which it missed before:
+  - camelCase and PascalCase names ending in a credential word (`dbPassword`,
+    `SmtpPwd`, `ClientSecret`, `apiToken: string`, `dbPassword :=`), including
+    C# properties (`AdminPassword { get; init; } = "..."`) and fields with a
+    leading underscore (`_smtpPassword = "..."`);
+  - a literal password passed to `NetworkCredential` or Java's
+    `PasswordAuthentication`;
+  - a literal token sent as a request header (`AuthenticationHeaderValue("Bearer", "...")`,
+    or a header named for a secret, token or API key).
+
+  The match is case-sensitive on the credential word, so names such as
+  `bypassMode`, `tokenCount` and `PasswordResetPath` are not reported. As
+  before, test code is reported as minor, and values that name themselves
+  test, example or placeholder values are not reported. Those values are now
+  matched in any letter case (`ViewerTest1!`).
+- These values are masked in every report format, like the existing secret
+  shapes.
+
+Measured on a held-out corpus of 40 files (9 planted credentials, 31
+lookalikes): 4.4.2 found 2 credentials, and 4.4.3 finds 9 with no false
+positives. The header shapes were added after that corpus showed them missing.
+On 252 real repositories, 4.4.3 adds 8 findings (3 hardcoded keys and webhook
+secrets, plus 5 test fixtures reported as minor) and loses none.
+
 ## [4.4.2] — 2026-11-02
 
 ### Fixed

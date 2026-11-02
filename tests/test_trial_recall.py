@@ -145,6 +145,33 @@ FILES = {
                                 "    \"Reports\": \"Server=reports.internal;User Id=rpt;Password=${REPORTS_DB_PASSWORD}\",\n"
                                 "    \"Local\": \"Host=localhost;Database=dev;Username=dev;Password=%s\"\n"
                                 "  }\n}\n" % (PASSWORD, PASSWORD)),
+    # JH101: camelCase and PascalCase names of credentials holding literals; names that only look like them do not
+    "Report/Mailer.cs": ("public class Mailer {\n"
+                         "    private const int PasswordMinLength = 12;\n"
+                         "    private const string PasswordResetPath = \"/account/reset2\";\n"
+                         "    private static readonly string ClientSecret = \"%s\";\n"
+                         "    public void Send(IConfiguration config) {\n"
+                         "        var dbPassword = \"%s\";\n"
+                         "        string smtpPwd = config[\"Smtp:Password\"];\n"
+                         "        var key = \"Smtp2:Password\";\n"
+                         "        var cred = new NetworkCredential(\"svc-report\", \"%s\");\n"
+                         "        var tokenCount = \"token42abc\";\n"
+                         "        var report = new Report { Pass = 1 };\n"
+                         "    }\n    public string AdminPassword { get; init; } = \"%s\";\n"
+                         "    private string _smtpPassword;\n    public Mailer() { _smtpPassword = \"%s\"; }\n"
+                         "}\n" % (PASSWORD2, PASSWORD3, PASSWORD4, PASSWORD, PASSWORD3)),
+    # in test code a credential-named literal is a fixture (minor); a value naming itself a test value is none
+    "tests/Api/AuthTests.cs": ("public class AuthTests {\n    private const string EditorPassword = \"%s\";\n"
+                               "    ICredentials C() => new NetworkCredential(\"svc\", \"%s\");\n"
+                               "}\n" % (PASSWORD4, PASSWORD3)),
+    "Report/Hook.cs": ("public class Hook {\n    public Hook(HttpClient c) {\n"
+                       "        c.DefaultRequestHeaders.Add(\"X-Webhook-Secret\", \"%s\");\n"
+                       "        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(\"Bearer\", \"%s\");\n"
+                       "        c.DefaultRequestHeaders.Add(\"X-Request-Id\", \"req42abcdef\");\n"
+                       "    }\n}\n" % (PASSWORD, PASSWORD2)),
+    "Report/Seed.cs": "public static class Seed {\n    public const string ViewerPassword = \"ViewerTest1!\";\n}\n",
+    "web/src/client.ts": ("const apiToken: string = \"%s\";\nconst bypassMode = \"strict2024\";\n" % PASSWORD),
+    "svc/main.go": ("package main\n\nfunc open() {\n\tdbPassword := \"%s\"\n\t_ = dbPassword\n}\n" % PASSWORD2),
     # JH101: a Supabase service-role key in front-end code; the anon key is public by design
     "web/src/supabase.ts": ("import { createClient } from \"@supabase/supabase-js\";\n"
                             "const SERVICE_KEY = \"%s\";\n"
@@ -215,6 +242,14 @@ class TrialRecall(unittest.TestCase):
         for secret in (PASSWORD, PASSWORD2, PASSWORD3, PASSWORD4, PREFIX, SUFFIX, DSN_PREFIX, DSN_SUFFIX, NEXT_TOKEN):
             for output in (json.dumps(self.findings), self.md, self.sarif):
                 self.assertNotIn(secret, output)
+
+    def test_camel_case_credential_names_holding_literals(self):
+        self.assertEqual(self.hits("JH101", "Report/Mailer.cs"), [(4, "critical"), (6, "critical"), (9, "critical"), (13, "critical"), (15, "critical")])
+        self.assertEqual(self.hits("JH101", "web/src/client.ts"), [(1, "critical")])
+        self.assertEqual(self.hits("JH101", "svc/main.go"), [(4, "critical")])
+        self.assertEqual(self.hits("JH101", "tests/Api/AuthTests.cs"), [(2, "minor"), (3, "minor")])
+        self.assertEqual(self.hits("JH101", "Report/Hook.cs"), [(3, "critical"), (4, "critical")])
+        self.assertEqual(self.hits("JH101", "Report/Seed.cs"), [])
 
     def test_a_service_role_key_is_a_secret_and_an_anon_key_is_not(self):
         self.assertEqual(self.hits("JH101", "web/src/supabase.ts"), [(2, "critical")])
