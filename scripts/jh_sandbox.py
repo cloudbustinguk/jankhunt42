@@ -207,7 +207,7 @@ def _plan_dotnet(root: str, steps: List[Dict[str, Any]], gaps: List[str], caches
         source = jh_graph.sanitize_text(target, 200)
         steps.append(_step("dotnet restore %s (locked, offline)" % target, "install",
                            "dotnet restore --locked-mode --source /cache/nuget --packages /work/nuget-packages "
-                           "--no-http-cache --disable-build-servers -p:NuGetAudit=false " + arg, source, nuget=True))
+                           "--no-http-cache --disable-build-servers -p:NuGetAudit=false -p:RestoreForceEvaluate=false " + arg, source, nuget=True))
         steps.append(_step("dotnet build %s (offline)" % target, "install",
                            "dotnet build --no-restore --disable-build-servers -p:NuGetAudit=false " + arg,
                            source, nuget=True))
