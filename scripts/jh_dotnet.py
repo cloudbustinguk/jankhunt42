@@ -292,9 +292,15 @@ def _authorization(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Find
         assigned = re.search(r'(?:var|RouteHandlerBuilder)\s+(\w+)\s*=\s*$', code[max(0,m.start()-150):m.start()])
         anonymous = bool(re.search(r'\.AllowAnonymous\s*\(', tail)) or m[1] in anonymous_vars or (assigned and assigned[1] in anonymous_vars)
         metadata_auth = re.search(r'\.WithMetadata\s*\(\s*new\s+(?:\w+\.)*AuthorizeAttribute\s*\(', tail)
-        if not anonymous and (ctx.get('fallback') or m[1] in protected or (assigned and assigned[1] in protected) or metadata_auth or re.search(r'\.RequireAuthorization\s*\(', tail)):
-            continue
         args = _args(code, start + 1, end - 1)
+        # Attributes on the handler lambda itself: app.MapPut("/x", [Authorize] async (...) => ...)
+        handler = code[args[1][0]:args[1][1]] if len(args) > 1 else ''
+        lambda_attrs = re.match(r'\s*((?:\[[^\[\]]{0,300}\]\s*)+)', handler)
+        lambda_attrs = lambda_attrs[1] if lambda_attrs else ''
+        lambda_auth = re.search(r'(?:\[|,)\s*(?:\w+\.)*Authorize(?:Attribute)?\b', lambda_attrs)
+        anonymous = anonymous or bool(re.search(r'(?:\[|,)\s*(?:\w+\.)*AllowAnonymous(?:Attribute)?\b', lambda_attrs))
+        if not anonymous and (ctx.get('fallback') or m[1] in protected or (assigned and assigned[1] in protected) or metadata_auth or lambda_auth or re.search(r'\.RequireAuthorization\s*\(', tail)):
+            continue
         route_match = re.search(r'"((?:[^"\\]|\\.)*)"', raw[args[0][0]:args[0][1]]) if args else None
         route = route_match[1] if route_match else ''
         body = code[args[1][0]:end] if len(args) > 1 else ''
@@ -461,13 +467,26 @@ def _ai(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
         args = raw[start:end]
         known = m[1] in receivers or m[2] in {'CompleteChatAsync', 'GetChatCompletionsAsync', 'GetResponseAsync'} or \
                 (m[2] in {'PostAsJsonAsync','PostAsync','SendAsync'} and _AI.search(args))
-        field = r'\b\w+\.(?:Email|FullName|Phone|SSN|SocialSecurityNumber|DateOfBirth)\b'
+        # UserEmail, CustomerPhone and HomePhoneNumber are the same fields under a prefix or suffix
+        field = r'\b\w+\.\w*(?:Email|FullName|Phone|SSN|SocialSecurityNumber|DateOfBirth)(?:Address|Number)?\b'
         def unredacted(fragment: str) -> bool:
             spans = []
             for red in re.finditer(r'\b(?:Redact|Anonymi[sz]e|Saniti[sz]e(?:Pii|PersonalData)|RemovePii)\w*\s*\(', fragment, re.I):
                 spans.append((red.start(), _end(fragment, fragment.find('(',red.start()))))
             return any(not any(a <= p.start() < b for a,b in spans) for p in re.finditer(field,fragment,re.I))
         personal = unredacted(code[start:end])
+        # A payload built just before the call and passed by name: var payload = new { user_email = req.UserEmail };
+        if known and not personal:
+            for name in re.findall(r'[(,]\s*(\w+)\s*(?=[,)])', code[start:end]):
+                local = None
+                for local in re.finditer(r'\bvar\s+' + re.escape(name) + r'\s*=\s*new\b[^;{]{0,200}\{',
+                                         code[max(0, m.start() - 4000):m.start()]):
+                    pass
+                if local:
+                    begin = max(0, m.start() - 4000) + local.end() - 1
+                    if unredacted(code[begin:_end(code, begin, '{', '}')]):
+                        personal = True
+                        break
         # Interpolated strings are blank in the code view. Only expressions inside their braces count.
         if not personal and re.search(r'(?:\$@?|@\$)"', args):
             personal = any(unredacted(expr) for expr in re.findall(r'(?<!\{)\{(?!\{)([^}]+)\}', args))
