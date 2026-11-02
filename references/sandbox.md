@@ -363,9 +363,14 @@ strace, curl and wget. Non-.NET repositories continue to use the normal runner.
 If the SDK is unavailable, .NET restore/build is skipped and coverage is partial.
 
 NuGet acquisition reads each project's default `packages.lock.json` (format 1 or 2).
-It requires a literal, unconditional `RestoreLockedMode=true` in the project or
-nearest `Directory.Build.props`/`Directory.Build.targets`; missing locks, conditional
-settings, custom imports and custom lock paths are refused with reasons. Project
+The restore always runs with `--locked-mode`, a global MSBuild property that the
+project, its props and its imports cannot override, so the project need not set
+`RestoreLockedMode` itself (Microsoft's documented `RestorePackagesWithLockFile`
+opt-in and CI-only conditions both work). Refused, with reasons: a missing lock, a
+project that makes `RestoreLockedMode` a `TreatAsLocalProperty`, a custom or computed
+`NuGetLockFilePath`, and `RestorePackagesWithLockFile` set to anything but `true`.
+Imports are not evaluated on the host; one that moves the lock makes the locked
+restore fail (coverage partial) rather than fetch anything unverified. Project
 references are skipped; direct and transitive packages across target frameworks
 are deduplicated by normalized id/version. Conflicting hashes are refused.
 Discovery is bounded to 100 projects and 20,000 entries, excludes build/cache

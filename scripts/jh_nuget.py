@@ -1,7 +1,7 @@
 """NuGet acquisition and .NET discovery. Project files are data here; MSBuild and archives run only in the guest.
 
-Fetch supports default packages.lock.json files, and literal, unconditional RestoreLockedMode=true in a project
-or its nearest Directory.Build.props/targets. Custom imports/conditional lock settings are refused as unresolved.
+Fetch reads each project's default packages.lock.json. The sandbox restores with --locked-mode, a global property
+the project cannot override except by TreatAsLocalProperty (refused). Custom lock paths and lock opt-outs are refused.
 https://learn.microsoft.com/en-us/nuget/consume-packages/package-references-in-project-files#locking-dependencies
 https://learn.microsoft.com/en-us/nuget/api/package-base-address-resource
 """
@@ -124,8 +124,12 @@ def _nearest(rel: str, name: str, files: set) -> str:
 
 
 def _locked(root: str, project: str, files: set) -> bool:
+    """True when the sandbox's `dotnet restore --locked-mode` will read the lock this plan hashed. The command-line
+    switch is a global MSBuild property, so it overrides RestoreLockedMode in the project, its props and imports;
+    only TreatAsLocalProperty can undo that, and it is refused. A lock path or lock opt-out that cannot be read
+    statically is refused, so the fetched set is the set restore verifies. Imports are not evaluated here; one that
+    moves the lock makes the locked restore fail (coverage partial), never fetch something unverified."""
     paths = [_nearest(project, n, files) for n in _PROPS[:2]] + [project] + [_nearest(project, _PROPS[2], files)]
-    value = None
     for path in dict.fromkeys(p for p in paths if p):
         raw = _read(root, path, MAX_XML_BYTES)
         # Reject declarations before XML parsing, including UTF-16 input: no entities are expanded on the host.
@@ -139,33 +143,22 @@ def _locked(root: str, project: str, files: set) -> bool:
             doc = ET.fromstring(text)
         except (ET.ParseError, RecursionError, ValueError):
             raise PlanError('project/props XML could not be parsed') from None
-        groups = {id(e) for e in doc if e.tag.rsplit("}", 1)[-1].lower() == "propertygroup"}
         for element in doc.iter():
-            tag = element.tag.rsplit('}', 1)[-1].lower()
-            if tag in ('import', 'importgroup', 'choose'):
-                raise PlanError('custom MSBuild imports/choices: locked mode cannot be verified statically')
             local = element.attrib.get('TreatAsLocalProperty', '').lower().split(';')
             if 'restorelockedmode' in (p.strip() for p in local):
                 raise PlanError('RestoreLockedMode is local and can override the locked-mode command')
-            if tag == 'propertygroup':
-                if id(element) not in groups and any(p.tag.rsplit('}', 1)[-1].lower() == 'restorelockedmode' for p in element):
-                    raise PlanError('dynamic lock settings inside a target cannot be verified statically')
-                for prop in element:
-                    key = prop.tag.rsplit('}', 1)[-1].lower()
-                    if key not in ('restorelockedmode', 'nugetlockfilepath', 'restorepackageswithlockfile'):
-                        continue
-                    if 'Condition' in element.attrib or 'Condition' in prop.attrib:
-                        raise PlanError('conditional lock settings cannot be verified statically')
-                    v = (prop.text or '').strip().lower()
-                    if key == 'restorelockedmode':
-                        if v not in ('true', 'false'):
-                            raise PlanError('RestoreLockedMode must be a literal true or false')
-                        value = v == 'true'
-                    elif key == 'nugetlockfilepath' and v not in ('', 'packages.lock.json'):
-                        raise PlanError('custom NuGetLockFilePath is not supported')
-                    elif key == 'restorepackageswithlockfile' and v != 'true':
-                        raise PlanError('RestorePackagesWithLockFile must not disable the lock')
-    return value is True
+            if element.tag.rsplit('}', 1)[-1].lower() != 'propertygroup':
+                continue
+            for prop in element:
+                key = prop.tag.rsplit('}', 1)[-1].lower()
+                if key not in ('nugetlockfilepath', 'restorepackageswithlockfile'):
+                    continue
+                v = (prop.text or '').strip().lower()
+                if key == 'nugetlockfilepath' and v not in ('', 'packages.lock.json'):
+                    raise PlanError('a custom NuGetLockFilePath is not supported')
+                if key == 'restorepackageswithlockfile' and v not in ('true', ''):
+                    raise PlanError('RestorePackagesWithLockFile must not turn the lock off or be computed')
+    return True
 
 
 def version(value: Any) -> str:
@@ -193,7 +186,7 @@ def plan(root: str, tree: Any = None) -> Dict[str, Any]:
             refuse('NuGet', issue)
         return result
     if not tree['projects']:
-        refuse('NuGet', 'no project with a verifiable locked-mode setting (a solution or lock alone is insufficient)')
+        refuse('NuGet', 'no .csproj project beside a packages.lock.json (a solution or lock alone is insufficient)')
         return result
     artifacts: Dict[tuple, Dict[str, Any]] = {}
     hashes: Dict[tuple, set] = {}
@@ -202,7 +195,7 @@ def plan(root: str, tree: Any = None) -> Dict[str, Any]:
         lock = (project.rsplit('/', 1)[0] + '/' if '/' in project else '') + 'packages.lock.json'
         try:
             if not _locked(root, project, tree['files']):
-                raise PlanError('project is not in locked mode (RestoreLockedMode must be true)')
+                raise PlanError('restore would not use this packages.lock.json')
             raw = _read(root, lock, max(0, A.MAX_LOCK_BYTES - read_bytes))
             read_bytes += len(raw)
             doc = json.loads(raw.decode('utf-8-sig'), object_pairs_hook=jh_ceiling._unique)
