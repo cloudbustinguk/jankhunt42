@@ -79,10 +79,15 @@ assert jh_dotnet.findings(source, rule, {}) == []
             'var api=app.MapGroup("/api").RequireAuthorization(); var child=api.MapGroup("/v1"); child.MapGet("/users", (Db db)=>db.Users);',
             'var route=app.MapGet("/users", (Db db)=>Results.Ok(db.Users)); route.RequireAuthorization();',
             'app.MapGet("/users", (Db db)=>Results.Ok(db.Users)).WithMetadata(new AuthorizeAttribute());',
+            'app.MapPut("/users/{id}", [Authorize] async (Db db, int id) => { await db.SaveChangesAsync(); });',
+            'app.MapDelete("/n/{id}", [Microsoft.AspNetCore.Authorization.Authorize(Roles = "admin")]\n'
+            '    async (Db db, string id) => { await db.SaveChangesAsync(); });',
             'builder.Services.AddAuthorization(o=>o.FallbackPolicy=new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());\n'
             'app.MapGet("/users", (Db db)=>Results.Ok(db.Users));']:
             self.assertEqual(found(text,'JH135'),[],text)
         code='var api=app.MapGroup("/api").RequireAuthorization(); api.MapGet("/users", (Db db)=>Results.Ok(db.Users)).AllowAnonymous();'
+        self.assertEqual(len(found(code,'JH135')),1)
+        code='var api=app.MapGroup("/api").RequireAuthorization(); api.MapGet("/users", [AllowAnonymous] (Db db)=>Results.Ok(db.Users));'
         self.assertEqual(len(found(code,'JH135')),1)
         self.assertEqual(len(found('var route=app.MapGet("/users", (Db db)=>Results.Ok(db.Users)).RequireAuthorization(); route.AllowAnonymous();','JH135')),1)
         self.assertEqual(len(found('var api=app.MapGroup("/api").RequireAuthorization(); api=app.MapGroup("/public"); api.MapGet("/users",(Db db)=>db.Users);','JH135')),1)
@@ -235,6 +240,12 @@ class Structural(unittest.TestCase):
         self.assertEqual(found('client.PostAsJsonAsync("https://api.example.invalid/notify", new { input.Email });','JH141'),[])
         self.assertEqual(found('client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", new { prompt="body.Email" });','JH141'),[])
         self.assertEqual(len(found('client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", new { body.Email });','JH141')),1)
+        named = ('var payload = new { prompt = req.Text, user_email = req.UserEmail };\n'
+                 'var r = await client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", payload);')
+        self.assertEqual(len(found(named,'JH141')),1)
+        self.assertEqual(found(named.replace('req.UserEmail', 'Redact(req.UserEmail)'),'JH141'),[])
+        self.assertEqual(found(named.replace('user_email = req.UserEmail', 'n = req.Count'),'JH141'),[])
+        self.assertEqual(len(found('client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", new { c.CustomerPhoneNumber });','JH141')),1)
 
     def test_xml_versions_exec_and_comment_decoys(self):
         xml='<Project><ItemGroup><PackageReference Include="Dapper" Version="*"/></ItemGroup><Target Name="x"><Exec Command="curl https://config.example.invalid/x -o x"/></Target></Project>'

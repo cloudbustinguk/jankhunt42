@@ -44,6 +44,14 @@ semantic versioning.
   themselves (`Results.Unauthorized()`, such as a webhook signature check).
   Measured on 69 claimed-safe snippets from a local model: 6 flagged by 4.4.1,
   2 now; findings on both earlier .NET corpora are unchanged.
+- `JH135` honours `[Authorize]` and `[AllowAnonymous]` written on a minimal API
+  handler lambda (`app.MapPut("/x", [Authorize] async (...) => ...)`).
+- `JH141` recognizes prefixed personal fields (`UserEmail`, `CustomerPhoneNumber`)
+  and a payload built in a variable just before the AI call.
+- On a third, held-out .NET corpus of 10 apps written by a local model, 4.4.1
+  missed 4 of 12 labelled problems and 4.4.2 misses 2. One of those two labels is
+  wrong (`System.Text.Json` `Deserialize<object>` creates no types named in the
+  payload); the other, a hardcoded C# password in a local variable, is open.
 - `JH138` reads listener URLs given to `app.Run`/`RunAsync` and `Urls.Add`, and
   `Listen(IPAddress.Any)` without `UseHttps`.
 
