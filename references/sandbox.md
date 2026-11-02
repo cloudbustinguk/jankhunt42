@@ -393,7 +393,11 @@ With `--nuget-cache` or a fetched feed, each discovered C# project (or a solutio
 when no project is discoverable) gets traced install steps: `dotnet restore
 --locked-mode --source /cache/nuget`, followed by `dotnet build --no-restore`.
 The source feed is read-only, restored packages live in `/work`, and network
-access remains disabled. Build/restore failures make coverage partial.
+access remains disabled. Restore reads only that feed: it uses a sandbox-owned
+NuGet config (no sources or fallback folders of the repository's), an empty
+fallback folder, and no `RestoreAdditionalProjectSources`, because locked mode
+does not re-check packages taken from a fallback folder, and `PackageDownload`
+items are not in the lock. Build/restore failures make coverage partial.
 SDK telemetry is disabled. The canary home remains read-only except for an
 empty, ephemeral `.dotnet` tmpfs required by .NET's named mutexes; credential
 files stay read-only. SDK cache/state also uses `/tmp` and `/work`.

@@ -25,6 +25,16 @@ semantic versioning.
   (`TreatAsLocalProperty`, custom or computed `NuGetLockFilePath`, lock opt-out).
 - The sandbox's `dotnet restore` also sets `RestoreForceEvaluate=false`: a project
   that set it could otherwise override locked mode (NuGet NU1512). Found by Codex.
+- The sandbox's restore uses only the verified feed. Two ways around it, both
+  reproduced by Codex, are closed:
+  - A repository `nuget.config` (or project property) naming a fallback package
+    folder could supply altered package contents, which locked mode does not
+    re-check.
+  - `RestoreAdditionalProjectSources` with `PackageDownload` could pull a package
+    no lock pins.
+  Restore now uses a sandbox-owned NuGet config, an empty fallback folder and no
+  extra project sources. A live test shows a poisoned fallback package reading a
+  canary before the fix, and not after.
 - `JH135` recognizes data writes through ADO.NET (`ExecuteNonQuery`), EF Core
   bulk and raw SQL operations, and MongoDB writes; Dapper's `Execute` and
   repository-style `Insert`/`Update`/`Delete` count on a data-access receiver
