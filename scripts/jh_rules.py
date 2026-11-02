@@ -49,6 +49,12 @@ TEST = ("test",)
 _SQL_CALL_PATTERN = (r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*\(\s*"
                      r"(?:f['\"]|\$\{|(?:[^)\n\"'+,]|\"[^\"\n]*\"|'[^'\n]*')*\+)")      # in the first argument
 
+# JH101: a quoted literal that looks like a credential: no spaces, a letter and a digit, no test or placeholder word
+_CRED_VALUE = (r"([\"'])(?=[^\s\"']*\d)(?=[^\s\"']*[A-Za-z])"
+               r"(?![^\s\"']*(?i:test|(?<![0-9a-f])e2e(?![0-9a-f])|mock|stub|fake|dummy|demo|never|secret|passw|example|"
+               r"sample|changeme|redact))"
+               r"[^\s\"']{8,}\1")
+
 RULES: List[Rule] = [
     # ------------------------------------------------------------------ security
     R("JH101", "Hardcoded secret", "critical", "security",
@@ -87,6 +93,18 @@ RULES: List[Rule] = [
           r"(?![^\s\"']*(?:test|(?<![0-9a-f])e2e(?![0-9a-f])|mock|stub|fake|dummy|demo|never|secret|passw|example|"
           r"sample|changeme|redact))"
           r"[^\s\"']{8,}\1",
+          # a camelCase or PascalCase name ending in a credential word (dbPassword, SmtpPwd, ClientSecret, apiToken),
+          # optionally typed (apiToken: string) or a C# property (AdminPassword { get; } =), assigned a credential-like
+          # literal; the suffix is case-sensitive, so bypass, tokenCount and PasswordResetPath are not names of secrets
+          r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|SecretKey)"
+          r"(?:\s*\{\s*get;[^}\n]*\})?\s*(?::\s*[A-Za-z_][\w<>?\[\]]*\s*)?:?[:=]\s*" + _CRED_VALUE,
+          # a credential object constructed with a literal password (C# NetworkCredential, Java PasswordAuthentication)
+          r"\b(?:NetworkCredential|PasswordAuthentication)\s*\(\s*[\"'][^\"'\n]*[\"']\s*,\s*" + _CRED_VALUE,
+          # a literal token sent as a request header: AuthenticationHeaderValue("Bearer", "..."), or a header named for
+          # a secret, token or API key set to a literal (.Add("X-Webhook-Secret", "..."), setRequestProperty, set)
+          r"\bAuthenticationHeaderValue\s*\(\s*[\"'](?:Bearer|Basic)[\"']\s*,\s*" + _CRED_VALUE,
+          r"(?i)\.(?:Add|TryAddWithoutValidation|set|setHeader|setRequestProperty|header|append)\s*\(\s*"
+          r"[\"'][\w-]*(?:secret|token|api-?key)[\w-]*[\"']\s*,\s*" + _CRED_VALUE,
       ),
       ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
     R("JH102", "Dynamic code execution", "major", "security",
@@ -1280,7 +1298,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 continue
                             message = ("A Supabase service-role key is in the code. It bypasses row-level security "
                                        "and gives full access to the database; in front-end code every visitor has it.")
-                        provider = "[:=]" not in pat.pattern and "PRIVATE KEY" not in pat.pattern
+                        # an assigned or passed value (generic) rather than a provider-shaped token or a key
+                        generic = "[:=]" in pat.pattern or pat.pattern.endswith(_CRED_VALUE)
+                        provider = not generic and "PRIVATE KEY" not in pat.pattern
                         if provider and _inside_base64_blob(line, m.start(), m.end()):
                             continue    # a provider-shaped run by chance inside embedded binary (a font, an image)
                         if provider and re.search(r"(?:AWSAccessKeyId|X-Amz-Credential)=(?:\S*?%2F)?$|"
@@ -1300,7 +1320,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             message = ("A Firebase web API key: it identifies the project and is public by design. "
                                        "Restrict the key in Google Cloud and rely on security rules, not on secrecy.")
                         quoted = _SECRET_QUOTED_RE.search(m.group(0))
-                        if quoted and "[:=]" in pat.pattern and quoted.group(2).strip().lower() in COMMON_PASSWORDS:
+                        if quoted and generic and quoted.group(2).strip().lower() in COMMON_PASSWORDS:
                             severity, confidence = "minor", "medium"
                             message = ("A common default password is written into the code. It is not secret, but "
                                        "anything still using it can be logged into by anyone; keep it to local test data.")
@@ -1315,7 +1335,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         # docs is usually a fixture or an example, and in
                         # translation files a label; provider-shaped tokens
                         # and keys keep their severity everywhere.
-                        if "[:=]" in pat.pattern:
+                        if generic:
                             if _I18N_PATH_RE.search(sf.rel):
                                 continue
                             if len(line) > 400 and sf.rel.lower().endswith((".jsonl", ".ndjson", ".csv", ".tsv")):

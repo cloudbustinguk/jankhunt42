@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.4.2"
+VERSION = "4.4.3"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -828,6 +828,19 @@ _SECRET_KEY_RE = re.compile(
     r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b"
     r"['\"]?\s*[:=]\s*(?=['\"])"
 )
+# a camelCase or PascalCase credential name (dbPassword, SmtpPwd, apiToken: string, dbPassword :=), as JH101 reads it
+_CAMEL_SECRET_KEY_RE = re.compile(
+    r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|SecretKey)"
+    r"(?:\s*\{\s*get;[^}\n]*\})?\s*(?::\s*[A-Za-z_][\w<>?\[\]]*\s*)?:?[:=]\s*(?=['\"])"
+)
+# the password argument of new NetworkCredential("user", "...") or PasswordAuthentication("user", "..."), the token
+# of AuthenticationHeaderValue("Bearer", "..."), and the value of a header named for a secret, token or API key
+_CREDENTIAL_ARG_RE = re.compile(
+    r"(?:\b(?:NetworkCredential|PasswordAuthentication|AuthenticationHeaderValue)\s*\(|"
+    r"(?i:\.(?:Add|TryAddWithoutValidation|set|setHeader|setRequestProperty|header|append)\s*\(\s*"
+    r"[\"'][\w-]*(?:secret|token|api-?key)[\w-]*[\"']\s*,))"
+    r"\s*(?:(?:\"[^\"\n]*\"|'[^'\n]*')\s*,\s*)?(?=['\"])"
+)
 _TOKEN_RES = [
     re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
@@ -905,8 +918,10 @@ def _conn_password_spans(text: str) -> List[Tuple[int, int]]:
 
 
 def _secret_assignment_spans(text: str) -> List[Tuple[int, int]]:
-    """A quoted value assigned to a secret-looking name (api_key = '...', "db_password": "..."), whole."""
-    return _value_spans(text, _SECRET_KEY_RE, ("'", '"'), False, 4, True)
+    """A quoted value assigned to a secret-looking name (api_key = '...', "db_password": "...", dbPassword = "...")
+    or passed as a credential's password, whole."""
+    return [span for key_re in (_SECRET_KEY_RE, _CAMEL_SECRET_KEY_RE, _CREDENTIAL_ARG_RE)
+            for span in _value_spans(text, key_re, ("'", '"'), False, 4, True)]
 
 
 def redact_secrets(text: str) -> str:
