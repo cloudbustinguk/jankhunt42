@@ -87,6 +87,12 @@ MAX_CONFIG_BYTES = 1000000
 MAX_CACHE_BYTES = 768 * 1024 * 1024
 CACHE_MOUNTS = {"npm": ("/cache/npm", "rw"), "wheels": ("/cache/wheels", "ro"), "nuget": ("/cache/nuget", "ro")}
 NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
+# what restore may read besides the verified feed: nothing (a repository nuget.config's fallbackPackageFolders, or
+# RestoreAdditionalProjectSources with PackageDownload, would otherwise supply bytes no lock pins)
+NUGET_CONFIG = ("<configuration><packageSources><clear/></packageSources>"
+                "<fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>\n")
+NUGET_ISOLATION = ("-p:RestoreFallbackFolders=/tmp/jh-nofallback -p:RestoreAdditionalProjectSources= "
+                   "-p:RestoreAdditionalProjectFallbackFolders=")
 # command-line settings override the repository's own .npmrc: scripts on, and every dependency type installed
 NPM_CI = ("npm ci --offline --cache /cache/npm --foreground-scripts --no-audit --no-fund --ignore-scripts=false "
           "--include=dev --include=optional --include=peer")
@@ -206,7 +212,12 @@ def _plan_dotnet(root: str, steps: List[Dict[str, Any]], gaps: List[str], caches
         arg = shlex.quote("./" + target)              # one filename, never a shell fragment or a dotnet option
         source = jh_graph.sanitize_text(target, 200)
         steps.append(_step("dotnet restore %s (locked, offline)" % target, "install",
+                           # Only the verified feed: the sandbox's own NuGet config replaces the repository's (its
+                           # sources and fallback folders), and global properties empty the project's extra sources
+                           # and fallback folders, which locked mode would not re-check.
+                           "mkdir -p /tmp/jh-nofallback && "
                            "dotnet restore --locked-mode --source /cache/nuget --packages /work/nuget-packages "
+                           "--configfile /jh/nuget.config " + NUGET_ISOLATION + " "
                            "--no-http-cache --disable-build-servers -p:NuGetAudit=false -p:RestoreForceEvaluate=false " + arg, source, nuget=True))
         steps.append(_step("dotnet build %s (offline)" % target, "install",
                            "dotnet build --no-restore --disable-build-servers -p:NuGetAudit=false " + arg,
@@ -1096,6 +1107,8 @@ def run(root: str, image: str = DEFAULT_IMAGE, engine: Optional[str] = None, tim
                         os.path.join(run_dir, "jh", name))
         with open(os.path.join(run_dir, "jh", "resolv.conf"), "w") as fh:
             fh.write("nameserver 127.0.0.1\noptions attempts:1 timeout:1\n")
+        with open(os.path.join(run_dir, "jh", "nuget.config"), "w") as fh:
+            fh.write(NUGET_CONFIG)
         with open(os.path.join(run_dir, "jh", "run.sh"), "w") as fh:
             fh.write(inner_script(steps, int(timeout)))
         write_steps(steps, os.path.join(run_dir, "jh"))

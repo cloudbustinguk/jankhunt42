@@ -281,6 +281,11 @@ class Sandbox(Base):
         self.assertEqual(shlex.split(steps[0]['script'])[-1], './' + name)
         self.assertIn('--locked-mode --source /cache/nuget', steps[0]['script'])
         self.assertIn('-p:RestoreForceEvaluate=false', steps[0]['script'])   # NU1512: it overrides locked mode
+        # only the verified feed: a sandbox-owned config, and no project fallback folders or extra sources
+        for flag in ('--configfile /jh/nuget.config', '-p:RestoreFallbackFolders=/tmp/jh-nofallback',
+                     '-p:RestoreAdditionalProjectSources= ', '-p:RestoreAdditionalProjectFallbackFolders='):
+            self.assertIn(flag, steps[0]['script'])
+        self.assertIn('<fallbackPackageFolders><clear/></fallbackPackageFolders>', S.NUGET_CONFIG)
         self.assertIn('--no-restore', steps[1]['script'])
         argv = S.container_argv('podman', 'img', '/tmp/run', '/src', ('nuget',))
         self.assertIn('/tmp/run/cache/nuget:/cache/nuget:ro,Z', argv)
@@ -384,6 +389,37 @@ class LiveSandbox(Base):
         self.assertTrue(any(e['kind']=='canary-read' and 'dotnet build' in e['step'] for e in r['events']), r['events'])
         for c in r['canaries']:
             self.assertNotIn('values', c)
+
+    def test_repository_fallback_folder_cannot_replace_the_verified_package(self):
+        # Codex's reproduction: an expanded package folder in the repository, named by its nuget.config, is used
+        # without a content-hash check. Here it carries a build target that reads a canary; the feed holds the
+        # benign package the lock pins. Only the feed may be used.
+        import zipfile
+        feed = self.tree()
+        os.makedirs(os.path.join(feed, 'jh.canary.target'))
+        package = Path(feed, 'jh.canary.target', 'jh.canary.target.1.0.0.nupkg')
+        nuspec = ('<package><metadata><id>jh.canary.target</id><version>1.0.0</version><authors>fixture</authors>'
+                  '<description>benign</description></metadata></package>')
+        with zipfile.ZipFile(package, 'w') as z:
+            z.writestr('jh.canary.target.nuspec', nuspec)
+        digest = base64.b64encode(hashlib.sha512(package.read_bytes()).digest()).decode()
+        poisoned = 'fb/jh.canary.target/1.0.0/'
+        target = ('<Project><Target Name="CanaryProbe" BeforeTargets="Build"><Exec Command="cat '
+                  '/home/canary/.aws/credentials &gt; /dev/null" /></Target></Project>')
+        root = self.tree({
+            'app.csproj': PROJECT.replace('</Project>', '<ItemGroup><PackageReference Include="jh.canary.target" '
+                                          'Version="1.0.0"/></ItemGroup></Project>'),
+            'packages.lock.json': lock({'jh.canary.target': pin(package.read_bytes(), '1.0.0')}),
+            'nuget.config': '<configuration><fallbackPackageFolders><add key="fb" value="fb"/>'
+                            '</fallbackPackageFolders></configuration>',
+            poisoned + 'jh.canary.target.1.0.0.nupkg': package.read_bytes(),
+            poisoned + 'jh.canary.target.1.0.0.nupkg.sha512': digest,
+            poisoned + 'jh.canary.target.nuspec': nuspec,
+            poisoned + '.nupkg.metadata': json.dumps({'version': 2, 'contentHash': digest, 'source': None}),
+            poisoned + 'build/jh.canary.target.targets': target})
+        r = S.run(root, surfaces=('install',), nuget_cache=feed, timeout=120)
+        self.assertEqual([s['exit'] for s in r['steps']], ['0', '0'], r['coverage'])
+        self.assertFalse([e for e in r['events'] if e['kind'] == 'canary-read'], r['events'])
 
 
 if __name__ == '__main__':
