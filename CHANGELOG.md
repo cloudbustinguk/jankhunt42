@@ -13,6 +13,8 @@ semantic versioning.
   The sandbox's `--locked-mode` already forces a locked restore; acquisition now
   refuses only what would make restore read a different lock or loosen it
   (`TreatAsLocalProperty`, custom or computed `NuGetLockFilePath`, lock opt-out).
+- The sandbox's `dotnet restore` also sets `RestoreForceEvaluate=false`: a project
+  that set it could otherwise override locked mode (NuGet NU1512). Found by Codex.
 - `JH135` recognizes data writes through ADO.NET (`ExecuteNonQuery`), Dapper
   (`Execute`), EF Core bulk and raw SQL operations, repository-style
   `Insert`/`Update`/`Delete`, and MongoDB writes.

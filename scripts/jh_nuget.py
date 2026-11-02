@@ -145,8 +145,9 @@ def _locked(root: str, project: str, files: set) -> bool:
             raise PlanError('project/props XML could not be parsed') from None
         for element in doc.iter():
             local = element.attrib.get('TreatAsLocalProperty', '').lower().split(';')
-            if 'restorelockedmode' in (p.strip() for p in local):
-                raise PlanError('RestoreLockedMode is local and can override the locked-mode command')
+            # RestoreForceEvaluate overrides locked mode (NU1512); the restore sets both globally.
+            if {'restorelockedmode', 'restoreforceevaluate'} & {p.strip() for p in local}:
+                raise PlanError('RestoreLockedMode or RestoreForceEvaluate is local and can override the locked-mode command')
             if element.tag.rsplit('}', 1)[-1].lower() != 'propertygroup':
                 continue
             for prop in element:

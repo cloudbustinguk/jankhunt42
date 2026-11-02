@@ -56,8 +56,11 @@ class Planning(Base):
     def test_lock_settings_restore_would_not_honour_never_fetch(self):
         local = '<Project TreatAsLocalProperty="Foo;RestoreLockedMode"><PropertyGroup>' \
                 '<RestoreLockedMode>false</RestoreLockedMode></PropertyGroup></Project>'
+        force = '<Project TreatAsLocalProperty="RestoreForceEvaluate"><PropertyGroup>' \
+                '<RestoreForceEvaluate>true</RestoreForceEvaluate></PropertyGroup></Project>'
         cases = [{'app.csproj': PROJECT},                                     # no lock beside the project
                  {'app.csproj': local, 'packages.lock.json': lock()},
+                 {'app.csproj': force, 'packages.lock.json': lock()},
                  {'app.csproj': PROJECT.replace('</PropertyGroup>', '<NuGetLockFilePath>other.json</NuGetLockFilePath>'
                                                 '</PropertyGroup>'), 'packages.lock.json': lock()},
                  {'app.csproj': PROJECT.replace('</PropertyGroup>', '<NuGetLockFilePath>$(Dir)x.json</NuGetLockFilePath>'
@@ -76,6 +79,8 @@ class Planning(Base):
                     r = A.run(root, [ORIGIN], os.path.join(self.tree(), 'out'))
                 self.assertEqual((r['state'], r['counts']['fetched']), ('partial', 0))
                 self.assertTrue(r['refused'])
+                # the plan itself authorizes nothing (a fetch error would also leave the run partial)
+                self.assertEqual(N.plan(root)['artifacts'], [])
 
     def test_documented_lock_setups_fetch_because_restore_forces_locked_mode(self):
         # Microsoft's documented forms: the lock opt-in alone, and locked mode only in CI. The sandbox's
@@ -215,6 +220,7 @@ class Sandbox(Base):
         self.assertEqual([s['surface'] for s in steps], ['install', 'install'])
         self.assertEqual(shlex.split(steps[0]['script'])[-1], './' + name)
         self.assertIn('--locked-mode --source /cache/nuget', steps[0]['script'])
+        self.assertIn('-p:RestoreForceEvaluate=false', steps[0]['script'])   # NU1512: it overrides locked mode
         self.assertIn('--no-restore', steps[1]['script'])
         argv = S.container_argv('podman', 'img', '/tmp/run', '/src', ('nuget',))
         self.assertIn('/tmp/run/cache/nuget:/cache/nuget:ro,Z', argv)

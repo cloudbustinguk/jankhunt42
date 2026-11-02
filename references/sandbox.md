@@ -365,9 +365,10 @@ If the SDK is unavailable, .NET restore/build is skipped and coverage is partial
 NuGet acquisition reads each project's default `packages.lock.json` (format 1 or 2).
 The restore always runs with `--locked-mode`, a global MSBuild property that the
 project, its props and its imports cannot override, so the project need not set
-`RestoreLockedMode` itself (Microsoft's documented `RestorePackagesWithLockFile`
+`RestoreLockedMode` itself; it also sets `RestoreForceEvaluate=false`, which would
+otherwise override locked mode (NU1512). (Microsoft's documented `RestorePackagesWithLockFile`
 opt-in and CI-only conditions both work). Refused, with reasons: a missing lock, a
-project that makes `RestoreLockedMode` a `TreatAsLocalProperty`, a custom or computed
+project that makes `RestoreLockedMode` or `RestoreForceEvaluate` a `TreatAsLocalProperty`, a custom or computed
 `NuGetLockFilePath`, and `RestorePackagesWithLockFile` set to anything but `true`.
 Imports are not evaluated on the host; one that moves the lock makes the locked
 restore fail (coverage partial) rather than fetch anything unverified. Project
