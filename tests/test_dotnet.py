@@ -67,6 +67,16 @@ assert jh_dotnet.findings(source, rule, {}) == []
             self.assertEqual(found(code,'JH135'),[],code)
         self.assertEqual(len(found('app.MapPost("/api/login/history", async (Db db) => { await db.SaveChangesAsync(); });',
                                    'JH135')), 1)
+        # a rejection that checks the caller's role is authorization; one that checks a record exists is not
+        self.assertEqual(found('app.MapPost("/api/notes", async (Db db, HttpContext c) => { if (!c.User.IsInRole(r)) '
+                               'return Results.Forbid(); await db.SaveChangesAsync(); return Results.Ok(); });', 'JH135'), [])
+        self.assertEqual(len(found('app.MapPost("/api/accounts", async (Account a, Db db) => { if (!await db.Accounts.'
+                                   'AnyAsync(x => x.Id == a.Id)) return Results.Unauthorized(); db.Accounts.Update(a); '
+                                   'await db.SaveChangesAsync(); return Results.Ok(); });', 'JH135')), 1)
+        # a register route under an admin path or a route parameter provisions accounts for someone else
+        for route in ['/api/tenants/{tenantId}/admins/register', '/api/admin/register']:
+            self.assertEqual(len(found('app.MapPost("%s", async (Db db) => { await db.SaveChangesAsync(); });' % route,
+                                       'JH135')), 1, route)
         for code in ['app.MapPost("/notes", (Db db) => { db.Execute(sql); }).RequireAuthorization();',
                      'app.MapPost("/login", (Db db) => { db.Update(user); });',
                      'app.MapPost("/echo", (Note n) => Results.Ok(new {ok=true}));']:
@@ -196,6 +206,9 @@ class Structural(unittest.TestCase):
                      'options.Listen(IPAddress.Loopback, 5000);',
                      'app.UseHttpsRedirection(); app.Run("http://0.0.0.0:8080");']:
             self.assertEqual(found(text,'JH138'),[],text)
+        # a web application under another name is a listener; a harness's own Run(url) is not
+        self.assertEqual(len(found('var web = builder.Build(); web.Run("http://0.0.0.0:8080");', 'JH138')), 1)
+        self.assertEqual(found('var testHarness = new Harness(); testHarness.Run("http://0.0.0.0:8080");', 'JH138'), [])
 
     def test_development_only_https_is_not_a_production_control(self):
         listener='builder.WebHost.UseUrls("http://*:5000");'

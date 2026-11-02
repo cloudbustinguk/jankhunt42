@@ -167,7 +167,8 @@ def signed_content_hash(data: bytes) -> str:
     """NuGet's contentHash for a repository-signed package (nuget.org signs every package): the sha512 of the archive
     as it was before `.signature.p7s` was appended, which is what packages.lock.json pins. Only the zip directory is
     read, with every offset checked; nothing is decompressed or extracted. '' unless the signature is the single,
-    last entry of a plain (non-zip64, single-disk, no trailing bytes) archive, as NuGet's signing writes it."""
+    last local entry (its directory record may be anywhere) of a plain (non-zip64, single-disk, no trailing bytes)
+    archive, as NuGet's signing writes it."""
     i = data.rfind(b'PK\x05\x06', max(0, len(data) - 65557))
     if i < 0 or i + 22 > len(data):
         return ''
@@ -184,13 +185,18 @@ def signed_content_hash(data: bytes) -> str:
             return ''
         records.append((struct.unpack('<I', data[p + 42:p + 46])[0], p, end, data[p + 46:p + 46 + name_len]))
         p = end
-    offset, start, end, name = records[-1]
-    if p != i or name != b'.signature.p7s' or any(r[3].lower() == name for r in records[:-1]) or \
-            any(r[0] >= offset for r in records[:-1]) or data[offset:offset + 4] != b'PK\x03\x04':
+    # the signature's directory record may sit anywhere in the central directory (NuGet removes it by index and
+    # keeps the others in order); its local entry must still be the last one in the archive
+    signatures = [k for k, r in enumerate(records) if r[3].lower() == b'.signature.p7s']
+    if p != i or len(signatures) != 1 or records[signatures[0]][3] != b'.signature.p7s':
+        return ''
+    offset, start, end, _ = records[signatures[0]]
+    others = records[:signatures[0]] + records[signatures[0] + 1:]
+    if any(r[0] >= offset for r in others) or data[offset:offset + 4] != b'PK\x03\x04':
         return ''
     eocd = bytearray(data[i:])
     struct.pack_into('<HHII', eocd, 8, count - 1, count - 1, cd_size - (end - start), offset)
-    return hashlib.sha512(data[:offset] + data[cd_off:start] + bytes(eocd)).hexdigest()
+    return hashlib.sha512(data[:offset] + b''.join(data[r[1]:r[2]] for r in others) + bytes(eocd)).hexdigest()
 
 
 def version(value: Any) -> str:

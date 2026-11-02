@@ -26,11 +26,27 @@ semantic versioning.
   matched in any letter case (`ViewerTest1!`).
 - These values are masked in every report format, like the existing secret
   shapes.
+- JH135 (endpoint without authorization) no longer misses two kinds of
+  unprotected endpoint that 4.4.2 let through. Both were found by Codex:
+  - A handler that returns `Unauthorized`/`Forbid`/`Challenge` counts as
+    authorization only when that check is about the caller (the user, a role or
+    claim, a signature, a key or a token). A check that a record exists no
+    longer hides the write after it.
+  - A `register` or `login` route is public only when it is not nested under
+    an admin path or a route parameter. For example,
+    `/api/tenants/{id}/admins/register` is checked.
+- JH138 (plain-HTTP listener) reads `Run(url)` only on the web application
+  (built with `Build()` or `WebApplication.Create`, or named `app`), not on
+  other objects that have a `Run` method.
+- NuGet `--fetch` accepts a signed package whose signature is listed anywhere
+  in the zip's central directory, as NuGet does. The signature must still be
+  stored last. The hash matches NuGet's own on Codex's reference archive.
 
-Measured on a held-out corpus of 40 files (9 planted credentials, 31
-lookalikes): 4.4.2 found 2 credentials, and 4.4.3 finds 9 with no false
+Measured on a held-out corpus of 40 files (20 planted credentials, 20
+lookalikes): 4.4.2 finds 7 credentials, and 4.4.3 finds 19 with no false
 positives. The header shapes were added after that corpus showed them missing.
-On 252 real repositories, 4.4.3 adds 8 findings (3 hardcoded keys and webhook
+The .NET held-out corpus's open miss (a password in a C# local variable) is
+now found. On 252 real repositories, 4.4.3 adds 8 findings (3 hardcoded keys and webhook
 secrets, plus 5 test fixtures reported as minor) and loses none.
 
 ## [4.4.2] — 2026-11-02
