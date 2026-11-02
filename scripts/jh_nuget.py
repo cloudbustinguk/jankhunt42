@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import struct
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 
@@ -162,6 +163,36 @@ def _locked(root: str, project: str, files: set) -> bool:
     return True
 
 
+def signed_content_hash(data: bytes) -> str:
+    """NuGet's contentHash for a repository-signed package (nuget.org signs every package): the sha512 of the archive
+    as it was before `.signature.p7s` was appended, which is what packages.lock.json pins. Only the zip directory is
+    read, with every offset checked; nothing is decompressed or extracted. '' unless the signature is the single,
+    last entry of a plain (non-zip64, single-disk, no trailing bytes) archive, as NuGet's signing writes it."""
+    i = data.rfind(b'PK\x05\x06', max(0, len(data) - 65557))
+    if i < 0 or i + 22 > len(data):
+        return ''
+    _, disk, cd_disk, on_disk, count, cd_size, cd_off, comment = struct.unpack('<IHHHHIIH', data[i:i + 22])
+    if disk or cd_disk or on_disk != count or count < 2 or cd_off + cd_size != i or i + 22 + comment != len(data):
+        return ''
+    records, p = [], cd_off
+    for _ in range(count):
+        if p + 46 > i or data[p:p + 4] != b'PK\x01\x02':
+            return ''
+        name_len, extra_len, comment_len = struct.unpack('<HHH', data[p + 28:p + 34])
+        end = p + 46 + name_len + extra_len + comment_len
+        if end > i:
+            return ''
+        records.append((struct.unpack('<I', data[p + 42:p + 46])[0], p, end, data[p + 46:p + 46 + name_len]))
+        p = end
+    offset, start, end, name = records[-1]
+    if p != i or name != b'.signature.p7s' or any(r[3].lower() == name for r in records[:-1]) or \
+            any(r[0] >= offset for r in records[:-1]) or data[offset:offset + 4] != b'PK\x03\x04':
+        return ''
+    eocd = bytearray(data[i:])
+    struct.pack_into('<HHII', eocd, 8, count - 1, count - 1, cd_size - (end - start), offset)
+    return hashlib.sha512(data[:offset] + data[cd_off:start] + bytes(eocd)).hexdigest()
+
+
 def version(value: Any) -> str:
     if not isinstance(value, str) or len(value) > 128:
         return ''
@@ -250,7 +281,9 @@ def acquire(plan: Dict[str, Any], origins: Any, feed: str, budget: int, stream: 
                               'pinned': len(plan['artifacts'])}
     for artifact in plan['artifacts']:
         errors = []
-        dest = os.path.join(feed, artifact['package'], artifact['version'], artifact['filename'])
+        # A local feed in NuGet's id-folder layout: restore reads identity from the package's own nuspec, so nothing
+        # is unpacked on the host. (The id/version layout would also need a .nuspec and .sha512 beside each package.)
+        dest = os.path.join(feed, artifact['package'], artifact['filename'])
         for origin in origins:
             room = budget - result['downloaded']
             if room <= 0:
