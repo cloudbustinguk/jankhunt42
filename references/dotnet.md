@@ -27,8 +27,11 @@ custom binder, or establish what a reverse proxy does. Authorization in custom
 middleware, inherited/custom attributes, complex control flow, indirect SQL or AI
 payload flows, and dynamically configured clients can be missed. JH135 focuses on
 recognizable data routes and database writes (EF Core, including bulk
-`ExecuteUpdate`/`ExecuteDelete` and raw `ExecuteSql`; ADO.NET `ExecuteNonQuery`; Dapper
-`Execute`; repository `Insert`/`Update`/`Delete`; MongoDB `*One`/`*Many` writes); a POST which only acknowledges input
+`ExecuteUpdate`/`ExecuteDelete` and raw `ExecuteSql`; ADO.NET `ExecuteNonQuery`; MongoDB
+`*One`/`*Many` writes; Dapper `Execute` and repository `Insert`/`Update`/`Delete` on a receiver
+named like data access, such as `conn`, `db`, `repo` or `context`). Sign-in routes, wherever
+mounted, and handlers that return `Unauthorized()`/`Forbid()`/`Challenge()` themselves are
+treated as visible authorization; a POST which only acknowledges input
 is not evidence of a persisted change. JH141 identifies known AI APIs/URLs and typed
 HTTP clients registered with an AI address; an arbitrary external service is not
 assumed to be AI. Application settings are scoped to the nearest visible project;

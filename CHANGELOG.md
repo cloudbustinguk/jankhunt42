@@ -25,9 +25,15 @@ semantic versioning.
   (`TreatAsLocalProperty`, custom or computed `NuGetLockFilePath`, lock opt-out).
 - The sandbox's `dotnet restore` also sets `RestoreForceEvaluate=false`: a project
   that set it could otherwise override locked mode (NuGet NU1512). Found by Codex.
-- `JH135` recognizes data writes through ADO.NET (`ExecuteNonQuery`), Dapper
-  (`Execute`), EF Core bulk and raw SQL operations, repository-style
-  `Insert`/`Update`/`Delete`, and MongoDB writes.
+- `JH135` recognizes data writes through ADO.NET (`ExecuteNonQuery`), EF Core
+  bulk and raw SQL operations, and MongoDB writes; Dapper's `Execute` and
+  repository-style `Insert`/`Update`/`Delete` count on a data-access receiver
+  (`conn`, `db`, `repo`, `context` and similar), not on caches, queues or UI state.
+- `JH135` no longer flags sign-in and sign-up routes mounted under a prefix
+  (`/api/auth/login`, `/api/users/register`), or handlers that reject callers
+  themselves (`Results.Unauthorized()`, such as a webhook signature check).
+  Measured on 69 claimed-safe snippets from a local model: 6 flagged by 4.4.1,
+  2 now; findings on both earlier .NET corpora are unchanged.
 - `JH138` reads listener URLs given to `app.Run`/`RunAsync` and `Urls.Add`, and
   `Listen(IPAddress.Any)` without `UseHttps`.
 
