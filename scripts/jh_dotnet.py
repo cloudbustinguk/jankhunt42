@@ -248,13 +248,23 @@ def _constant_response(body: str) -> bool:
     return True
 
 
+# A condition that checks who the caller is: the signed-in user, a role or claim, a signature, a key or a token.
+_CALLER_CHECK = re.compile(r'\b(?:User|Identity|IsAuthenticated|IsInRole|Claims?|FindFirst\w*|AuthorizeAsync|Principal'
+                           r'|\w*(?:Signature|Hmac|ApiKey|Secret|Token|Authorization)\w*|Verify\w*|Valid\w*)\b')
+_REJECTION = re.compile(r'\bif\s*\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)\s*\{?\s*return\s+'
+                        r'(?:Results\s*\.\s*|TypedResults\s*\.\s*)?(?:Unauthorized|Forbid|Challenge)\s*\(')
+
+
 def _sensitive(verb: str, route: str, body: str) -> bool:
-    # Sign-in and sign-up routes are public by design, wherever they are mounted (/api/auth/login).
-    if route.lower().strip('/').rsplit('/', 1)[-1] in {'login', 'register', 'signup', 'token', 'forgot-password',
-                                                       'reset-password'}:
+    # Sign-in and sign-up routes are public by design, wherever they are mounted (/api/auth/login), but not one
+    # nested under an admin path or a route parameter (/api/tenants/{id}/admins/register provisions an admin).
+    segments = route.lower().strip('/').split('/')
+    if segments[-1] in {'login', 'register', 'signup', 'token', 'forgot-password', 'reset-password'} and \
+            not any('admin' in seg or '{' in seg for seg in segments[:-1]):
         return False
-    # A handler that rejects callers itself (a webhook signature check, an API key) is visible authorization.
-    if re.search(r'\b(?:Results\s*\.\s*)?(?:Unauthorized|Forbid|Challenge)\s*\(', body):
+    # A handler that rejects callers itself is visible authorization only when the rejection checks the caller
+    # (a webhook signature, an API key, the user's role), not a record's existence.
+    if any(_CALLER_CHECK.search(m[1]) for m in _REJECTION.finditer(body)):
         return False
     if _writes(body):
         return True
@@ -374,9 +384,14 @@ def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
     code, raw = _views(sf)
     if sf.lang == 'csharp':
         out = []
+        # the web applications this file builds (or the conventional app): Run(url) on anything else (a test
+        # harness, a job runner) opens no listener
+        apps = set(re.findall(r'\b(\w+)\s*=\s*(?:\w+\s*\.\s*Build\s*\(\s*\)|WebApplication\s*\.\s*Create\s*\()', code))
         # app.Run/RunAsync/Urls.Add take a URL like UseUrls; Listen(IPAddress.Any...) is ListenAnyIP spelled out.
         for m in re.finditer(r'\.ListenAnyIP\s*\(|\.Listen\s*\(\s*IPAddress\s*\.\s*(?:Any|IPv6Any)\b|'
-                             r'\.UseUrls\s*\(|\b\w+\s*\.\s*Run(?:Async)?\s*\(|\.Urls\s*\.\s*Add\s*\(', code):
+                             r'\.UseUrls\s*\(|\b(\w+)\s*\.\s*Run(?:Async)?\s*\(|\.Urls\s*\.\s*Add\s*\(', code):
+            if m[1] and m[1] not in apps and m[1] != 'app':
+                continue
             end = _end(code, code.find('(', m.start()))
             text = raw[m.start():end]
             if m[0].startswith(('.ListenAnyIP', '.Listen')):

@@ -211,6 +211,26 @@ class Acquisition(Base):
             records.append(early[p:p + 46 + n + e + c]); p += 46 + n + e + c
         listed_last = early[:cd_off] + b''.join(records[1:] + records[:1]) + early[i:]
         self.assertEqual(N.signed_content_hash(listed_last), '')
+        # the signature stored last but listed anywhere in the directory: NuGet removes it by index, so the hash is
+        # NuGet's own (GetPackageContentHash in the .NET 10.0.403 SDK, on this exact archive)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as z:
+            for name, body in (('x.nuspec', b'<package/>'), ('lib/a.dll', b'fake')):
+                z.writestr(zipfile.ZipInfo(name), body)
+        with zipfile.ZipFile(buf, 'a') as z:
+            z.writestr(zipfile.ZipInfo('.signature.p7s'), b'synthetic-signature')
+        normal = buf.getvalue()
+        i = normal.rfind(b'PK\x05\x06')
+        cd_off = struct.unpack('<I', normal[i + 16:i + 20])[0]
+        records, p = [], cd_off
+        while p < i:
+            n, e, c = struct.unpack('<HHH', normal[p + 28:p + 34])
+            records.append(normal[p:p + 46 + n + e + c]); p += 46 + n + e + c
+        reversed_cd = normal[:cd_off] + b''.join(reversed(records)) + normal[i:]
+        self.assertEqual(N.signed_content_hash(normal), '265608cb40fd4ef699afa4ccc74db62ff95f15409c5b795de25ed8aac4807b5b'
+                                                        '295c417f2953ba9a83be64c573d64adb026c0596aa0088f1e183bbcaf9fe8972')
+        self.assertEqual(N.signed_content_hash(reversed_cd), '200a06d2d50927b4c7dce9840480862537f5a00e2edf65998ffd74109b02b1f4'
+                                                             '662a9d84e1548d2e7b62c497631a0c2f3267443705ccc11f532a62f2d482e1d7')
         # the signature allowance is NuGet's alone: an npm tarball must match its integrity byte for byte
         part = os.path.join(self.tree(), 'x.part')
         Path(part).write_bytes(signed)
