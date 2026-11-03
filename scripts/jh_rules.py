@@ -135,7 +135,7 @@ RULES: List[Rule] = [
           # a credential in a URL's query string: an Azure SAS signature, a key, a token or a password
           # (not a bare key=: PostgREST filters read ?key=eq.value; not a Firebase Storage download token: public)
           r"(?i)(?<!alt=media)[?&](?:sig|signature|api_?key|apikey|access_?token|token|secret|password)=" +
-          r"(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\.)" + _CRED_SHAPE.replace(
+          r"(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\.|[$<{%@])" + _CRED_SHAPE.replace(
               "[^\\s\\\"']", "[^\\s&#\\\"']") + r"[^\s&#\"'<>]{12,}",
           # an Azure Storage account key or a Service Bus / Event Hubs shared access key in a connection string; the
           # storage emulator's published development key is not a secret
@@ -1368,9 +1368,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         if "Authorization" in pat.pattern and re.search(r"(?:Bearer|Basic|Token)\s+eyJ", m.group(0)):
                             continue    # a JWT: the JWT pattern reports it when it grants a privileged role
                         jwt = re.search(r"\beyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]+", m.group(0))
-                        if jwt and (_CRED_DENY in pat.pattern or "[:=]" in pat.pattern) and \
-                                _jwt_role(jwt.group(0)) not in _PRIVILEGED_JWT_ROLES:
-                            continue    # an anon or user JWT passed as a value ('apikey', '<anon key>'): public by design
+                        if jwt and (_CRED_DENY in pat.pattern or "[:=]" in pat.pattern) and _jwt_role(jwt.group(0)) == "anon":
+                            continue    # an anon JWT passed as a value ('apikey', '<anon key>'): public by design
                         basic = re.search(r"(?i)Basic\s+([A-Za-z0-9+/]+=*)", m.group(0)) if "Authorization" in pat.pattern \
                             else None
                         if basic and not _basic_credentials(basic.group(1)):

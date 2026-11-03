@@ -228,6 +228,8 @@ class SolutionZip(unittest.TestCase):
                 raw[at + 24:at + 28] = struct.pack('<I', 100)      # central directory: uncompressed size 100
         members, gaps = P.expand(bytes(raw), 'f.zip')
         self.assertFalse(any(len(t) > P.MAX_MEMBER_BYTES for _, t in members))
+        self.assertEqual([m for m, _ in members], ['f.zip!/solution.xml'])
+        self.assertTrue(any('Lie.json' in g for g in gaps), gaps)
 
 
 if __name__ == '__main__':
