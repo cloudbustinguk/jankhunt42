@@ -93,7 +93,9 @@ RULES: List[Rule] = [
           r"(?i)\b(?:server|host|data\s+source)\s*=[^\"'\n]*?\b(?:password|pwd)\s*[:=]\s*['\"]?[^;\"'\s${%<]{6,}",
           # a JWT whose payload grants a privileged role (a Supabase service-role key)
           r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
-          r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])(?:(?!\1)[^\n]){8,}\1",
+          # not an upper-case prefix ending in a colon ({token: "NAMESPACE:"}, Azure DevOps security tokens): no secret
+          r"(?i)\b(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b\s*[:=]\s*(['\"])"
+          r"(?!(?-i:[A-Z][A-Z0-9_]*):\1)(?:(?!\1)[^\n]){8,}\1",
           # a quoted key ("db_password": "...") or a prefixed name (DB_PASSWORD = "..."): the value must look
           # like a credential (no spaces, a letter and a digit), so UI text ("password": "Mot de passe") is not
           r"(?i)(?:\b(?:[a-z0-9]+[_-])+(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b[\"']?|"
@@ -410,6 +412,20 @@ RULES: List[Rule] = [
       "A flow passes personal fields to an AI connector, AI Builder prompt or AI API with no visible redaction.",
       "Send only the fields the prompt needs, redact or pseudonymise personal data, and use an approved AI service.",
       confidence="medium", langs=("json",), check="powerplatform_ai_personal", tags=("powerplatform", "citizen", "ai")),
+    # Copilot Studio agents (bots/<schema>/bot.xml) and environment variables, from the same exports
+    R("JH148", "Copilot Studio agent needs no sign-in", "major", "security",
+      "An agent set to No authentication answers anyone who can reach it, and its connector actions run with the "
+      "maker's connections.",
+      "Set Authentication to 'Authenticate with Microsoft' (or manual sign-in). If the agent is meant to be public, "
+      "give it no actions or knowledge that reach internal data.",
+      confidence="medium", langs=("xml",), check="powerplatform_agent_open", tags=("powerplatform", "citizen", "ai")),
+    R("JH149", "Power Platform environment variable holds a secret as plain text", "major", "security",
+      "A secret-named environment variable is Text, not Secret, so its value is stored and exported in plain text; a "
+      "value in the export is the secret itself (critical).",
+      "Make it a Secret variable (Azure Key Vault), rotate any exported value, and export the solution without "
+      "current values.",
+      confidence="medium", langs=("xml", "json"), check="powerplatform_env_secret",
+      tags=("powerplatform", "citizen", "secret")),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",

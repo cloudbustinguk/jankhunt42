@@ -1,11 +1,12 @@
 # Power Platform
 
 Most enterprise citizen developers build in Microsoft Power Platform: Power Automate flows, Power Apps and Copilot
-Studio agents. `scan` reads Power Automate cloud flows from the files makers export and commit, and reports four
-risks that are common in citizen-built flows, plus any hardcoded secret.
+Studio agents. `scan` reads the files makers export and commit: cloud flows, canvas apps, Copilot Studio agents and
+environment variables. It reports six risks that are common in citizen-built solutions, plus any hardcoded secret,
+including one in a canvas app's formulas.
 
-jankhunt42 only reads the export. It never runs a flow, evaluates an expression, resolves a connection, signs in, or
-fetches anything. A finding describes the configuration in the file; it cannot show which environment imported it,
+jankhunt42 only reads the export. It never runs a flow or an app, evaluates an expression, resolves a connection,
+signs in, or fetches anything. A finding describes the configuration in the file; it cannot show which environment imported it,
 whose account a connection uses, the tenant's data policy, or whether the flow is turned on.
 
 ## Which files are read
@@ -16,16 +17,29 @@ whose account a connection uses, the tenant's data policy, or whether the flow i
 - **The same files unpacked** and committed, for example by `pac solution unpack` (`Workflows/*.json`) or from a
   package's `Microsoft.Flow/flows/` folder.
 - Any JSON whose `properties.definition` (or `definition`) is a workflow definition with `triggers` or `actions`.
+- **Canvas apps:** an `.msapp` committed on its own, or `CanvasApps/<name>.msapp` inside a solution zip (opened one
+  level deep, never further). An `.msapp` is itself a zip. Its Power Fx source, `Src/*.pa.yaml`, is read as written.
+  An app saved before that format exists keeps its formulas in `Controls/*.json` and `Components/*.json`; those are
+  read as a listing, one line per property (`Screen1.OnVisible: =Set(gblApiKey, "...")`), reported as
+  `<member>!/formulas.yaml`.
+- **Copilot Studio agents:** `bots/<schema>/bot.xml`, zipped or unpacked.
+- **Environment variables:** `environmentvariabledefinitions/<schema>/environmentvariabledefinition.xml` (type and
+  default value) and `environmentvariablevalues.json` beside it (the current value, when the solution was exported
+  with values), zipped or unpacked.
 
 A flow inside a zip is reported as `<zip path>!/<member>`, for example
-`solutions/Contoso.zip!/Workflows/Notify-1A2B.json`. Every rule reads it as it would read the unpacked file, so a
-literal password in an HTTP action is a `JH101` finding either way.
+`solutions/Contoso.zip!/Workflows/Notify-1A2B.json`, and a canvas app's screen inside it as
+`solutions/Contoso.zip!/CanvasApps/contoso_app_DocumentUri.msapp!/Src/Screen1.pa.yaml`. Every rule reads a member as it
+would read the unpacked file, so a literal password in an HTTP action or a `Set(gblApiKey, "...")` formula is a `JH101`
+finding either way.
 
-Zips are opened within fixed limits: 32 MB per zip, 5,000 entries, 4 MB per flow, 48 MB read per zip, and a
-compression ratio of at most 200. Encrypted, oversized or over-compressed members, and zips whose entry names are
-not valid UTF-8, are not read and are listed as warnings in every report format (JSON `warnings`, a "Not read" note
-in Markdown, HTML and the terminal, and a SARIF tool execution notification). A zip that is not a Power Platform export is ignored. Only the manifest and the flows are read, never
-other members.
+Zips are opened within fixed limits: 32 MB per zip, 5,000 entries, 4 MB per member read (16 MB for a canvas app's
+screen), 16 MB per canvas app and 32 apps per solution, 48 MB read per zip (a canvas app and its members count toward the zip around it), and a compression
+ratio of at most 200. Encrypted, oversized or over-compressed members, apps that are not readable zips, and zips
+whose entry names are not valid UTF-8, are not read and are listed as warnings in every report format (JSON
+`warnings`, a "Not read" note in Markdown, HTML and the terminal, and a SARIF tool execution notification). A zip
+that is not a Power Platform export or canvas app is ignored. Only the members listed above are read, never others
+(topics, images, connectors).
 
 ## Rules
 
@@ -35,6 +49,8 @@ other members.
 | JH145 | major (Key Vault); minor (HTTP) | Azure Key Vault **Get secret** without **Secure outputs**, or an HTTP action sending an `Authorization`/API-key header or an `authentication` block without **Secure inputs**. The value is then shown in the flow's run history | The same actions with Secure inputs/outputs turned on |
 | JH146 | minor | A connector that can connect a personal account: Gmail, Outlook.com, OneDrive (personal), Dropbox, Google Drive, Sheets, Calendar, Contacts | Office 365 Outlook, OneDrive for Business, SharePoint and other organisation connectors |
 | JH147 | major | Personal fields (email, phone, birth date, address, full name, national ID, passport; trigger fields and Dataverse columns such as `emailaddress1`, `birthdate`) sent to an AI service: AI Builder prompts (`aibuilderpredict_*`), AI connectors, or an HTTP call to an AI API | AI calls that send no personal field; a field read from a step named for redaction (`body('Redact_PII')?['email']`; also `Anonymise`, `Mask`); personal fields saved to Dataverse or sent to non-AI services |
+| JH148 | major | A Copilot Studio agent set to **No authentication** (`authenticationmode` 1): anyone who can reach it, on a website, the demo page or another channel, chats with it without signing in, and the connector actions it calls run with the maker's connections | Agents set to Authenticate with Microsoft (2), manual sign-in (3, 4), or unspecified (0) |
+| JH149 | major; critical when the value is in the export | An environment variable named for a secret (API key, client secret, password, token, connection string, in its schema or display name) whose type is **Text**, not **Secret**: its value is stored and exported in plain text. Critical when the export carries a default or current value that could be the secret; the value is never shown | Secret-type variables (Azure Key Vault references), other types, placeholders (`<...>`, `changeme`, `Enter ...`), URLs, and values with spaces |
 
 How sure each rule is:
 - **JH144:** Microsoft documents the "Who can trigger the flow" options, not how an export writes them. Public flow
@@ -49,14 +65,20 @@ How sure each rule is:
 - **JH147:** field names are a heuristic, and this is not data-flow analysis. A field passed through an expression the
   reader cannot follow is not reported. A field read from a step named for redaction is trusted by that step's name;
   the word in a prompt ("do not redact") is not a redaction.
+- **JH148:** `authenticationmode` is the Dataverse bot table's choice: 0 Unspecified, 1 None, 2 Integrated
+  (Authenticate with Microsoft), 3 Custom Entra ID, 4 Generic OAuth2. Some agents are meant to be public: a website
+  FAQ with no actions and only public knowledge is fine. The finding is a prompt to confirm that, because the export
+  does not say which channels are published.
+- **JH149:** Microsoft's documentation warns that a secret kept in a Text variable is not encrypted. Names are a
+  heuristic. A current value is reported under a credential name, and under a name that only ends in `key`
+  (`DemoKey`) when the value is long and mixes letters and digits, never a GUID.
 
 Connector names follow Power Platform's API names (`/providers/Microsoft.PowerApps/apis/shared_<connector>`), read
 from the action's `host` and the flow's `connectionReferences`.
 
 ## Not read yet
 
-- Canvas apps (`.msapp`, `Src/*.pa.yaml`) beyond what `JH101` finds in unpacked formula files.
-- Copilot Studio agents (topics, knowledge sources, the "No authentication" setting).
-- Environment variable values, custom connectors, desktop flows, and `map`/`passport` reach for flows. n8n already
-  has these in `map` (`references/n8n.md`).
+- Copilot Studio topics, knowledge sources and actions (`botcomponents/`), and agent channels.
+- A canvas app's data sources and connections, custom connectors, desktop flows, and `map`/`passport` reach for
+  flows, apps and agents. n8n already has these in `map` (`references/n8n.md`).
 - Solution zips in `review` (git) mode; `scan` reads them from the working tree.
