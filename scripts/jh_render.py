@@ -295,6 +295,10 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
         out.append("")
         for warning in meta["cve_warnings"]:
             out.append("> CVE lookup: %s" % warning)
+    if meta.get("archive_warnings"):
+        out.append("")
+        for warning in meta["archive_warnings"]:
+            out.append("> Not read: %s" % warning)
     if meta.get("config"):
         out.append("")
         out.append("_Config: `%s`_" % meta["config"])
@@ -469,6 +473,8 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         out.append("  " + color.magenta("CVE") + "  " + color.grey(note))
     if meta.get("config"):
         out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
+    for warning in (meta.get("archive_warnings") or [])[:5]:
+        out.append("  " + color.yellow("NOT READ") + "  " + color.grey(str(warning)))
     minified = meta.get("minified") or []
     if minified:
         out.append("  " + color.cyan("MINIFIED") + "  " + color.grey(

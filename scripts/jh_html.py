@@ -88,6 +88,7 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
     worst = report.dimensions.get(report.worst_dimension)
     worst_label = _e(worst.label if worst else "risk")
     warnings: List[str] = [str(w) for w in (meta.get("cve_warnings") or [])]
+    warnings += ["Not read: %s" % w for w in (meta.get("archive_warnings") or [])]
     new_code = ""
     nc = meta.get("new_code") or {}
     if nc.get("warning"):

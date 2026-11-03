@@ -38,6 +38,9 @@ NEW_SECRETS = ("k9F2mQ7xL4pR8vB3", "a8f3kd92jf83kd0s",
                "q8Jd9Kd83jf0Lx92kdL0z9xQ2mP4nB7vC1sR5tY8uW3eA6hG0jK2lN4oP7qS9==", "G0_My9qL_P@ss",
                "Lq83kd9x0z", "Xk92jdLq0p", "b7Rk2mQ9vL4xP8nZ", "Hq4vM8kR2zX7nL3p", "Rt7pL9vN3qW2")
 
+FX_SECRETS = ("pL3kR9mN2vB5xZ8cA1sD", "vN8kL2pQ4mR6tY9u", "zX8cV6bN4mK2jH0gF5dS", "hT4pW9sL2cV6bN1mX8qR",
+              "M8nK4pL2qR9vX3wY1jF6")
+
 FILES = {
     # JH105: TLS checks turned off through Python's ssl module and .NET's certificate callbacks
     "export/job.py": ("import ssl\nimport urllib.request\nimport urllib3\n\n"
@@ -197,6 +200,18 @@ FILES = {
     # a local development database in a settings example or a guide is not reported at all
     "svc/.env.example": "DATABASE_URL=postgres://app:" + NEW_SECRETS[4] + "@localhost:5432/app\n",
     "svc/SETUP.md": "Run `export DATABASE_URL=postgres://app:" + NEW_SECRETS[4] + "@127.0.0.1:5432/app` first.\n",
+    # Power Fx in an unpacked canvas app: secrets set into variables, compared, passed beside their name, glued to
+    # "Bearer ", and carried in a URL's query string; the same names holding non-secrets are not reported
+    "app/Src/App.pa.yaml": ("App:\n"
+                            "  OnStart: =Set(gblApiKey, \"" + FX_SECRETS[0] + "\"); Set(gblCount, 3)\n"
+                            "  OnVisible: =If(txtPassword.Text = \"" + FX_SECRETS[1] + "\", Navigate(Main), Back())\n"
+                            "  OnSelect: =MyFlow.Run(\"clientSecret\", \"" + FX_SECRETS[2] + "\")\n"
+                            "  Text: =\"Bearer \" & \"" + FX_SECRETS[3] + "\"\n"
+                            "  Image: =\"https://acct.blob.core.windows.net/c/f.pdf?sv=2024&sig=" + FX_SECRETS[4] + "\"\n"),
+    "app/Src/Safe.pa.yaml": ("Home:\n"
+                             "  OnStart: =Set(gblTokenLabel, \"lbl_token\"); Set(gblApiKey, LookUp(Settings, Key = \"ApiKey\").Value)\n"
+                             "  OnVisible: =If(txtPassword.Text = \"\", Notify(\"Enter a password\"))\n"
+                             "  Image: =\"https://cdn.example.net/logo.png?v=2024&size=large\"\n"),
     # an anon key sent as the bearer token is public by design, as it is as the apikey
     # and a test double's readable token (one digit) is not a credential
     "web/src/anon.ts": ("fetch(u, { headers: { Authorization: \"Bearer " + jwt("anon") + "\" } });\n"
@@ -291,6 +306,13 @@ class TrialRecall(unittest.TestCase):
                                                            (5, "critical"), (6, "critical")])
         self.assertEqual(self.hits("JH101", "web/src/anon.ts"), [])
         self.assertEqual(self.hits("JH101", "svc/.env.example") + self.hits("JH101", "svc/SETUP.md"), [])
+
+    def test_power_fx_secrets_are_found_and_never_shown(self):
+        self.assertEqual(self.hits("JH101", "app/Src/App.pa.yaml"), [(n, "critical") for n in (2, 3, 4, 5, 6)])
+        self.assertEqual(self.hits("JH101", "app/Src/Safe.pa.yaml"), [])
+        for secret in FX_SECRETS:
+            for output in (json.dumps(self.findings), self.md, self.sarif):
+                self.assertNotIn(secret, output)
         for secret in NEW_SECRETS + (base64.b64encode(b"svc:" + NEW_SECRETS[8].encode()).decode(),):
             for output in (json.dumps(self.findings), self.md, self.sarif):
                 self.assertNotIn(secret, output)
