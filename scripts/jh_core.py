@@ -872,6 +872,15 @@ _TOKEN_RES = [
 ]
 # the password inside a connection string or DSN: Password=...; or Pwd=...;
 _CONN_PASSWORD_RE = re.compile(r"(?i)\b(?:password|pwd|accountkey|sharedaccesskey)\s*=\s*")
+# the literal beside a secret-named variable or key where no = or : separates them: Set(gblApiKey, "..."),
+# txtPassword.Text = "...", gblPassword <> "...", MyFlow.Run("clientSecret", "..."), "Bearer " & "..."
+_SECRET_ARG_RE = re.compile(
+    r"(?i)(?:\bSet\s*\(\s*\w*(?:api_?key|secret|token|passw(?:or)?d|pwd|access_?key)\w*\s*,|"
+    r"\b\w*(?:passw(?:or)?d|pwd)\w*(?:\.(?:text|value)\s*(?:<>|!=|==|=)|\s*(?:<>|!=|==))|"
+    r"[\"'](?:client_?secret|api_?key|access_?token|passw(?:or)?d|secret)[\"']\s*,|"
+    r"[\"']Bearer ?[\"']\s*(?:&|\+|,))\s*(?=[\"'])")
+# a credential in a URL's query string (?sig=..., &key=..., token=...), bare up to the next parameter
+_QUERY_SECRET_RE = re.compile(r"(?i)[?&](?:sig|signature|api_?key|apikey|key|access_?token|token|secret|password)=")
 # a header written out in one string ("Authorization: Bearer ..."): the credential after the scheme, bare
 _AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization:\s*(?:Bearer|Basic|Token)\s+(?=[\w.~+/=-]{8,}(?:[\s\"'`\\]|$))")
 # a literal Authorization value ({Authorization: "Bearer ..."}), whole; not "Bearer " + token, not a placeholder
@@ -880,6 +889,7 @@ _AUTH_VALUE_RE = re.compile(r"(?i)\bAuthorization[\"']?\s*\]?\s*[:=,]\s*(?=[\"']
 _DSN_PASSWORD_RES = (re.compile(r"[\w.%+-]{1,64}:([^\s\"'`]+?)@(?:tcp|unix)\("),
                      re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^:@/\s\"']+:([^@/\s\"']+)@"))
 _BARE_VALUE_END_RE = re.compile(r"[;\"'\s]")
+_QUERY_VALUE_END_RE = re.compile(r"[&#;\"'`\s<>)]")
 
 
 def _closing_quote(text: str, quote: str, start: int, stop: int) -> int:
@@ -934,9 +944,11 @@ def _conn_password_spans(text: str) -> List[Tuple[int, int]]:
 def _secret_assignment_spans(text: str) -> List[Tuple[int, int]]:
     """A quoted value assigned to a secret-looking name (api_key = '...', "db_password": "...", dbPassword = "...")
     or passed as a credential's password, whole."""
-    return [span for key_re in (_SECRET_KEY_RE, _CAMEL_SECRET_KEY_RE, _CREDENTIAL_ARG_RE, _AUTH_VALUE_RE)
+    return [span for key_re in (_SECRET_KEY_RE, _CAMEL_SECRET_KEY_RE, _CREDENTIAL_ARG_RE, _AUTH_VALUE_RE, _SECRET_ARG_RE)
             for span in _value_spans(text, key_re, ("'", '"'), False, 4, True)] + \
         _value_spans(text, _AUTH_HEADER_RE, (), True, 4, True) + \
+        [(m.end(), e.start() if e else len(text)) for m in _QUERY_SECRET_RE.finditer(text)
+         for e in [_QUERY_VALUE_END_RE.search(text, m.end())] if (e.start() if e else len(text)) - m.end() >= 8] + \
         [m.span(1) for dsn_re in _DSN_PASSWORD_RES for m in dsn_re.finditer(text)]
 
 

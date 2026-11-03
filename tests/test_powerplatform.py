@@ -46,7 +46,10 @@ class HttpTrigger(unittest.TestCase):
     def test_open_unknown_and_signed_in_triggers(self):
         open_ = flow({'manual': {'type': 'Request', 'kind': 'Http', 'inputs': {'triggerAuthenticationType': 'Anyone'}}})
         hits = found(open_, 'JH144')
-        self.assertEqual([(f.severity, f.confidence) for f in hits], [('major', 'high')])
+        self.assertEqual([(f.severity, f.confidence) for f in hits], [('major', 'medium')])
+        # public flow definitions write the open mode as All
+        all_ = flow({'manual': {'type': 'Request', 'kind': 'Http', 'inputs': {'triggerAuthenticationType': 'All'}}})
+        self.assertEqual([f.severity for f in found(all_, 'JH144')], ['major'])
         self.assertEqual(hits[0].line, [i for i, l in enumerate(open_.split('\n'), 1) if l.strip() == '"manual": {'][0])
         unknown = found(flow({'manual': {'type': 'Request', 'kind': 'Http', 'inputs': {'schema': {}}}}), 'JH144')
         self.assertEqual([(f.severity, f.confidence) for f in unknown], [('minor', 'low')])
@@ -120,6 +123,13 @@ class PersonalDataToAi(unittest.TestCase):
         red = json.loads(json.dumps(http))
         red['inputs']['body']['messages'][0]['content'] = "@{body('Redact_PII')?['email']}"
         self.assertEqual(found(flow(actions={'Ask': red}), 'JH147'), [])
+        # the word in a prompt is not a redaction step, and one redacted field does not cover another
+        said = json.loads(json.dumps(http))
+        said['inputs']['body']['messages'][0]['content'] = "Do not redact this: @{triggerBody()?['email']}"
+        self.assertEqual(len(found(flow(actions={'Ask': said}), 'JH147')), 1)
+        both = json.loads(json.dumps(http))
+        both['inputs']['body']['messages'][0]['content'] = "@{body('Redact_PII')?['email']} @{triggerBody()?['phone']}"
+        self.assertEqual(len(found(flow(actions={'Ask': both}), 'JH147')), 1)
         other = json.loads(json.dumps(http))
         other['inputs']['uri'] = 'https://openai.com.example.invalid/v1'
         self.assertEqual(found(flow(actions={'Ask': other}), 'JH147'), [])
@@ -167,6 +177,10 @@ class SolutionZip(unittest.TestCase):
                                    ('JH145', 'solutions/demo.zip!/Workflows/Open-1A2B.json', 'minor')])
             self.assertNotIn(token, p.stdout)
             self.assertTrue(any('Big.json: too large or too compressed' in w for w in report['warnings']), report['warnings'])
+            for fmt in ('--md', '--sarif', '--html'):
+                self.assertIn('Big.json: too large or too compressed', run_cli('scan', root, fmt, '--no-config').stdout, fmt)
+            sarif = json.loads(run_cli('scan', root, '--sarif', '--no-config').stdout)
+            self.assertEqual(sarif['runs'][0]['invocations'][0]['toolExecutionNotifications'][0]['level'], 'warning')
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -196,6 +210,24 @@ class SolutionZip(unittest.TestCase):
         members, _ = P.expand(solution_zip({'Workflows/../../etc/passwd.json': '{}', 'Workflows/sub/x.json': '{}'}), 'c.zip')
         self.assertEqual([m for m, _ in members], ['c.zip!/solution.xml'])
         self.assertTrue(P.expand(b'0' * (P.MAX_ZIP_BYTES + 1), 'd.zip')[1])
+        # names that are not UTF-8 under the UTF-8 flag: reported, not silently skipped
+        raw = bytearray(solution_zip({'Workflows/ab.json': '{}'}))
+        for at in [i for i in range(len(raw)) if raw.startswith(b'Workflows/ab.json', i)]:
+            raw[at + 10] = 0xff
+        for at in [i for i in range(len(raw)) if raw.startswith(b'PK\x01\x02', i) or raw.startswith(b'PK\x03\x04', i)]:
+            flag = at + (9 if raw.startswith(b'PK\x01\x02', at) else 7)
+            raw[flag] |= 0x08                      # bit 11 is 0x0800: the high byte of the flag field
+        members, gaps = P.expand(bytes(raw), 'e.zip')
+        self.assertTrue(any('not valid UTF-8' in g for g in gaps), gaps)
+        # a member whose recorded size understates its content is never read past the limit
+        big = ' ' * (P.MAX_MEMBER_BYTES + 100)
+        raw = bytearray(solution_zip({'Workflows/Lie.json': big}))
+        import struct
+        for at in [i for i in range(len(raw)) if raw.startswith(b'PK\x01\x02', i)]:
+            if raw[at + 46:at + 46 + 17] == b'Workflows/Lie.json'[:17]:
+                raw[at + 24:at + 28] = struct.pack('<I', 100)      # central directory: uncompressed size 100
+        members, gaps = P.expand(bytes(raw), 'f.zip')
+        self.assertFalse(any(len(t) > P.MAX_MEMBER_BYTES for _, t in members))
 
 
 if __name__ == '__main__':

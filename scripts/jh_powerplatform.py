@@ -53,6 +53,8 @@ def expand(data: Any, rel: str, size: Optional[int] = None) -> Tuple[List[Tuple[
     try:
         zf = zipfile.ZipFile(data)
         infos = zf.infolist()
+    except UnicodeDecodeError:
+        return out, ["%s: entry names are not valid UTF-8, not read" % rel]
     except (zipfile.BadZipFile, zipfile.LargeZipFile, ValueError, OSError, EOFError, NotImplementedError):
         return out, []
     names = {i.filename.lower() for i in infos[:MAX_MEMBERS]}
@@ -211,6 +213,10 @@ def _at(sf: SourceFile, rule: Rule, name: str, **kw: Any) -> Finding:
     return make_finding(rule, sf, line, evidence=key[:120] + ": {", **kw)
 
 
+# "Who can trigger the flow: Anyone". Microsoft documents the options, not their serialization; public flow
+# definitions write the open mode as All. Tenant and specific-user modes are anything else.
+OPEN_MODES = {"all", "anyone"}
+
 # consumer-capable connectors: each can connect a personal account, so a flow using one can move work data out of the
 # organisation. Whether this connection is personal is not in the export.
 CONSUMER = {
@@ -227,6 +233,13 @@ _AI_HOST = re.compile(r"(?i)https://(?:[\w-]+\.)*(?:openai\.com|openai\.azure\.c
 _PERSONAL = re.compile(r"(?i)\[\s*'(?:[^'\]]*/)?(?:\w*(?:e-?mail|phone|mobile|birth(?:date|day)?|dateofbirth|dob|ssn|"
                        r"socialsecurity|nationalid|passport|fullname|surname|lastname|address(?:\d_line\d)?)\w*)'\s*\]")
 _REDACTOR = re.compile(r"(?i)redact|anonymi[sz]|pseudonymi[sz]|mask")
+# the step a field is read from: body('Redact_PII')?['email'], outputs('Anonymise')?['body/fullname']
+_SOURCE = re.compile(r"(?i)\b(?:body|outputs|actions|items|actionBody|actionOutputs)\s*\(\s*'([^']{1,200})'\s*\)\s*\??\s*(?:\[[^\]]*\]\s*\??\s*)*$")
+
+
+def _redacted_source(before: str) -> bool:
+    source = _SOURCE.search(before)
+    return bool(source and _REDACTOR.search(source.group(1)))
 
 
 def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
@@ -241,10 +254,12 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
         if rule.check == "powerplatform_http_trigger" and kind == "trigger" and typ.lower() == "request" and \
                 str(node.get("kind", "")).lower() in ("http", ""):      # not Button, PowerApp or Skills: those sign in
             mode = inputs.get("triggerAuthenticationType")
-            if isinstance(mode, str) and mode.strip().lower() == "anyone":
-                out.append(_at(sf, rule, name, confidence="high", message=(
-                    "The flow's HTTP trigger '%s' is set to Anyone: whoever has its URL can start the flow, with no "
-                    "sign-in. The URL is the only key, and it travels in logs, scripts and chat." % name[:60])))
+            if isinstance(mode, str) and mode.strip().lower() in OPEN_MODES:
+                # 'Anyone' is the designer's label; public exports serialize the open mode as 'All'
+                out.append(_at(sf, rule, name, confidence="medium", message=(
+                    "The flow's HTTP trigger '%s' is open to anyone (triggerAuthenticationType '%s'): whoever has its URL "
+                    "can start the flow, with no sign-in. The URL is the only key, and it travels in logs, scripts and "
+                    "chat." % (name[:60], mode.strip()[:20]))))
             elif mode is None:
                 out.append(_at(sf, rule, name, severity="minor", confidence="low", message=(
                     "The flow starts from an HTTP request ('%s') and the export does not say who may call it. A flow "
@@ -258,14 +273,14 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
             if api == "shared_keyvault" and op.lower().startswith("getsecret") and not _secured(node, "outputs"):
                 out.append(_at(sf, rule, name, message=(
                     "The Key Vault action '%s' reads a secret without Secure outputs, so the secret is shown in the "
-                    "flow's run history to everyone who can open it (co-owners and admins)." % name[:60])))
+                    "flow's run history to anyone with access to it." % name[:60])))
             elif typ.lower() == "http" and not _secured(node, "inputs") and (
                     isinstance(inputs.get("authentication"), dict) or
                     any(str(k).lower() in ("authorization", "x-api-key", "api-key", "apikey", "ocp-apim-subscription-key")
                         for k in (inputs.get("headers") or {}) if isinstance(inputs.get("headers"), dict))):
                 out.append(_at(sf, rule, name, severity="minor", confidence="medium", message=(
                     "The HTTP action '%s' sends a credential without Secure inputs, so it is shown in the flow's run "
-                    "history to everyone who can open it." % name[:60])))
+                    "history to anyone with access to it." % name[:60])))
         if rule.check == "powerplatform_consumer" and api in CONSUMER:
             out.append(_at(sf, rule, name, message=(
                 "The action '%s' uses the %s connector, which can connect a personal account. Work data the flow "
@@ -278,8 +293,10 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
             if not ai:
                 continue
             sent = json.dumps({k: v for k, v in inputs.items() if k not in ("host", "authentication")})[:200000]
-            fields = sorted({m.group(0) for m in _PERSONAL.finditer(sent)})
-            if fields and not _REDACTOR.search(sent):
+            # a field counts unless it is read from a step named for redaction; a word in a prompt is not a redaction
+            fields = sorted({m.group(0) for m in _PERSONAL.finditer(sent)
+                             if not _redacted_source(sent[max(0, m.start() - 300):m.start()])})
+            if fields:
                 out.append(_at(sf, rule, name, message=(
                     "The action '%s' sends personal data (%s) to an AI service with no visible redaction. Check the "
                     "service is approved for this data and that the minimum is sent." % (

@@ -123,6 +123,18 @@ RULES: List[Rule] = [
           r"[\w.~+/=-]{12,}|Basic\s+" + _CRED_DENY + r"[A-Za-z0-9+/]{12,}={0,2})\1",
           r"(?i)\bAuthorization:\s*(?:(?:Bearer|Token)\s+" + _TOKEN_SHAPE + r"[\w.~+/=-]{12,}|Basic\s+" + _CRED_DENY +
           r"[A-Za-z0-9+/]{12,}={0,2})(?![^\s\"'\\])",
+          # Power Fx (canvas apps) and similar: a secret-named variable set to a literal (Set(gblApiKey, "..."),
+          # Set(gblAuthToken, "Bearer ...")), a password compared with a literal (txtPassword.Text = "..."), a
+          # secret-named key passed beside its value (MyFlow.Run("clientSecret", "...")), and "Bearer " & "..."
+          r"(?i)\bSet\s*\(\s*\w*(?:api_?key|secret|token|passw(?:or)?d|pwd|access_?key)\w*\s*,\s*" + _CRED_VALUE,
+          r"(?i)\bSet\s*\(\s*\w*(?:api_?key|secret|token|passw(?:or)?d|pwd|access_?key)\w*\s*,\s*([\"'])(?:Bearer|Basic)\s+" +
+          _TOKEN_SHAPE + r"[\w.~+/=-]{12,}\1",
+          r"\b\w*(?:Password|Passwd|Pwd|PASSWORD)\w*(?:\.(?:Text|Value)\s*(?:<>|!=|==|=)|\s*(?:<>|!=|==))\s*" + _CRED_VALUE,
+          r"(?i)[\"'](?:client_?secret|api_?key|access_?token|passw(?:or)?d|secret)[\"']\s*,\s*" + _CRED_VALUE,
+          r"(?i)[\"']Bearer ?[\"']\s*(?:&|\+|,)\s*([\"'])" + _TOKEN_SHAPE + r"[\w.~+/=-]{12,}\1",
+          # a credential in a URL's query string: an Azure SAS signature, a key, a token or a password
+          r"(?i)[?&](?:sig|signature|api_?key|apikey|key|access_?token|token|secret|password)=" + _CRED_SHAPE.replace(
+              "[^\\s\\\"']", "[^\\s&#\\\"']") + r"[^\s&#\"'<>]{12,}",
           # an Azure Storage account key or a Service Bus / Event Hubs shared access key in a connection string; the
           # storage emulator's published development key is not a secret
           r"\b(?:AccountKey|SharedAccessKey)\s*=\s*(?!Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/"
