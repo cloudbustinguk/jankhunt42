@@ -190,6 +190,7 @@ FILES = {
                          "    const string CacheKey = \"user:12345abc\";\n"
                          "    const string Probe = \"Authorization: Basic " +
                          base64.b64encode(b"svc:" + NEW_SECRETS[8].encode()).decode() + "\";\n"
+                         "    const string SessionToken = \"" + jwt("authenticated") + "\";\n"
                          "}\n"),
     "svc/db.go": ("package svc\n"
                   "const prodDSN = \"report:" + NEW_SECRETS[3] + "@tcp(db.corp.net:3306)/reports\"\n"
@@ -305,7 +306,7 @@ class TrialRecall(unittest.TestCase):
 
     def test_admin_keys_authorization_headers_account_keys_and_dsn_passwords(self):
         self.assertEqual(self.hits("JH101", "Report/Remote.cs"), [(2, "critical"), (3, "critical"), (4, "critical"),
-                                                                  (7, "critical")])
+                                                                  (7, "critical"), (8, "critical")])
         self.assertEqual(self.hits("JH101", "svc/db.go"), [(2, "critical"), (3, "minor"), (4, "critical"),
                                                            (5, "critical"), (6, "critical")])
         self.assertEqual(self.hits("JH101", "web/src/anon.ts"), [])
@@ -393,6 +394,7 @@ class RedactorProperties(unittest.TestCase):
         # n8n exports count any redacted parameter as a secret, so a template must come back unchanged
         import jh_core
         for text in ["Send `Authorization: Bearer <token>` with each call.",
+                     "const u = `${base}?mode=full&access_token=${encodeURIComponent(FB_TOKEN_2024)}`;",
                      "headers: { Authorization: 'Bearer ' + key }",
                      "headers: { Authorization: `Bearer ${key}` }",
                      'req.Headers.Add("Authorization", "Basic " + creds);',

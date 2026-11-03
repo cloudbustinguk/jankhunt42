@@ -88,6 +88,9 @@ def expand(data: Any, rel: str, size: Optional[int] = None) -> Tuple[List[Tuple[
         if len(raw) > MAX_MEMBER_BYTES:
             gaps.append("%s!/%s: too large, not read" % (rel, _SAFE_NAME.sub("_", name)))
             continue
+        if len(raw) != info.file_size:          # the directory and the data disagree: a truncated or forged entry
+            gaps.append("%s!/%s: size does not match the zip directory, not read" % (rel, _SAFE_NAME.sub("_", name)))
+            continue
         text = raw.decode("utf-8-sig", "replace")
         out.append(("%s!/%s" % (rel, _SAFE_NAME.sub("_", name)), text))
     return out, gaps

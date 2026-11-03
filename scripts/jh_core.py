@@ -881,7 +881,7 @@ _SECRET_ARG_RE = re.compile(
     r"[\"']Bearer ?[\"']\s*(?:&|\+|,))\s*(?=[\"'])")
 # a credential in a URL's query string (?sig=..., &key=..., token=...), bare up to the next parameter
 _QUERY_SECRET_RE = re.compile(r"(?i)(?<!alt=media)[?&](?:sig|signature|api_?key|apikey|access_?token|token|secret|"
-                              r"password)=(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\.)")
+                              r"password)=(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\.|[$<{%@])")
 # a header written out in one string ("Authorization: Bearer ..."): the credential after the scheme, bare
 _AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization:\s*(?:Bearer|Basic|Token)\s+(?=[\w.~+/=-]{8,}(?:[\s\"'`\\]|$))")
 # a literal Authorization value ({Authorization: "Bearer ..."}), whole; not "Bearer " + token, not a placeholder
