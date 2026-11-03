@@ -142,7 +142,7 @@ class DocumentedCommands(unittest.TestCase):
         ran, skipped = 0, []
         for cmd in commands(read(source)):
             reason = next((why for token, why in SKIP if re.search(r"(^|\s)%s(\s|$)" % re.escape(token), cmd)), None)
-            if not reason and len(cmd.split()) == 2 and cmd.split()[1] in ("map", "review", "triage"):
+            if not reason and len(cmd.split()) == 2 and cmd.split()[1] in ("map", "review"):
                 reason = MENTION
             if reason:
                 skipped.append((cmd, reason))

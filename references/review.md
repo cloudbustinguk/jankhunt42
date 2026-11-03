@@ -135,7 +135,7 @@ chain requirement failures are added to the same gate.
 
 Use `--brief` to produce a Markdown pack for the host agent or an external
 reviewer. It contains the scope, gate, score, receipts, contextual leads,
-supply-chain evidence, and a compact output contract. The intended sequence is:
+and a compact output contract. The intended sequence is:
 
 1. Run `review` and keep the JSON receipt set.
 2. Give the semantic reviewer the diff plus the brief.

@@ -51,7 +51,7 @@ and writes nothing.
 | `assessment.decision` | policy rules below | pass / review / insufficient-evidence / block |
 | `ownership` | `CODEOWNERS` (observed), `passport.owners` (declared) | observed / declared / unknown |
 | `governance` | profile, custodians, public-exposure and agent leads, AI agent tooling from the map, plain-language brief | standard / citizen |
-| `provenance` | SBOMs and attestations via `supply-chain` parsers; `sbom_minimum_elements` and `sbom_missing` for the most complete SBOM | observed / not-observed; met / partial / not-met / none |
+| `provenance` | SBOM and attestation files in the repository, parsed offline (no signature is verified); `sbom_minimum_elements` and `sbom_missing` for the most complete SBOM | observed / not-observed; met / partial / not-met / none |
 | `ai` | AI-use inventory: model services the software can reach (with evidence tier and who reaches them), agent tool servers and instruction files, human-oversight posture, sensitive data reachable alongside an AI service | assessed / not assessed; `observed` |
 | `alignment` | orientation crosswalk from every rule and evidence area to NIST AI RMF subcategories and AIGP domains ([`ai-governance.md`](ai-governance.md)) | orientation only |
 | `data` | data sources from the map, with classifications and who classified them | assessed / not assessed |
