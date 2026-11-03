@@ -187,10 +187,10 @@ class Structural(unittest.TestCase):
             self.assertEqual(len(found(text,'JH138')),1)
         for text in ['options.ListenAnyIP(5000, o=>o.UseHttps());',
                      'builder.WebHost.UseUrls("http://127.0.0.1:5000");',
-                     'builder.WebHost.UseUrls("http://*:5000"); app.UseHttpsRedirection();']:
+                     'builder.WebHost.UseUrls("http://*:5000", "https://*:5001"); app.UseHttpsRedirection();']:
             self.assertEqual(found(text,'JH138'),[],text)
         files={'a.csproj':'<Project/>','Program.cs':'app.UseHttpsRedirection();',
-               'appsettings.json':'{"urls":"http://0.0.0.0:5000"}'}
+               'appsettings.json':'{"urls":"http://0.0.0.0:5000;https://0.0.0.0:5001"}'}
         self.assertEqual(scan(files,{'JH138'}),[])
         self.assertEqual(found('{"urls":"http://0.0.0.0:5000"}','JH138','appsettings.Development.json'),[])
         self.assertEqual(found('{"ExternalClient":{"Url":"http://0.0.0.0:5000"}}','JH138','appsettings.json'),[])
@@ -204,14 +204,15 @@ class Structural(unittest.TestCase):
         for text in ['app.Run();', 'app.Run("https://0.0.0.0:8443");', 'app.Urls.Add("http://localhost:5000");',
                      'await Task.Run(() => Work());', 'options.Listen(IPAddress.Any, 5001, o=>o.UseHttps());',
                      'options.Listen(IPAddress.Loopback, 5000);',
-                     'app.UseHttpsRedirection(); app.Run("http://0.0.0.0:8080");']:
+                     'app.UseHttpsRedirection(); builder.WebHost.UseKestrel(k => k.ListenAnyIP(443, o => o.UseHttps())); '
+                     'app.Run("http://0.0.0.0:8080");']:
             self.assertEqual(found(text,'JH138'),[],text)
         # a web application under another name is a listener; a harness's own Run(url) is not
         self.assertEqual(len(found('var web = builder.Build(); web.Run("http://0.0.0.0:8080");', 'JH138')), 1)
         self.assertEqual(found('var testHarness = new Harness(); testHarness.Run("http://0.0.0.0:8080");', 'JH138'), [])
 
     def test_development_only_https_is_not_a_production_control(self):
-        listener='builder.WebHost.UseUrls("http://*:5000");'
+        listener='builder.WebHost.UseUrls("http://*:5000", "https://*:5001");'
         for guard in ['app.Environment.IsDevelopment()', 'enabled', 'false', '!app.Environment.IsDevelopment() && enabled']:
             code='if('+guard+') app.UseHttpsRedirection(); '+listener
             self.assertEqual(len(found(code,'JH138')),1,guard)
@@ -220,6 +221,28 @@ class Structural(unittest.TestCase):
             self.assertEqual(found(code,'JH138'),[],guard)
         code='if(app.Environment.IsDevelopment()) { Log.Info("dev"); } else { app.UseHttpsRedirection(); } '+listener
         self.assertEqual(found(code,'JH138'),[])
+
+    def test_redirection_needs_an_https_port(self):
+        # UseHttpsRedirection with no HTTPS port anywhere cannot redirect: the cleartext listener is reported, with why
+        for files in [{'Program.cs': 'app.UseHttpsRedirection(); app.Run("http://0.0.0.0:8080");'},
+                      {'a.csproj': '<Project/>', 'Program.cs': 'app.UseHttpsRedirection();',
+                       'appsettings.json': '{"urls":"http://0.0.0.0:5000"}',
+                       'appsettings.Development.json': '{"https_port": 5001}',
+                       'Properties/launchSettings.json': '{"profiles":{"x":{"applicationUrl":"https://localhost:5001"}}}'},
+                      {'Program.cs': 'app.UseHttpsRedirection(); var api = "https://api.example.net/v1"; '
+                                     'app.Run("http://0.0.0.0:8080");'}]:
+            hits = scan(files, {'JH138'})
+            self.assertEqual(len(hits), 1, files)
+            self.assertIn('cannot redirect', hits[0].message)
+        self.assertNotIn('cannot redirect', found('app.Run("http://0.0.0.0:8080");', 'JH138')[0].message)
+        # a port from configuration, the code or the environment is somewhere to redirect to
+        listener = {'Program.cs': 'app.UseHttpsRedirection(); app.Run("http://0.0.0.0:8080");'}
+        for extra in [{'appsettings.json': '{"https_port": 443}'},
+                      {'appsettings.Production.json': '{"Kestrel":{"Endpoints":{"Https":{"Url":"https://*:443"}}}}'},
+                      {'Startup.cs': 'services.AddHttpsRedirection(o => o.HttpsPort = 443);'},
+                      {'Dockerfile': 'FROM mcr.microsoft.com/dotnet/aspnet:8.0\nENV ASPNETCORE_HTTPS_PORTS=8443\n'},
+                      {'docker-compose.yml': 'services:\n  web:\n    environment:\n      - ASPNETCORE_URLS=http://+:80;https://+:443\n'}]:
+            self.assertEqual(scan(dict(listener, **extra), {'JH138'}), [], extra)
 
     def test_sql_interpolation_is_not_parameterization(self):
         for text in ['db.Users.FromSqlRaw($"SELECT * FROM users WHERE name=\'{name}\'");',
@@ -259,6 +282,70 @@ class Structural(unittest.TestCase):
         self.assertEqual(found(named.replace('req.UserEmail', 'Redact(req.UserEmail)'),'JH141'),[])
         self.assertEqual(found(named.replace('user_email = req.UserEmail', 'n = req.Count'),'JH141'),[])
         self.assertEqual(len(found('client.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", new { c.CustomerPhoneNumber });','JH141')),1)
+
+    def test_ai_payload_fields_as_they_stand_at_the_call(self):
+        def hits(body):
+            code = ('builder.Services.AddHttpClient<AssistantClient>();\n'
+                    'app.MapPost("/summary", async (AssistantClient ai, Request req) => {\n' + body +
+                    '\nreturn Results.Ok(); }).RequireAuthorization();')
+            return len(found(code, 'JH141'))
+        call = ' await ai.CompleteChatAsync(payload);'
+        unsafe = ['var payload = new ChatPayload(); payload.Email = req.Email; payload.Prompt = req.Text;' + call,
+                  'var payload = new ChatPayload(); payload.Email = null; payload.Email = req.Email;' + call,
+                  'var payload = new ChatPayload(); payload.Email = req.Email; payload.Email = null; '
+                  'payload.Phone = req.Phone;' + call,
+                  'var payload = new ChatPayload(); payload.Prompt = req.Email;' + call,
+                  'var payload = new ChatPayload { Email = req.Email }; if (share) payload.Email = null;' + call,
+                  'var payload = new ChatPayload { Email = req.Email }; if (share) { payload.Email = null; } '
+                  'else { payload.Email = Redact(req.Email); }' + call,
+                  'var payload = new ChatPayload(); payload.Email = Normalize(req.Email);' + call,
+                  'ChatPayload payload = new(); payload.Email = req.Email;' + call,
+                  'var payload = new ChatPayload(); if (verbose) payload = new ChatPayload { Email = req.Email };' + call,
+                  'var payload = new ChatRequest(); payload.Messages.Add(new Message { Content = req.Email });' + call,
+                  'var payload = new ChatRequest(); payload.User.Email = req.Email;' + call,
+                  'var payload = $"Summarise the account for {req.Email}";' + call,
+                  'var prompt = "Write to " + req.UserEmail; await ai.CompleteChatAsync(new Chat { Text = prompt });']
+        safe = ['var payload = new ChatPayload(); payload.Prompt = req.Text;' + call,
+                'var payload = new ChatPayload { Email = req.Email, Prompt = req.Text }; payload.Email = null;' + call,
+                'var payload = new ChatPayload(); payload.Email = Redact(req.Email); payload.Prompt = req.Text;' + call,
+                'var payload = new ChatPayload { Email = req.Email }; payload = new ChatPayload { Prompt = req.Text };'
+                + call,
+                'var payload = new ChatPayload(); payload.Prompt = req.Text;' + call + ' payload.Email = req.Email;',
+                'var payload = new ChatPayload(); payload.Email = req.Email; payload.Email = null; payload.Phone = "";'
+                + call,
+                'var payload = new ChatPayload { Email = req.Email }; payload.Email = string.Empty;' + call,
+                'var payload = await store.Load(req.Id);' + call]
+        for body in unsafe:
+            self.assertEqual(hits(body), 1, body)
+        for body in safe:
+            self.assertEqual(hits(body), 0, body)
+        # a same-named local in another handler is a different variable
+        two = ('builder.Services.AddHttpClient<AssistantClient>();\n'
+               'app.MapPost("/a", async (AssistantClient ai, Request req) => { var payload = new { Email = req.Email };'
+               ' await ai.CompleteChatAsync(payload); });\n'
+               'app.MapPost("/b", async (AssistantClient ai, Request req) => { var payload = new ChatPayload(); '
+               'payload.Prompt = req.Text; await ai.CompleteChatAsync(payload); });')
+        self.assertEqual([f.line for f in found(two, 'JH141')], [2])
+        # nor is a parameter of that name in a handler of its own
+        param = ('builder.Services.AddHttpClient<AssistantClient>();\n'
+                 'app.MapPost("/a", async (Request req) => { var payload = new { Email = req.Email }; '
+                 'await queue.Save(payload); });\n'
+                 'app.MapPost("/b", async (AssistantClient ai, ChatPayload payload) => '
+                 '{ await ai.CompleteChatAsync(payload); });')
+        self.assertEqual(found(param, 'JH141'), [])
+
+
+    def test_ai_sdk_clients_more_fields_and_locals_read_by_the_payload(self):
+        sdk = ('app.MapPost("/x", async (ChatClient chat, Req req) => {{ {body} '
+               'await chat.GetCompletionsAsync(new[] {{ new UserChatMessage(prompt) }}); }});')
+        for body in ['var prompt = $"Profile {req.NationalId}";', 'var prompt = $"Ship to {req.Address}";',
+                     'var prompt = "Write to " + req.Email;',
+                     'var sb = new StringBuilder(); sb.AppendLine($"Email: {req.Email}"); var prompt = sb.ToString();']:
+            self.assertEqual(len(found(sdk.format(body=body), 'JH141')), 1, body)
+        for body in ['var prompt = $"Summarise {req.Text}";', 'var prompt = $"Base {client.BaseAddress}";',
+                     'var sb = new StringBuilder(); sb.AppendLine(req.Text); var prompt = sb.ToString();']:
+            self.assertEqual(found(sdk.format(body=body), 'JH141'), [], body)
+        self.assertEqual(len(found('options.Listen(System.Net.IPAddress.Any, 5003);', 'JH138')), 1)
 
     def test_xml_versions_exec_and_comment_decoys(self):
         xml='<Project><ItemGroup><PackageReference Include="Dapper" Version="*"/></ItemGroup><Target Name="x"><Exec Command="curl https://config.example.invalid/x -o x"/></Target></Project>'

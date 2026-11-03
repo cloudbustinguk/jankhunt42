@@ -17,7 +17,23 @@ semantic versioning.
   - a literal password passed to `NetworkCredential` or Java's
     `PasswordAuthentication`;
   - a literal token sent as a request header (`AuthenticationHeaderValue("Bearer", "...")`,
-    or a header named for a secret, token or API key).
+    or a header named for a secret, token or API key);
+  - a literal `Authorization` header value (`{ Authorization: "Bearer ..." }`,
+    `.Add("Authorization", "Basic ...")`), or the whole header in one string
+    (`"Authorization: Bearer ..."`). A bearer token must be at least 12
+    characters with two digits, so a test double's `session-1` is not reported.
+    A `Basic` value must decode to `user:password`. An anon JWT sent this way is
+    public by design and is not reported;
+  - keys named for what they unlock or sign (`AdminKey`, `masterKey`,
+    `JwtSigningKey`, `WebhookHmacKey`, `LICENSE_KEY`, `ADMIN_KEY`). A bare
+    `...Key` (a cache, partition or storage key) is still not a secret;
+  - an Azure Storage `AccountKey=` or Service Bus/Event Hubs `SharedAccessKey=`
+    in a connection string. The storage emulator's published key is not
+    reported;
+  - a password in a DSN: Go's `user:pass@tcp(host:3306)/db`, and database URLs
+    (`postgres://user:pass@host`, also MySQL, MongoDB, Redis, AMQP and SQL
+    Server). A DSN for a database on this machine or in a local container is
+    reported as minor, and not at all in a guide or a `.env.example`.
 
   The match is case-sensitive on the credential word, so names such as
   `bypassMode`, `tokenCount` and `PasswordResetPath` are not reported. As
@@ -38,16 +54,55 @@ semantic versioning.
 - JH138 (plain-HTTP listener) reads `Run(url)` only on the web application
   (built with `Build()` or `WebApplication.Create`, or named `app`), not on
   other objects that have a `Run` method.
+- JH138 no longer lets `UseHttpsRedirection()` hide a cleartext listener when
+  nothing in the project gives the redirect an HTTPS port. Without one, the
+  middleware logs a warning and serves the request over HTTP. A port counts
+  when the project sets an HTTPS URL or endpoint, `UseHttps()`, `HttpsPort`,
+  an `https_port` setting, or `ASPNETCORE_HTTPS_PORTS`/an HTTPS
+  `ASPNETCORE_URLS` in a Dockerfile, compose file or manifest. Development
+  settings and `launchSettings.json` do not count. The finding says why. Found
+  by Codex.
+- JH141 (personal data sent to an AI API) follows a payload's fields from where
+  it is built to the AI call, in the same handler:
+  - `payload.Email = req.Email` after construction is now found;
+  - a field cleared before the call (`= null`, `""`, `string.Empty`, or a
+    redactor) is no longer reported, unless it is set again;
+  - items added to a payload's collection (`payload.Messages.Add(...)`) and a
+    prompt string built from personal fields are read;
+  - a same-named local or parameter in another handler is no longer mistaken
+    for the argument;
+  - a local the payload reads is followed too, two levels deep (a
+    `StringBuilder` filled with personal fields, then `prompt = sb.ToString()`);
+  - an AI SDK client injected by type (`ChatClient`, `OpenAIClient`,
+    `AzureOpenAIClient`, `AnthropicClient`, `IChatClient`) is recognised, not
+    only typed `HttpClient`s;
+  - national ID, passport number and postal address fields count as personal
+    data.
+
+  A field cleared under a condition or in a loop still counts as personal data:
+  the check cannot prove every path clears it. An unknown helper
+  (`Normalize(req.Email)`) is not taken as redaction, and a prompt built inside
+  a helper method is not followed. Codex wrote the 16 cases this is tested
+  against.
+- JH138 reads `Listen(System.Net.IPAddress.Any, ...)` written with its
+  namespace.
 - NuGet `--fetch` accepts a signed package whose signature is listed anywhere
   in the zip's central directory, as NuGet does. The signature must still be
   stored last. The hash matches NuGet's own on Codex's reference archive.
 
 Measured on a held-out corpus of 40 files (20 planted credentials, 20
-lookalikes): 4.4.2 finds 7 credentials, and 4.4.3 finds 19 with no false
-positives. The header shapes were added after that corpus showed them missing.
-The .NET held-out corpus's open miss (a password in a C# local variable) is
-now found. On 252 real repositories, 4.4.3 adds 8 findings (3 hardcoded keys and webhook
-secrets, plus 5 test fixtures reported as minor) and loses none.
+lookalikes): 4.4.2 finds 7 credentials, and 4.4.3 finds all 20 with no false
+positives. On 41 labelled C# snippets that hold a secret, 4.4.2 finds 16 and
+4.4.3 finds 36. The header, key-name and DSN shapes were added after those
+corpora showed them missing, so these figures flatter the rule. On a .NET
+corpus of 30 apps (8 sending personal data to an AI API, 7 public cleartext
+listeners, 15 lookalikes), 4.4.2 finds 0 and 6, and 4.4.3 finds 7 and 7 with
+no false positives; the one miss builds its prompt in a helper method. The JH141
+and JH138 changes were also tuned on that corpus. On 252 real repositories,
+4.4.3 adds 35 findings and loses none to a rule change: 4 hardcoded keys,
+webhook secrets and an encryption key, plus 31 test fixtures and local
+development databases reported as minor. 3 minor findings move off files that
+already have 5 findings for the same rule.
 
 ## [4.4.2] — 2026-11-02
 

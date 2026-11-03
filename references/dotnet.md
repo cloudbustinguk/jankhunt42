@@ -10,10 +10,10 @@ controls apply as documented in [rulesets](rulesets.md).
 | JH135 | Application data returned or changed without visible authorization | Endpoint/group `RequireAuthorization`, controller/action `[Authorize]`, fallback authentication policy, constant health/metrics responses |
 | JH136 | Any origin combined with credentials | Anonymous public CORS; exact trusted origins; separate policies |
 | JH137 | Developer errors outside a development guard | Calls inside `if (Environment.IsDevelopment())`, including single statements |
-| JH138 | Public cleartext Kestrel listener without visible redirection | `UseUrls`, `app.Run`/`RunAsync` URLs, `Urls.Add`, `ListenAnyIP` and `Listen(IPAddress.Any)` are read. Localhost, `UseHttps`, HTTPS redirection, development/launch settings |
+| JH138 | Public cleartext Kestrel listener without visible redirection | `UseUrls`, `app.Run`/`RunAsync` URLs, `Urls.Add`, `ListenAnyIP` and `Listen(IPAddress.Any)` are read. Localhost, `UseHttps`, HTTPS redirection with an HTTPS port configured (an HTTPS URL or endpoint, `HttpsPort`, `https_port`, `ASPNETCORE_HTTPS_PORTS`), development/launch settings |
 | JH139 | Interpolated SQL reaching a string database API | Parameterized EF `FromSql`/`FromSqlInterpolated`, Dapper parameters, unused SQL examples |
 | JH140 | Type metadata accepted during deserialization | `TypeNameHandling.None`, serialization-only settings, an explicit binder requiring separate review |
-| JH141 | Personal fields passed to an identified AI client without visible redaction | Redacted fields, ordinary non-AI clients, string examples |
+| JH141 | Personal fields passed to an identified AI client without visible redaction, including fields assigned to a payload after it is built | Redacted fields, fields cleared before the call (`null`, `""`, a redactor; not under a condition), same-named locals in other handlers, ordinary non-AI clients, string examples |
 | JH142 | Floating PackageReference/PackageVersion | Fixed versions; XML comments |
 | JH143 | Network download in an MSBuild Exec command | Local commands; XML comments |
 

@@ -50,10 +50,19 @@ _SQL_CALL_PATTERN = (r"(?i)(?<![\"'\w])(?:execute|executemany|query|exec|raw)\s*
                      r"(?:f['\"]|\$\{|(?:[^)\n\"'+,]|\"[^\"\n]*\"|'[^'\n]*')*\+)")      # in the first argument
 
 # JH101: a quoted literal that looks like a credential: no spaces, a letter and a digit, no test or placeholder word
-_CRED_VALUE = (r"([\"'])(?=[^\s\"']*\d)(?=[^\s\"']*[A-Za-z])"
-               r"(?![^\s\"']*(?i:test|(?<![0-9a-f])e2e(?![0-9a-f])|mock|stub|fake|dummy|demo|never|secret|passw|example|"
-               r"sample|changeme|redact))"
-               r"[^\s\"']{8,}\1")
+# _CRED_DENY marks a pattern as generic (an assigned or passed value): see the scan loop
+_CRED_DENY = (r"(?![^\s\"']*(?i:test|(?<![0-9a-f])e2e(?![0-9a-f])|mock|stub|fake|dummy|demo|never|secret|passw|example|"
+              r"sample|changeme|redact))")
+_CRED_SHAPE = r"(?=[^\s\"']*\d)(?=[^\s\"']*[A-Za-z])" + _CRED_DENY
+_CRED_VALUE = r"([\"'])" + _CRED_SHAPE + r"[^\s\"']{8,}\1"
+# a bearer token: test doubles send short readable ones (session-1, tok_not_real_x), real ones are long and random
+_TOKEN_SHAPE = r"(?=(?:[^\s\"'\d]*\d){2})(?=[^\s\"']*[A-Za-z])" + _CRED_DENY
+# a name that ends in a credential word, camelCase or PascalCase; the suffix is case-sensitive, so bypass, tokenCount
+# and PasswordResetPath are not names of secrets. A bare ...Key is a cache, partition or storage key; a key named
+# for what it unlocks or signs (AdminKey, masterKey, JwtSigningKey, webhookHmacKey, LicenseKey) is a secret.
+_CAMEL_SECRET_NAME = (r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|"
+                      r"SecretKey|(?:[Aa]dmin|[Mm]aster|[Pp]rivate|[Ss]igning|[Ee]ncryption|[Hh]mac|HMAC|[Ww]ebhook|"
+                      r"[Ss]ubscription|[Ll]icen[cs]e|[Jj]wt|JWT)Key)")
 
 RULES: List[Rule] = [
     # ------------------------------------------------------------------ security
@@ -96,8 +105,11 @@ RULES: List[Rule] = [
           # a camelCase or PascalCase name ending in a credential word (dbPassword, SmtpPwd, ClientSecret, apiToken),
           # optionally typed (apiToken: string) or a C# property (AdminPassword { get; } =), assigned a credential-like
           # literal; the suffix is case-sensitive, so bypass, tokenCount and PasswordResetPath are not names of secrets
-          r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|SecretKey)"
+          _CAMEL_SECRET_NAME +
           r"(?:\s*\{\s*get;[^}\n]*\})?\s*(?::\s*[A-Za-z_][\w<>?\[\]]*\s*)?:?[:=]\s*" + _CRED_VALUE,
+          # the same keys in snake or kebab case (ADMIN_KEY, jwt_signing_key, "webhook-hmac-key")
+          r"(?i)\b(?:[a-z0-9]+[_-])*(?:admin|master|private|signing|encryption|hmac|webhook|subscription|licen[cs]e|jwt)"
+          r"[_-]?key\b[\"']?\s*[:=]\s*" + _CRED_VALUE,
           # a credential object constructed with a literal password (C# NetworkCredential, Java PasswordAuthentication)
           r"\b(?:NetworkCredential|PasswordAuthentication)\s*\(\s*[\"'][^\"'\n]*[\"']\s*,\s*" + _CRED_VALUE,
           # a literal token sent as a request header: AuthenticationHeaderValue("Bearer", "..."), or a header named for
@@ -105,6 +117,20 @@ RULES: List[Rule] = [
           r"\bAuthenticationHeaderValue\s*\(\s*[\"'](?:Bearer|Basic)[\"']\s*,\s*" + _CRED_VALUE,
           r"(?i)\.(?:Add|TryAddWithoutValidation|set|setHeader|setRequestProperty|header|append)\s*\(\s*"
           r"[\"'][\w-]*(?:secret|token|api-?key)[\w-]*[\"']\s*,\s*" + _CRED_VALUE,
+          # a literal Authorization header: {Authorization: "Bearer ..."}, headers["Authorization"] = "Bearer ...",
+          # .Add("Authorization", "Basic ..."), and the header written out in one string ("Authorization: Bearer ...")
+          r"(?i)\bAuthorization[\"']?\s*\]?\s*[:=,]\s*([\"'])(?:(?:Bearer|Token)\s+" + _TOKEN_SHAPE +
+          r"[\w.~+/=-]{12,}|Basic\s+" + _CRED_DENY + r"[A-Za-z0-9+/]{12,}={0,2})\1",
+          r"(?i)\bAuthorization:\s*(?:(?:Bearer|Token)\s+" + _TOKEN_SHAPE + r"[\w.~+/=-]{12,}|Basic\s+" + _CRED_DENY +
+          r"[A-Za-z0-9+/]{12,}={0,2})(?![^\s\"'\\])",
+          # an Azure Storage account key or a Service Bus / Event Hubs shared access key in a connection string; the
+          # storage emulator's published development key is not a secret
+          r"\b(?:AccountKey|SharedAccessKey)\s*=\s*(?!Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/"
+          r"KBHBeksoGMGw==)[A-Za-z0-9+/]{30,}={0,2}",
+          # a password inside a DSN: Go's user:pass@tcp(host:3306)/db, or a database URL scheme://user:pass@host
+          r"[\"'`][\w.%+-]{1,64}:" + _CRED_SHAPE + r"[^\s\"'`]{6,}?@(?:tcp|unix)\(",
+          r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver)://[^:@/\s\"']+:"
+          + _CRED_SHAPE + r"[^@/\s\"']{6,}@",
       ),
       ignore=r"(?i)(example|placeholder|changeme|change_me|your[_-]|xxx+|dummy|fake|sample|redacted|synthetic|<[^>]+>|\$\{|%\(|process\.env|os\.environ|getenv|env\[|secret_key_base|notasecret)"),
     R("JH102", "Dynamic code execution", "major", "security",
@@ -1291,6 +1317,21 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 message = ("A database password in a connection string for a database on this machine "
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % host.group(1)[:40])
+                        if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
+                            host = _DSN_HOST_RE.match(line, m.end())
+                            if m.group(0).endswith("unix(") or (host and _local_db_host(host.group(1))):
+                                if sf.lang == "markdown" or _EXAMPLE_FILE_RE.search(sf.rel):
+                                    continue    # a local development database in a guide or a .env.example
+                                severity, confidence = "minor", "low"
+                                message = ("A database password in a DSN for a database on this machine or in a local "
+                                           "container: usually a development default. Keep it to local work, and "
+                                           "make sure it is used nowhere else.")
+                        if "Authorization" in pat.pattern and re.search(r"(?:Bearer|Basic|Token)\s+eyJ", m.group(0)):
+                            continue    # a JWT: the JWT pattern reports it when it grants a privileged role
+                        basic = re.search(r"(?i)Basic\s+([A-Za-z0-9+/]+=*)", m.group(0)) if "Authorization" in pat.pattern \
+                            else None
+                        if basic and not _basic_credentials(basic.group(1)):
+                            continue    # Basic credentials are base64 user:password; anything else is not them
                         if pat.pattern.startswith(r"\beyJ"):
                             while m and _jwt_role(m.group(0)) not in _PRIVILEGED_JWT_ROLES:
                                 m = pat.search(line, m.end())   # an anon or user token: public by design
@@ -1299,7 +1340,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             message = ("A Supabase service-role key is in the code. It bypasses row-level security "
                                        "and gives full access to the database; in front-end code every visitor has it.")
                         # an assigned or passed value (generic) rather than a provider-shaped token or a key
-                        generic = "[:=]" in pat.pattern or pat.pattern.endswith(_CRED_VALUE)
+                        generic = "[:=]" in pat.pattern or _CRED_DENY in pat.pattern
                         provider = not generic and "PRIVATE KEY" not in pat.pattern
                         if provider and _inside_base64_blob(line, m.start(), m.end()):
                             continue    # a provider-shaped run by chance inside embedded binary (a font, an image)
@@ -1435,6 +1476,10 @@ def _npm_scripts(sf: SourceFile) -> List[Tuple[int, str]]:
 
 
 _CONN_HOST_RE = re.compile(r"(?i)\b(?:server|host|data\s+source)\s*=\s*(?:tcp:)?([^;\"'\s,]+)")
+# a file of example settings to copy: .env.example, config.sample.yml, settings.json.dist, app.template.env
+_EXAMPLE_FILE_RE = re.compile(r"(?i)(?:^|[/.])(?:example|sample|template|dist)(?:\.[\w-]+)?$")
+# the host after a DSN's credentials: user:pass@tcp(HOST:3306) or scheme://user:pass@HOST:5432/db
+_DSN_HOST_RE = re.compile(r"([^\s()/?\"'`,;]+)")
 _LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "(local)", ".", "(localdb)",
                    "host.docker.internal"}
 
@@ -1454,6 +1499,18 @@ def _local_db_host(host: str) -> bool:
     if h in _LOCAL_DB_HOSTS or h.startswith("(localdb)") or _loopback_address(h):
         return True
     return "." not in h and ":" not in h and not h.replace("_", "").replace("-", "").isdigit()
+
+
+def _basic_credentials(value: str) -> bool:
+    """Whether a Basic header value decodes to user:password with a password of a credential's length."""
+    import base64
+    import binascii
+    try:
+        text = base64.b64decode(value + "=" * (-len(value) % 4), validate=True).decode("utf-8")
+    except (binascii.Error, ValueError):
+        return False
+    user, sep, password = text.partition(":")
+    return bool(sep) and len(password) >= 6 and password.isprintable()
 
 
 def _jwt_role(token: str) -> Optional[str]:

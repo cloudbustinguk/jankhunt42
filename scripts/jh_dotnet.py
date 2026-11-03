@@ -195,7 +195,13 @@ def context(sources: Sequence[SourceFile]) -> Dict[str, Dict[str, Any]]:
         candidates = [d for d in dirs if not d or parent == d or parent.startswith(d + '/')]
         group = max(candidates, key=len) if candidates else parent
         item = groups.setdefault(group, {'fallback': False, 'https': False, 'controllers': False, 'ai_types': set(), 'fallback_bad': False})
+        out[sf.rel] = item
         code, raw = _views(sf)
+        dev = '.development.' in sf.rel.lower() or sf.rel.lower().endswith('launchsettings.json')
+        if not dev and sf.lang != 'csharp':
+            # appsettings: an https_port setting, or an HTTPS URL among the server's own urls or Kestrel endpoints
+            item['https_port'] = item.get('https_port') or bool(re.search(
+                r'"(?:https_port|HttpsPort)"\s*:|"(?:urls|url)"\s*:\s*"[^"]*https://', sf.text, re.I))
         if sf.lang == 'csharp':
             branches = _branches(code, raw)
             for m in re.finditer(r'\b(?:FallbackPolicy\s*=|SetFallbackPolicy\s*\()', code):
@@ -207,14 +213,22 @@ def context(sources: Sequence[SourceFile]) -> Dict[str, Dict[str, Any]]:
                     item['fallback_bad'] = True
             item['https'] |= any(_unconditional_in_production(m.start(), branches)
                                  for m in re.finditer(r'\.UseHttpsRedirection\s*\(', code))
+            # somewhere for the redirect to go: a TLS listener, an HTTPS URL given to the server, or a configured port
+            item['https_port'] = item.get('https_port') or bool(
+                re.search(r'\.UseHttps\s*\(|\bHttpsPort\s*=', code) or any(
+                    re.search(r'https://', raw[m.end():_end(code, m.end() - 1)], re.I)
+                    for m in re.finditer(r'(?:\.UseUrls|\.Run(?:Async)?|\.Urls\s*\.\s*Add)\s*\(', code)))
             item['controllers'] |= any(_unconditional_in_production(m.start(), branches)
                                        for m in re.finditer(r'\.MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(', code))
             for m in re.finditer(r'AddHttpClient\s*<\s*(\w+)\s*>\s*\(', code):
                 end = _end(code, code.find('(', m.start()))
                 if _AI.search(raw[m.start():end]):
                     item['ai_types'].add(m[1])
-        out[sf.rel] = item
+    # the port can also come from the environment: a Dockerfile, compose file or manifest anywhere in the repository
+    env = any(re.search(r'\bASPNETCORE_HTTPS_PORTS?\b|\bASPNETCORE_URLS\b\W{1,4}[^\n]*https://', sf.text)
+              for sf in sources if not sf.rel.lower().endswith('launchsettings.json') and '.development.' not in sf.rel.lower())
     for item in groups.values():
+        item['https_port'] = item.get('https_port') or env
         item['fallback'] = item['fallback'] and not item['fallback_bad']
     return out
 
@@ -378,9 +392,18 @@ def _development(sf: SourceFile, rule: Rule) -> List[Finding]:
             if not any(a <= m.start() < b for a,b in guarded)]
 
 
+_NO_HTTPS_PORT = ("An HTTP listener accepts nonlocal traffic. UseHttpsRedirection is called, but nothing in the project "
+                  "gives it an HTTPS port (no HTTPS URL or endpoint, https_port setting or ASPNETCORE_HTTPS_PORTS), so it "
+                  "cannot redirect and requests are served in cleartext; confirm TLS termination.")
+
+
 def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
-    if ctx.get('https') or sf.rel.lower().endswith('launchsettings.json') or '.development.' in sf.rel.lower():
+    # redirection is a control only with somewhere to redirect to; without an HTTPS port the middleware logs a warning
+    # and passes the request through
+    if (ctx.get('https') and ctx.get('https_port')) or sf.rel.lower().endswith('launchsettings.json') or \
+            '.development.' in sf.rel.lower():
         return []
+    message = _NO_HTTPS_PORT if ctx.get('https') else None
     code, raw = _views(sf)
     if sf.lang == 'csharp':
         out = []
@@ -388,7 +411,7 @@ def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
         # harness, a job runner) opens no listener
         apps = set(re.findall(r'\b(\w+)\s*=\s*(?:\w+\s*\.\s*Build\s*\(\s*\)|WebApplication\s*\.\s*Create\s*\()', code))
         # app.Run/RunAsync/Urls.Add take a URL like UseUrls; Listen(IPAddress.Any...) is ListenAnyIP spelled out.
-        for m in re.finditer(r'\.ListenAnyIP\s*\(|\.Listen\s*\(\s*IPAddress\s*\.\s*(?:Any|IPv6Any)\b|'
+        for m in re.finditer(r'\.ListenAnyIP\s*\(|\.Listen\s*\(\s*(?:System\s*\.\s*Net\s*\.\s*)?IPAddress\s*\.\s*(?:Any|IPv6Any)\b|'
                              r'\.UseUrls\s*\(|\b(\w+)\s*\.\s*Run(?:Async)?\s*\(|\.Urls\s*\.\s*Add\s*\(', code):
             if m[1] and m[1] not in apps and m[1] != 'app':
                 continue
@@ -399,7 +422,7 @@ def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
             else:
                 bad = bool(re.search(r'http://(?:0\.0\.0\.0|\*|\+|\[::\])(?=[:/"\s])', text, re.I))
             if bad:
-                out.append(_finding(sf, rule, m.start()))
+                out.append(_finding(sf, rule, m.start(), message=message))
         return out
     if sf.lang == 'json' and os.path.basename(sf.rel).lower().startswith('appsettings'):
         try:
@@ -414,7 +437,8 @@ def _http(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
                 pending.extend((v,path+(str(k).lower(),)) for k,v in item.items())
             elif isinstance(item, str) and (path == ('urls',) or (path[:2] == ('kestrel','endpoints') and path[-1:] == ('url',))):
                 values.add(item)
-        return [_finding(sf, rule, m.start()) for m in re.finditer(r'"(?:urls|url)"\s*:\s*"([^"\\]*)"', sf.text, re.I)
+        return [_finding(sf, rule, m.start(), message=message)
+                for m in re.finditer(r'"(?:urls|url)"\s*:\s*"([^"\\]*)"', sf.text, re.I)
                 if m[1] in values and re.search(r'http://(?:0\.0\.0\.0|\*|\+|\[::\])(?=[:/;]|$)',m[1],re.I)]
     return []
 
@@ -470,11 +494,120 @@ def _types(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
+_KEYWORDS = {'true', 'false', 'null', 'default', 'this', 'base', 'await', 'new', 'var', 'out', 'ref', 'in', 'is', 'as'}
+_CONDITIONAL = re.compile(r'\b(?:if|else|while|for|foreach|do|switch|case|catch|finally)\b')
+_CLEARED = re.compile(r'(?:null!?|""|string\.Empty|String\.Empty|default(?:\s*\([^()]*\))?)\s*;?')
+
+
+def _enclosing(code: str, pos: int) -> int:
+    """Where the innermost { block holding pos opens, or -1."""
+    depth = 0
+    for i in range(pos - 1, max(-1, pos - 20000), -1):
+        c = code[i]
+        if c == '}':
+            depth += 1
+        elif c == '{':
+            if not depth:
+                return i
+            depth -= 1
+    return -1
+
+
+def _local_personal(code: str, raw: str, name: str, call: int, unredacted: Any, depth: int = 0) -> bool:
+    """Whether the local `name` can hold personal data where it is passed at `call`: the latest declaration of it whose
+    block holds the call (so a same-named local in another handler is not it), its initializer, then each assignment
+    up to the call. payload.Email = req.Email taints Email and payload.Email = null (or "", or a redactor) clears it;
+    payload = new ... starts again; payload.Messages.Add(...) and payload.A.B = ... can only add. An assignment under
+    a condition or loop can add personal data but never clear it: the small tracker cannot prove every path clears.
+    Another local the value reads (prompt = sb.ToString()) is followed the same way, two levels deep. Anything it
+    cannot read (a helper's result, a value from elsewhere) is not reported."""
+    def taint(a: int, b: int) -> bool:
+        if unredacted(code[a:b]):
+            return True
+        if re.search(r'(?:\$@?|@\$)"', raw[a:b]) and \
+                any(unredacted(e) for e in re.findall(r'(?<!\{)\{(?!\{)([^}]+)\}', raw[a:b])):
+            return True
+        return follow(a, b)
+
+    def follow(a: int, b: int) -> bool:
+        return depth < 2 and any(
+            other != name and other not in _KEYWORDS and _local_personal(code, raw, other, a, unredacted, depth + 1)
+            for other in dict.fromkeys(re.findall(r'(?<![.\w])([A-Za-z_]\w*)(?=\s*(?:\.\s*ToString\s*\(\s*\))?\s*(?:[,;)}\]+]|$))',
+                                                  code[a:b])))
+
+    def built(a: int, b: int) -> Dict[str, bool]:
+        """The fields an expression gives the local: an object or collection initializer member by member, constructor
+        arguments together, a string expression whole; anything else nothing."""
+        lead = re.match(r'\s*new\b\s*(?:[\w.]+\s*(?:<[^<>;]*>)?\s*(?:\[\s*\])?)?\s*', code[a:b])
+        if not lead:
+            # a string expression whole; any other value only through a local it reads (prompt = sb.ToString())
+            return {'*': taint(a, b) if re.match(r'\s*(?:\$@?|@\$?)?"', raw[a:b]) else follow(a, b)}
+        fields: Dict[str, bool] = {}
+        p = a + lead.end()
+        if code[p:p + 1] == '(':
+            q = _end(code, p)
+            fields['()'] = taint(p, q)
+            p = q
+            while p < b and code[p].isspace():
+                p += 1
+        if code[p:p + 1] == '{':
+            q = _end(code, p, '{', '}')
+            for i, (x, y) in enumerate(_args(code, p + 1, q - 1)):
+                item = code[x:y]
+                member = re.match(r'\s*(\w+)\s*=(?![=>])', item) or re.search(r'(?<![\w(])(?:\w+\.)+(\w+)\s*$', item)
+                fields[member[1] if member else '#%d' % i] = taint(x, y)
+        return fields
+
+    region = code[max(0, call - 8000):call]
+    base = max(0, call - 8000)
+    decl, block = None, -1
+    for d in re.finditer(r'(?<![.\w])(?:var|[A-Za-z_][\w.]*(?:\s*<[^<>;()=]*>)?\??)\s+' + re.escape(name) +
+                         r'\s*=(?![=>])', region):
+        if d[0].split()[0] in ('return', 'await', 'else', 'case', 'new', 'throw', 'yield'):
+            continue
+        b = _enclosing(code, base + d.start())
+        if b < 0 or _end(code, b, '{', '}') > call:
+            decl, block = d, b
+    if not decl:
+        return False
+    rhs = base + decl.end()
+    stop = _statement(code, rhs)
+    state = built(rhs, stop)
+    ref = r'(?<![.\w])' + re.escape(name)
+    for a in re.finditer(ref + r'\s*(?:(\.\s*\w+\s*)((?:\.\s*\w+\s*)*)=(?![=>])|=(?![=>])|'
+                         r'(?:\.\s*\w+\s*)*\.\s*(?:Add|AddRange|Insert|Append|AppendLine)\s*\()', code[stop:call]):
+        at = stop + a.start()
+        edge = max(code.rfind(';', 0, at), code.rfind('{', 0, at), code.rfind('}', 0, at))
+        conditional = _enclosing(code, at) != block or bool(_CONDITIONAL.search(code, edge + 1, at))
+        value = stop + a.end()
+        finish = _end(code, value - 1) if a[0].endswith('(') else _statement(code, value)
+        if a[0].endswith('('):                                   # payload.Messages.Add(...)
+            state['+%d' % at] = taint(value, finish)
+        elif a[1] and not a[2]:                                  # payload.Email = ...
+            member = a[1].strip(' .\t\n')
+            cleared = bool(_CLEARED.fullmatch(raw[value:finish].strip())) or not taint(value, finish)
+            state[member] = (state.get(member, False) or not cleared) if conditional else not cleared
+        elif a[1]:                                               # payload.User.Email = ...: part of a field
+            member = a[1].strip(' .\t\n')
+            state[member] = state.get(member, False) or taint(value, finish)
+        else:                                                    # payload = new ...
+            fresh = built(value, finish)
+            if conditional:
+                for key, hit in fresh.items():
+                    state[key] = state.get(key, False) or hit
+            else:
+                state = fresh
+    return any(state.values())
+
+
 def _ai(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
     code, raw = _views(sf)
     receivers = set()
     for typ in ctx.get('ai_types', set()):
         receivers.update(re.findall(r'\b' + re.escape(typ) + r'\s+(\w+)\b', code))
+    # an AI SDK's client injected or held by type: OpenAI, Azure OpenAI, Anthropic, Microsoft.Extensions.AI
+    receivers.update(re.findall(r'\b(?:I?ChatClient|OpenAIClient|AzureOpenAIClient|AnthropicClient|'
+                                r'ChatCompletionsClient)(?:<[^<>]*>)?\??\s+(\w+)\s*[,)=;]', code))
     out = []
     for m in re.finditer(r'\b(\w+)\.(\w+)\s*\(', code):
         start = code.find('(', m.start())
@@ -483,25 +616,21 @@ def _ai(sf: SourceFile, rule: Rule, ctx: Dict[str, Any]) -> List[Finding]:
         known = m[1] in receivers or m[2] in {'CompleteChatAsync', 'GetChatCompletionsAsync', 'GetResponseAsync'} or \
                 (m[2] in {'PostAsJsonAsync','PostAsync','SendAsync'} and _AI.search(args))
         # UserEmail, CustomerPhone and HomePhoneNumber are the same fields under a prefix or suffix
-        field = r'\b\w+\.\w*(?:Email|FullName|Phone|SSN|SocialSecurityNumber|DateOfBirth)(?:Address|Number)?\b'
+        field = (r'\b\w+\.\w*(?:Email|FullName|Phone|SSN|SocialSecurityNumber|DateOfBirth|NationalId|'
+                 r'NationalInsuranceNumber|PassportNumber)(?:Address|Number)?\b|'
+                 r'\b\w+\.(?:Home|Postal|Street|Mailing|Billing|Shipping)?Address\b')
         def unredacted(fragment: str) -> bool:
             spans = []
             for red in re.finditer(r'\b(?:Redact|Anonymi[sz]e|Saniti[sz]e(?:Pii|PersonalData)|RemovePii)\w*\s*\(', fragment, re.I):
                 spans.append((red.start(), _end(fragment, fragment.find('(',red.start()))))
             return any(not any(a <= p.start() < b for a,b in spans) for p in re.finditer(field,fragment,re.I))
         personal = unredacted(code[start:end])
-        # A payload built just before the call and passed by name: var payload = new { user_email = req.UserEmail };
+        # A local built before the call and passed by name: its fields as they stand at the call (_local_personal)
         if known and not personal:
-            for name in re.findall(r'[(,]\s*(\w+)\s*(?=[,)])', code[start:end]):
-                local = None
-                for local in re.finditer(r'\bvar\s+' + re.escape(name) + r'\s*=\s*new\b[^;{]{0,200}\{',
-                                         code[max(0, m.start() - 4000):m.start()]):
-                    pass
-                if local:
-                    begin = max(0, m.start() - 4000) + local.end() - 1
-                    if unredacted(code[begin:_end(code, begin, '{', '}')]):
-                        personal = True
-                        break
+            for name in dict.fromkeys(re.findall(r'(?<![.\w])([A-Za-z_]\w*)(?![\w(]|\s*[.(=])', code[start + 1:end - 1])):
+                if name not in _KEYWORDS and _local_personal(code, raw, name, m.start(), unredacted):
+                    personal = True
+                    break
         # Interpolated strings are blank in the code view. Only expressions inside their braces count.
         if not personal and re.search(r'(?:\$@?|@\$)"', args):
             personal = any(unredacted(expr) for expr in re.findall(r'(?<!\{)\{(?!\{)([^}]+)\}', args))
