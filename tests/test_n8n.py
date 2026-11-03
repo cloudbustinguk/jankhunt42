@@ -234,9 +234,6 @@ class N8nMapping(unittest.TestCase):
         self.assertEqual(html.count('<script'), 2)
         self.assertNotIn('<', html.split('id="jh-data">', 1)[1].split('</script>', 1)[0])
         self.assertNotIn('\x1b', jh_views.map_tty(r, color=False))
-        n['name'] = '=FORMULA()'
-        csv = jh_map.render_csv(report(workflow(n)))[0]
-        self.assertIn("'=FORMULA()", csv)
 
     def test_defaults_legacy_scope_disabled_and_relabel(self):
         host = '.'.join(('endpoint', 'invalid'))

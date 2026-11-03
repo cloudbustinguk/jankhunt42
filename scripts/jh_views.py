@@ -232,9 +232,6 @@ def map_tty(report, color: bool = True, ascii_only: bool = False, columns: Optio
     if report.get("delta"):
         out += [""] + t.box([clean(l) for l in jh_map.delta_markdown(report["delta"], report).split("\n") if l.strip()],
                             "yellow", "graph delta")
-    if report.get("whatif"):
-        out += [""] + t.box([clean(l) for l in jh_map.whatif_markdown(report["whatif"], report).split("\n") if l.strip()],
-                            "magenta", "what-if (hypothetical)")
     out += ["", c.grey("  explore: jankhunt42 map . --html > map.html   ·   data: --json   ·   shareable: --redact")]
     text = "\n".join(out)
     return asciify(text) if ascii_only else text

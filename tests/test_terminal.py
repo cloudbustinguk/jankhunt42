@@ -109,17 +109,19 @@ class CliModes(unittest.TestCase):
     def test_help_mentions_three_questions(self):
         r = run_cli("--help")
         self.assertIn("What's broken?", r.stdout)
-        for cmd in ("map", "passport", "selftest", "scan", "review", "supply-chain", "sandbox"):
+        for cmd in ("map", "passport", "selftest", "scan", "review", "sandbox"):
             self.assertIn(cmd, r.stdout)
             self.assertEqual(run_cli(cmd, "--help").returncode, 0)
 
-    def test_the_4_0_command_surface(self):
-        # the main help lists the kept commands only; the rest still parse
+    def test_the_4_6_command_surface(self):
+        # the main help lists the kept commands only; agent-fuzz still parses
         listed = re.findall(r"^    (\S+)\s", run_cli("--help").stdout, re.M)
-        self.assertEqual(sorted(listed), sorted(("scan", "review", "supply-chain", "map", "passport", "sandbox",
-                                                 "agent-fuzz", "selftest", "rules")))
+        self.assertEqual(sorted(listed), sorted(("scan", "review", "map", "passport", "sandbox", "selftest", "rules")))
+        self.assertEqual(run_cli("agent-fuzz", "--help").returncode, 0)
         for name, pointer, release in (("hunt", "scan", "4.0.0"), ("merge", "hunt", "4.0.0"),
-                                       ("report", "scan --md", "4.0.0"), ("score", "scan --score", "4.1.0")):
+                                       ("report", "scan --md", "4.0.0"), ("score", "scan --score", "4.1.0"),
+                                       ("supply-chain", "gh attestation verify", "4.6.0"),
+                                       ("triage", "log triage", "4.6.0"), ("doctor", "host diagnostics", "4.6.0")):
             r = run_cli(name, ".")
             self.assertEqual(r.returncode, 2, name)
             self.assertIn("removed in " + release, r.stderr)
@@ -131,8 +133,8 @@ class CliModes(unittest.TestCase):
             gated = run_cli("scan", root, "--score", "--fail-on", "info")    # a gate --score would not apply
             self.assertEqual(gated.returncode, 2)
             self.assertIn("--fail-policy", gated.stderr)
-            self.assertEqual(run_cli("doctor", root, "--json").returncode, 0)
-        self.assertEqual(run_cli("triage", "--help").returncode, 0)
+            for gone in ("--cve", "--calibrate", "--since"):                # removed in 4.6.0
+                self.assertEqual(run_cli("scan", root, gone).returncode, 2, gone)
 
 
 class Palette(unittest.TestCase):

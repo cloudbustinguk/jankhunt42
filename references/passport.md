@@ -39,14 +39,14 @@ Advisory by default (exit `0` whatever the decision). `--fail-on review`,
 decision is at or above that outcome (`pass < review < insufficient-evidence
 < block`). Exit `2` is a usage error.
 
-`passport` runs the scanner with the same defaults as `scan`, but never with
-`--cve` or `--calibrate`: it stays offline and writes nothing.
+`passport` runs the scanner with the same defaults as `scan`. It stays offline
+and writes nothing.
 
 ## What a passport contains
 
 | Section | Source | States |
 |---|---|---|
-| `assessment.jank` | Jank Score 2.0, unchanged arithmetic | score, grade, policy |
+| `assessment.jank` | Jank Score 3.0, unchanged arithmetic | score, grade, policy |
 | `assessment.exposure` | `map` exposure class | Low / Moderate / High / Critical / Unknown |
 | `assessment.decision` | policy rules below | pass / review / insufficient-evidence / block |
 | `ownership` | `CODEOWNERS` (observed), `passport.owners` (declared) | observed / declared / unknown |
@@ -296,10 +296,10 @@ The decision itself never changes because of acceptance. `--redact` hides the ac
 ## Assurance levels and what is deferred
 
 The passport covers repository-static evidence (L1) and parsed build/release
-evidence (L2, exporter-reported, or `tool-verified` when `--verify` ran a
-native verifier; see `references/supply-chain.md`). Verification results sit
-under `provenance.verification` without timestamps (they ran at
-`generated_at`), and `--redact` keeps only their outcomes. Independently collected operational
+evidence (L2: SBOMs and provenance files in the repository, with the
+verification state their exporter recorded; jankhunt42 verifies no signature
+itself, so use `gh attestation verify` or `cosign verify-attestation`).
+Independently collected operational
 evidence (L3) enters only through an operator inventory. Not implemented:
 signature verification of passports or acceptance records, platform-control
 inheritance, and continuous monitoring.

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.5.0"
+VERSION = "4.6.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -1040,14 +1040,3 @@ def trim(text: str, width: int = 160) -> str:
     text = " ".join(text.strip().split())
     return text if len(text) <= width else text[: width - 1] + "…"
 
-
-def rel_link(rel: str, line: int) -> str:
-    return f"{rel}:{line}"
-
-
-def is_probably_text(path: Path) -> bool:
-    try:
-        chunk = path.read_bytes()[:4096]
-    except OSError:
-        return False
-    return b"\x00" not in chunk

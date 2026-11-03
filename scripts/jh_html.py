@@ -87,18 +87,7 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
     policy = _policy_class(report.policy)
     worst = report.dimensions.get(report.worst_dimension)
     worst_label = _e(worst.label if worst else "risk")
-    warnings: List[str] = [str(w) for w in (meta.get("cve_warnings") or [])]
-    warnings += ["Not read: %s" % w for w in (meta.get("archive_warnings") or [])]
-    new_code = ""
-    nc = meta.get("new_code") or {}
-    if nc.get("warning"):
-        warnings.append("New-code view unavailable: %s" % nc["warning"])
-    elif nc:
-        new_code = '<span class="pill">new code %d/100 · %s</span>' % (
-            int(nc.get("score", 0)), _e(nc.get("grade", "A")))
-    cve = ""
-    if meta.get("cve"):
-        cve = '<span class="pill">CVE lookup · %s packages</span>' % _e(meta.get("cve_packages", 0))
+    warnings: List[str] = ["Not read: %s" % w for w in (meta.get("archive_warnings") or [])]
     elapsed = meta.get("elapsed")
     elapsed_text = "%.2fs" % float(elapsed) if elapsed is not None else "—"
     warnings_html = ""
@@ -116,13 +105,11 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
           <div class="score-ring__inner"><strong>%d</strong><span>%s</span><small>/100</small></div>
         </div>
         <div class="hero__copy">
-          <div class="eyebrow">Jank Score 2.0 · weakest link: %s</div>
+          <div class="eyebrow">Jank Score %s · weakest link: %s</div>
           <h1>%s</h1>
           <div class="pill-row">
             <span class="pill policy-%s">policy %s</span>
             <span class="pill">worst dimension: %s</span>
-            %s
-            %s
           </div>
           <p class="lede">A transparent prioritization score built from severity × confidence × exposure. It tells you where to look first; it does not certify safety.</p>
           <div class="meta-grid">
@@ -135,8 +122,8 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
         </div>
       </div>
     </header>''' % (
-        _e(VERSION), score, tone, score, score, grade, worst_label,
-        _e(report.label), policy, policy, worst_label, new_code, cve,
+        _e(VERSION), score, tone, score, score, grade, _e(report.version), worst_label,
+        _e(report.label), policy, policy, worst_label,
         _e(result.files), _e(f"{result.loc:,}"), _e(elapsed_text), _e(root), warnings_html,
     )
 
@@ -176,7 +163,7 @@ def _render_dimensions(report: "jh_score.ScoreReport") -> str:
             dim.score, tone, _e(dim.label), _e(dim.grade), _e(dim.grade),
             dim.score, dim.findings, _e(dim.worst), top))
     return '''<section class="section">
-      <div class="section__head"><div class="eyebrow">Scorecard</div><h2>Four dimensions, one weak link</h2></div>
+      <div class="section__head"><div class="eyebrow">Scorecard</div><h2>Three dimensions, one weak link</h2></div>
       <div class="dims">%s</div>
       <details class="method"><summary>How this score works</summary>
         <p>Each finding contributes <b>severity × confidence × exposure</b> risk points.
@@ -230,23 +217,6 @@ def _render_toolbar(counts: Dict[str, int], total: int) -> str:
     </div>''' % ("".join(buttons), total)
 
 
-def _finding_extra(finding: Finding) -> str:
-    extra = finding.extra or {}
-    parts: List[str] = []
-    cves = extra.get("cve") or []
-    if cves:
-        parts.append("CVE " + ", ".join(_e(cve) for cve in cves))
-    fixed = extra.get("fixed") or []
-    if fixed:
-        parts.append("fixed in " + ", ".join(_e(version) for version in fixed))
-    advisory = extra.get("advisory")
-    if advisory and not cves:
-        parts.append("advisory " + _e(advisory))
-    if not parts:
-        return ""
-    return '<div class="finding__extra">%s</div>' % " · ".join(parts)
-
-
 def _render_finding_card(finding: Finding, idx: int) -> str:
     sev = _sev(finding.severity)
     searchable = " ".join([
@@ -282,7 +252,7 @@ def _render_finding_card(finding: Finding, idx: int) -> str:
         sev, sev, _e(searchable), idx, _e(SEV_LABEL.get(sev, sev.upper())),
         _e(finding.rule), _e(finding.confidence), _e(finding.title),
         _e(finding.path), finding.line, _e(finding.category),
-        evidence, why, fix, tags + _finding_extra(finding))
+        evidence, why, fix, tags)
 
 
 def _render_findings(findings: Sequence[Finding], max_findings: int) -> str:
@@ -319,8 +289,6 @@ def render_scan(result, meta: Dict[str, object], max_findings: int = 300) -> str
     findings: List[Finding] = list(result.findings)
     root = str(meta.get("root", "."))
     report = jh_score.compute(findings, result.loc)
-    if meta.get("new_code"):
-        report.new_code = meta["new_code"]
     counts = _counts(findings)
     title = "jankhunt42 · %s" % root
     return "\n".join([
@@ -453,7 +421,7 @@ h1 { margin: 4px 0 12px; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1.02;
 .section { margin: 30px 0; }
 .section__head { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 12px; }
 .section__head h2 { margin: 2px 0 0; font-size: 1.28rem; letter-spacing: -.02em; }
-.dims { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.dims { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .dim { border: 1px solid var(--line); border-radius: 16px; padding: 15px; background: var(--panel); }
 .dim__head { display: flex; justify-content: space-between; gap: 10px; align-items: center; color: var(--muted); font-size: .78rem; font-weight: 700; }
 .grade { display: inline-grid; place-items: center; min-width: 26px; height: 26px; border-radius: 8px; color: #07090e; background: var(--tone, var(--muted)); font-size: .78rem; }
@@ -532,7 +500,6 @@ h1 { margin: 4px 0 12px; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1.02;
 .fix .label { color: var(--green); }
 .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .tags span { color: var(--faint); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; font: .64rem var(--mono); }
-.finding__extra { margin-top: 9px; color: var(--yellow); font-size: .74rem; overflow-wrap: anywhere; }
 .empty-state { text-align: center; border: 1px dashed var(--line); border-radius: 18px; background: var(--panel); padding: 42px 24px; }
 .empty-mark { font-size: 2.4rem; color: var(--green); }
 .empty-state h2 { margin: 8px 0 4px; }

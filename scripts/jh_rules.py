@@ -415,44 +415,14 @@ RULES: List[Rule] = [
       "The handler swallows the error and continues, hiding failures and corrupting state.",
       "Handle, log with context, re-raise, or return a deliberate error.",
       confidence="high", check="empty_handler", langs=PY + JS + JVM + CLIKE),
-    R("JH202", "Broad catch", "minor", "reliability",
-      "Catching Exception/Throwable also catches programming errors and shutdown signals.",
-      "Catch the specific exception types you can actually handle.",
-      confidence="medium", langs=PY + JVM + ("csharp",),
-      patterns=(r"\bexcept\s+(?:Exception|BaseException)\b", r"\bcatch\s*\(\s*(?:Exception|Throwable|System\.Exception)\b")),
     R("JH217", "Bare except", "major", "reliability",
       "A bare except catches everything, including KeyboardInterrupt and SystemExit.",
       "Catch specific exceptions; if cleanup is the goal, use try/finally.",
       confidence="high", langs=PY, patterns=(r"^\s*except\s*:",)),
-    R("JH203", "TODO/FIXME marker", "info", "maintainability",
-      "An unresolved marker records known debt or a known defect.",
-      "Link it to an issue or resolve it; do not let it become permanent.",
-      confidence="high", target="comments",
-      # BUG is also an English word ("the BUG reporting pipeline"): it counts where a marker would sit, at the
-      # start of a comment or before : ( - or the end of the line; TODO, FIXME and HACK count anywhere
-      patterns=(r"\b(?:TODO|FIXME|HACK)\b|\bBUG\b(?=\s*[:(\-]|\s*$)|(?:^|[#/*;\-]|<!--)\s*BUG\b|"
-                r"\bXXX\b(?=\s*[:(\-])|(?:^|[#/*;\-]|<!--)\s*(?i:(?:todo|fixme|hack)\s*[:(])",)),
     R("JH204", "Debug leftover", "minor", "reliability",
       "Debug output or a debugger hook is still in the code path.",
       "Remove it or route it through the project logger at an appropriate level.",
       confidence="medium", langs=PY + JS + ("php", "ruby"), check="debug_leftover"),
-    R("JH205", "Commented-out code", "info", "maintainability",
-      "Commented code rots, confuses readers, and hides intent; version control already remembers it.",
-      "Delete it or restore it with a test; keep comments for why, not what used to be.",
-      confidence="low", target="comments",
-      patterns=(r"(?i)^\s*(?:if|for|while|switch|return|def|class|function|const|let|var|import|from|public|private|protected|try|catch|#include)\b",
-                # a trailing ; { } counts only with something code-shaped: an assignment, a call, an arrow, or braces alone
-                r"^(?=.*(?:[^=!<>]=[^=]|\w\(|=>)).*[;{}]\s*$|^\s*(?://+|#+|--|/?\*+)?\s*[{}]+\s*;?\s*$")),
-    R("JH206", "Mutable default argument", "major", "reliability",
-      "A list/dict default is created once and shared across calls, so state leaks between invocations.",
-      "Use None as the default and create a fresh container inside the function.",
-      confidence="high", langs=PY,
-      patterns=(r"\bdef\s+\w+\s*\([^)\n]*=\s*(?:\[\]|\{\})",)),
-    R("JH207", "Comparison to None", "minor", "reliability",
-      "Equality with None calls __eq__ and can behave unexpectedly for proxies and overloaded objects.",
-      "Use 'is None' / 'is not None'.",
-      confidence="high", langs=PY,
-      patterns=(r"(?:[=!]=\s*None\b|\bNone\s*[=!]=)",)),
     R("JH208", "return inside finally", "major", "reliability",
       "A return/break/continue in finally discards exceptions and pending return values.",
       "Do cleanup only in finally; return after the try/finally block.",
@@ -469,47 +439,11 @@ RULES: List[Rule] = [
       "A hung child process can pin the parent indefinitely.",
       "Pass a timeout and handle TimeoutExpired; kill the process group on cleanup.",
       confidence="medium", check="subprocess_timeout", langs=PY),
-    # ------------------------------------------------------------ maintainability
-    R("JH301", "Long function", "minor", "maintainability",
-      "A long function is hard to test, reason about, and review.",
-      "Extract cohesive steps into named helpers and keep one level of abstraction per function.",
-      confidence="medium", check="long_function", langs=PY + CLIKE + JS),
-    R("JH302", "Deep nesting", "minor", "maintainability",
-      "Deep nesting multiplies branches and makes control flow hard to verify.",
-      "Use guard clauses, early returns, or extract helper functions.",
-      confidence="medium", check="deep_nesting", langs=PY + CLIKE + JS),
-    R("JH303", "Very long line", "info", "maintainability",
-      "Long lines are hard to review and often hide generated or minified content.",
-      "Wrap the expression or move data into a resource file.",
-      confidence="high", target="raw",
-      patterns=(r"^.{201,}$",)),
-    R("JH304", "Large source file", "info", "maintainability",
-      "A very large file usually mixes responsibilities and slows navigation/review.",
-      "Split by cohesion; keep modules focused on one reason to change.",
-      confidence="medium", check="large_file"),
-    R("JH305", "Duplicated block", "info", "maintainability",
-      "A block of six or more lines appears more than once in the file.",
-      "Extract the repeated logic or data; keep one source of truth.",
-      confidence="low", check="duplicate_blocks"),
-    R("JH306", "Suppression comment", "info", "maintainability",
+    R("JH306", "Suppression comment", "info", "reliability",
       "A lint/type/security suppression hides a diagnostic; it may be stale or too broad.",
       "Fix the underlying issue or narrow the suppression with a reason and an owner.",
       confidence="high", target="comments",
       patterns=(r"(?i)(?:#\s*noqa|#\s*type:\s*ignore|eslint-disable|@ts-ignore|@ts-expect-error|nolint|pylint:\s*disable|rubocop:disable|#\s*nosec|#\[allow\()",)),
-    R("JH307", "Wildcard import", "info", "maintainability",
-      "Wildcard imports hide dependencies and can silently shadow names.",
-      "Import the specific names or the module.",
-      confidence="high", langs=PY, patterns=(r"^\s*from\s+[\w.]+\s+import\s+\*",)),
-    R("JH308", "Dead branch", "info", "reliability",
-      "A branch guarded by a constant false value can never execute.",
-      "Remove it or replace the constant with a real feature flag/configuration value.",
-      confidence="high", langs=PY + JS + JVM + CLIKE,
-      patterns=(r"^\s*if\s*\(\s*(?:False|false|0)\s*\)", r"^\s*if\s+(?:False|false|0)\s*:")),
-    R("JH315", "assert in production code", "minor", "reliability",
-      "Python removes assert statements under -O, so they cannot enforce runtime invariants.",
-      "Raise an explicit exception for checks that must always run; keep asserts in tests.",
-      confidence="high", langs=PY, tags=("test-exclude",),
-      patterns=(r"^\s*assert\s+",)),
 
     # -------------------------------------------------------------------- config
     R("JH401", "Secret-bearing file", "critical", "security",
@@ -569,11 +503,6 @@ RULES: List[Rule] = [
       "Pin an immutable tag or digest and update explicitly.",
       confidence="high", target="nocomment", kinds=K8S,
       patterns=(r"(?i)^\s*-?\s*image\s*:\s*['\"]?[^\s'\"]+:latest\b",)),
-    R("JH413", "Deprecated Kubernetes apiVersion", "major", "reliability",
-      "This API version was removed from modern Kubernetes; the manifest will fail on upgrade.",
-      "Migrate to the current stable API version and test against the target cluster.",
-      confidence="high", target="nocomment", kinds=K8S,
-      patterns=(r"(?i)^\s*apiVersion\s*:\s*(?:extensions/v1beta1|apps/v1beta1|apps/v1beta2|policy/v1beta1|batch/v1beta1|networking\.k8s\.io/v1beta1|rbac\.authorization\.k8s\.io/v1beta1)\s*$",)),
     R("JH414", "Dangerous capability added", "major", "security",
       "SYS_ADMIN/NET_ADMIN/SYS_PTRACE/ALL capabilities substantially weaken isolation.",
       "Drop ALL and add only the minimal capability the workload proves it needs.",
@@ -675,11 +604,6 @@ RULES: List[Rule] = [
       "This test executes code but never checks a result, so it cannot fail meaningfully.",
       "Assert the observable behavior, or remove the test if it only checks 'no exception'.",
       confidence="medium", check="assertion_free_test", kinds=TEST + ("test",)),
-    R("JH503", "Sleep in test", "info", "tests",
-      "Fixed sleeps make tests slow and flaky under load.",
-      "Await the condition, use fake timers, or poll with a bounded deadline.",
-      confidence="high", target="code", kinds=TEST + ("test",),
-      patterns=(r"\btime\.sleep\s*\(", r"\bThread\.sleep\s*\(")),
     R("JH504", "Tautological assertion", "minor", "tests",
       "The assertion is always true, so the test cannot detect a regression.",
       "Assert a specific value or behavior that would change if the code broke.",
@@ -703,12 +627,6 @@ RULES: List[Rule] = [
                 # string title is masked, so fit('modelFit', 10) and expect(fit('abc', 2)) do not match
                 r"(?<![\w.$])f(?:it|describe)\s*\(\s*[^,(]*\s*,\s*(?:(?:async\s+)?(?:\([^()]*\)\s*=>|\w+\s*=>|function\b)|"
                 r"(?:fakeAsync|waitForAsync|async|inject|waitsForAsync)\s*\()")),
-
-    # ---------------------------------------------------------------------- docs
-    R("JH601", "Broken relative link", "minor", "docs",
-      "A relative Markdown link points at a file or directory that does not exist.",
-      "Fix the path or remove the link; run a link checker in CI.",
-      confidence="high", check="broken_links", kinds=("markdown",)),
 
     # --------------------------------------------------------------------- agents
     # What an AI coding agent does when it opens, reads, or runs in this
@@ -772,11 +690,6 @@ RULES: List[Rule] = [
       "Drop --privileged, host networking and extra capabilities; use docker-in-docker or a rootless builder instead of the host Docker socket.",
       confidence="high", check="devcontainer_isolation", kinds=("agent_config",)),
 
-    # ----------------------------------------------------------------- CVE (dynamic)
-    R("JH901", "Known vulnerable dependency", "critical", "security",
-      "A dependency version matches a published security advisory.",
-      "Upgrade to a fixed version; if none exists, mitigate or replace the dependency.",
-      confidence="high", tags=("cve", "supply-chain")),
 ]
 
 
@@ -793,7 +706,6 @@ class ScanOptions:
     ignore_rule_ids: Optional[Set[str]] = None
     max_per_file_rule: int = 5
     max_per_rule: int = 200
-    include_cve: bool = False
     # False for governance scans: repository pragmas cannot hide what the
     # citizen profile must see.
     honor_suppressions: bool = True
@@ -840,7 +752,7 @@ class ScanResult:
     # filters, so it reflects what the rule actually matched, not what the
     # CLI chose to display. fired = every match before any filtering;
     # suppressed = subset dropped specifically by an inline
-    # `# jankhunt42: ignore` pragma. Consumed by --calibrate (jh_calibrate.py).
+    # `# jankhunt42: ignore` pragma.
     fired_by_rule: Dict[str, int] = field(default_factory=dict)
     suppressed_by_rule: Dict[str, int] = field(default_factory=dict)
     # site rules switched off for running over their time budget (_site_rule)
@@ -1214,8 +1126,6 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             for idx, line in enumerate(lines, 1):
                 if not line or not line.strip():
                     continue
-                if rule.id == "JH205" and _is_http_route_comment(sf, idx):
-                    continue                # documented HTTP routes can contain example objects and assignments
                 # on a long (minified) line, an ignore word elsewhere on it must not hide a match
                 if ignore and len(line) <= 400 and ignore.search(line):
                     continue
@@ -1295,8 +1205,6 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "minor hygiene note, not a shell-injection.")
                     if rule.id == "JH103" and _argv_without_shell(sf, idx, m.start(), pat.pattern):
                         continue
-                    if rule.id == "JH205" and _in_doc_block(sf, idx):
-                        continue                # a /** ... */ documentation block describes code; it is not code
                     shell = _processbuilder_shell(" ".join([sf.nocomment[idx - 1][m.start():]] + sf.nocomment[idx:idx + 2])) \
                         if rule.id == "JH103" and "ProcessBuilder" in pat.pattern else "major"
                     if shell is None:
@@ -2082,28 +1990,6 @@ def _js_regex_spans(code: str) -> List[Tuple[int, int]]:
 def _in_regex_spans(spans: List[Tuple[int, int]], pos: int) -> bool:
     i = bisect_right(spans, (pos, sys.maxsize)) - 1
     return i >= 0 and pos < spans[i][1]
-
-
-def _in_doc_block(sf: SourceFile, idx: int) -> bool:
-    """Line idx (1-based) sits inside a /** ... */ documentation block (JSDoc, Javadoc, PHPDoc), which describes
-    parameters and shapes in code-like text. A plain /* ... */ block may hold commented-out code, so it does not count."""
-    for k in range(idx - 1, max(-1, idx - 201), -1):
-        line = sf.raw[k]
-        if k < idx - 1 and "*/" in line:
-            return False
-        opener = line.rfind("/*")
-        if opener >= 0:
-            return line.startswith("/**", opener) and not line.startswith("/**/", opener)
-    return False
-
-
-def _is_http_route_comment(sf: SourceFile, idx: int) -> bool:
-    """Route examples in comments document an API; they are not disabled code."""
-    if idx <= 0 or idx > len(sf.raw):
-        return False
-    line = re.sub(r"^\s*(?://+|#+|--|/\*+|\*)\s*", "", sf.raw[idx - 1])
-    return bool(re.match(r"(?i)(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+/\S*", line)
-                and re.search(r"(?:→|->|\breturns?\b|\bresponds?\b)", line, re.I))
 
 
 def _firebase_web_config(sf: SourceFile, idx: int) -> bool:

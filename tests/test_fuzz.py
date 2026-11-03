@@ -99,7 +99,7 @@ class DeepJson(unittest.TestCase):
             with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
                 fh.write(text)
         for args in (("scan", root, "--json"), ("passport", root, "--profile", "citizen", "--json"),
-                     ("map", root, "--json"), ("supply-chain", root, "--json")):
+                     ("map", root, "--json")):
             with self.subTest(command=args[0]):
                 r = _util.run_cli(*args)
                 self.assertNotIn("Traceback", r.stderr)

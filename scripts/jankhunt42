@@ -12,7 +12,6 @@ import sys
 import time
 import urllib.parse
 from dataclasses import asdict
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -30,15 +29,11 @@ from jh_rules import RULES, ScanOptions, ScanResult, scan_sources, rule_by_id  #
 import jh_fence  # noqa: E402
 import jh_ceiling  # noqa: E402
 import jh_render  # noqa: E402
-import jh_doctor  # noqa: E402
-import jh_triage  # noqa: E402
-import jh_cve  # noqa: E402
 import jh_score  # noqa: E402
 import jh_html  # noqa: E402
 import jh_review  # noqa: E402
 import jh_supply  # noqa: E402
 import jh_config  # noqa: E402
-import jh_calibrate  # noqa: E402
 import jh_dedup  # noqa: E402
 import jh_graph  # noqa: E402
 import jh_map  # noqa: E402
@@ -79,35 +74,6 @@ class Spinner:
         if self.enabled:
             sys.stderr.write("\r\x1b[2K")
             sys.stderr.flush()
-
-
-def _manifest_files(root: str, max_depth: int = 4) -> List[Tuple[str, str]]:
-    names = {
-        "package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
-        "pnpm-lock.yaml", "bun.lockb", "requirements.txt", "pyproject.toml",
-        "pipfile.lock", "poetry.lock", "cargo.lock", "go.mod", "pom.xml",
-        "build.gradle", "build.gradle.kts", "gemfile.lock", "composer.lock",
-        "pubspec.lock",
-    }
-    out: List[Tuple[str, str]] = []
-    base = os.path.abspath(root)
-    for dirpath, dirnames, filenames in os.walk(base):
-        rel_dir = os.path.relpath(dirpath, base)
-        depth = 0 if rel_dir == "." else rel_dir.count(os.sep) + 1
-        if depth > max_depth:
-            dirnames[:] = []
-            continue
-        dirnames[:] = [d for d in dirnames if d not in {
-            "node_modules", ".git", "vendor", "dist", "build", "target", ".venv",
-            "venv", "__pycache__", ".tox", ".gradle", "Pods", "DerivedData",
-        } and not d.startswith(".")]
-        for fn in filenames:
-            low = fn.lower()
-            if low in names or low.endswith((".csproj", ".fsproj", ".vbproj")):
-                path = os.path.join(dirpath, fn)
-                rel = os.path.relpath(path, base).replace(os.sep, "/")
-                out.append((path, rel))
-    return out
 
 
 def _probe_root(paths: Sequence[str]) -> str:
@@ -233,7 +199,6 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         "root": str(root),
         "elapsed": time.time() - t0,
         "skipped": skipped,
-        "cve": bool(args.cve),
     }
     import jh_powerplatform
     if jh_powerplatform.GAPS:
@@ -251,37 +216,6 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         print("jankhunt42: %s" % note, file=sys.stderr)
     meta["cross_file_duplicates"] = [c.to_dict() for c in jh_dedup.find_cross_file_duplicates(result.findings)]
     meta["minified"] = sorted(sf.rel for sf in sources if "minified" in sf.kinds)
-    if getattr(args, "calibrate", False):
-        ledger = jh_calibrate.load_ledger(str(root))
-        notes = jh_calibrate.apply_calibration(result.findings, ledger, SEVERITIES)
-        result.findings.sort(key=lambda f: f.sort_key())
-        jh_calibrate.update_ledger(ledger, result.fired_by_rule, result.suppressed_by_rule)
-        jh_calibrate.save_ledger(str(root), ledger)
-        meta["calibration"] = {
-            "ledger": jh_calibrate.ledger_path(str(root)),
-            "downgrades": [n.to_dict() for n in notes],
-        }
-    if args.cve:
-        manifests = _manifest_files(str(root))
-        deps = jh_cve.collect_dependencies(manifests)
-        if not deps:
-            meta["cve_warnings"] = ["no pinned dependencies found in known manifests"]
-        else:
-            cve = jh_cve.query_osv(deps)
-            result.findings.extend(cve.findings)
-            result.findings.sort(key=lambda f: f.sort_key())
-            meta["cve_packages"] = cve.packages
-            meta["cve_queried"] = cve.queried
-            if cve.warnings:
-                meta["cve_warnings"] = cve.warnings
-    since = getattr(args, "since", None)
-    if since:
-        changed, warning = jh_score.changed_lines(str(root), since)
-        if changed is None:
-            meta["new_code"] = {"since": since, "warning": warning}
-        else:
-            _, new_meta = jh_score.compute_new_code(result.findings, changed, since)
-            meta["new_code"] = new_meta
     meta["elapsed"] = time.time() - t0
     if spinner:
         spinner.done()
@@ -293,8 +227,6 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
     for f in result.findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     score = jh_score.compute(result.findings, result.loc)
-    if meta.get("new_code"):
-        score.new_code = meta["new_code"]
     data = {
         "tool": TOOL,
         "version": VERSION,
@@ -308,14 +240,11 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
             "jank_score": score.score,
             "jank": score.to_dict(),
             "elapsed_seconds": round(float(meta.get("elapsed", 0)), 3),
-            "cve": meta.get("cve", False),
-            "cve_packages": meta.get("cve_packages", 0),
         },
-        "warnings": meta.get("cve_warnings", []) + meta.get("site_warnings", []) + meta.get("archive_warnings", []),
+        "warnings": meta.get("site_warnings", []) + meta.get("archive_warnings", []),
         "config": meta.get("config"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         "minified": meta.get("minified", []),
-        "calibration": meta.get("calibration"),
         "findings": [asdict(f) for f in result.findings],
     }
     for key in ("ignored_rules", "rulesets"):          # only when used, so a default report is unchanged
@@ -456,68 +385,11 @@ def cmd_review(args: argparse.Namespace) -> int:
     return 1 if review["gate"]["result"] == "fail" else 0
 
 
-def cmd_supply_chain(args: argparse.Namespace) -> int:
-    formats = sum(1 for enabled in (args.md, args.json) if enabled)
-    if formats > 1:
-        print("jankhunt42: choose one output format: --md or --json", file=sys.stderr)
-        return 2
-    root = os.path.abspath(args.paths[0] if args.paths else ".")
-    if os.path.isfile(root):
-        root = os.path.dirname(root)
-    requirements = {
-        "sbom": bool(args.require_sbom),
-        "sbom_minimum": bool(getattr(args, "require_sbom_minimum", False)),
-        "attestation": bool(args.require_attestation),
-        "verified_attestation": bool(args.require_verified_attestation),
-    }
-    kwargs = dict(sbom_paths=args.sbom or (), attestation_paths=args.attestation or (),
-                  jfrog_paths=args.jfrog_evidence or (), requirements=requirements,
-                  discover=not args.no_discover)
-    try:
-        report = _supply_with_verification(root, args, kwargs)
-    except ValueError as exc:
-        print("jankhunt42: supply-chain: %s" % jh_core_safe(str(exc)), file=sys.stderr)
-        return 2
-    payload = {
-        "tool": TOOL,
-        "version": VERSION,
-        "command": "supply-chain",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        **report,
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-    elif args.md or not sys.stdout.isatty():
-        print(jh_supply.markdown(report))
-    else:
-        color = jh_render.Colors(not args.no_color)
-        print(color.bold("SUPPLY-CHAIN EVIDENCE") + "  " + color.grey(root))
-        print("  " + jh_supply.summary_line(report))
-        print("")
-        print(jh_supply.markdown(report, heading="## Evidence"))
-    return 1 if report["gate"]["result"] == "fail" else 0
-
-
-def _supply_with_verification(root: str, args: argparse.Namespace, kwargs: Dict[str, object]) -> Dict[str, object]:
-    """Plain offline inspection, or --verify PLAN: native verifiers, plus
-    fetching only with --online. Raises ValueError for usage problems."""
-    plan_path = getattr(args, "verify", None)
-    if not plan_path:
-        if getattr(args, "online", False) or getattr(args, "fetch_dir", None):
-            raise ValueError("--online and --fetch-dir need --verify PLAN")
-        return jh_supply.inspect(root, **kwargs)
-    import jh_verify
-    plan = jh_verify.load_plan(plan_path, root)  # PlanError is a ValueError
-    return jh_verify.verify_supply(root, plan, bool(args.online), getattr(args, "fetch_dir", None), **kwargs)
-
-
 def cmd_score(args: argparse.Namespace) -> int:
     tty = sys.stdout.isatty() and not args.json and not args.md
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
     report = jh_score.compute(result.findings, result.loc)
-    if meta.get("new_code"):
-        report.new_code = meta["new_code"]
     if args.json:
         data = {
             "tool": TOOL,
@@ -527,10 +399,9 @@ def cmd_score(args: argparse.Namespace) -> int:
             "files": result.files,
             "loc": result.loc,
             "jank": report.to_dict(),
-            "warnings": meta.get("cve_warnings", []),
+            "warnings": meta.get("site_warnings", []) + meta.get("archive_warnings", []),
             "config": meta.get("config"),
             "cross_file_duplicates": meta.get("cross_file_duplicates", []),
-            "calibration": meta.get("calibration"),
         }
         print(json.dumps(data, indent=2, ensure_ascii=False))
     elif tty and not args.no_color:
@@ -554,45 +425,18 @@ _REMOVED = {
     "score": "`score` was removed in 4.1.0, as 4.0.0 said: use `jankhunt42 scan --score`.",
     "hunt": "`hunt` was removed in 4.0.0: use `jankhunt42 scan` and `jankhunt42 review`.",
     "merge": "`merge` was removed in 4.0.0, with `hunt`.",
-    "report": "`report` was removed in 4.0.0: use `jankhunt42 scan --md` (and `doctor` or `triage` if you need them).",
+    "report": "`report` was removed in 4.0.0: use `jankhunt42 scan --md`.",
+    "supply-chain": "`supply-chain` was removed in 4.6.0: `passport` still records the SBOM and provenance files it "
+                    "finds; verify attestations with `gh attestation verify` or `cosign verify-attestation`.",
+    "triage": "`triage` (log triage) was removed in 4.6.0.",
+    "doctor": "`doctor` (host diagnostics) was removed in 4.6.0.",
+    "detonate": "`detonate` was renamed `sandbox` in 4.1.0; the old name is gone.",
 }
 
 
 def cmd_removed(args: argparse.Namespace) -> int:
     print("jankhunt42: " + _REMOVED[args.command], file=sys.stderr)
     return 2
-
-
-def cmd_sandbox_alias(args: argparse.Namespace) -> int:
-    print("jankhunt42: `detonate` is now `sandbox`; the old name goes in 4.2.", file=sys.stderr)
-    return cmd_sandbox(args)
-
-
-def cmd_triage(args: argparse.Namespace) -> int:
-    paths = list(args.paths)
-    if not paths:
-        if not sys.stdin.isatty():
-            paths = ["-"]
-        else:
-            print("jankhunt42: give at least one log file (or pipe via stdin)", file=sys.stderr)
-            return 2
-    result = jh_triage.triage_paths(paths, grep=args.grep)
-    if args.json:
-        print(jh_triage.triage_json(result, args.top))
-    else:
-        tty = sys.stdout.isatty() and not args.md
-        print(jh_render.render_triage(result, tty, args.no_color or not tty, args.top))
-    return 0
-
-
-def cmd_doctor(args: argparse.Namespace) -> int:
-    result = jh_doctor.doctor(args.path or ".", deep=args.system)
-    if args.json:
-        print(jh_doctor.doctor_json(result))
-    else:
-        tty = sys.stdout.isatty() and not args.md
-        print(jh_render.render_doctor(result, tty, args.no_color or not tty))
-    return 0
 
 
 def cmd_rules(args: argparse.Namespace) -> int:
@@ -602,7 +446,7 @@ def cmd_rules(args: argparse.Namespace) -> int:
         print(json.dumps([{
             "id": r.id, "title": r.title, "severity": r.severity, "category": r.category,
             "confidence": r.confidence, "message": r.message, "fix": r.fix,
-            "tags": list(r.tags), "dynamic": r.id == "JH901",
+            "tags": list(r.tags),
         } for r in rows], indent=2, ensure_ascii=False))
         return 0
     print("# jankhunt42 rule catalog\n")
@@ -610,7 +454,7 @@ def cmd_rules(args: argparse.Namespace) -> int:
     print("|---|---|---|---|---|")
     for r in rows:
         print("| `%s` | %s | %s | %s | %s |" % (r.id, r.severity, r.category, r.confidence, r.title))
-    print("\n%d rules shown. `JH901` is populated by `scan --cve` (OSV.dev)." % len(rows))
+    print("\n%d rules shown." % len(rows))
     return 0
 
 
@@ -643,21 +487,13 @@ def _map_inputs(args: argparse.Namespace) -> Tuple[str, List[str], object]:
 
 
 def cmd_map(args: argparse.Namespace) -> int:
-    if not _one_format(args, ("json", "html", "md", "mermaid", "csv")):
-        return 2
-    if args.base and args.drift:
-        print("jankhunt42: map: --base and --drift are mutually exclusive", file=sys.stderr)
+    if not _one_format(args, ("json", "html", "md")):
         return 2
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
     try:
         root, excludes, cfg = _map_inputs(args)
         common = (root, [root], excludes, args.max_files, args.max_file_bytes, cfg.passport, args.inventory, depth)
-        if args.drift:
-            stored = jh_map.load_json_file(args.drift)
-            report = jh_map.run_map(*common)
-            report["delta"] = jh_map.drift(stored, report)
-            report = jh_map.finalize_report(report)
-        elif args.base:
+        if args.base:
             base = jh_map.run_map(*common, rev=args.base)
             report = jh_map.run_map(*common, rev="HEAD")
             report["delta"] = jh_graph.diff(base, report)
@@ -667,9 +503,6 @@ def cmd_map(args: argparse.Namespace) -> int:
             report = jh_map.finalize_report(report)
         else:
             report = jh_map.run_map(*common)
-        if args.what_if:
-            report["whatif"] = jh_map.run_whatif(report, jh_map.load_json_file(args.what_if), depth)
-            report = jh_map.finalize_report(report)
     except jh_map.GitError as exc:
         print("jankhunt42: map --base: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -678,21 +511,6 @@ def cmd_map(args: argparse.Namespace) -> int:
         return 2
     if args.redact:
         report = jh_map.finalize_report(jh_graph.pseudonymize(report))
-    if args.mermaid:
-        print(jh_explorer.render_mermaid(report))
-        return 0
-    if args.csv:
-        try:
-            os.makedirs(args.csv, exist_ok=True)
-            nodes_csv, edges_csv = jh_map.render_csv(report)
-            for name, body in (("nodes.csv", nodes_csv), ("edges.csv", edges_csv)):
-                with open(os.path.join(args.csv, name), "w", encoding="utf-8", newline="") as fh:
-                    fh.write(body)
-        except OSError as exc:
-            print("jankhunt42: map --csv: %s" % jh_core_safe(str(exc)), file=sys.stderr)
-            return 2
-        print("wrote %s and %s" % (os.path.join(args.csv, "nodes.csv"), os.path.join(args.csv, "edges.csv")))
-        return 0
     _emit(args, report, jh_map.markdown, jh_views.map_tty, jh_explorer.render_map)
     return 0
 
@@ -745,8 +563,8 @@ def cmd_passport(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
     if args.base:
-        if args.emit_sandbox_policy or args.compare or args.against or args.verify:
-            print("jankhunt42: passport: --base cannot combine export, comparison or native verification", file=sys.stderr)
+        if args.emit_sandbox_policy or args.compare or args.against:
+            print("jankhunt42: passport: --base cannot combine export or comparison", file=sys.stderr)
             return 2
         try:
             with jh_capabilities.snapshots(args) as snapshot:
@@ -774,10 +592,6 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         return 2
     if args.compare and args.html:
         print("jankhunt42: passport --compare supports --json or Markdown", file=sys.stderr)
-        return 2
-    if (args.online and not args.verify) or (args.verify and args.against):
-        print("jankhunt42: passport: --online needs --verify, and --verify cannot be used with --against",
-              file=sys.stderr)
         return 2
     if args.compare and args.against:
         try:
@@ -814,8 +628,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         return 0
     scan_args = argparse.Namespace(
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
-        min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200, cve=False,
-        since=None, config=args.config, no_config=args.no_config, calibrate=False,
+        min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200,
+        config=args.config, no_config=args.no_config,
         ignore_rule_ids=ignored_rules(args), severity_map=getattr(args, "severity_map", None),
         rulesets=getattr(args, "rulesets", None))
     ignored = set(getattr(args, "governance_ignore_ids", None) or ()) or None
@@ -859,7 +673,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         counts[f.severity] = counts.get(f.severity, 0) + 1
     jank = jh_score.compute(result.findings, result.loc).to_dict()
     try:
-        supply = _supply_with_verification(snapshot["frozen"] if snapshot else root, args, {"discover": True})
+        supply = jh_supply.inspect(snapshot["frozen"] if snapshot else root, discover=True)
     except ValueError as exc:
         print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
         return 2
@@ -1109,11 +923,11 @@ def build_parser() -> argparse.ArgumentParser:
                     "sandbox.",
     )
     p.add_argument("--version", action="version", version="%(prog)s " + VERSION)
-    # hidden commands (no help=) still parse: the debugging helpers, the score alias and the removed names
+    # hidden commands (no help=) still parse: agent-fuzz and the removed names
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND",
                            title="commands")
 
-    def add_common_scan_inputs(sp, cve_help):
+    def add_common_scan_inputs(sp):
         sp.add_argument("--no-color", action="store_true")
         sp.add_argument("--quiet", action="store_true")
         sp.add_argument("--no-progress", action="store_true")
@@ -1131,15 +945,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--max-file-bytes", type=int, default=1500000)
         sp.add_argument("--max-per-file-rule", type=int, default=5)
         sp.add_argument("--max-per-rule", type=int, default=200)
-        sp.add_argument("--cve", action="store_true", help=cve_help)
-        sp.add_argument("--since", metavar="REF",
-                        help="also score findings on lines changed since this git ref (new-code view)")
         sp.add_argument("--config", metavar="PATH",
                         help="explicit .jankhunt42.toml/.jankhunt42.json (default: discovered upward from root)")
         sp.add_argument("--no-config", action="store_true", help="ignore any .jankhunt42.toml/.jankhunt42.json")
-        sp.add_argument("--calibrate", action="store_true",
-                        help="apply and update the repo-local FP calibration ledger (.jankhunt42/calibration.json); "
-                             "the only flag besides --cve that writes anything")
 
     def add_scan_opts(sp):
         sp.add_argument("paths", nargs="*", help="files or directories (default: .)")
@@ -1147,7 +955,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 for CI code scanning")
         sp.add_argument("--md", action="store_true", help="force Markdown output")
         sp.add_argument("--html", action="store_true", help="self-contained HTML report (stdout)")
-        add_common_scan_inputs(sp, "query OSV.dev for pinned dependency advisories (network)")
+        add_common_scan_inputs(sp)
         sp.add_argument("--max-findings", type=int, default=300,
                         help="display cap (JSON/SARIF keep all)")
         sp.add_argument("--fail-on", choices=SEVERITIES,
@@ -1168,7 +976,6 @@ def build_parser() -> argparse.ArgumentParser:
     out = sp.add_argument_group("output")
     filters = sp.add_argument_group("filters")
     gates = sp.add_argument_group("baselines and gates")
-    supply = sp.add_argument_group("supply-chain evidence")
     limits = sp.add_argument_group("advanced: limits")
     group = what.add_mutually_exclusive_group()
     group.add_argument("--base", metavar="REF",
@@ -1197,7 +1004,7 @@ def build_parser() -> argparse.ArgumentParser:
     limits.add_argument("--max-file-bytes", type=int, default=1500000)
     limits.add_argument("--max-per-file-rule", type=int, default=5)
     limits.add_argument("--max-per-rule", type=int, default=200)
-    # Deliberately no --config/--calibrate here: `review` has its own
+    # Deliberately no --config here: `review` has its own
     # evidence-gated receipt pipeline (jh_review.py) that these do not
     # yet reach. Accepting the flags without wiring them would silently
     # do nothing, which is worse than not offering them.
@@ -1207,65 +1014,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="exit 1 for new supported findings at or above this severity")
     gates.add_argument("--include-unverified", action="store_true",
                        help="include unverified leads in the --fail-on gate")
-    supply.add_argument("--no-supply-chain", action="store_true", help="skip SBOM/attestation evidence discovery")
-    supply.add_argument("--no-supply-chain-discovery", action="store_true",
-                        help="only inspect explicitly supplied evidence files")
-    supply.add_argument("--sbom", action="append", metavar="PATH", help="explicit SBOM path (repeatable)")
-    supply.add_argument("--attestation", action="append", metavar="PATH",
-                        help="explicit in-toto/Sigstore/GitHub attestation path (repeatable)")
-    supply.add_argument("--jfrog-evidence", action="append", metavar="PATH",
-                        help="explicit JFrog AppTrust evidence path (repeatable)")
-    supply.add_argument("--require-sbom", action="store_true", help="fail if no SBOM is found")
-    supply.add_argument("--require-attestation", action="store_true", help="fail if no attestation is found")
-    supply.add_argument("--require-verified-attestation", action="store_true",
-                        help="fail unless the exporter recorded a successful verification")
     sp.set_defaults(func=cmd_review)
-
-    def add_verify_inputs(sp):
-        sp.add_argument("--verify", metavar="PLAN.json",
-                        help="verification plan (outside the repo): run gh/cosign/jf on the evidence")
-        sp.add_argument("--online", action="store_true",
-                        help="with --verify: allow fetching from GitHub and online verification")
-
-    sp = sub.add_parser("supply-chain", help="inspect SPDX/CycloneDX SBOMs, GitHub/Sigstore attestations, and JFrog evidence")
-    sp.add_argument("paths", nargs="*", help="repository root (default: .)")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    sp.add_argument("--no-color", action="store_true")
-    sp.add_argument("--no-discover", action="store_true", help="only inspect explicit evidence paths")
-    sp.add_argument("--sbom", action="append", metavar="PATH", help="explicit SBOM path (repeatable)")
-    sp.add_argument("--attestation", action="append", metavar="PATH",
-                    help="explicit attestation path (repeatable)")
-    sp.add_argument("--jfrog-evidence", action="append", metavar="PATH",
-                    help="explicit JFrog evidence path (repeatable)")
-    sp.add_argument("--require-sbom", action="store_true")
-    sp.add_argument("--require-sbom-minimum", action="store_true",
-                    help="fail unless an SBOM covers the NTIA minimum elements (supplier, name, version, "
-                         "identifier, dependencies, author, timestamp)")
-    sp.add_argument("--require-attestation", action="store_true")
-    sp.add_argument("--require-verified-attestation", action="store_true",
-                    help="fail unless an attestation is provider-verified or tool-verified")
-    add_verify_inputs(sp)
-    sp.add_argument("--fetch-dir", metavar="DIR",
-                    help="with --verify: keep fetched evidence in DIR (default: a temporary directory)")
-    sp.set_defaults(func=cmd_supply_chain)
-
-    sp = sub.add_parser("triage")     # 4.0.0: hidden from the main help; logs, ranked
-    sp.add_argument("paths", nargs="*", help="log files, .gz, or - for stdin")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    sp.add_argument("--no-color", action="store_true")
-    sp.add_argument("--top", type=int, default=30)
-    sp.add_argument("--grep", help="only consider lines matching this regex")
-    sp.set_defaults(func=cmd_triage)
-
-    sp = sub.add_parser("doctor")     # 4.0.0: hidden from the main help; environment health
-    sp.add_argument("path", nargs="?", default=".")
-    sp.add_argument("--json", action="store_true")
-    sp.add_argument("--md", action="store_true")
-    sp.add_argument("--no-color", action="store_true")
-    sp.add_argument("--system", action="store_true", help="include ports, failed units, kernel log")
-    sp.set_defaults(func=cmd_doctor)
 
 
     def add_map_inputs(sp, out=None, inputs=None, limits=None):
@@ -1293,12 +1042,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_map_inputs(sp)
     sp.add_argument("--base", metavar="REF",
                     help="graph delta REF -> HEAD from committed git objects only (dirty files are ignored)")
-    sp.add_argument("--drift", metavar="MAP.json",
-                    help="compare a stored map report with the current repository (static change, not runtime drift)")
-    sp.add_argument("--what-if", metavar="SCENARIO.json",
-                    help="apply hypothetical mutations to a copy of the graph and report the change")
-    sp.add_argument("--mermaid", action="store_true", help="Mermaid flowchart (documentation view; JSON is canonical)")
-    sp.add_argument("--csv", metavar="DIR", help="write nodes.csv and edges.csv to DIR (formula-injection safe)")
     sp.set_defaults(func=cmd_map)
 
     sp = sub.add_parser("passport", help="can we responsibly ship it? evidence, ownership, explainable decision",
@@ -1311,7 +1054,6 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox = sp.add_argument_group("sandbox")
     control = sp.add_argument_group("change control")
     compare = sp.add_argument_group("comparing passports")
-    supply = sp.add_argument_group("supply chain")
     inputs = sp.add_argument_group("inputs")
     limits = sp.add_argument_group("advanced: limits")
     add_map_inputs(sp, out, inputs, limits)
@@ -1326,7 +1068,6 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox.add_argument("--sandbox-run", metavar="PATH",
                          help="a `sandbox --json` result kept outside the repository; used only if made on this exact "
                               "tree, and it can only add outcomes (P-RUN-001, P-RUN-002)")
-    sandbox.add_argument("--detonation", dest="sandbox_run", metavar="PATH", help=argparse.SUPPRESS)   # 4.0 name
     change.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
     decision.add_argument("--policy", metavar="PATH",
                           help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")
@@ -1353,7 +1094,6 @@ def build_parser() -> argparse.ArgumentParser:
                          help="an operator's JSON list of approved host/port pairs, kept outside the repository: it "
                               "narrows an emitted policy, and counts as declared for --sandbox-run "
                               "(references/network-ceiling.md)")
-    add_verify_inputs(supply)
     sp.set_defaults(func=cmd_passport)
 
     def add_sandbox_opts(sp):
@@ -1386,11 +1126,8 @@ def build_parser() -> argparse.ArgumentParser:
                                         "on open in a disposable sandbox, and log what they try")
     add_sandbox_opts(sp)
     sp.set_defaults(func=cmd_sandbox)
-    sp = sub.add_parser("detonate")    # 4.1.0: the old name of `sandbox`, hidden, for one release
-    add_sandbox_opts(sp)
-    sp.set_defaults(func=cmd_sandbox_alias)
 
-    sp = sub.add_parser("agent-fuzz", help="validate policy-fuzz campaigns for sandboxed agent testing")
+    sp = sub.add_parser("agent-fuzz")  # 4.6.0: hidden from the main help until a runner ships
     agent_fuzz_cmds = sp.add_subparsers(dest="agent_fuzz_command", required=True, metavar="ACTION")
     validate = agent_fuzz_cmds.add_parser("validate", help="validate a declarative campaign; does not run an agent")
     validate.add_argument("campaign", metavar="CAMPAIGN.json", help="versioned campaign file")
@@ -1428,7 +1165,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 # commands whose positional arguments are files or directories to read
 # (review's are path filters, which may name a deleted file)
-_PATH_COMMANDS = ("scan", "supply-chain", "doctor", "map", "passport")
+_PATH_COMMANDS = ("scan", "map", "passport")
 
 
 def _unreadable(path: str) -> str:

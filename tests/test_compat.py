@@ -22,6 +22,21 @@ ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "J
                "JH432", "JH709", "JH710", "JH711"} | {"JH%d" % n for n in range(135, 148)}
 # Top-level JSON keys added since 1.1.0 (additive; 2.7.1 lists minified bundles).
 ADDED_KEYS = {"minified"}
+# 4.6.0 pared jankhunt42 down to its core (CHANGELOG): these rules, keys and score parts are gone on purpose.
+REMOVED_RULES = {"JH202", "JH203", "JH205", "JH206", "JH207", "JH301", "JH302", "JH303", "JH304", "JH305", "JH307",
+                 "JH308", "JH315", "JH413", "JH503", "JH601", "JH901"}
+REMOVED_KEYS = {"calibration", "cve", "cve_packages", "dynamic"}   # dynamic: JH901 was the only one
+RESCORED_KEYS = {"jank", "jank_score"}      # Jank Score 3.0 has no maintainability dimension
+
+
+def without_removed(obj):
+    """An old report as 4.6.0 would write it: the removed rules, keys and the 2.0 score taken out."""
+    if isinstance(obj, dict):
+        return {k: without_removed(v) for k, v in obj.items() if k not in REMOVED_KEYS | RESCORED_KEYS}
+    if isinstance(obj, list):
+        return [without_removed(v) for v in obj
+                if not (isinstance(v, dict) and (v.get("rule") or v.get("ruleId") or v.get("id")) in REMOVED_RULES)]
+    return obj
 
 
 def strip_volatile(obj):
@@ -45,8 +60,12 @@ class CurrentContracts(unittest.TestCase):
     def test_scan_json_keys(self):
         d = json.loads(run_cli("scan", self.root, "--json").stdout)
         for k in ("tool", "version", "command", "root", "summary", "warnings", "config", "cross_file_duplicates",
-                  "calibration", "findings"):
+                  "findings"):
             self.assertIn(k, d)
+        for k in REMOVED_KEYS:
+            self.assertNotIn(k, d)
+            self.assertNotIn(k, d["summary"])
+        self.assertEqual(d["summary"]["jank"]["version"], "3.0")
         self.assertEqual(d["command"], "scan")
 
     def test_sarif_shape(self):
@@ -119,17 +138,24 @@ class CrossVersion(unittest.TestCase):
             if args == ("rules", "--json"):
                 self.assertEqual({r["id"] for r in new} - {r["id"] for r in old}, ADDED_RULES)
                 new = [r for r in new if r["id"] not in ADDED_RULES]
+                for r in old:
+                    if r["id"] == "JH306":
+                        r["category"] = "reliability"     # 4.6.0: the maintainability category is gone
             if isinstance(new, dict):
                 new = {k: v for k, v in new.items() if k not in ADDED_KEYS - set(old)}
-            self.assertEqual(strip_volatile(old), strip_volatile(new), args)
+            self.assertEqual(without_removed(strip_volatile(old)), without_removed(strip_volatile(new)), args)
 
     def test_markdown_scan_identical_modulo_version(self):
         # The only intentional human-output change in 2.0: the product name is
         # written in lowercase (documented in CHANGELOG and README migration notes).
         old = self.run_old("scan", self.root, "--md").stdout.replace("Jank" + "Hunt42", "jankhunt42")
         new = run_cli("scan", self.root, "--md").stdout
+        # 4.6.0: the Jank Score is 3.0 (no maintainability row), so score lines are compared by the tests above
         drop = lambda t: [l for l in t.splitlines() if "elapsed" not in l and " in " not in l and "v1." not in l
-                          and "v2." not in l and "Scan time" not in l and "Minified bundles" not in l]
+                          and "v2." not in l and "Scan time" not in l and "Minified bundles" not in l
+                          and "Jank:" not in l and "Maintainability" not in l and "_Score " not in l
+                          and not l.startswith("| Security |") and not l.startswith("| Reliability |")
+                          and not l.startswith("| Test confidence |")]
         self.assertEqual(drop(old), drop(new))
 
 

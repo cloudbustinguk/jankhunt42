@@ -1,59 +1,55 @@
 #!/usr/bin/env python3
-"""Jank Score 2.0 — a transparent, density-based risk score.
+"""Jank Score 3.0 — a transparent, density-based risk score.
 
 Philosophy borrowed, formulas our own:
 
-* SonarQube separates security, reliability, and maintainability ratings, uses
-  A-E grades, measures debt density, and focuses on new code ("Clean as You
-  Code"). We keep the separation, the grades, the density, and the new-code
-  view, but replace "technical debt in days" with risk points so we never invent
-  precision we do not have.
+* SonarQube separates its ratings, uses A-E grades, measures debt density, and
+  focuses on new code ("Clean as You Code"). We keep the separation, the
+  grades, the density, and the new-code view (in `review`), but replace
+  "technical debt in days" with risk points so we never invent precision we do
+  not have. 3.0 drops the maintainability dimension: style is a linter's job,
+  and the score answers what citizen-built software can hurt.
 * Veracode combines severity with confidence and applies policy gates to
   high-severity, high-confidence flaws. We use severity x confidence x exposure,
   then apply an explicit advisory policy to the result.
 
 The headline is deliberately anchored to the weakest dimension. A security
-catastrophe must not be averaged away by a thousand pristine style lines.
+catastrophe must not be averaged away by a thousand clean lines.
 """
 from __future__ import annotations
 
 import math
-import re
-import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from jh_core import Finding, SEV_RANK, SEVERITIES, run_git
+from jh_core import Finding, SEV_RANK
 
-SCORE_VERSION = "2.0"
+SCORE_VERSION = "3.0"
 
 # Severity is potential impact. Confidence is how much we trust the finding.
 SEV_POINTS = {"blocker": 40.0, "critical": 20.0, "major": 8.0, "minor": 3.0, "info": 1.0}
 CONF_FACTOR = {"high": 1.0, "medium": 0.65, "low": 0.30}
 
 # Exposure is a coarse, honest proxy for reachability. We do not pretend to have
-# data-flow analysis: runtime security and reliability code counts fully; style,
-# tests, and docs are discounted because they are less likely to hurt a user.
+# data-flow analysis: runtime security and reliability code counts fully; tests
+# are discounted because they are less likely to hurt a user.
 EXPOSURE = {
     "security": 1.00,
     "reliability": 1.00,
     "supply-chain": 1.00,
     "agent": 1.00,
     "ci": 0.90,
-    "maintainability": 0.55,
     "tests": 0.45,
-    "docs": 0.25,
 }
 
-DIMENSIONS = ("security", "reliability", "maintainability", "tests")
+DIMENSIONS = ("security", "reliability", "tests")
 DIMENSION_LABELS = {
     "security": "Security",
     "reliability": "Reliability",
-    "maintainability": "Maintainability",
     "tests": "Test confidence",
 }
-DIMENSION_WEIGHTS = {"security": 0.35, "reliability": 0.30, "maintainability": 0.20, "tests": 0.15}
-DIMENSION_K = {"security": 25.0, "reliability": 35.0, "maintainability": 45.0, "tests": 30.0}
+DIMENSION_WEIGHTS = {"security": 0.45, "reliability": 0.35, "tests": 0.20}
+DIMENSION_K = {"security": 25.0, "reliability": 35.0, "tests": 30.0}
 
 # SonarQube-style rating floors: a single severe issue makes the dimension
 # severe even in a large codebase. The floor is scaled by confidence and
@@ -68,8 +64,6 @@ CATEGORY_DIMENSION = {
     "agent": "security",
     "ci": "security",
     "reliability": "reliability",
-    "maintainability": "maintainability",
-    "docs": "maintainability",
     "tests": "tests",
 }
 
@@ -78,7 +72,8 @@ EXTRA_RULE_WEIGHT = 0.10
 
 
 def dimension_for(finding: Finding) -> str:
-    return CATEGORY_DIMENSION.get(finding.category, "maintainability")
+    # site rules (category "site" or the site's own) count as reliability
+    return CATEGORY_DIMENSION.get(finding.category, "reliability")
 
 
 def grade_for(score: float) -> str:
@@ -287,7 +282,7 @@ def scorecard_markdown(report: ScoreReport, heading: str = "## Jank score") -> s
                    % (d.label, d.score, d.grade, d.findings, d.worst, top))
     out.append("")
     out.append("> A severe dimension anchors the headline; a security catastrophe "
-               "is not averaged away by clean style. The score is a prioritization "
+               "is not averaged away by clean code elsewhere. The score is a prioritization "
                "device, not a compliance certificate. Gate CI on `--fail-on`.")
     if report.new_code:
         nc = report.new_code
@@ -347,76 +342,4 @@ def scorecard_tty(report: ScoreReport, color: Any, width: int) -> List[str]:
 # Changed-line discovery for the "new code" view
 # ---------------------------------------------------------------------------
 
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
-
-def changed_lines(root: str, since: str = "HEAD") -> Tuple[Optional[Dict[str, Set[int]]], Optional[str]]:
-    """Return {relative path: changed new-line numbers} for `git diff <since>`.
-
-    Read-only. Returns (None, warning) when git or the revision is unavailable.
-    """
-    try:
-        proc = run_git(
-            ["git", "-C", root, "diff", "--unified=0", "--no-color", "--no-ext-diff",
-             "--no-prefix", str(since), "--"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, str(exc)
-    if proc.returncode != 0:
-        msg = (proc.stderr or "git diff failed").strip().splitlines()
-        return None, msg[0] if msg else "git diff failed"
-    changed: Dict[str, Set[int]] = {}
-    current: Optional[str] = None
-    for line in proc.stdout.splitlines():
-        if line.startswith("+++ "):
-            name = line[4:].strip()
-            if name == "/dev/null":
-                current = None
-            else:
-                current = name.replace("\\", "/")
-                changed.setdefault(current, set())
-            continue
-        m = _HUNK_RE.match(line)
-        if m and current:
-            start = int(m.group(1))
-            count = int(m.group(2)) if m.group(2) is not None else 1
-            if count > 0:
-                changed[current].update(range(start, start + count))
-    return changed, None
-
-
-def new_code_findings(findings: Sequence[Finding], changed: Dict[str, Set[int]]) -> List[Finding]:
-    out: List[Finding] = []
-    for f in findings:
-        path = f.path.replace("\\", "/")
-        lines = changed.get(path)
-        if not lines:
-            continue
-        end = f.end_line or f.line
-        if f.line in lines or any(ln in lines for ln in range(f.line, max(f.line, end) + 1)):
-            out.append(f)
-    return out
-
-
-def changed_loc(changed: Dict[str, Set[int]]) -> int:
-    return sum(len(lines) for lines in changed.values())
-
-
-def compute_new_code(findings: Sequence[Finding], changed: Dict[str, Set[int]],
-                     since: str) -> Tuple[ScoreReport, Dict[str, Any]]:
-    subset = new_code_findings(findings, changed)
-    loc = changed_loc(changed)
-    report = compute(subset, loc)
-    meta = {
-        "since": since,
-        "changed_files": len(changed),
-        "changed_lines": loc,
-        "findings": len(subset),
-        "score": report.score,
-        "grade": report.grade,
-        "label": report.label,
-        "policy": report.policy,
-        "dimensions": {k: v.to_dict() for k, v in report.dimensions.items()},
-    }
-    return report, meta

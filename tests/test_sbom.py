@@ -258,17 +258,14 @@ class Gates(unittest.TestCase):
 
     def test_require_sbom_minimum(self):
         self.write("bom.cdx.json", CDX_JSON)
-        partial = run_cli("supply-chain", self.tmp, "--json", "--require-sbom-minimum")
-        self.assertEqual(partial.returncode, 1)
-        report = json.loads(partial.stdout)
+        need = {"sbom_minimum": True}
+        report = jh_supply.inspect(self.tmp, requirements=need, discover=True)
+        self.assertEqual(report["gate"]["result"], "fail")
         self.assertEqual(report["summary"]["sbom_minimum_elements"], "partial")
         self.assertIn("no SBOM meets the NTIA minimum elements", report["gate"]["reasons"][0])
         self.write("app.spdx.json", SPDX2_FULL)
-        met = run_cli("supply-chain", self.tmp, "--json", "--require-sbom-minimum")
-        self.assertEqual(met.returncode, 0, met.stdout[-400:])
-        md = run_cli("supply-chain", self.tmp, "--md").stdout
-        self.assertIn("| Minimum elements |", md)
-        self.assertIn("supplier for 1 of 3 components", md)
+        met = jh_supply.inspect(self.tmp, requirements=need, discover=True)
+        self.assertEqual(met["gate"]["result"], "pass", met["gate"])
 
     def test_passport_policy_requires_the_minimum(self):
         self.write("bom.cdx.json", CDX_JSON)

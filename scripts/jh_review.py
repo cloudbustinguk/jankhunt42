@@ -36,7 +36,6 @@ from jh_core import (  # noqa: F401
 )
 from jh_rules import RULES, ScanOptions, ScanResult, rule_by_id, scan_sources
 import jh_score
-import jh_supply
 
 _REVIEW_RECEIPT_VERSION = "1.0"
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -480,8 +479,6 @@ def rulepack_hash() -> str:
 
 def _repro(f: Finding) -> str:
     path = shlex.quote(f.path)
-    if f.rule == "JH901":
-        return "jankhunt42 scan %s --cve --rule JH901 --json" % path
     return "jankhunt42 scan %s --rule %s --min-severity info --json" % (path, f.rule)
 
 
@@ -607,23 +604,6 @@ def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any]
 # Review assembly
 # ---------------------------------------------------------------------------
 
-def _supply_report(root: str, args: Any) -> Optional[Dict[str, Any]]:
-    if getattr(args, "no_supply_chain", False):
-        return None
-    req = {
-        "sbom": bool(getattr(args, "require_sbom", False)),
-        "attestation": bool(getattr(args, "require_attestation", False)),
-        "verified_attestation": bool(getattr(args, "require_verified_attestation", False)),
-    }
-    return jh_supply.inspect(
-        root,
-        sbom_paths=getattr(args, "sbom", ()) or (),
-        attestation_paths=getattr(args, "attestation", ()) or (),
-        jfrog_paths=getattr(args, "jfrog_evidence", ()) or (),
-        requirements=req,
-        discover=not bool(getattr(args, "no_supply_chain_discovery", False)),
-    )
-
 
 def _risk_rank(f: Finding) -> Tuple[int, str, int, str]:
     return (SEV_RANK.get(f.severity, 99), f.path, f.line, f.rule)
@@ -631,15 +611,6 @@ def _risk_rank(f: Finding) -> Tuple[int, str, int, str]:
 
 def run_review(args: Any) -> Dict[str, Any]:
     t0 = time.time()
-    if getattr(args, "no_supply_chain", False):
-        explicit = (getattr(args, "sbom", ()) or ()) + (getattr(args, "attestation", ()) or ()) \
-            + (getattr(args, "jfrog_evidence", ()) or ())
-        required = (getattr(args, "require_sbom", False)
-                    or getattr(args, "require_attestation", False)
-                    or getattr(args, "require_verified_attestation", False))
-        if explicit or required:
-            raise ReviewError("--no-supply-chain cannot be combined with evidence paths or "
-                              "supply-chain requirements")
     start = (getattr(args, "paths", ()) or ["."])[0] or "."
     root = git_root(start)
     mode = "working"
@@ -724,7 +695,6 @@ def run_review(args: Any) -> Dict[str, Any]:
             r for r in receipts if r.get("scope") == "persisting"
         ]
 
-    supply = _supply_report(root, args)
     gate_reasons: List[str] = []
     fail_on = getattr(args, "fail_on", None)
     include_unverified = bool(getattr(args, "include_unverified", False))
@@ -735,8 +705,6 @@ def run_review(args: Any) -> Dict[str, Any]:
         if gated:
             gate_reasons.append("%d new finding%s at or above %s"
                                 % (len(gated), "" if len(gated) == 1 else "s", fail_on))
-    if supply and supply.get("gate", {}).get("result") == "fail":
-        gate_reasons.extend(supply["gate"].get("reasons", []))
     gate = {
         "fail_on": fail_on,
         "result": "fail" if gate_reasons else "pass",
@@ -750,17 +718,12 @@ def run_review(args: Any) -> Dict[str, Any]:
         "No runtime or test execution was performed by this review.",
         "Static rules only; the project compiler, typechecker, tests, and native linters were not run.",
         "Only changed files and diff hunks were considered; unchanged code and full-repo context were not re-reviewed.",
-        "Cryptographic attestation verification is delegated to gh, cosign, or jf; unverified means exactly that.",
+        "Dependency advisories (CVEs) are out of scope; use Dependabot, osv-scanner or your registry's audit.",
     ]
-    unknowns.append("Dependency CVE lookup was not run by this review; use `jankhunt42 scan --cve` separately.")
     if scope_meta["skipped_files"]:
         unknowns.append("%d changed file%s were skipped; see scope.skipped_files."
                         % (len(scope_meta["skipped_files"]),
                            "" if len(scope_meta["skipped_files"]) == 1 else "s"))
-    if supply is None:
-        unknowns.append("Supply-chain evidence discovery was disabled.")
-    elif not supply.get("sboms") and not supply.get("attestations"):
-        unknowns.append("No SBOM or attestation evidence was found in the reviewed tree.")
 
     new_receipts = [r for r in receipts if r.get("scope") == "new"]
     summary = {
@@ -790,7 +753,6 @@ def run_review(args: Any) -> Dict[str, Any]:
         "summary": summary,
         "score": jank_dict,
         "baseline": baseline,
-        "supply_chain": supply,
         "findings": receipts,
         "contextual": contextual_receipts,
         "resolved": (baseline or {}).get("resolved_findings", []),
@@ -810,8 +772,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "review": review,
         "findings": receipts,
         "warnings": list(dict.fromkeys(
-            (supply or {}).get("warnings", [])
-            + ([] if not diff_scope.warning else [diff_scope.warning])
+            ([] if not diff_scope.warning else [diff_scope.warning])
             + overrun
         )),
     }
@@ -946,9 +907,6 @@ def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
             out.append("- `%s` · %s · `%s:%d`"
                        % (item.get("rule"), item.get("title"), item.get("path"), item.get("line", 0)))
         out.append("")
-    if review.get("supply_chain"):
-        out.append(jh_supply.markdown(review["supply_chain"]))
-        out.append("")
     out.append("## Coverage and unknowns")
     out.append("")
     for unknown in review.get("unknowns", []):
@@ -972,7 +930,7 @@ def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
     out.append("## Gate")
     out.append("")
     if review["gate"]["result"] == "pass":
-        out.append("**PASS** — no gated finding or required supply-chain evidence is missing.")
+        out.append("**PASS** — no gated finding.")
     else:
         out.append("**FAIL**")
         for reason in review["gate"].get("reasons", []):
@@ -1023,9 +981,6 @@ def brief(review: Dict[str, Any]) -> str:
         out.append("")
         for idx, r in enumerate(review["contextual"], 1):
             out.extend(_receipt_block(r, idx))
-    if review.get("supply_chain"):
-        out.append(jh_supply.markdown(review["supply_chain"]))
-        out.append("")
     out.append("## Output contract")
     out.append("")
     out.append("Return JSON with `agent`, `findings`, and `rejected`. Each finding needs "
@@ -1077,9 +1032,6 @@ def tty(review: Dict[str, Any], max_findings: int = 300, no_color: bool = False)
         out.append("  " + color.grey("persisting baseline findings: %d"
                                      % review["summary"]["persisting_findings"]))
     out.append("")
-    if review.get("supply_chain"):
-        out.append("  " + color.magenta("SUPPLY") + "  " + color.grey(jh_supply.summary_line(review["supply_chain"])))
-        out.append("")
     if review.get("findings"):
         out.append("  " + color.dim("─" * (width - 4)))
         out.append("")
