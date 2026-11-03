@@ -4,6 +4,24 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.5.0] — unreleased
+
+### Added
+
+- Power Platform reader: `scan` reads Power Automate cloud flows from solution exports (`.zip` with
+  `Workflows/*.json`) and flow packages (`Microsoft.Flow/flows/<id>/definition.json`), zipped or unpacked. A flow
+  inside a zip is reported as `<zip>!/<member>`, and every rule reads it, so a literal secret in a zipped flow is a
+  JH101 finding. Zips are opened within fixed size, entry and compression limits; what is not read is listed in
+  the report's warnings. Nothing is run, resolved or fetched. See `references/powerplatform.md`.
+- JH144 (major): a flow's HTTP trigger set to Anyone, so whoever has the URL starts it without signing in; a minor
+  lead when the export does not record who may call it.
+- JH145: an Azure Key Vault secret read without Secure outputs (major), or an HTTP action sending a credential
+  without Secure inputs (minor), so the value is shown in run history.
+- JH146 (minor): a connector that can connect a personal account (Gmail, Outlook.com, personal OneDrive, Dropbox,
+  Google).
+- JH147 (major): personal fields sent to an AI service from a flow (AI Builder prompts, AI connectors, AI APIs) with
+  no visible redaction.
+
 ## [4.4.3] — 2026-11-03
 
 ### Fixed

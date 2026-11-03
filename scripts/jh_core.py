@@ -684,6 +684,9 @@ def _git_files(root: Path) -> Optional[List[str]]:
     return [p for p in out.split("\0") if p]
 
 
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+
+
 def discover_files(
     paths: Sequence[str],
     excludes: Sequence[str] = (),
@@ -728,7 +731,8 @@ def discover_files(
         if not p.is_file() or _is_skipped_file(p):
             return
         try:
-            if p.stat().st_size > max_bytes:
+            # a Power Platform solution export is a zip; its flows are read from inside it (jh_powerplatform)
+            if p.stat().st_size > (max(max_bytes, MAX_ARCHIVE_BYTES) if p.name.lower().endswith(".zip") else max_bytes):
                 return
         except OSError:
             return
