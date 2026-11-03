@@ -4,6 +4,32 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.7.0] — unreleased
+
+The Power Platform reader now covers what citizen developers ship besides flows: canvas apps, Copilot Studio agents
+and environment variables, from solution exports zipped or unpacked. The catalog has 98 rules.
+
+### Added
+
+- **Canvas apps.** An `.msapp` committed on its own, or `CanvasApps/<name>.msapp` inside a solution zip (opened one
+  level deep, within the zip's limits), is read. Its Power Fx source (`Src/*.pa.yaml`) is read as written. An app
+  saved before that format is read from `Controls/*.json` and `Components/*.json` as a formula listing,
+  `<control>.<property>: =<formula>`, so a `Set(gblApiKey, "...")` hidden in an app is a `JH101` finding. Findings
+  name the member: `solutions/Contoso.zip!/CanvasApps/app.msapp!/Src/Screen1.pa.yaml`.
+- **JH148: Copilot Studio agent needs no sign-in** (major). An agent exported with `authenticationmode` 1 ("No
+  authentication") answers anyone who can reach it, and its connector actions run with the maker's connections.
+- **JH149: Power Platform environment variable holds a secret as plain text** (major; critical when the export
+  carries the value). A variable named for a secret whose type is Text, not Secret, is stored and exported in plain
+  text. A default or current value that could be the secret makes it critical; the value is never shown.
+- Apps that are not readable zips, too many canvas apps (more than 32 per solution) and oversized apps (more than
+  16 MB, or a screen over 16 MB) are listed as "not read" warnings in every report format.
+
+### Fixed
+
+- JH101 no longer takes an upper-case prefix ending in a colon for a secret: `{token: "NAMESPACE:"}`, the Azure
+  DevOps security namespace that the CoE Starter Kit's ALM Accelerator passes in a canvas app formula. A token
+  after the prefix (`"HASH:<token>"`) is still reported.
+
 ## [4.6.0] — 2026-11-04
 
 jankhunt42 is pared down to its core: software that citizen developers and their AI agents build, what is broken

@@ -1,9 +1,17 @@
-"""Power Platform: read Power Automate cloud flows from solution exports, inertly.
+"""Power Platform: read solution exports and canvas apps, inertly.
 
 A citizen developer exports a solution as a .zip (solution.xml, customizations.xml, Workflows/<flow>.json) or commits
 the unpacked folder. expand() opens a solution zip within fixed limits and returns the members worth reading as text,
 each named <zip path>!/<member>, so every rule (hardcoded secrets included) reads a flow inside a zip as it reads an
 unpacked one. Nothing here runs a flow, evaluates an expression, resolves a connection or fetches anything.
+
+What is read: cloud flows (Workflows/*.json, or a flow package's definition.json), Copilot Studio agents
+(bots/<schema>/bot.xml), environment variables (environmentvariabledefinitions/<schema>/), and canvas apps. A canvas app
+is an .msapp, itself a zip, committed on its own or kept in a solution as CanvasApps/<name>.msapp; one inside a solution
+is opened one level deep and no further. From an app, the Power Fx source (Src/*.pa.yaml) is read as written. An app
+saved before that format exists keeps its formulas in Controls/*.json and Components/*.json; those are read as a
+listing, one line per property, `<control>.<property>: =<formula>`, named <member>!/formulas.yaml, so secret rules see
+the formula and not JSON escapes.
 
 Flow definitions use the Logic Apps workflow definition language: properties.definition.triggers and .actions, with
 connectors named by API (/providers/Microsoft.PowerApps/apis/shared_<connector>) through properties.connectionReferences
@@ -12,6 +20,7 @@ whether the flow is turned on are not in an export and are never assumed.
 """
 from __future__ import annotations
 
+import html
 import io
 import json
 import re
@@ -26,81 +35,192 @@ MAX_MEMBER_BYTES = 4 * 1024 * 1024       # one member, uncompressed
 MAX_TOTAL_BYTES = 48 * 1024 * 1024       # everything read from one zip, uncompressed
 MAX_RATIO = 200                          # uncompressed / compressed, per member: beyond this it is a bomb
 MAX_DEPTH = 64                           # nesting of actions inside scopes, conditions and loops
+MAX_APP_BYTES = 16 * 1024 * 1024         # one canvas app inside a solution zip (images make apps large)
+MAX_APPS = 32                            # canvas apps opened from one solution zip
+MAX_APP_MEMBER_BYTES = 16 * 1024 * 1024  # one screen's formulas: a large screen's Controls/<n>.json passes 12 MB
 
 # members read as text: the flows, and the manifest that identifies the zip. A solution export keeps flows in
 # Workflows/<flow>.json; the older flow package (Export > Package (.zip)) keeps each in
 # Microsoft.Flow/flows/<id>/definition.json beside a root manifest.json.
 _READ = re.compile(r"(?i)^(?:solution\.xml|manifest\.json|workflows/[^/]{1,200}\.json|"
-                   r"microsoft\.flow/flows/[^/]{1,100}/definition\.json)$")
+                   r"microsoft\.flow/flows/[^/]{1,100}/definition\.json|bots/[^/]{1,200}/bot\.xml|"
+                   r"environmentvariabledefinitions/[^/]{1,200}/environmentvariable(?:definition\.xml|values\.json))$")
 _PACKAGE_FLOW = re.compile(r"(?i)^microsoft\.flow/flows/[^/]{1,100}/definition\.json$")
+_CANVAS_APP = re.compile(r"(?i)^canvasapps/[^/]{1,200}\.msapp$")
+# inside an .msapp, whose member names use backslashes (read here with forward slashes)
+_APP_SOURCE = re.compile(r"(?i)^src/[^/]{1,200}\.pa\.yaml$")
+_APP_CONTROLS = re.compile(r"(?i)^(?:controls|components)/[^/]{1,200}\.json$")
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._/ ()+-]")
 
 
 def is_archive(rel: str) -> bool:
-    return rel.lower().endswith(".zip")
+    return rel.lower().endswith((".zip", ".msapp"))
+
+
+def _open(data: Any, rel: str) -> Tuple[Optional[zipfile.ZipFile], List[zipfile.ZipInfo], List[str]]:
+    try:
+        zf = zipfile.ZipFile(data)
+        return zf, zf.infolist(), []
+    except UnicodeDecodeError:
+        return None, [], ["%s: entry names are not valid UTF-8, not read" % rel]
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, ValueError, OSError, EOFError, NotImplementedError):
+        return None, [], []
+
+
+def _kind(infos: List[zipfile.ZipInfo]) -> str:
+    """'solution', 'package' (a flow package), 'app' (an .msapp), or '' for any other zip."""
+    names = {i.filename.replace("\\", "/").lower() for i in infos[:MAX_MEMBERS]}
+    if "solution.xml" in names and "customizations.xml" in names:
+        return "solution"
+    if "manifest.json" in names and any(_PACKAGE_FLOW.match(n) for n in names):
+        return "package"
+    if "header.json" in names and "properties.json" in names:
+        return "app"
+    return ""
+
+
+class _Reader:
+    """Reads members within the limits and records what it could not read. One per expand() call, so a canvas app
+    opened from inside a solution zip draws on the same total as the zip around it."""
+
+    def __init__(self, gaps: List[str]) -> None:
+        self.gaps = gaps
+        self.total = 0
+        self.full = False
+
+    def read(self, zf: zipfile.ZipFile, info: zipfile.ZipInfo, where: str, limit: int = MAX_MEMBER_BYTES
+             ) -> Optional[bytes]:
+        if self.full:
+            return None
+        if info.flag_bits & 0x1:
+            self.gaps.append("%s: encrypted, not read" % where)
+            return None
+        if info.file_size > limit or info.file_size > MAX_RATIO * max(info.compress_size, 1):
+            self.gaps.append("%s: too large or too compressed, not read" % where)
+            return None
+        self.total += info.file_size
+        if self.total > MAX_TOTAL_BYTES:
+            self.gaps.append("%s: more than %d MB to read, the rest not read" % (where.split("!/")[0], MAX_TOTAL_BYTES >> 20))
+            self.full = True
+            return None
+        try:
+            with zf.open(info) as fh:
+                raw = fh.read(limit + 1)                 # the header's size may lie; never read past the limit
+        except (zipfile.BadZipFile, NotImplementedError, ValueError, OSError, EOFError, RuntimeError):
+            self.gaps.append("%s: unreadable, not read" % where)
+            return None
+        if len(raw) > limit:
+            self.gaps.append("%s: too large, not read" % where)
+            return None
+        if len(raw) != info.file_size:          # the directory and the data disagree: a truncated or forged entry
+            self.gaps.append("%s: size does not match the zip directory, not read" % where)
+            return None
+        return raw
 
 
 def expand(data: Any, rel: str, size: Optional[int] = None) -> Tuple[List[Tuple[str, str]], List[str]]:
-    """The text members of a Power Platform export (bytes, or a seekable binary file of `size` bytes), as
-    (virtual path, text), and what could not be read. Only the central directory and the members read are touched.
-    A zip that is not a Power Platform export gives nothing and no warning."""
+    """The text members of a Power Platform export or canvas app (bytes, or a seekable binary file of `size` bytes),
+    as (virtual path, text), and what could not be read. Only the central directory and the members read are touched.
+    A zip that is neither gives nothing and no warning."""
     out: List[Tuple[str, str]] = []
     gaps: List[str] = []
     if isinstance(data, (bytes, bytearray)):
         size, data = len(data), io.BytesIO(data)
     if size is None or size > MAX_ZIP_BYTES:
         return out, ["%s: larger than %d MB, not opened" % (rel, MAX_ZIP_BYTES >> 20)]
-    try:
-        zf = zipfile.ZipFile(data)
-        infos = zf.infolist()
-    except UnicodeDecodeError:
-        return out, ["%s: entry names are not valid UTF-8, not read" % rel]
-    except (zipfile.BadZipFile, zipfile.LargeZipFile, ValueError, OSError, EOFError, NotImplementedError):
-        return out, []
-    names = {i.filename.lower() for i in infos[:MAX_MEMBERS]}
-    solution = "solution.xml" in names and "customizations.xml" in names
-    package = "manifest.json" in names and any(_PACKAGE_FLOW.match(n) for n in names)
-    if not solution and not package:
-        return out, []                                   # an ordinary zip, not a Power Platform export
+    zf, infos, gaps = _open(data, rel)
+    kind = _kind(infos) if zf else ""
+    if not kind:
+        return out, gaps                                 # an ordinary zip, not a Power Platform export
     if len(infos) > MAX_MEMBERS:
         return out, ["%s: more than %d entries, not read" % (rel, MAX_MEMBERS)]
-    total = 0
+    reader = _Reader(gaps)
+    if kind == "app":
+        _read_app(zf, infos, rel, reader, out)
+        return out, gaps
+    apps = 0
     for info in infos:
         name = info.filename
-        if info.is_dir() or not _READ.match(name):
+        if info.is_dir():
             continue
-        if info.flag_bits & 0x1:
-            gaps.append("%s!/%s: encrypted, not read" % (rel, _SAFE_NAME.sub("_", name)))
+        where = "%s!/%s" % (rel, _SAFE_NAME.sub("_", name))
+        if _CANVAS_APP.match(name):
+            apps += 1
+            if apps > MAX_APPS:
+                if apps == MAX_APPS + 1:
+                    gaps.append("%s: more than %d canvas apps, the rest not read" % (rel, MAX_APPS))
+                continue
+            raw = reader.read(zf, info, where, MAX_APP_BYTES)
+            if raw is None:
+                continue
+            inner, inner_infos, bad = _open(io.BytesIO(raw), where)
+            if inner is None:
+                gaps.extend(bad or ["%s: not a readable zip, not read" % where])
+            elif _kind(inner_infos) != "app" or len(inner_infos) > MAX_MEMBERS:
+                gaps.append("%s: not a canvas app this version reads, not read" % where)
+            else:
+                _read_app(inner, inner_infos, where, reader, out)        # one level deep: an app holds no apps
             continue
-        if info.file_size > MAX_MEMBER_BYTES or info.file_size > MAX_RATIO * max(info.compress_size, 1):
-            gaps.append("%s!/%s: too large or too compressed, not read" % (rel, _SAFE_NAME.sub("_", name)))
+        if not _READ.match(name):
             continue
-        total += info.file_size
-        if total > MAX_TOTAL_BYTES:
-            gaps.append("%s: more than %d MB of flows, the rest not read" % (rel, MAX_TOTAL_BYTES >> 20))
-            break
-        try:
-            with zf.open(info) as fh:
-                raw = fh.read(MAX_MEMBER_BYTES + 1)      # the header's size may lie; never read past the limit
-        except (zipfile.BadZipFile, NotImplementedError, ValueError, OSError, EOFError, RuntimeError):
-            gaps.append("%s!/%s: unreadable, not read" % (rel, _SAFE_NAME.sub("_", name)))
-            continue
-        if len(raw) > MAX_MEMBER_BYTES:
-            gaps.append("%s!/%s: too large, not read" % (rel, _SAFE_NAME.sub("_", name)))
-            continue
-        if len(raw) != info.file_size:          # the directory and the data disagree: a truncated or forged entry
-            gaps.append("%s!/%s: size does not match the zip directory, not read" % (rel, _SAFE_NAME.sub("_", name)))
+        raw = reader.read(zf, info, where)
+        if raw is not None:
+            out.append((where, raw.decode("utf-8-sig", "replace")))
+    return out, gaps
+
+
+def _read_app(zf: zipfile.ZipFile, infos: List[zipfile.ZipInfo], rel: str, reader: _Reader,
+              out: List[Tuple[str, str]]) -> None:
+    """A canvas app's formulas: Src/*.pa.yaml when the app has them, else a listing of Controls/ and Components/."""
+    named = [(i, i.filename.replace("\\", "/")) for i in infos if not i.is_dir()]
+    source = [(i, n) for i, n in named if _APP_SOURCE.match(n)]
+    for info, name in source or [(i, n) for i, n in named if _APP_CONTROLS.match(n)]:
+        where = "%s!/%s" % (rel, _SAFE_NAME.sub("_", name))
+        raw = reader.read(zf, info, where, MAX_APP_MEMBER_BYTES)
+        if raw is None:
             continue
         text = raw.decode("utf-8-sig", "replace")
-        out.append(("%s!/%s" % (rel, _SAFE_NAME.sub("_", name)), text))
-    return out, gaps
+        if source:
+            out.append((where, text))
+        else:
+            listing = formulas(text)
+            if listing:
+                out.append((where + "!/formulas.yaml", listing))
+
+
+def formulas(text: str) -> str:
+    """The Power Fx formulas in a canvas app's Controls/<n>.json, one `<control>.<property>: =<formula>` per line
+    (a formula's further lines indented beneath it), or '' when the file holds none."""
+    try:
+        doc = json.loads(text)
+    except (ValueError, RecursionError):
+        return ""
+    lines: List[str] = []
+    stack = [(doc.get("TopParent"), 0)] if isinstance(doc, dict) else []
+    while stack:
+        node, depth = stack.pop()
+        if not isinstance(node, dict) or depth > MAX_DEPTH:
+            continue
+        control = re.sub(r"\s+", " ", str(node.get("Name") or "?"))[:100]
+        for rule in node.get("Rules") if isinstance(node.get("Rules"), list) else []:
+            script = rule.get("InvariantScript") if isinstance(rule, dict) else None
+            if isinstance(script, str) and script.strip():
+                prop = re.sub(r"\s+", " ", str(rule.get("Property") or "?"))[:100]
+                first, *rest = script.split("\n")
+                lines.append("%s.%s: =%s" % (control, prop, first))
+                lines.extend("    " + more for more in rest)
+        children = node.get("Children")
+        if isinstance(children, list):
+            stack.extend((child, depth + 1) for child in reversed(children))
+    return "\n".join(lines) + "\n" if lines else ""
 
 
 GAPS: List[str] = []                     # what load_archive could not read during this load, for the report's warnings
 
 
 def load_archive(path: Any, root: Any) -> List[SourceFile]:
-    """The readable members of a solution zip on disk as sources named <zip>!/<member>; gaps go to GAPS."""
+    """The readable members of a solution zip or canvas app on disk, as sources named <file>!/<member>; gaps go to
+    GAPS."""
     import os
     rel = os.path.relpath(str(path), str(root)).replace(os.sep, "/")
     try:
@@ -245,7 +365,128 @@ def _redacted_source(before: str) -> bool:
     return bool(source and _REDACTOR.search(source.group(1)))
 
 
+# ------------------------------------------------------------------ Copilot Studio agents
+
+# bots/<schema>/bot.xml. authenticationmode is the Dataverse bot table's choice: 0 Unspecified, 1 None (the maker's "No
+# authentication"), 2 Integrated (Authenticate with Microsoft), 3 Custom Entra ID, 4 Generic OAuth2.
+_BOT_FILE = re.compile(r"(?i)(?:^|/)bots/[^/]{1,200}/bot\.xml$")
+_AUTH_MODE = re.compile(r"<authenticationmode>\s*(\d{1,3})\s*</authenticationmode>")
+
+
+def _line_at(text: str, pos: int) -> int:
+    return text.count("\n", 0, pos) + 1
+
+
+def _agent_open(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if not _BOT_FILE.search(sf.rel) or not re.search(r"<bot[\s>]", sf.text[:4096]):
+        return []
+    mode = _AUTH_MODE.search(sf.text)
+    if not mode or mode.group(1) != "1":
+        return []
+    named = re.search(r"<name>([^<]{1,200})</name>", sf.text) or re.search(r'<bot\s+schemaname="([^"]{1,200})"', sf.text)
+    label = html.unescape(named.group(1)).strip()[:80] if named else "?"
+    return [make_finding(rule, sf, _line_at(sf.text, mode.start()), message=(
+        "The Copilot Studio agent '%s' is set to No authentication (authenticationmode 1): anyone who can reach it, on "
+        "a website, the demo page or another channel, can chat with it without signing in, and the connector actions "
+        "it calls run with the maker's connections, since there is no user to sign in." % label))]
+
+
+# ------------------------------------------------------------------ environment variables
+
+# environmentvariabledefinitions/<schema>/environmentvariabledefinition.xml holds the type and any default value;
+# environmentvariablevalues.json beside it holds the current value when the solution is exported with values. Type is
+# the Dataverse choice: 100000000 String (the maker's "Text"), 100000001 Number, 100000002 Boolean, 100000003 JSON,
+# 100000004 Data source, 100000005 Secret (an Azure Key Vault reference, never the secret itself).
+_ENV_FILE = re.compile(r"(?i)(?:^|/)environmentvariabledefinitions/([^/]{1,200})/"
+                       r"(environmentvariabledefinition\.xml|environmentvariablevalues\.json)$")
+TEXT_TYPE = "100000000"
+# a name, publisher prefix and punctuation removed, that ends in a credential word: AzureOpenAIAPIKey, ClientSecret,
+# SmtpPassword, GraphPfxPw, AccessToken, StorageConnectionString
+_SECRET_NAME = re.compile(r"(?i)(?:api_?key|access_?key|subscription_?key|account_?key|shared_?(?:access_?)?key|sas_?key|"
+                          r"private_?key|signing_?key|master_?key|secret(?:_?key)?|passw(?:or)?d|pwd|pw|"
+                          r"(?:access|auth|bearer|api|refresh|sas)?_?token|connection_?string|conn_?str)$")
+_KEY_NAME = re.compile(r"(?i)key$")                # DemoKey: a secret only when its value looks like one
+_KV_REF = re.compile(r"(?i)^/subscriptions/[^/]+/resourcegroups/[^/]+/providers/microsoft\.keyvault/")
+_PLACEHOLDER = re.compile(r"(?i)^(?:<.*>|\[.*\]|\{.*\}|\$\(.*\)|x+|\*+|-+|\.+|0+|none|null|nil|n/?a|tbd|todo)$|"
+                          r"placeholder|changeme|change_me|your_?|enter_?|replace|insert|example|sample|dummy|fake|redact")
+_GUID = re.compile(r"(?i)^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$")
+
+
+def _bare_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", re.sub(r"^[A-Za-z0-9]{1,12}_(?=.)", "", name.strip()))
+
+
+def _secret_value(value: str, named: bool) -> bool:
+    """A value that could be the credential itself, not a placeholder, a URL or a Key Vault reference. Under a
+    credential name any such value of 8 characters counts; under a name that only ends in 'key', a long mixed one."""
+    v = value.strip()
+    if len(v) < 8 or re.search(r"\s", v) or "://" in v or _KV_REF.match(v) or _PLACEHOLDER.search(v):
+        return False
+    if named:
+        return True
+    return len(v) >= 20 and bool(re.search(r"\d", v)) and bool(re.search(r"[A-Za-z]", v)) and not _GUID.match(v)
+
+
+def _values(doc: Any) -> List[str]:
+    """The value strings in an environmentvariablevalues.json."""
+    vals = doc.get("environmentvariablevalues") if isinstance(doc, dict) else None
+    vals = vals.get("environmentvariablevalue") if isinstance(vals, dict) else None
+    items = vals if isinstance(vals, list) else [vals]
+    return [i["value"] for i in items if isinstance(i, dict) and isinstance(i.get("value"), str)]
+
+
+def _env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
+    where = _ENV_FILE.search(sf.rel)
+    if not where:
+        return []
+    schema, member = where.group(1), where.group(2).lower()
+    if member.endswith(".xml"):
+        typ = re.search(r"<type>\s*(\d{1,12})\s*</type>", sf.text)
+        if not typ or typ.group(1) != TEXT_TYPE:
+            return []
+        display = re.search(r'<displayname\s+default="([^"]{0,200})"', sf.text)
+        names = [schema] + ([html.unescape(display.group(1))] if display else [])
+        if not any(_SECRET_NAME.search(_bare_name(n)) for n in names):
+            return []
+        default = re.search(r"<defaultvalue>([^<]{0,4000})</defaultvalue>", sf.text)
+        value = html.unescape(default.group(1)) if default else ""
+        if _secret_value(value, True):
+            return [make_finding(rule, sf, _line_at(sf.text, default.start()), severity="critical", confidence="high",
+                                 evidence="<defaultvalue>(%d characters, not shown)</defaultvalue>" % len(value.strip()),
+                                 message=(
+                "The environment variable '%s' is Text, not Secret, and the export carries its default value (%d "
+                "characters, not shown): the secret ships with every copy of the solution. Rotate it, clear the default, "
+                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (schema[:80], len(value.strip()))))]
+        return [make_finding(rule, sf, _line_at(sf.text, typ.start()), evidence="<type>%s</type>" % TEXT_TYPE, message=(
+            "The environment variable '%s' is named for a secret but is Text, not Secret: its value is stored in plain "
+            "text, readable by anyone who can read environment variables, and exported with the solution. Make it a "
+            "Secret variable, which keeps the value in Azure Key Vault." % schema[:80]))]
+    named = bool(_SECRET_NAME.search(_bare_name(schema)))
+    if not named and not _KEY_NAME.search(_bare_name(schema)):
+        return []
+    try:
+        doc = json.loads(sf.text)
+    except (ValueError, RecursionError):
+        return []
+    out: List[Finding] = []
+    for value in _values(doc):
+        if _secret_value(value, named):
+            at = sf.text.find(json.dumps(value)[1:-1])
+            out.append(make_finding(rule, sf, _line_at(sf.text, max(at, 0)), severity="critical", confidence="high",
+                                    evidence='"value": "(%d characters, not shown)"' % len(value.strip()), message=(
+                "The export carries the current value of the environment variable '%s' (%d characters, not shown): the "
+                "secret ships with every copy of the solution. Rotate it, export the solution without current values, "
+                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (schema[:80], len(value.strip())))))
+    return out
+
+
+# ------------------------------------------------------------------ dispatch
+
 def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if rule.check == "powerplatform_agent_open":
+        return _agent_open(sf, rule)
+    if rule.check == "powerplatform_env_secret":
+        return _env_secret(sf, rule)
     parsed = flow(sf)
     if not parsed:
         return []

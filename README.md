@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.6.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.7.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -77,7 +77,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - open Firebase rules, disabled row-level security, and public buckets;
   - invisible Unicode.
 - **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.
-- **Power Automate checks** (`JH144`-`JH147`): flows read from solution exports and flow packages, zipped or unpacked: HTTP triggers open to anyone, secrets shown in run history, consumer-account connectors, and personal data sent to AI services. Secrets inside a zipped flow are found too. See [the Power Platform guide](references/powerplatform.md).
+- **Power Platform checks** (`JH144`-`JH149`): solution exports and flow packages, zipped or unpacked, and canvas apps (`.msapp`). Flows: HTTP triggers open to anyone, secrets shown in run history, consumer-account connectors, and personal data sent to AI services. Copilot Studio agents that need no sign-in. Environment variables that keep a secret as plain text. Secrets in a zipped flow or a canvas app's formulas are found too. See [the Power Platform guide](references/powerplatform.md).
 - **The citizen profile** will not pass a release without:
   - an owner, and an engineering custodian named by the operator;
   - observed tests and CI;

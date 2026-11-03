@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.6.0"
+VERSION = "4.7.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -731,8 +731,9 @@ def discover_files(
         if not p.is_file() or _is_skipped_file(p):
             return
         try:
-            # a Power Platform solution export is a zip; its flows are read from inside it (jh_powerplatform)
-            if p.stat().st_size > (max(max_bytes, MAX_ARCHIVE_BYTES) if p.name.lower().endswith(".zip") else max_bytes):
+            # a Power Platform solution export (.zip) or canvas app (.msapp) is read from inside (jh_powerplatform)
+            if p.stat().st_size > (max(max_bytes, MAX_ARCHIVE_BYTES) if p.name.lower().endswith((".zip", ".msapp"))
+                                   else max_bytes):
                 return
         except OSError:
             return
