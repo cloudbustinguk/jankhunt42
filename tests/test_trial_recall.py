@@ -173,7 +173,7 @@ FILES = {
                                "}\n" % (PASSWORD4, PASSWORD3)),
     "Report/Hook.cs": ("public class Hook {\n    public Hook(HttpClient c) {\n"
                        "        c.DefaultRequestHeaders.Add(\"X-Webhook-Secret\", \"%s\");\n"
-                       "        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(\"Bearer\", \"%s\");\n"
+                       "        c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(\"Basic\", \"%s\");\n"
                        "        c.DefaultRequestHeaders.Add(\"X-Request-Id\", \"req42abcdef\");\n"
                        "    }\n}\n" % (PASSWORD, PASSWORD2)),
     "Report/Seed.cs": "public static class Seed {\n    public const string ViewerPassword = \"ViewerTest1!\";\n}\n",
@@ -222,7 +222,9 @@ FILES = {
                         "fetch(u, { headers: { Authorization: \"Bearer tok_not_real_value1\" } });\n"
                         # base64 that is not user:password is not Basic credentials
                         "fetch(u, { headers: { Authorization: \"Basic aGVsbG8gd29ybGQgdGhlcmU=\" } });\n"
-                        "pg.header('apikey', '" + jwt("anon") + "');\n"),
+                        "pg.header('apikey', '" + jwt("anon") + "');\n"
+                        # a user token as a bearer: the JWT pattern decides, by its role
+                        "fetch(u, { headers: { Authorization: \"Bearer " + jwt(None) + "\" } });\n"),
     "web/src/client.ts": ("const apiToken: string = \"%s\";\nconst bypassMode = \"strict2024\";\n" % PASSWORD),
     "svc/main.go": ("package main\n\nfunc open() {\n\tdbPassword := \"%s\"\n\t_ = dbPassword\n}\n" % PASSWORD2),
     # JH101: a Supabase service-role key in front-end code; the anon key is public by design
