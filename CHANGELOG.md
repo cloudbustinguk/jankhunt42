@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.5.0] — unreleased
+## [4.5.0] — 2026-11-03
 
 ### Added
 
@@ -20,7 +20,24 @@ semantic versioning.
 - JH146 (minor): a connector that can connect a personal account (Gmail, Outlook.com, personal OneDrive, Dropbox,
   Google).
 - JH147 (major): personal fields sent to an AI service from a flow (AI Builder prompts, AI connectors, AI APIs) with
-  no visible redaction.
+  no visible redaction. A field counts as redacted only when it is read from a step named for redaction.
+- JH101 finds secrets as canvas apps (Power Fx) and similar code write them: `Set(gblApiKey, "...")`,
+  `Set(gblAuthToken, "Bearer ...")`, `txtPassword.Text = "..."`, a literal beside `"clientSecret"`, `"Bearer " &
+  "..."`, and credentials in a URL's query string (`?sig=`, `token=`, `secret=`, `api_key=`). PostgREST filters
+  (`?key=eq.value`), Firebase Storage download tokens, anon JWTs passed as values, and template expressions are not
+  reported. All are masked in every output.
+- What a zip could not read is listed in every report format: JSON `warnings`, a "Not read" note in Markdown, HTML
+  and the terminal, and a SARIF tool execution notification.
+
+Measured on public Power Platform samples (PnP Power Automate and Power Apps samples, Microsoft's CoE Starter Kit
+and PowerApps-Samples): a literal Azure AD client secret in a sample flow (in its zip and its unpacked copy), a
+contact's full name sent to a GPT prompt through AI Builder, and CoE Graph calls that send a client secret without
+Secure inputs. On a held-out corpus of 40 flows written by a local model (20 problems, 20 lookalikes), 4.4.3 finds
+none and 4.5.0 finds all 20 with no false positives; the corpus followed a format brief, so it does not test unknown
+export variants. On 101 labelled Power Fx snippets, JH101 finds 39 of 56 credentials (4.4.3: 19) and flags 1 of 45
+safe snippets. On 252 real repositories, 4.5.0 adds 6 findings (3 critical: a SAS signature in test code and a
+function secret in two front-end files; 3 minor test fixtures) and drops 1 (a Supabase anon key in a SQL migration,
+public by design). Codex audited the reader twice; every finding was fixed before release.
 
 ## [4.4.3] — 2026-11-03
 
