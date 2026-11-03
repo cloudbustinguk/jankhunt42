@@ -211,13 +211,17 @@ FILES = {
     "app/Src/Safe.pa.yaml": ("Home:\n"
                              "  OnStart: =Set(gblTokenLabel, \"lbl_token\"); Set(gblApiKey, LookUp(Settings, Key = \"ApiKey\").Value)\n"
                              "  OnVisible: =If(txtPassword.Text = \"\", Notify(\"Enter a password\"))\n"
-                             "  Image: =\"https://cdn.example.net/logo.png?v=2024&size=large\"\n"),
+                             "  Image: =\"https://cdn.example.net/logo.png?v=2024&size=large\"\n"
+                             "  Avatar: =\"https://firebasestorage.googleapis.com/v0/b/demo.appspot.com/o/a.png?alt=media&"
+                             "token=1b2c3d4e-5f60-7182-93a4-b5c6d7e8f901\"\n"
+                             "  Items: =\"https://demo.supabase.co/rest/v1/app_config?api_key=eq.n8n_public_url\"\n"),
     # an anon key sent as the bearer token is public by design, as it is as the apikey
     # and a test double's readable token (one digit) is not a credential
     "web/src/anon.ts": ("fetch(u, { headers: { Authorization: \"Bearer " + jwt("anon") + "\" } });\n"
                         "fetch(u, { headers: { Authorization: \"Bearer tok_not_real_value1\" } });\n"
                         # base64 that is not user:password is not Basic credentials
-                        "fetch(u, { headers: { Authorization: \"Basic aGVsbG8gd29ybGQgdGhlcmU=\" } });\n"),
+                        "fetch(u, { headers: { Authorization: \"Basic aGVsbG8gd29ybGQgdGhlcmU=\" } });\n"
+                        "pg.header('apikey', '" + jwt("anon") + "');\n"),
     "web/src/client.ts": ("const apiToken: string = \"%s\";\nconst bypassMode = \"strict2024\";\n" % PASSWORD),
     "svc/main.go": ("package main\n\nfunc open() {\n\tdbPassword := \"%s\"\n\t_ = dbPassword\n}\n" % PASSWORD2),
     # JH101: a Supabase service-role key in front-end code; the anon key is public by design
