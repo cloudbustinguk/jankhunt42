@@ -825,12 +825,15 @@ def load_source(path: Path, root: Path) -> Optional[SourceFile]:
 # wider than JH101's detection on purpose: prefixed names (AWS_SECRET_ACCESS_KEY) and quoted keys
 # ("db_password": ...) are redacted whatever the value looks like
 _SECRET_KEY_RE = re.compile(
-    r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key)\b"
+    r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key|"
+    r"(?:admin|master|private|signing|encryption|hmac|webhook|subscription|licen[cs]e|jwt)[_-]?key)\b"
     r"['\"]?\s*[:=]\s*(?=['\"])"
 )
 # a camelCase or PascalCase credential name (dbPassword, SmtpPwd, apiToken: string, dbPassword :=), as JH101 reads it
 _CAMEL_SECRET_KEY_RE = re.compile(
-    r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|SecretKey)"
+    r"\b_*(?:[A-Za-z][A-Za-z0-9]*?[a-z0-9])?(?:Password|Passwd|Pwd|Pass|Secret|Token|ApiKey|AccessKey|SecretKey|"
+    r"(?:[Aa]dmin|[Mm]aster|[Pp]rivate|[Ss]igning|[Ee]ncryption|[Hh]mac|HMAC|[Ww]ebhook|[Ss]ubscription|[Ll]icen[cs]e|"
+    r"[Jj]wt|JWT)Key)"
     r"(?:\s*\{\s*get;[^}\n]*\})?\s*(?::\s*[A-Za-z_][\w<>?\[\]]*\s*)?:?[:=]\s*(?=['\"])"
 )
 # the password argument of new NetworkCredential("user", "...") or PasswordAuthentication("user", "..."), the token
@@ -864,7 +867,14 @@ _TOKEN_RES = [
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),
 ]
 # the password inside a connection string or DSN: Password=...; or Pwd=...;
-_CONN_PASSWORD_RE = re.compile(r"(?i)\b(?:password|pwd)\s*=\s*")
+_CONN_PASSWORD_RE = re.compile(r"(?i)\b(?:password|pwd|accountkey|sharedaccesskey)\s*=\s*")
+# a header written out in one string ("Authorization: Bearer ..."): the credential after the scheme, bare
+_AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization:\s*(?:Bearer|Basic|Token)\s+(?=[\w.~+/=-]{8,}(?:[\s\"'`\\]|$))")
+# a literal Authorization value ({Authorization: "Bearer ..."}), whole; not "Bearer " + token, not a placeholder
+_AUTH_VALUE_RE = re.compile(r"(?i)\bAuthorization[\"']?\s*\]?\s*[:=,]\s*(?=[\"'](?:Bearer|Basic|Token)\s+[\w.~+/=-]{8,}[\"'])")
+# a DSN's password: Go's user:PASS@tcp(...) (the driver splits at the last @), or scheme://user:PASS@host
+_DSN_PASSWORD_RES = (re.compile(r"[\w.%+-]{1,64}:([^\s\"'`]+?)@(?:tcp|unix)\("),
+                     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^:@/\s\"']+:([^@/\s\"']+)@"))
 _BARE_VALUE_END_RE = re.compile(r"[;\"'\s]")
 
 
@@ -920,8 +930,10 @@ def _conn_password_spans(text: str) -> List[Tuple[int, int]]:
 def _secret_assignment_spans(text: str) -> List[Tuple[int, int]]:
     """A quoted value assigned to a secret-looking name (api_key = '...', "db_password": "...", dbPassword = "...")
     or passed as a credential's password, whole."""
-    return [span for key_re in (_SECRET_KEY_RE, _CAMEL_SECRET_KEY_RE, _CREDENTIAL_ARG_RE)
-            for span in _value_spans(text, key_re, ("'", '"'), False, 4, True)]
+    return [span for key_re in (_SECRET_KEY_RE, _CAMEL_SECRET_KEY_RE, _CREDENTIAL_ARG_RE, _AUTH_VALUE_RE)
+            for span in _value_spans(text, key_re, ("'", '"'), False, 4, True)] + \
+        _value_spans(text, _AUTH_HEADER_RE, (), True, 4, True) + \
+        [m.span(1) for dsn_re in _DSN_PASSWORD_RES for m in dsn_re.finditer(text)]
 
 
 def redact_secrets(text: str) -> str:

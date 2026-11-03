@@ -34,6 +34,10 @@ def write(root, rel, text):
         fh.write(text)
 
 
+NEW_SECRETS = ("k9F2mQ7xL4pR8vB3", "a8f3kd92jf83kd0s",
+               "q8Jd9Kd83jf0Lx92kdL0z9xQ2mP4nB7vC1sR5tY8uW3eA6hG0jK2lN4oP7qS9==", "G0_My9qL_P@ss",
+               "Lq83kd9x0z", "Xk92jdLq0p", "b7Rk2mQ9vL4xP8nZ", "Hq4vM8kR2zX7nL3p", "Rt7pL9vN3qW2")
+
 FILES = {
     # JH105: TLS checks turned off through Python's ssl module and .NET's certificate callbacks
     "export/job.py": ("import ssl\nimport urllib.request\nimport urllib3\n\n"
@@ -170,6 +174,35 @@ FILES = {
                        "        c.DefaultRequestHeaders.Add(\"X-Request-Id\", \"req42abcdef\");\n"
                        "    }\n}\n" % (PASSWORD, PASSWORD2)),
     "Report/Seed.cs": "public static class Seed {\n    public const string ViewerPassword = \"ViewerTest1!\";\n}\n",
+    # JH101: a key named for what it unlocks, a literal Authorization header, an Azure account key and DSN passwords;
+    # a cache key and the storage emulator's published key are not secrets
+    "Report/Remote.cs": ("public class Remote {\n"
+                         "    private const string WebhookHmacKey = \"" + NEW_SECRETS[0] + "\";\n"
+                         "    void Go(HttpClient c) { c.DefaultRequestHeaders.Add(\"Authorization\", \"Bearer " +
+                         NEW_SECRETS[1] + "\"); }\n"
+                         "    const string Blob = \"DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=" +
+                         NEW_SECRETS[2] + "\";\n"
+                         "    const string Dev = \"DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey="
+                         "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==\";\n"
+                         "    const string CacheKey = \"user:12345abc\";\n"
+                         "    const string Probe = \"Authorization: Basic " +
+                         base64.b64encode(b"svc:" + NEW_SECRETS[8].encode()).decode() + "\";\n"
+                         "}\n"),
+    "svc/db.go": ("package svc\n"
+                  "const prodDSN = \"report:" + NEW_SECRETS[3] + "@tcp(db.corp.net:3306)/reports\"\n"
+                  "const localDSN = \"root:" + NEW_SECRETS[4] + "@tcp(127.0.0.1:3306)/dev\"\n"
+                  "const pgURL = \"postgres://app:" + NEW_SECRETS[5] + "@db.corp.net:5432/app\"\n"
+                  "const probe = \"curl -H 'Authorization: Bearer " + NEW_SECRETS[6] + "' https://api.corp.net\"\n"
+                  "const ADMIN_KEY = \"" + NEW_SECRETS[7] + "\"\n"),
+    # a local development database in a settings example or a guide is not reported at all
+    "svc/.env.example": "DATABASE_URL=postgres://app:" + NEW_SECRETS[4] + "@localhost:5432/app\n",
+    "svc/SETUP.md": "Run `export DATABASE_URL=postgres://app:" + NEW_SECRETS[4] + "@127.0.0.1:5432/app` first.\n",
+    # an anon key sent as the bearer token is public by design, as it is as the apikey
+    # and a test double's readable token (one digit) is not a credential
+    "web/src/anon.ts": ("fetch(u, { headers: { Authorization: \"Bearer " + jwt("anon") + "\" } });\n"
+                        "fetch(u, { headers: { Authorization: \"Bearer tok_not_real_value1\" } });\n"
+                        # base64 that is not user:password is not Basic credentials
+                        "fetch(u, { headers: { Authorization: \"Basic aGVsbG8gd29ybGQgdGhlcmU=\" } });\n"),
     "web/src/client.ts": ("const apiToken: string = \"%s\";\nconst bypassMode = \"strict2024\";\n" % PASSWORD),
     "svc/main.go": ("package main\n\nfunc open() {\n\tdbPassword := \"%s\"\n\t_ = dbPassword\n}\n" % PASSWORD2),
     # JH101: a Supabase service-role key in front-end code; the anon key is public by design
@@ -251,6 +284,17 @@ class TrialRecall(unittest.TestCase):
         self.assertEqual(self.hits("JH101", "Report/Hook.cs"), [(3, "critical"), (4, "critical")])
         self.assertEqual(self.hits("JH101", "Report/Seed.cs"), [])
 
+    def test_admin_keys_authorization_headers_account_keys_and_dsn_passwords(self):
+        self.assertEqual(self.hits("JH101", "Report/Remote.cs"), [(2, "critical"), (3, "critical"), (4, "critical"),
+                                                                  (7, "critical")])
+        self.assertEqual(self.hits("JH101", "svc/db.go"), [(2, "critical"), (3, "minor"), (4, "critical"),
+                                                           (5, "critical"), (6, "critical")])
+        self.assertEqual(self.hits("JH101", "web/src/anon.ts"), [])
+        self.assertEqual(self.hits("JH101", "svc/.env.example") + self.hits("JH101", "svc/SETUP.md"), [])
+        for secret in NEW_SECRETS + (base64.b64encode(b"svc:" + NEW_SECRETS[8].encode()).decode(),):
+            for output in (json.dumps(self.findings), self.md, self.sarif):
+                self.assertNotIn(secret, output)
+
     def test_a_service_role_key_is_a_secret_and_an_anon_key_is_not(self):
         self.assertEqual(self.hits("JH101", "web/src/supabase.ts"), [(2, "critical")])
         found = [f for f in self.findings if f["rule"] == "JH101" and f["path"] == "web/src/supabase.ts"][0]
@@ -318,6 +362,16 @@ class RedactorProperties(unittest.TestCase):
             noise = "".join(rng.choice(bits) for _ in range(rng.randint(0, 8)))
             for tail in ("; token = '%s'" % secret, ' password="%s"' % secret, ";Pwd=%s;" % secret):
                 self.assertNotIn(secret, jh_core.redact_secrets(noise + tail), noise + tail)
+
+    def test_an_authorization_scheme_or_placeholder_alone_is_left_alone(self):
+        # n8n exports count any redacted parameter as a secret, so a template must come back unchanged
+        import jh_core
+        for text in ["Send `Authorization: Bearer <token>` with each call.",
+                     "headers: { Authorization: 'Bearer ' + key }",
+                     "headers: { Authorization: `Bearer ${key}` }",
+                     'req.Headers.Add("Authorization", "Basic " + creds);',
+                     "Send `Authorization: Basic base64(user:appPassword2024)` to log in."]:
+            self.assertEqual(jh_core.redact_secrets(text), text)
 
 if __name__ == "__main__":
     unittest.main()
