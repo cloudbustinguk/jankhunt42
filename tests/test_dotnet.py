@@ -362,6 +362,9 @@ class Structural(unittest.TestCase):
         xml='<Project><Target Name="x"><Exec Command="curl https://user:'+secret+'@config.example.invalid/file -o file"/></Target></Project>'
         f=found(xml,'JH143','app.csproj')[0]
         self.assertNotIn(secret,f.evidence)
+        # a signature in the query string (an Azure SAS link) is a credential too
+        sas='<Project><Target Name="x"><Exec Command="curl https://config.example.invalid/file?sv=2024&amp;sig='+secret+' -o file"/></Target></Project>'
+        self.assertNotIn(secret,found(sas,'JH143','app.csproj')[0].evidence)
         self.assertEqual(found('<!DOCTYPE Project [<!ENTITY x SYSTEM "file:///etc/passwd">]><Project>&x;</Project>','JH143','x.csproj'),[])
 
 
