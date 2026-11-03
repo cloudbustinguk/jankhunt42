@@ -377,6 +377,25 @@ RULES: List[Rule] = [
       "An MSBuild Exec command downloads remote content during the build, outside a separate verified acquisition step.",
       "Acquire and verify fixed artifacts separately, then restore and build from a local feed without network access.",
       confidence="high", files=("*.csproj", "*.props", "*.targets"), check="dotnet_exec", tags=("dotnet",)),
+    # Power Platform: Power Automate cloud flows in solution exports, read by jh_powerplatform (zipped or unpacked)
+    R("JH144", "Power Automate flow starts from an HTTP request open to anyone", "major", "security",
+      "A flow's HTTP trigger runs for whoever has its URL, with no sign-in; the URL is the only key.",
+      "Set the trigger's 'Who can trigger the flow' to users in your tenant or specific users, and rotate the URL.",
+      confidence="medium", langs=("json",), check="powerplatform_http_trigger", tags=("powerplatform", "citizen")),
+    R("JH145", "Power Automate secret shown in run history", "major", "security",
+      "A flow reads or sends a secret without Secure inputs/outputs, so its run history shows the value.",
+      "Turn on Secure outputs (Key Vault) or Secure inputs (HTTP) in the action's settings.",
+      confidence="high", langs=("json",), check="powerplatform_secret_history", tags=("powerplatform", "citizen", "secret")),
+    R("JH146", "Power Automate flow uses a consumer-account connector", "minor", "security",
+      "A connector that can connect a personal account (Gmail, Outlook.com, personal OneDrive, Dropbox, Google) "
+      "can move work data out of the organisation.",
+      "Use the organisation's connector (Office 365 Outlook, OneDrive for Business, SharePoint) or confirm the "
+      "connector is classified in your data policy.",
+      confidence="low", langs=("json",), check="powerplatform_consumer", tags=("powerplatform", "citizen")),
+    R("JH147", "Power Automate flow sends personal data to an AI service", "major", "security",
+      "A flow passes personal fields to an AI connector, AI Builder prompt or AI API with no visible redaction.",
+      "Send only the fields the prompt needs, redact or pseudonymise personal data, and use an approved AI service.",
+      confidence="medium", langs=("json",), check="powerplatform_ai_personal", tags=("powerplatform", "citizen", "ai")),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",
@@ -1094,6 +1113,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     acceptor = _FindingAcceptor(opts, _collect_suppressions(sources))
     import jh_dotnet
     dotnet_context = jh_dotnet.context(sources)
+    import jh_powerplatform
 
     for sf in sources:
         python_docstrings = None
@@ -1125,10 +1145,15 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         result.findings.append(f)
             if rule.check:
                 fn = CHECKS.get(rule.check)
-                if not fn and not rule.check.startswith("dotnet_"):
+                if not fn and not rule.check.startswith(("dotnet_", "powerplatform_")):
                     continue
                 try:
-                    found = jh_dotnet.findings(sf, rule, dotnet_context) if rule.check.startswith("dotnet_") else fn(sf, rule)
+                    if rule.check.startswith("dotnet_"):
+                        found = jh_dotnet.findings(sf, rule, dotnet_context)
+                    elif rule.check.startswith("powerplatform_"):
+                        found = jh_powerplatform.findings(sf, rule)
+                    else:
+                        found = fn(sf, rule)
                 except Exception as exc:  # jankhunt42: ignore JH202  (a broken check must not kill the scan)
                     print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue

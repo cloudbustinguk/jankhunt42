@@ -125,9 +125,14 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
     root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes)
     if spinner:
         spinner.update("reading %d files…" % len(files))
+    import jh_powerplatform
+    jh_powerplatform.GAPS.clear()
     sources = []
     skipped = 0
     for idx, path in enumerate(files, 1):
+        if jh_powerplatform.is_archive(str(path)):
+            sources.extend(jh_powerplatform.load_archive(path, root))     # a solution export's flows, or nothing
+            continue
         sf = load_source(path, root)
         if sf is None:
             skipped += 1
@@ -230,6 +235,9 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         "skipped": skipped,
         "cve": bool(args.cve),
     }
+    import jh_powerplatform
+    if jh_powerplatform.GAPS:
+        meta["archive_warnings"] = list(jh_powerplatform.GAPS[:50])
     if cfg.source:
         meta["config"] = cfg.source
     if ignored_rules(args):
@@ -303,7 +311,7 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
             "cve": meta.get("cve", False),
             "cve_packages": meta.get("cve_packages", 0),
         },
-        "warnings": meta.get("cve_warnings", []) + meta.get("site_warnings", []),
+        "warnings": meta.get("cve_warnings", []) + meta.get("site_warnings", []) + meta.get("archive_warnings", []),
         "config": meta.get("config"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         "minified": meta.get("minified", []),

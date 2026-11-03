@@ -80,6 +80,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - open Firebase rules, disabled row-level security, and public buckets;
   - invisible Unicode.
 - **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.
+- **Power Automate checks** (`JH144`-`JH147`): flows read from solution exports and flow packages, zipped or unpacked: HTTP triggers open to anyone, secrets shown in run history, consumer-account connectors, and personal data sent to AI services. Secrets inside a zipped flow are found too. See [the Power Platform guide](references/powerplatform.md).
 - **The citizen profile** will not pass a release without:
   - an owner, and an engineering custodian named by the operator;
   - observed tests and CI;
@@ -346,6 +347,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
+| [`references/powerplatform.md`](references/powerplatform.md) | Power Automate flows in solution exports and flow packages: open HTTP triggers, secrets in run history, consumer connectors, personal data to AI |
 | [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |
 | [`references/sandbox.md`](references/sandbox.md) | `sandbox`: running the install hooks, the dependencies as they load, and what runs on open in a sandbox, the audit log, canaries and limits |
 | [`references/dotnet.md`](references/dotnet.md) | ASP.NET Core leads, their limits, and offline NuGet restore/build |
