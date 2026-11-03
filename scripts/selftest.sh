@@ -838,10 +838,10 @@ PY
 "$PY" - "$TMP/rules.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d) == 109, len(d)
+assert len(d) == 113, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" in ids and "JH101" in ids, ids
-assert {"JH%d" % n for n in range(135, 144)} <= ids, ids
+assert {"JH%d" % n for n in range(135, 148)} <= ids, ids
 assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711"}, ids
 print("rules: %d" % len(d))
 PY
