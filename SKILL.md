@@ -40,8 +40,7 @@ Never add `--online` or `--fetch` unless the user asked for it.
 | an AI agent workspace reviewed: settings, MCP servers, instruction files | `jankhunt42 scan . --category agent` | `references/citizen.md` |
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
-| an n8n workflow export reviewed | `jankhunt42 map .` | `references/n8n.md` |
-| a Power Automate flow or Power Platform solution export reviewed | `jankhunt42 scan .` | `references/powerplatform.md` |
+| an n8n workflow, or a Power Automate flow or solution export, reviewed | `jankhunt42 map .` (n8n), `jankhunt42 scan .` (Power Automate) | `references/n8n.md`, `references/powerplatform.md` |
 | what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox .` | `references/sandbox.md` |
 | a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --ignore-rule JH417` | `references/rulesets.md` |
 | copy-paste commands for native tools | | `references/toolbox.md` |
