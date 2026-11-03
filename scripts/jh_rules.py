@@ -1080,7 +1080,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         found = jh_powerplatform.findings(sf, rule)
                     else:
                         found = fn(sf, rule)
-                except Exception as exc:  # jankhunt42: ignore JH202  (a broken check must not kill the scan)
+                except Exception as exc:  # a broken check must not kill the scan
                     print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue
                 for f in found:
