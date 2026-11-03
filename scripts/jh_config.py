@@ -54,7 +54,6 @@ class Config:
     path_rules: List[PathRule] = field(default_factory=list)
     ignore_globs: List[str] = field(default_factory=list)
     fail_on: Optional[str] = None
-    calibrate: Optional[bool] = None
     # `passport` section: owners, asset classifications, operations
     # declarations, tighten-only policy. Repository-controlled, so every
     # consumer treats it as `declared`, never as verified or trusted.
@@ -175,8 +174,6 @@ def load_config(path: Optional[str], contents: Optional[str] = None) -> Config:
 
     if raw.get("fail_on"):
         cfg.fail_on = str(raw["fail_on"])
-    if "calibrate" in raw:
-        cfg.calibrate = bool(raw["calibrate"])
     passport = raw.get("passport", {})
     if isinstance(passport, dict):
         cfg.passport = passport

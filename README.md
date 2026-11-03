@@ -8,15 +8,15 @@
 
 AI app builders and coding agents let anyone turn an idea into running software in an afternoon. That software inherits its builder's credentials, the tools their agent is wired to, and their access to production data, often without an engineer ever looking at it. jankhunt42 is the review that is missing. It reads a repository the way a security engineer would and explains what it finds in plain terms, both to the citizen developer who built it and to the team asked to approve it.
 
-jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`scan --cve`, `--verify … --online`, `sandbox --fetch`).
+jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.5.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.6.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
 | Question | Commands | What you get |
 |---|---|---|
-| **What's broken?** | `scan`, `review`, `supply-chain` | Evidence-backed leads across code, CI, Kubernetes, containers, secrets, dependencies, and AI-agent workspaces; Jank Score 2.0; diff review with receipts |
+| **What's broken?** | `scan`, `review` | Evidence-backed leads across code, low-code exports, CI, containers, secrets, and AI-agent workspaces; Jank Score 3.0; diff review with receipts |
 | **What can it hurt?** | `map`, `map --base REF` | A typed connectivity graph with a receipt per edge, covering apps, CI, Kubernetes, Terraform, n8n workflows, cloud data platforms (Azure, AWS, Google Cloud, Databricks, Snowflake) and cloud identities; confidentiality/integrity/availability blast radius; a credential blast radius per identity; trust-boundary crossings, explicit unknowns, and a graph diff |
 | **Can we responsibly ship it?** | `passport`, `sandbox` | Ownership, provenance and SBOM quality, data sources, AI use, operations evidence, change control on the default branch, package sources, the Jank Score and the exposure class, joined in an explainable `pass` / `review` / `insufficient-evidence` / `block` decision; a pull-request gate recipe for citizen developers |
 
@@ -58,9 +58,6 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell)
 jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceiling /etc/it/approved.json   # capped by IT's approved list
 jankhunt42 sandbox .                    # opt-in: run the install hooks, the dependencies as they load, and what runs on open in a sandbox
-jankhunt42 agent-fuzz validate campaign.json --json  # validate a campaign; does not run an agent yet
-jankhunt42 agent-fuzz evaluate campaign.json observations.json --json  # score supplied observations; does not run an agent
-jankhunt42 agent-fuzz evaluate campaign.json observations.json --html > report.html  # offline report; TTYs get a case summary
 jankhunt42 passport . --base <ref> --md   # what new access this change asks for (for IT to approve)
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
@@ -103,11 +100,11 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
     <th width="50%">As one offline HTML file (<code>--html</code>)</th>
   </tr>
   <tr>
-    <td colspan="2"><b>What's broken?</b> <code>jankhunt42 scan .</code>: the Jank Score, its four dimensions, hot spots, and every finding with its evidence.</td>
+    <td colspan="2"><b>What's broken?</b> <code>jankhunt42 scan .</code>: the Jank Score, its dimensions, hot spots, and every finding with its evidence.</td>
   </tr>
   <tr>
-    <td><img src="assets/readme/terminal-scan.png" alt="Terminal scan view: the code autopsy banner, a Jank gauge at 67 out of 100 graded E with the label biohazard and policy fail, the four dimension bars, top offenders and rules, and the first finding with evidence, why and fix"></td>
-    <td><img src="assets/readme/scan-report.png" alt="HTML scan report: a score ring at 67 out of 100 graded E labelled biohazard, severity counts, and a scorecard for security, reliability, maintainability and test confidence"></td>
+    <td><img src="assets/readme/terminal-scan.png" alt="Terminal scan view: the code autopsy banner, a Jank gauge at 69 out of 100 graded E with the label biohazard and policy fail, the three dimension bars, top offenders and rules, and the first finding with evidence, why and fix"></td>
+    <td><img src="assets/readme/scan-report.png" alt="HTML scan report: a score ring at 69 out of 100 graded E labelled biohazard, severity counts, and a scorecard for security, reliability and test confidence"></td>
   </tr>
   <tr>
     <td colspan="2"><b>What can it hurt?</b> <code>jankhunt42 map .</code>: the exposure class, evidence coverage, trust-boundary crossings, and the highest-impact paths. The explorer is shown with the application's integrity blast radius highlighted.</td>
@@ -120,8 +117,8 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
     <td colspan="2"><b>Can we responsibly ship it?</b> <code>jankhunt42 passport .</code>: the decision, the rules that produced it (including sensitive data reachable alongside an AI service), the evidence areas, and the AI services in use.</td>
   </tr>
   <tr>
-    <td><img src="assets/readme/terminal-passport.png" alt="Terminal passport: release assessment REVIEW, Jank Score 67 out of 100, exposure High, evidence coverage 4 of 9, three review reasons P-DAT-002, P-AI-001 and P-JNK-001, the evidence areas, and the start of the AI use section"></td>
-    <td><img src="assets/readme/software-passport.png" alt="HTML passport: summary cards for review, 67 out of 100, High, 4 of 9 and assessed, the three review reasons, and the table of every rule with its outcome"></td>
+    <td><img src="assets/readme/terminal-passport.png" alt="Terminal passport: release assessment REVIEW, Jank Score 69 out of 100, exposure High, evidence coverage 4 of 10, three review reasons P-DAT-002, P-AI-001 and P-JNK-001, the evidence areas, change control and package sources"></td>
+    <td><img src="assets/readme/software-passport.png" alt="HTML passport: summary cards for review, 69 out of 100, High, 4 of 10 and assessed, the three review reasons, and the table of every rule with its outcome"></td>
   </tr>
   <tr>
     <td colspan="2"><b>Software built by citizen developers.</b> <code>jankhunt42 passport . --profile citizen</code> leads with a plain-language brief: why it blocks, what the software and its AI agent's tool servers can reach, and who must sign off.</td>
@@ -137,13 +134,6 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
     <td><img src="assets/readme/terminal-sandbox.png" alt="Terminal sandbox run: 3 ALERT and 3 DENY with complete coverage; an npm postinstall and a VS Code folder-open task ran; the audit log shows canary reads of ~/.aws/credentials and ~/.npmrc, a persistence attempt on ~/.bashrc, two DNS lookups and a blocked connection to 203.0.113.9:443."></td>
     <td><img src="assets/readme/sandbox-passport.png" alt="HTML passport with the sandbox run: review on P-RUN-001 for 3 ALERTs and P-RUN-002 for 2 destinations the repository does not declare; a table marks api.invoices.example.com declared, and collector.telemetry-cdn.example and 203.0.113.9:443 undeclared."></td>
   </tr>
-  <tr>
-    <td colspan="2"><b>Did the observed behavior match policy?</b> <code>jankhunt42 agent-fuzz evaluate CAMPAIGN.json OBSERVATIONS.json</code> scores evidence supplied by an adapter. These gallery examples use synthetic observations; no agent was run, and file hashes do not authenticate the evidence.</td>
-  </tr>
-  <tr>
-    <td><img src="assets/readme/terminal-agent-fuzz.png" alt="Terminal agent-fuzz evaluation from synthetic caller-provided observations: one fail, five passes, one inconclusive case and one case where policy was not loaded; the report states no agent was run."></td>
-    <td><img src="assets/readme/agent-fuzz-report.png" alt="Offline HTML agent-fuzz report with synthetic caller-provided observations: fail verdict, five passes, one fail, one inconclusive case and one policy-not-loaded case, plus scope and hash caveats."></td>
-  </tr>
 </table>
 
 Text output for the same fixture, regenerated by the test suite on every run, is in [`references/examples.md`](references/examples.md), with notes on how to read it.
@@ -157,26 +147,19 @@ jankhunt42 scan . --json                 # full machine report
 jankhunt42 scan . --sarif > jank.sarif   # SARIF 2.1.0 for code scanning
 jankhunt42 scan . --html > jankhunt42.html
 jankhunt42 scan . --fail-on critical     # explicit CI gate
-jankhunt42 scan . --since HEAD           # whole-tree plus new-code score
-jankhunt42 scan . --score --json         # Jank Score 2.0 breakdown
+jankhunt42 scan . --score --json         # Jank Score 3.0 breakdown
 jankhunt42 rules --category security     # the rule catalog
 jankhunt42 review . --base HEAD~1 --json # committed changes, with receipts
 jankhunt42 review . --staged --md
 jankhunt42 review . --commit HEAD --brief            # handoff for a semantic reviewer
 jankhunt42 review . --base HEAD~1 --save-baseline baseline.json --json
 jankhunt42 review . --base HEAD~1 --baseline baseline.json --fail-on major
-jankhunt42 triage app.log --top 25       # debugging helper: fingerprint and rank log clusters
-jankhunt42 doctor --system               # debugging helper: repo and host health
 
 # What can it hurt?
 jankhunt42 map . --json                        # jankhunt.map.v1 (templates/map.schema.json)
 jankhunt42 map . --base HEAD~1 --json          # graph delta from committed git objects only
 jankhunt42 map . --redact --json               # shareable: pseudonymous IDs, no hosts or snippets
 jankhunt42 map . --inventory ../inventory.json # operator inventory: classifications and verified grants
-jankhunt42 map . --what-if ../scenario.json    # hypothetical: revoke, block egress, compromise an identity
-jankhunt42 map . --drift ../stored-map.json    # stored map vs the current repository
-jankhunt42 map . --mermaid > map.mmd           # Mermaid flowchart for docs
-jankhunt42 map . --csv map-csv                 # nodes.csv + edges.csv (formula-injection safe)
 
 # Can we responsibly ship it?
 jankhunt42 passport . --json                   # jankhunt.passport.v1 (templates/passport.schema.json)
@@ -189,13 +172,10 @@ jankhunt42 sandbox . --json                   # opt-in sandbox run of the instal
 jankhunt42 sandbox . --fetch https://registry.npmjs.org/ --json   # dependencies' hooks too: fetches the pinned npm packages, verified
 jankhunt42 passport . --sandbox-run /path/outside/run.json   # carry a saved run into the passport (P-RUN-001, P-RUN-002)
 jankhunt42 passport . --branch-rules ../rules/app.json    # rulesets exported by an operator: is review enforced?
-jankhunt42 supply-chain . --json                          # SPDX/CycloneDX, in-toto/Sigstore/GitHub, JFrog
-jankhunt42 supply-chain . --require-sbom-minimum          # fail unless an SBOM has the NTIA minimum elements
-jankhunt42 supply-chain . --verify ../verify-plan.json    # run gh/cosign/jf against a plan outside the repo
 jankhunt42 selftest --full                                # self-assurance, with a pass/fail gate
 ```
 
-Policy precedence is defaults, then an operator `--policy` from outside the repository, then hard floors. Repository config can only tighten. Jank Score 2.0 is a transparent prioritization device: four dimensions, A-E grades, and a headline anchored to the worst dimension.
+Policy precedence is defaults, then an operator `--policy` from outside the repository, then hard floors. Repository config can only tighten. Jank Score 3.0 is a transparent prioritization device: three dimensions (security, reliability, tests), A-E grades, and a headline anchored to the worst dimension.
 
 ## The evidence model
 
@@ -220,7 +200,7 @@ Paths take the strength of their weakest edge. "Known" reach means verified; eve
 
 ```json
 {
-  "rules": {"JH205": {"enabled": false}},
+  "rules": {"JH306": {"enabled": false}},
   "paths": {"legacy/**": {"severity": {"JH101": "info"}}},
   "ignore": ["vendor/**"],
   "passport": {
@@ -231,15 +211,11 @@ Paths take the strength of their weakest edge. "Known" reach means verified; eve
 }
 ```
 
-Suppress a confirmed false positive inline, with a reason: `# jankhunt42: ignore JH201`. File-level suppression is `# jankhunt42: ignore-file JH305`, in the first 12 lines.
+Suppress a confirmed false positive inline, with a reason: `# jankhunt42: ignore JH201`. File-level suppression is `# jankhunt42: ignore-file JH204`, in the first 12 lines.
 
 ## Privacy and security
 
-- **Offline by default.** Only two opt-ins reach a network:
-  - `scan --cve` sends package names and versions to OSV.dev;
-  - `--verify … --online` sends the repository name and artifact digests to the GitHub API.
-
-  `map` and `passport` never resolve, probe, or connect to anything they find.
+- **Offline by default.** Only `sandbox --fetch URL` reaches a network: it downloads the hash-pinned packages a lockfile names, from the origins you give it. `scan`, `review`, `map` and `passport` never resolve, probe, or connect to anything they find.
 - **Redaction.** Credentials, URL userinfo, query strings, connection-string secrets, keys, tokens and emails are removed before anything is hashed, displayed or stored. Repository control characters are neutralized before they reach a terminal. HTML output escapes everything and runs under a no-network content security policy.
 - **Sharing.** A connectivity graph can reveal internal topology, so use `--redact` for anything you share. Generated artifacts contain relative paths only.
 - **Untrusted repositories.** jankhunt42 never executes repository code. Instructions embedded in repository content are data, not commands. Its Git calls switch off every way a repository's own configuration can name a program (hooks, fsmonitor, clean/smudge filters, diff drivers and text converters, signature checking), never write the index or use the network, and drop inherited variables that name a program (`GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND`, `GIT_PAGER`, editors). A test proves each of these runs under plain Git and never under jankhunt42.
@@ -257,7 +233,7 @@ jankhunt42 is one `SKILL.md` directory. Put it where your tool already looks for
 
 The skill routes requests to the matching command and reference:
 
-- debugging and scanning;
+- scanning and diff review;
 - mapping, exposure and blast radius;
 - passport and release readiness;
 - citizen-developer governance.
@@ -309,8 +285,7 @@ Keep enforcement explicit. The gates are:
 
 - `scan --fail-on SEV`;
 - `review --fail-on SEV`, with a baseline;
-- `passport --fail-on OUTCOME`;
-- the `supply-chain --require-*` flags.
+- `passport --fail-on OUTCOME`.
 
 Everything else is advisory.
 
@@ -319,7 +294,7 @@ Everything else is advisory.
 | Code | Meaning |
 |---|---|
 | `0` | Ran successfully and no explicit gate tripped (`map` and an advisory `passport` always exit 0) |
-| `1` | A gate tripped: `--fail-on`, a supply-chain requirement, `scan --score --fail-policy`, a failing `selftest`, or a sandbox ALERT |
+| `1` | A gate tripped: `--fail-on`, `scan --score --fail-policy`, a failing `selftest`, or a sandbox ALERT |
 | `2` | Usage error, unreadable input, unresolvable git ref, or invalid inventory/policy file |
 | `130` | Interrupted |
 
@@ -328,7 +303,7 @@ Everything else is advisory.
 - **Static evidence only.** Findings and edges come from text, not data flow or runtime observation. They can miss things and can fire on examples. Effective privileges are never proven from a repository.
 - **Agents.** Agent rules read configuration; they do not run the agent or its MCP servers. The citizen profile governs a release decision; it is not a sandbox.
 - **Decisions.** Exposure classes and passport decisions are explainable heuristics, not probabilities or compliance results. The NIST AI RMF and AIGP crosswalk is orientation only.
-- **Supply chain.** Parsing verifies no cryptography; the native verifiers do. SBOM quality counts fields; it does not judge their accuracy.
+- **Supply chain.** The passport records SBOM and provenance files it finds and verifies no cryptography; use `gh attestation verify` or `cosign`. SBOM quality counts fields; it does not judge their accuracy. Dependency advisories are out of scope: use Dependabot or osv-scanner.
 
 If a finding is wrong, confirm it in context, then suppress it with a reason or improve the rule. A scanner that cries wolf is worse than no scanner.
 
@@ -336,16 +311,13 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | Reference | Covers |
 |---|---|
 | [`references/examples.md`](references/examples.md) | Text output for the demo fixture, and how to read it |
-| [`references/connectivity.md`](references/connectivity.md) | `map`: adapters, edge semantics, blast radius, exposure, inventory format, what-if, drift |
+| [`references/connectivity.md`](references/connectivity.md) | `map`: adapters, edge semantics, blast radius, exposure, inventory format, graph deltas |
 | [`references/passport.md`](references/passport.md) | `passport`: sections, rules, policy precedence, declarations, acceptance, comparison |
 | [`references/citizen.md`](references/citizen.md) | The citizen profile, agent workspace checks, and the incidents they map to |
 | [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, and the NIST AI RMF / AIGP crosswalk |
-| [`references/agent-policy-corpus.md`](references/agent-policy-corpus.md) | Source-linked agent policy research and proposed fuzz experiments |
-| [`references/supply-chain.md`](references/supply-chain.md) | SBOMs and their minimum elements, attestations, JFrog evidence, `--verify` |
-| [`references/scoring.md`](references/scoring.md) | Jank Score 2.0 formula, weights, and limits |
+| [`references/scoring.md`](references/scoring.md) | Jank Score 3.0 formula, weights, and limits |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
-| [`references/method.md`](references/method.md), [`references/playbooks.md`](references/playbooks.md), [`references/toolbox.md`](references/toolbox.md) | Debugging method, failure playbooks, native tool commands |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
 | [`references/powerplatform.md`](references/powerplatform.md) | Power Automate flows in solution exports and flow packages: open HTTP triggers, secrets in run history, consumer connectors, personal data to AI |
 | [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |

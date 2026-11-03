@@ -4,6 +4,45 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.6.0] — unreleased
+
+jankhunt42 is pared down to its core: software that citizen developers and their AI agents build, what is broken
+in it, what it can reach, whether it can ship, and the opt-in sandbox. Everything else is removed. Each removed
+command name exits 2 and says where to go instead. This release removes commands, options, rules and JSON keys,
+so scripts that used them need changing; it stays in the 4.x line by choice.
+
+### Removed
+
+- `supply-chain` (SBOM, attestation and JFrog evidence inspection, and the `--verify` plan runner). `passport` still
+  records the SBOM and provenance files a repository carries; verify attestations with `gh attestation verify` or
+  `cosign verify-attestation`. `review` no longer reads supply-chain evidence, and its `--no-supply-chain`,
+  `--no-supply-chain-discovery`, `--sbom`, `--attestation`, `--jfrog-evidence` and `--require-*` options are gone,
+  as are `passport --verify/--online` and `templates/verify.schema.json`.
+- `triage` (log triage) and `doctor` (host diagnostics), left from jankhunt42's debugging days, with
+  `references/method.md`, `references/playbooks.md`, `references/toolbox.md` and `templates/report.md`.
+- `scan --cve` and rule JH901: dependency advisories are better served by Dependabot, osv-scanner or a registry's
+  audit. jankhunt42 now never reaches a network except through `sandbox --fetch`.
+- `scan --calibrate` (it wrote a ledger into the scanned repository) and `scan --since` (`review --base` scores
+  new code).
+- `map --drift`, `--what-if`, `--mermaid` and `--csv`. `map --base` still shows what a change newly reaches.
+- The hidden 4.0 names `detonate` and `passport --detonation`.
+- 16 style and hygiene rules: JH202 (broad catch), JH203 (TODO marker), JH205 (commented-out code), JH206 (mutable
+  default argument), JH207 (comparison to None), JH301 (long function), JH302 (deep nesting), JH303 (long line),
+  JH304 (large file), JH305 (duplicated block), JH307 (wildcard import), JH308 (dead branch), JH315 (assert in
+  production code), JH413 (deprecated Kubernetes apiVersion), JH503 (sleep in test) and JH601 (broken relative
+  link). Under 4.5.0 they made up 65% of all findings on 233 real repositories (11,628 of 17,832, all but 9 of
+  them minor), and none of them said what the software could hurt. Linters do this job better. The catalog has 96 rules.
+- Scan JSON keys `calibration`, `summary.cve` and `summary.cve_packages`; the rule catalog's `dynamic` flag; review
+  JSON `supply_chain`.
+
+### Changed
+
+- Jank Score 3.0: three dimensions, security (0.45), reliability (0.35) and tests (0.20). The maintainability
+  dimension is gone, JH306 (suppression comment) counts as reliability, and a site rule's own category counts as
+  reliability. Headline scores move a little: the demo fixture goes from 67 to 69.
+- `agent-fuzz` still works but is no longer listed in the main help, until a runner ships.
+- `SKILL.md` routes only the three questions, the citizen profile and the sandbox (164 lines, down from 199).
+
 ## [4.5.0] — 2026-11-03
 
 ### Added

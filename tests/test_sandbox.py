@@ -783,18 +783,17 @@ class PassportEvidence(unittest.TestCase):
 
 
 class OldNames(unittest.TestCase):
-    """detonate and --detonation, the 4.0 names, still work in 4.1, hidden, and say where things moved."""
+    """detonate and --detonation, the 4.0 names, are gone in 4.6; the old name says where things moved."""
 
     def test_the_old_command_and_flag_still_work(self):
         from _util import run_cli
-        r = run_cli("detonate", "--help")
-        self.assertEqual(r.returncode, 0)
-        self.assertNotIn("detonate", run_cli("--help").stdout)          # hidden from the command list
-        self.assertNotIn("--detonation", run_cli("passport", "--help").stdout)
+        self.assertNotIn("detonate", run_cli("--help").stdout)          # not in the command list
         root = tempfile.mkdtemp(prefix="jh-det-old-")
         self.addCleanup(shutil.rmtree, root, True)
-        r = run_cli("detonate", root, "--engine", "podman", "--image", "jankhunt42-no-such-image:0", "--json")
-        self.assertIn("`detonate` is now `sandbox`", r.stderr)
+        r = run_cli("detonate", root, "--json")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("renamed `sandbox`", r.stderr)
+        self.assertEqual(run_cli("passport", root, "--detonation", "x.json").returncode, 2)
         self.assertEqual(jh_sandbox._result_problem({"schema": "jankhunt.detonate.v1"}) ==
                          "not a jankhunt.sandbox.v1 result", False)      # an old saved result is still read
 

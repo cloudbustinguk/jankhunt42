@@ -1,12 +1,9 @@
 """2.1.0 extensions: path strength (oracle-checked), Mermaid/CSV export,
 OpenAPI enrichment, code-to-workload bindings, what-if, drift, passport
 acceptance records, and passport comparison."""
-import csv
-import io
 import json
 import os
 import random
-import re
 import shutil
 import subprocess
 import tempfile
@@ -15,7 +12,6 @@ import unittest
 import _util
 from _util import edge, node, run_cli
 import oracle
-import jh_explorer
 import jh_graph as G
 import jh_map
 import jh_passport
@@ -97,69 +93,18 @@ class Strength(unittest.TestCase):
         self.assertTrue(any("attenuation ignored" in w for w in untrusted["warnings"]))
 
 
-HOSTILE = 'x"]; click n1 call evil() %%\n<b>|pipe|</b> [x] {y} =cmd|\' /c calc\'!A0'
-
-
 class Exports(unittest.TestCase):
-    def report(self):
-        y = ("kind: Deployment\napiVersion: apps/v1\nmetadata:\n  name: %s\n  namespace: n\n" % json.dumps(HOSTILE))
-        return build({"k.yaml": y, "a.py": 'import requests\nrequests.get("https://api.example.com/x?token=s3cr3tvalue")\n'})
-
-    def test_mermaid_is_well_formed_and_inert(self):
-        text = jh_explorer.render_mermaid(self.report())
-        lines = text.split("\n")
-        self.assertEqual(lines[2], "flowchart LR")
-        for line in lines[3:]:
-            self.assertRegex(line, r'^(  n\d+\["[^"\[\]|<>{}()`]*"\]|  n\d+ -(?:->|\.->)\|"[^"|]*"\| n\d+|  classDef \w+ [\w:#,\-. ]+|  class [n\d,]+ \w+|%% .*)$')
-        # Hostile text may appear only inside a quoted label: no line is a click/style/link statement.
-        self.assertFalse([l for l in lines if re.match(r"\s*(click|style|linkStyle|call|href)\b", l)])
-        self.assertNotIn("s3cr3tvalue", text)
-        self.assertEqual(text, jh_explorer.render_mermaid(self.report()))
-
-    def test_mermaid_truncation_and_dashed_edges(self):
-        files = {"s%d.py" % i: "import redis\n" for i in range(3)}
-        files.update({"h%d.py" % i: 'import requests\nrequests.get("https://h%d.example.com")\n' % i for i in range(10)})
-        text = jh_explorer.render_mermaid(build(files), max_nodes=4)
-        self.assertIn("%% truncated:", text)
-        self.assertIn("-.->", jh_explorer.render_mermaid(build({"a.py": "import redis\n"})))
-
-    def test_csv_round_trip_and_formula_injection(self):
-        nodes_csv, edges_csv = jh_map.render_csv(self.report())
-        rows = list(csv.DictReader(io.StringIO(nodes_csv)))
-        self.assertTrue(rows)
-        for r in rows:
-            for v in r.values():
-                self.assertFalse(v[:1] in ("=", "+", "-", "@"), v)
-        erows = list(csv.DictReader(io.StringIO(edges_csv)))
-        self.assertEqual({"id", "source", "target", "kind", "capability", "verification", "evidence_tier",
-                          "confidence", "trust_boundary", "evidence"}, set(erows[0]))
-        self.assertNotIn("s3cr3tvalue", nodes_csv + edges_csv)
-
-    def test_formula_cells_are_neutralized(self):
-        rep = {"graph": {"nodes": [dict(node("n1", "external"), display_label=lbl) for lbl in
-                                   ('=HYPERLINK("http://x","y")', "+1", "-2", "@SUM(A1)")][:1] +
-                                  [dict(node("n%d" % i, "external"), display_label=lbl) for i, lbl in
-                                   enumerate(("+1", "-2", "@SUM(A1)", "\t=1"), 2)],
-                         "edges": []}, "evidence": []}
-        nodes_csv, _ = jh_map.render_csv(rep)
-        labels = [r["label"] for r in csv.DictReader(io.StringIO(nodes_csv))]
-        self.assertEqual(len(labels), 5)
-        for lbl in labels:
-            self.assertEqual(lbl[0], "'", lbl)
-
     def test_cli_formats_and_redaction(self):
         tmp = tempfile.mkdtemp(prefix="jh-exp-")
         try:
             root = os.path.join(tmp, "demo")
             shutil.copytree(os.path.join(_util.FIXTURES, "demo-app"), root)
-            r = run_cli("map", root, "--mermaid", "--redact")
+            r = run_cli("map", root, "--md", "--redact")
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("ledger-db", r.stdout)
-            out = os.path.join(tmp, "csv")
-            r = run_cli("map", root, "--csv", out)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertTrue(os.path.exists(os.path.join(out, "edges.csv")))
-            self.assertEqual(run_cli("map", root, "--mermaid", "--json").returncode, 2)
+            self.assertEqual(run_cli("map", root, "--md", "--json").returncode, 2)
+            for gone in ("--mermaid", "--csv", "--drift", "--what-if"):     # removed in 4.6.0
+                self.assertEqual(run_cli("map", root, gone, "x").returncode, 2, gone)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -214,66 +159,6 @@ class Bindings(unittest.TestCase):
     def test_unmatched_binding_warns(self):
         rep = build({"a.py": "import redis\n"}, decl={"bindings": [{"workload": "nope"}]})
         self.assertTrue(any("binding matched no workload" in w for w in rep["warnings"]))
-
-
-class WhatIf(unittest.TestCase):
-    def setUp(self):
-        self.rep = build({".env": "DATABASE_URL=postgres://ledger.prod.internal/l\n",
-                          "a.py": 'import psycopg\nimport os\nc = psycopg.connect(os.environ["DATABASE_URL"])\n'
-                                  'c.execute("DELETE FROM t")\nimport requests\nrequests.post("https://x.example.com/up")\n'},
-                         decl={"assets": [{"match": "ledger.prod", "sensitivity": "restricted"}]})
-
-    def run_w(self, *mutations):
-        return jh_map.run_whatif(self.rep, {"name": "t", "mutations": list(mutations)}, 4)
-
-    def test_revoke_never_increases_integrity_reach(self):
-        w = self.run_w({"op": "revoke", "source": "app", "target": "ledger.prod"})
-        self.assertEqual(w["mutations"][0]["matched"], 1)
-        self.assertFalse([n for n in w["delta"]["newly_reachable"] if n["impact"] == "integrity"])
-
-    def test_add_edge_never_shrinks_and_is_hypothetical(self):
-        w = self.run_w({"op": "add-edge", "source": "app", "target": "x.example.com", "kind": "exports", "capability": "write"})
-        self.assertFalse(w["delta"]["edges"]["removed"])
-        self.assertTrue(w["delta"]["edges"]["added"])
-
-    def test_block_egress_removes_external_edges(self):
-        w = self.run_w({"op": "block-egress"})
-        self.assertTrue(w["delta"]["edges"]["removed"])
-        self.assertIn("internal->external", w["delta"]["trust_boundaries"]["removed"])
-
-    def test_invalid_op_and_unmatched(self):
-        with self.assertRaises(ValueError):
-            self.run_w({"op": "rm -rf /"})
-        w = self.run_w({"op": "remove-node", "match": "nothing-matches-this"})
-        self.assertEqual(len(w["unmatched"]), 1)
-
-    def test_original_report_is_not_mutated(self):
-        before = json.dumps(self.rep, sort_keys=True)
-        self.run_w({"op": "remove-node", "match": "ledger"}, {"op": "set-capability", "source": "app", "target": "x.example", "to": "admin"})
-        self.assertEqual(before, json.dumps(self.rep, sort_keys=True))
-
-
-class Drift(unittest.TestCase):
-    def test_drift_against_stored_map(self):
-        tmp = tempfile.mkdtemp(prefix="jh-drift-")
-        try:
-            root = os.path.join(tmp, "demo")
-            shutil.copytree(os.path.join(_util.FIXTURES, "demo-app"), root)
-            stored = os.path.join(tmp, "stored.json")
-            with open(stored, "w") as fh:
-                fh.write(run_cli("map", root, "--json").stdout)
-            with open(os.path.join(root, "app", "new.py"), "w") as fh:
-                fh.write('import requests\nrequests.post("https://new.example.com/x")\n')
-            d = json.loads(run_cli("map", root, "--drift", stored, "--json").stdout)["delta"]
-            self.assertEqual(d["kind"], "snapshot-drift")
-            self.assertTrue(d["edges"]["added"])
-            self.assertIn("not observed runtime drift", d["note"])
-            self.assertEqual(run_cli("map", root, "--drift", stored, "--base", "HEAD").returncode, 2)
-            with open(stored, "w") as fh:
-                json.dump({"schema_version": "something-else"}, fh)
-            self.assertEqual(run_cli("map", root, "--drift", stored).returncode, 2)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def git(root, *args):

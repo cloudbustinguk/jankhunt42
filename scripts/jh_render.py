@@ -9,9 +9,7 @@ import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, safe_text, trim
-from jh_doctor import DoctorResult
-from jh_triage import LogCluster, TriageResult
+from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, safe_text
 import jh_score
 
 
@@ -233,22 +231,6 @@ def jank_score(findings: Sequence[Finding], loc: int) -> int:
     return jh_score.compute(findings, loc).score
 
 
-def score_label(score: int) -> str:
-    return jh_score.label_for(score)
-
-
-def score_color(score: int) -> str:
-    if score <= 15:
-        return "green"
-    if score <= 30:
-        return "cyan"
-    if score <= 50:
-        return "yellow"
-    if score <= 70:
-        return "red"
-    return "red"
-
-
 def _width(default: int = 78) -> int:
     try:
         cols = shutil.get_terminal_size((80, 24)).columns
@@ -289,12 +271,7 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
     out: List[str] = []
     if meta.get("elapsed") is not None:
         out.append("")
-        out.append("_Scan time: %.2fs · rule engine %s_" % (
-            float(meta["elapsed"]), "with CVE lookup" if meta.get("cve") else "offline"))
-    if meta.get("cve_warnings"):
-        out.append("")
-        for warning in meta["cve_warnings"]:
-            out.append("> CVE lookup: %s" % warning)
+        out.append("_Scan time: %.2fs · rule engine offline_" % float(meta["elapsed"]))
     if meta.get("archive_warnings"):
         out.append("")
         for warning in meta["archive_warnings"]:
@@ -322,20 +299,7 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
             if d["count"] > 6:
                 locs += ", …"
             out.append("| `%s` | %s | %d | %s |" % (d["rule"], d["title"], d["count"], locs))
-    calib = meta.get("calibration")
-    if calib and calib.get("downgrades"):
-        out.append("")
-        out.append("### Calibration")
-        out.append("")
-        out.append("Rules downgraded from this repo's recorded suppression history "
-                   "(`%s`):" % calib.get("ledger", ""))
-        out.append("")
-        out.append("| Rule | Observations | Suppressed | Severity |")
-        out.append("|---|---:|---:|---|")
-        for n in calib["downgrades"]:
-            out.append("| `%s` | %d | %.0f%% | %s → %s |"
-                       % (n["rule"], n["observations"], n["suppression_rate"] * 100,
-                          n["from"], n["to"]))
+
     out.append("")
     out.append("## Summary")
     out.append("")
@@ -361,15 +325,6 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
     out.append("_Score %s: severity × confidence × exposure, density per KLOC, "
                "severity floors, and a weakest-dimension anchor. It prioritizes; it "
                "does not certify. Gate CI on `--fail-on`._" % report.version)
-    if meta.get("new_code"):
-        nc = meta["new_code"]
-        out.append("")
-        if nc.get("warning"):
-            out.append("> New-code view unavailable: %s" % nc["warning"])
-        else:
-            out.append("**New code since `%s`:** %d findings · **%d/100 (%s · %s)** · policy **%s**"
-                       % (nc.get("since", "?"), nc.get("findings", 0), nc.get("score", 0),
-                          nc.get("grade", "A"), nc.get("label", "pristine"), nc.get("policy", "pass")))
     out.append("")
     top_rules = _top_rules(findings, 8)
     if top_rules:
@@ -465,12 +420,6 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         out.append("  " + "   ".join(sev_bits))
     else:
         out.append("  " + color.green("no findings — suspiciously clean"))
-    if meta.get("cve"):
-        warn = meta.get("cve_warnings") or []
-        note = "CVE lookup: %s packages" % meta.get("cve_packages", 0)
-        if warn:
-            note += " · " + "; ".join(str(w) for w in warn[:1])
-        out.append("  " + color.magenta("CVE") + "  " + color.grey(note))
     if meta.get("config"):
         out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
     for warning in (meta.get("archive_warnings") or [])[:5]:
@@ -486,15 +435,6 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         out.append("  " + color.yellow("DUPLICATE") + "  "
                    + color.grey("%d cluster(s) across %d sites — same bug, not one bug"
                                 % (len(dupes), sites)))
-    calib = meta.get("calibration")
-    if calib:
-        n = len(calib.get("downgrades") or [])
-        if n:
-            out.append("  " + color.cyan("CALIBRATED") + "  "
-                       + color.grey("%d rule(s) downgraded from this repo's suppression history "
-                                    "(%s)" % (n, calib.get("ledger", ""))))
-        else:
-            out.append("  " + color.grey("calibration: no rule crossed the suppression-rate threshold yet"))
     return out
 
 
@@ -592,8 +532,6 @@ def scan_tty(result, meta: Dict[str, object], max_findings: int = 300) -> str:
     out: List[str] = banner("code autopsy lab", meta_line, color, width)
     out.append("")
     report = jh_score.compute(findings, result.loc)
-    if meta.get("new_code"):
-        report.new_code = meta["new_code"]
     out.extend(jh_score.scorecard_tty(report, color, width))
     out.append("")
     out.extend(_tty_summary(counts, meta, color))
@@ -613,7 +551,7 @@ def scan_tty(result, meta: Dict[str, object], max_findings: int = 300) -> str:
     out.extend(_tty_finding_cards(findings, max_findings, width, color))
     out.append(color.dim("  " + "─" * (width - 4)))
     out.append("  " + color.grey("next: ") + color.cyan("jankhunt42 scan . --json") + color.grey("  ·  ")
-               + color.cyan("jankhunt42 triage app.log") + color.grey("  ·  read references/playbooks.md"))
+               + color.cyan("jankhunt42 map .") + color.grey("  ·  ") + color.cyan("jankhunt42 passport ."))
     return "\n".join(out)
 
 
@@ -632,99 +570,9 @@ def _wrap(text: str, width: int, indent: str) -> str:
     return ("\n" + indent).join(lines)
 
 
-def triage_tty(result: TriageResult, top: int = 30) -> str:
-    color = Colors(True)
-    width = _width()
-    out: List[str] = []
-    sources = ", ".join(result.sources)
-    out.extend(banner("log autopsy", "%s  ·  %s lines  ·  %s events  ·  %s clusters"
-                      % (sources, f"{result.lines:,}", f"{result.events:,}", len(result.clusters)), color, width))
-    out.append("")
-    counts = result.counts
-    max_count = max(counts.values()) if counts else 1
-    for sev in ("critical", "error", "warning", "info", "debug", "trace"):
-        if counts.get(sev):
-            out.append("  %s %s %s" % (color.chip(sev),
-                                       color.bold("%6d" % counts[sev]),
-                                       _bar(counts[sev], max_count, max(10, width - 40), color, "red" if sev in ("critical", "error") else None)))
-    out.append("")
-    if not result.clusters:
-        out.append("  " + color.yellow("no severity-tagged or exception-like lines"))
-        out.append("  " + color.grey("try --grep 'timeout|refused|panic' or inspect the raw tail"))
-        return "\n".join(out)
-    out.append("  " + color.dim("─" * (width - 4)))
-    out.append("  " + color.bold("TOP CLUSTERS") + color.grey("  ·  fingerprint → count"))
-    out.append("")
-    for idx, c in enumerate(result.clusters[:top], 1):
-        out.append("  %02d  %s  %s" % (idx, color.chip(c.severity), color.bold(_truncate(c.message, width - 20))))
-        span = "line %d" % c.first_line
-        if c.last_line and c.last_line != c.first_line:
-            span += " → %d" % c.last_line
-        if c.first_ts or c.last_ts:
-            span += "  ·  %s → %s" % (c.first_ts or "?", c.last_ts or "?")
-        out.append("      " + color.grey(span + ("  · stack attached" if c.has_stack else "")))
-        for sample in c.samples[:3]:
-            out.append("      " + color.grey("│ ") + color.dim(_truncate(sample, width - 10)))
-        out.append("")
-    return "\n".join(out)
-
-
-def doctor_tty(result: DoctorResult) -> str:
-    color = Colors(True)
-    width = _width()
-    from jh_doctor import doctor_markdown
-    md = doctor_markdown(result)
-    return "\n".join(banner("project doctor", result.root, color, width) + [""] + _colorize_markdown(md, color))
-
-
-def _colorize_markdown(md: str, color: Colors) -> List[str]:
-    out: List[str] = []
-    in_code = False
-    for line in md.splitlines():
-        if line.startswith("```"):
-            in_code = not in_code
-            out.append(color.grey(line))
-            continue
-        if in_code:
-            out.append(color.dim("  " + line))
-            continue
-        if line.startswith("# "):
-            out.append(color.gradient(line[2:]))
-        elif line.startswith("## "):
-            out.append(color.cyan("▸ " + line[3:]))
-        elif line.startswith("### "):
-            out.append(color.blue("  " + line[4:]))
-        elif line.startswith("|"):
-            out.append(color.grey(line))
-        elif line.startswith("- "):
-            out.append("  " + color.cyan("• ") + _inline(line[2:], color))
-        else:
-            out.append(_inline(line, color))
-    return out
-
-
-def _inline(text: str, color: Colors) -> str:
-    text = re.sub(r"\*\*([^*]+)\*\*", lambda m: color.bold(m.group(1)), text)
-    text = re.sub(r"`([^`]+)`", lambda m: color.cyan(m.group(1)), text)
-    return text
-
-
 def render_scan(result, meta: Dict[str, object], tty: bool, no_color: bool,
                 max_findings: int = 300) -> str:
     if tty and not no_color:
         return scan_tty(result, meta, max_findings)
     return scan_markdown(result, meta, max_findings)
 
-
-def render_triage(result: TriageResult, tty: bool, no_color: bool, top: int = 30) -> str:
-    if tty and not no_color:
-        return triage_tty(result, top)
-    from jh_triage import triage_markdown
-    return triage_markdown(result, top)
-
-
-def render_doctor(result: DoctorResult, tty: bool, no_color: bool) -> str:
-    if tty and not no_color:
-        return doctor_tty(result)
-    from jh_doctor import doctor_markdown
-    return doctor_markdown(result)

@@ -198,7 +198,7 @@ class EmbeddedCode(unittest.TestCase):
                     markdown=M.markdown(r), html=jh_explorer.render_map(r),
                     tty=jh_views.map_tty(r, color=False, columns=160))
         digest = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '7563abe6c71013c3a3bc706d9f6b27158c5c938c13c05445f6ee183f73dc70f2')
+        self.assertEqual(digest, '0a4ff9c643a96edcb3d6ae1b927317955881bb735d087d624377cdfb09fd112e')
 
 
 

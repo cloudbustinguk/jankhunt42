@@ -20,10 +20,6 @@ jankhunt42 map . --redact --json              # shareable: pseudonymous labels, 
 jankhunt42 map . --base HEAD~1 --json         # graph delta from committed git objects only
 jankhunt42 map . --inventory ../inventory.json --json   # operator inventory (see below)
 jankhunt42 map . --max-depth 6                # reachability bound (1-8, default 4)
-jankhunt42 map . --mermaid > map.mmd          # Mermaid flowchart (documentation view)
-jankhunt42 map . --csv map-csv                # nodes.csv + edges.csv for diagram tools
-jankhunt42 map . --what-if scenario.json      # hypothetical mutations on a copy of the graph
-jankhunt42 map . --drift stored-map.json      # stored map vs the current repository
 ```
 
 Exit codes: `0` success, `2` usage error (bad path, unresolvable `--base`,
@@ -332,15 +328,6 @@ impact, added/removed trust-boundary crossings, exposure change, and coverage
 regression. A removed edge whose evidence file was skipped on the head side is
 `not-observed`, not `removed`.
 
-## Exports: Mermaid and CSV
-
-Canonical JSON stays the evidence store; these are views.
-
-- `--mermaid` prints a `flowchart LR`. Node IDs are ordinal aliases. Labels are quoted, and quotes, brackets, braces, parentheses, pipes, angle brackets, backticks and semicolons become Mermaid entity codes, so repository text cannot close a label or add `click`/`style` statements. Solid arrows mean observed, declared or verified evidence; dashed arrows mean inferred or unknown. Output is capped at 200 nodes, with an explicit `%% truncated` line when anything is cut. No Mermaid renderer ships with jankhunt42, so the output is checked against the grammar subset it uses, not rendered.
-- `--csv DIR` writes `nodes.csv` and `edges.csv` with stable IDs, evidence state, evidence tier, trust boundary and `path:line` receipts. Cells starting with `=`, `+`, `-` or `@` are prefixed with `'` to block spreadsheet formula injection. This is the only `map` option that writes files, and only into `DIR`.
-
-Both compose with `--redact`.
-
 ## Code-to-workload bindings
 
 By default jankhunt42 does not guess which workload runs the repository code. Declare it instead:
@@ -356,32 +343,6 @@ A binding adds two `declared` edges. The workload `authenticates-as` the applica
 A trusted operator inventory may weight a grant with `"attenuation": 0.0-1.0`. Repository inventories are ignored, with a warning. When any edge carries a weight, each reachable asset also gets `strength` and `strength_path`. This is the maximum product of weights over admissible paths within `--max-depth`, computed by exact bounded dynamic programming and checked against a brute-force oracle. Unweighted edges count as 1.0, and 0 removes an edge.
 
 Strength orders presentation only. It is **not a probability**, and it never changes the exposure class or any passport rule.
-
-## What-if scenarios (`--what-if`)
-
-```json
-{"name": "scope ledger access", "mutations": [
-  {"op": "revoke", "source": "demo-app", "target": "ledger-db"},
-  {"op": "block-egress", "principal": "demo-app"},
-  {"op": "add-edge", "source": "demo-app", "target": "reports", "kind": "writes", "capability": "write"},
-  {"op": "set-capability", "source": "demo-app", "target": "redis", "to": "read"},
-  {"op": "remove-node", "match": "openai"},
-  {"op": "remove-edge", "source": "payments-api", "kind": "connects"},
-  {"op": "compromise-identity", "identity": "payments-api"}
-]}
-```
-
-Mutations run on a copy of the graph, and nothing on disk, in git or on a network changes. `revoke` removes write, delete and admin edges between the matches. Edges with unknown capability remain, because unknown is still possible. Added edges are `declared` and labeled hypothetical. `compromise-identity` computes that identity's own blast radius, which expands only the grants the identity holds in the graph.
-
-The result goes in `whatif`, containing:
-- each mutation with its match count;
-- the unmatched mutations;
-- a full graph delta: exposure change, new and lost reach, boundaries;
-- the radii of compromised identities.
-
-## Drift (`--drift stored-map.json`)
-
-Compares a stored `jankhunt.map.v1` report with the current working tree, using the same delta as `--base` and labeled `snapshot-drift`. This is a static repository comparison, not observed runtime drift. There is no daemon; schedule it from CI if you want it periodic. `--drift` and `--base` are mutually exclusive.
 
 ## Inventory file (`--inventory`)
 

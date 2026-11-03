@@ -513,7 +513,7 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
             steps.append("Verify effective grants for the flagged connections and scope them to least privilege; "
                          "record the result in an operator inventory to turn leads into verified evidence.")
         elif rule == "P-EVD-001":
-            steps.append("Produce the required supply-chain evidence (%s); see `jankhunt42 supply-chain`." % r["message"])
+            steps.append("Produce the required supply-chain evidence (%s) and commit it beside the code." % r["message"])
         elif rule == "P-JNK-001":
             steps.append("Work down the weakest Jank Score dimension first (`jankhunt42 scan --score`), then the "
                          "highest-severity leads (`jankhunt42 scan --min-severity critical`).")

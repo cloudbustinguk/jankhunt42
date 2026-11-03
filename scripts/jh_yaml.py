@@ -27,7 +27,6 @@ class YamlError(ValueError):
     pass
 
 
-_COMMENT_RE = re.compile(r"(^|\s)#.*$")
 # `key: |`, `- >-`, `run: |2`: the lines that follow are an opaque block scalar.
 _BLOCK_INDICATOR_RE = re.compile(r"(?:^|:\s+|^-\s+)[|>][-+0-9]*$")
 

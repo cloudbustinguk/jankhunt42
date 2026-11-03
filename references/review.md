@@ -153,9 +153,10 @@ intent, and test design.
 * No runtime or test execution.
 * No compiler, typechecker, native linter, or language server.
 * No full-repository semantic review; unchanged files are not re-reviewed.
-* No cryptographic signature verification. See `supply-chain.md`.
-* No dependency CVE lookup unless a separate `scan --cve` run is added to the
-  review evidence. The review itself stays offline.
+* No cryptographic signature verification and no SBOM or attestation checks;
+  the passport records those files.
+* No dependency advisory (CVE) lookup: use Dependabot or osv-scanner. The
+  review stays offline.
 * The new-code score density uses added lines from every reviewed file, not
   only source code. A very large SBOM, fixture, or data file can dilute the
   denominator; check `review.scope.changed_lines` and the language list before

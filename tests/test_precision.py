@@ -1012,10 +1012,6 @@ class Scanner(unittest.TestCase):
         self.assertEqual(sev("JH126", "web/src/ui/eye.ts"), [(4, "minor"), (5, "minor"), (6, "major")])
         self.assertEqual(sev("JH125", "web/src/app/layout.tsx"), [(2, "minor"), (5, "major")])
 
-    def test_soak_b23_markers_and_doc_blocks(self):
-        self.assertEqual(self.lines("JH203", "py/notes.py"), [3, 4])
-        self.assertEqual(self.lines("JH205", "web/chart.js"), [8])
-
     def test_soak_b21_detector_patterns_and_advice(self):
         sev = lambda rule, rel: sorted((f["line"], f["severity"]) for f in self.hits(rule, rel))
         self.assertEqual(sev("JH131", "web/sanitize.ts"), [(1, "minor"), (2, "major")])
@@ -1107,14 +1103,12 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH122", "ops/run_box.sh"), [1])
 
     def test_soak_b01(self):
-        self.assertEqual(self.lines("JH203", "web/markers.ts"), [3, 4, 5])
         self.assertEqual(self.lines("JH101", "src/labels.ts"), [4])
         self.assertEqual(self.lines("JH124", "web/print.ts"), [4])
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/safe.tsx")),
                          [(1, "minor"), (2, "major")])
         self.assertEqual(self.lines("JH502", "tests/test_guard.py"), [4])
         self.assertEqual(self.lines("JH502", "tests/arrow.test.ts"), [3])
-        self.assertEqual(self.lines("JH205", "web/comments.ts"), [3, 4, 5])
 
     def test_soak_b02(self):
         self.assertEqual(self.lines("JH102", "web/cdp.js"), [7])         # setTimeout(fn) is not code in a string
@@ -1132,22 +1126,14 @@ class Scanner(unittest.TestCase):
         self.assertEqual({f["severity"] for f in self.hits("JH107", "app/check.py")}, {"major"})
 
     def test_soak_b03(self):
-        self.assertEqual(self.hits("JH205", "src/urls.ts"), [])
         self.assertEqual(self.lines("JH132", "src/rules/doc.ts"), [2])
         self.assertEqual(self.lines("JH132", ".github/workflows/next.yml"), [7])
         self.assertEqual(self.lines("JH502", "tests/runner.test.js"), [4])
-        self.assertEqual(self.lines("JH601", "docs/links.md"), [3])
-        self.assertEqual(self.hits("JH601", "docs/readme_template.md"), [])
-        self.assertEqual(self.lines("JH203", "db/es.sql"), [2])
         self.assertEqual({f["severity"] for f in self.hits("JH107", "app/cache.py")}, {"minor"})
         self.assertEqual({f["severity"] for f in self.hits("JH109", "api/fast.py")}, {"minor"})
         self.assertEqual({f["rule"] for f in self.findings if f["path"] == "docs/assets/index-Qs7X.js"}, {"JH101"})
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH101", "data/tasks.jsonl")),
                          [(1, "minor"), (2, "critical")])
-
-    def test_jh205_skips_documented_http_route_examples(self):
-        self.assertEqual(self.hits("JH205", "functions/api/billing.js"), [])
-        self.assertEqual(self.lines("JH205", "functions/api/commented.js"), [1, 2])
 
     def test_soak_b04(self):
         self.assertEqual(self.lines("JH210", "svc/loop.py"), [5])
@@ -1173,13 +1159,6 @@ class Scanner(unittest.TestCase):
         # short config names are not locale codes: an MCP config and app.json launch things
         self.assertEqual({f["severity"] for f in self.hits("JH702", ".cursor/mcp.json")}, {"major"})
         self.assertEqual({f["severity"] for f in self.hits("JH702", "app.json")}, {"major"})
-
-    def test_soak_b07_jh601_links_inside_fences_are_ignored(self):
-        # JH601 read a link-shaped span inside a ```python fence (`fn[key](**kw)`, Python
-        # dict-unpacking) as a broken markdown link. A code fence holds example code, not
-        # navigation, so its link-shaped spans must be skipped — but a real broken relative
-        # link OUTSIDE a fence still fires (before and after the fenced block).
-        self.assertEqual(self.lines("JH601", "docs/fenced.md"), [3, 10, 17])   # a nested ``` stays inside ````
 
     def test_soak_b07_jh501_iterator_skip_is_not_a_skipped_test(self):
         # JH501 fired on Rust `Iterator::skip(n)` in a `tests.rs` file (`.skip(offset)`
@@ -1218,7 +1197,6 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH501", "tests/skip_more_test.py"), [4])
         self.assertEqual(self.lines("JH501", "tests/mocha_skip.test.js"), [2])
         self.assertEqual(self.lines("JH505", "tests/ng.spec.ts"), [1, 2])
-        self.assertEqual(self.lines("JH601", "docs/inline.md"), [3])          # inline ```code``` opens no fence
         self.assertEqual(self.lines("JH210", "svc/proc_attr.py"), [5, 8])     # self.proc.wait(), p.stdout.read()
         self.assertEqual({f["severity"] for f in self.hits("JH702", "nx.json")}, {"major"})
         self.assertEqual({f["severity"] for f in self.hits("JH701", "AGENTS.md.d/x/AGENTS.md")}, {"major"})
@@ -1281,7 +1259,6 @@ class Scanner(unittest.TestCase):
                          [(1, "major"), (2, "minor"), (3, "minor")])
 
     def test_review_of_271_exemptions_resist_hostile_input(self):
-        self.assertEqual(self.lines("JH203", "web/jsx.tsx"), [1])          # the comment after </div> is a comment
         self.assertEqual(self.hits("JH102", "web/jsx.tsx"), [])            # and its eval() is not code
         self.assertEqual(self.lines("JH102", "src/hide.js"), [1])          # one long string cannot hide a file
         self.assertEqual(self.meta_minified, ["docs/assets/index-Qs7X.js"])  # and a skipped bundle is listed
@@ -1292,9 +1269,7 @@ class Scanner(unittest.TestCase):
         self.assertEqual({f["severity"] for f in self.hits("JH101", "config/appsettings.json")}, {"critical"})
         self.assertEqual(self.lines("JH701", "skills/inst/SKILL.md"), [1])
         self.assertEqual(self.lines("JH132", "web/Page.svelte"), [1])
-        self.assertEqual(self.lines("JH601", ".github/PULL_REQUEST_TEMPLATE.md"), [1])
         self.assertEqual(self.lines("JH502", "tests/close.test.js"), [10])   # a next-line arrow body asserts
-        self.assertEqual(self.hits("JH601", "docs/devlog.md"), [])            # (...) and (.*) are placeholders
 
     def test_review_of_262_exemptions_do_not_hide_leads(self):
         self.assertEqual(self.lines("JH122", "ops/continued.sh"), [2, 3, 4])
@@ -1354,7 +1329,7 @@ class MissingPath(unittest.TestCase):
     def test_a_missing_path_is_an_error_not_a_clean_scan(self):
         with tempfile.TemporaryDirectory() as root:
             gone = os.path.join(root, "does-not-exist")
-            for command in ("scan", "supply-chain", "doctor", "map", "passport"):
+            for command in ("scan", "map", "passport"):
                 p = run_cli(command, gone)
                 self.assertEqual(p.returncode, 2, command)
                 self.assertIn("no such file or directory", p.stderr, command)
