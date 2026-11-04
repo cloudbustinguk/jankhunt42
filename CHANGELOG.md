@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.7.0] — unreleased
+## [4.7.0] — 2026-11-04
 
 The Power Platform reader now covers what citizen developers ship besides flows: canvas apps, Copilot Studio agents
 and environment variables, from solution exports zipped or unpacked. The catalog has 98 rules.
