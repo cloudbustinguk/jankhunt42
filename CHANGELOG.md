@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.6.0] — unreleased
+## [4.6.0] — 2026-11-04
 
 jankhunt42 is pared down to its core: software that citizen developers and their AI agents build, what is broken
 in it, what it can reach, whether it can ship, and the opt-in sandbox. Everything else is removed. Each removed
