@@ -4,6 +4,28 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.8.0] — unreleased
+
+Copilot Studio agents are now read past their sign-in setting: their topics, tools and instructions. The new rules
+follow Microsoft's own list of the agent misconfigurations it finds most (February 2026), checked in the export before
+it is imported rather than in a live tenant. The catalog has 102 rules.
+
+### Added
+
+- **Agent components.** `botcomponents/<schema>/data` in a solution export, zipped or unpacked, and an agent cloned
+  with the Copilot Studio extension for VS Code (`settings.mcs.yml`, `agent.mcs.yml`, `topics/` and `actions/`).
+- **JH150: Copilot Studio tool runs with the maker's credentials** (major; critical when the agent needs no sign-in).
+  A connector, flow or MCP server tool, or a topic's connector step, set to Maker-provided credentials lets everyone
+  who chats with the agent act with the maker's own access.
+- **JH151: Copilot Studio HTTP request is unencrypted or bypasses a connector** (major; minor around a connector). A
+  topic's HTTP request over plain HTTP or to a port other than 443, or to a Microsoft service that has a connector,
+  outside the data policies that govern it.
+- **JH152: Copilot Studio agent has no instructions for generative orchestration** (minor).
+- **JH153: Copilot Studio agent emails whoever the AI chooses** (major). An email tool whose recipient the AI fills
+  in can be steered by injected instructions to mail conversation data anywhere.
+- JH101 reads a topic's HTTP request headers: an API key typed in plain or as a Power Fx text is a hardcoded secret,
+  and its value is never shown. JH148 reads `authenticationMode: None` in `settings.mcs.yml`.
+
 ## [4.7.0] — 2026-11-04
 
 The Power Platform reader now covers what citizen developers ship besides flows: canvas apps, Copilot Studio agents

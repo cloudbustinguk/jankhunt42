@@ -93,6 +93,7 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
         spinner.update("reading %d files…" % len(files))
     import jh_powerplatform
     jh_powerplatform.GAPS.clear()
+    jh_powerplatform.MEMBERS.clear()
     sources = []
     skipped = 0
     for idx, path in enumerate(files, 1):

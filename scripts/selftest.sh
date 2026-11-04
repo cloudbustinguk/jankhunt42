@@ -725,7 +725,7 @@ PY
 "$PY" - "$TMP/rules.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert len(d) == 98, len(d)
+assert len(d) == 102, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" not in ids and "JH101" in ids, ids
 assert {"JH%d" % n for n in range(135, 148)} <= ids, ids

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.7.0"
+VERSION = "4.8.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -193,6 +193,8 @@ def detect_lang(path: str) -> str:
         return "config"
     if base in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
         return "yaml"
+    if base == "data" and path.replace("\\", "/").lower().split("/")[-3:-2] == ["botcomponents"]:
+        return "yaml"           # a Copilot Studio component in a solution export: botcomponents/<schema>/data
     ext = os.path.splitext(low)[1]
     return EXT_LANG.get(ext, "text")
 

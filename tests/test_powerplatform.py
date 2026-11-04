@@ -345,10 +345,222 @@ class CopilotAgents(unittest.TestCase):
     def test_agents_inside_a_solution_zip(self):
         members, _ = P.expand(solution_zip({'bots/cr123_helpdesk/bot.xml': BOT % 1,
                                             'bots/cr123_helpdesk/configuration.json': '{"$kind": "BotConfiguration"}',
-                                            'botcomponents/cr123_helpdesk.topic.Greeting/data': 'kind: AdaptiveDialog\n'}),
+                                            'botcomponents/cr123_helpdesk.topic.Greeting/data': 'kind: AdaptiveDialog\n',
+                                            'botcomponents/cr123_helpdesk.topic.Greeting/botcomponent.xml': '<x/>',
+                                            'botcomponents/cr123_helpdesk.file.Doc/filedata/doc.pdf': '%PDF'}),
                               's.zip')
-        self.assertEqual([m for m, _ in members], ['s.zip!/solution.xml', 's.zip!/bots/cr123_helpdesk/bot.xml'])
+        self.assertEqual([m for m, _ in members], ['s.zip!/solution.xml', 's.zip!/bots/cr123_helpdesk/bot.xml',
+                                                   's.zip!/bots/cr123_helpdesk/configuration.json',
+                                                   's.zip!/botcomponents/cr123_helpdesk.topic.Greeting/data'])
         self.assertEqual([f.path for f in scan(dict(members), {'JH148'})], ['s.zip!/bots/cr123_helpdesk/bot.xml'])
+
+
+# Copilot Studio components, as a solution export keeps them (botcomponents/<bot>.<type>.<name>/data) and as the
+# VS Code extension clones them (*.mcs.yml). The YAML follows Microsoft's published samples.
+TOOL = ('kind: TaskDialog\ninputs:\n  - kind: AutomaticTaskInput\n    propertyName: query\n'
+        '    description: What to look up.\n\nmodelDisplayName: %s\nmodelDescription: Looks up records.\naction:\n'
+        '  kind: InvokeConnectorTaskAction\n  connectionReference: cr123_helpdesk.shared_commondataserviceforapps.abc\n'
+        '  connectionProperties:\n    mode: %s\n\n  operationId: ListRecords\n')
+MCP_TOOL = ('kind: TaskDialog\nmodelDisplayName: Orders server\nmodelDescription: Orders.\naction:\n'
+            '  kind: InvokeExternalAgentTaskAction\n  connectionReference: cr123_helpdesk.shared_orders-5fmcp.abc\n'
+            '  connectionProperties:\n    mode: Maker\n\n  operationDetails:\n    kind: ModelContextProtocolMetadata\n'
+            '    operationId: InvokeServer\n')
+TOPIC_STEP = ('kind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  id: main\n  actions:\n'
+              '    - kind: InvokeConnectorAction\n      id: lookup\n      displayName: Find the order\n      input:\n'
+              '        binding:\n          organization: current\n\n'
+              '      connectionReference: cr123_helpdesk.shared_commondataserviceforapps.abc\n'
+              '      connectionProperties:\n        mode: Maker\n')
+SETTINGS = ('displayName: Help Desk\nschemaName: cr123_helpdesk\naccessControlPolicy: ChatbotReaders\n'
+            'authenticationMode: %s\nconfiguration:\n  settings:\n    GenerativeActionsEnabled: %s\n\n'
+            '  recognizer:\n    kind: GenerativeAIRecognizer\n')
+AGENT = ('mcs.metadata:\n  componentName: Help Desk\nkind: GptComponentMetadata\ndisplayName: Help Desk\n'
+         'instructions:%s\ngptCapabilities:\n  webBrowsing: false\n')
+GPT = 'kind: GptComponentMetadata\ninstructions:%s\ngptCapabilities:\n  webBrowsing: false\n'
+MAIL = ('kind: TaskDialog\n%smodelDisplayName: Send an email (V2)\nmodelDescription: Sends an email.\naction:\n'
+        '  kind: InvokeConnectorTaskAction\n  connectionReference: cr123_helpdesk.%s.abc\n'
+        '  connectionProperties:\n    mode: Invoker\n\n  operationId: %s\n')
+AUTO_TO = 'inputs:\n  - kind: AutomaticTaskInput\n    propertyName: To\n    description: Who to email.\n\n'
+MANUAL_TO = 'inputs:\n  - kind: ManualTaskInput\n    propertyName: %s\n    value: %s\n\n'
+COMP = 'src/botcomponents/cr123_helpdesk.%s/data'
+B = 'src/bots/cr123_helpdesk/bot.xml'
+C = 'src/bots/cr123_helpdesk/configuration.json'
+
+
+def topic_http(url, headers=''):
+    return ('kind: AdaptiveDialog\nbeginDialog:\n  kind: OnRecognizedIntent\n  id: main\n  actions:\n'
+            '    - kind: HttpRequestAction\n      id: call\n      method: Post\n      url: %s\n%s' % (url, headers))
+
+
+def config(generative):
+    return json.dumps({'$kind': 'BotConfiguration', 'settings': {'GenerativeActionsEnabled': generative}}, indent=2)
+
+
+def line_of(text, words):
+    return text[:text.index(words)].count('\n') + 1
+
+
+def scan_tree(files, ids):
+    """Scan files written to a real folder, so a component can look up its agent's other files."""
+    root = tempfile.mkdtemp(prefix='jh-cs-')
+    try:
+        for rel, text in files.items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write(text)
+        sources = [source_from_text(rel, os.path.join(root, rel), text) for rel, text in files.items()]
+        return scan_sources([s for s in sources if s], ScanOptions(rule_ids=ids)).findings
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+class CopilotStudioComponents(unittest.TestCase):
+    def test_component_files_are_yaml(self):
+        from jh_core import detect_lang
+        for rel, lang in (('botcomponents/cr1_a.topic.B/data', 'yaml'), ('x.zip!/botcomponents/c/data', 'yaml'),
+                          ('src/data', 'text'), ('botcomponents/data', 'text'), ('botcomponents/a/b/data', 'text'),
+                          ('agent/topics/Greeting.topic.mcs.yml', 'yaml')):
+            self.assertEqual(detect_lang(rel), lang, rel)
+
+    def test_tools_with_the_makers_credentials(self):
+        files = {B: BOT % 2, COMP % 'action.Lookup': TOOL % ('Lookup accounts', 'Maker'),
+                 COMP % 'action.Mine': TOOL % ('My records', 'Invoker'), COMP % 'action.Orders': MCP_TOOL,
+                 COMP % 'topic.Orders': TOPIC_STEP,
+                 COMP % 'topic.Other': 'kind: AdaptiveDialog\nsettings:\n  mode: Maker\n',     # not a connection
+                 'notes/tool.yaml': TOOL % ('Not a component', 'Maker')}
+        hits = sorted((f.path.split('.', 1)[1], f.line, f.severity, f.message) for f in scan_tree(files, {'JH150'}))
+        self.assertEqual([h[:3] for h in hits], [('action.Lookup/data', 13, 'major'), ('action.Orders/data', 8, 'major'),
+                                                 ('topic.Orders/data', 15, 'major')])
+        self.assertIn("connector tool 'Lookup accounts' runs with the maker's own connection", hits[0][3])
+        self.assertIn("MCP server tool 'Orders server'", hits[1][3])
+        self.assertIn("connector action 'Find the order' in topic 'Orders'", hits[2][3])
+        files[B] = BOT % 1                                     # and the agent needs no sign-in: anyone acts as the maker
+        hits = scan_tree(files, {'JH150'})
+        self.assertEqual(sorted(f.severity for f in hits), ['critical'] * 3)
+        self.assertTrue(all('needs no sign-in' in f.message for f in hits))
+
+    def test_an_agent_cloned_by_vs_code(self):
+        files = {'agent/settings.mcs.yml': SETTINGS % ('None', 'true'), 'agent/agent.mcs.yml': AGENT % '',
+                 'agent/actions/Lookup.mcs.yml': TOOL % ('Lookup accounts', 'Maker'),
+                 'agent/actions/Mail.mcs.yml': MAIL % (AUTO_TO, 'shared_office365', 'SendEmailV2'),
+                 'agent/topics/Call.topic.mcs.yml': topic_http('http://api.example.invalid/orders')}
+        hits = sorted((f.rule, f.path, f.line, f.severity) for f in scan_tree(
+            files, {'JH148', 'JH150', 'JH151', 'JH152', 'JH153'}))
+        self.assertEqual(hits, [
+            ('JH148', 'agent/settings.mcs.yml', 4, 'major'), ('JH150', 'agent/actions/Lookup.mcs.yml', 13, 'critical'),
+            ('JH151', 'agent/topics/Call.topic.mcs.yml', 9, 'major'), ('JH152', 'agent/agent.mcs.yml', 5, 'minor'),
+            ('JH153', 'agent/actions/Mail.mcs.yml', 15, 'major')])
+        agent = scan_tree(files, {'JH148', 'JH152'})
+        self.assertIn("'Help Desk' is set to No authentication (authenticationMode: None)", agent[0].message + agent[1].message)
+        files['agent/settings.mcs.yml'] = SETTINGS % ('Integrated', 'false')
+        self.assertEqual(sorted((f.rule, f.severity) for f in scan_tree(files, {'JH148', 'JH150', 'JH152'})),
+                         [('JH150', 'major')])
+
+    def test_http_requests_in_topics(self):
+        cases = [('http://api.example.invalid/orders', 'major', 'over plain HTTP'),
+                 ('="http://api.example.invalid/orders/" & Topic.OrderId', 'major', 'over plain HTTP'),
+                 ('|-\n        http://api.example.invalid/orders', 'major', 'over plain HTTP'),
+                 ('https://api.example.invalid:8443/orders', 'major', 'non-standard port'),
+                 ('https://graph.microsoft.com/v1.0/me', 'minor', 'calls graph.microsoft.com with a raw HTTP request'),
+                 ('https://contoso.sharepoint.com/sites/x/_api/web', 'minor', 'contoso.sharepoint.com'),
+                 ('https://api.example.invalid/orders', None, None),
+                 ('https://api.example.invalid:443/orders', None, None),
+                 ('=Env.cr123_endpoint', None, None), ('="https://" & Env.cr123_host', None, None),
+                 ('http://localhost:3978/api', None, None), ('http://127.0.0.1/x', None, None),
+                 ('http://[::1', None, None)]
+        for url, severity, words in cases:
+            hits = found(topic_http(url), 'JH151', COMP % 'topic.Orders')
+            self.assertEqual([(f.line, f.severity) for f in hits], [(9, severity)] if severity else [], url)
+            if words:
+                self.assertIn(words, hits[0].message, url)
+                self.assertIn("topic 'Orders'", hits[0].message, url)
+        secret = 'Vb7' + 'q4Lx9Mz2'
+        hit = found(topic_http('http://api.example.invalid/x?code=' + secret), 'JH151', COMP % 'topic.Orders')[0]
+        self.assertEqual(hit.evidence, 'url: http://api.example.invalid/x')
+        self.assertNotIn(secret, hit.message)
+        self.assertEqual(found(topic_http('http://api.example.invalid/'), 'JH151', 'notes/topic.yaml'), [])
+
+    def test_generative_orchestration_without_instructions(self):
+        def hits(files):
+            return [(f.path.split('.', 1)[1], f.line, f.severity) for f in scan_tree(files, {'JH152'})]
+        on = {C: config(True)}
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': GPT % ''})), [('gpt.default/data', 2, 'minor')])
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': GPT % ' ""'})), [('gpt.default/data', 2, 'minor')])
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': GPT % ' |\n  \n'})), [('gpt.default/data', 2, 'minor')])
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': 'kind: GptComponentMetadata\n'})),
+                         [('gpt.default/data', 1, 'minor')])
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': GPT % ' |\n  Answer questions about orders only.'})), [])
+        self.assertEqual(hits({C: config(False), COMP % 'gpt.default': GPT % ''}), [])
+        self.assertEqual(hits({COMP % 'gpt.default': GPT % ''}), [])                    # no configuration in the export
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.other': GPT % ''})), [])
+        self.assertEqual(hits(dict(on, **{COMP % 'gpt.default': 'kind: AdaptiveDialog\ninstructions:\n'})), [])
+        msg = scan_tree(dict(on, **{COMP % 'gpt.default': GPT % ''}), {'JH152'})[0].message
+        self.assertIn("The agent 'cr123_helpdesk' uses generative orchestration but has no instructions", msg)
+
+    def test_email_sent_where_the_ai_chooses(self):
+        def hits(inputs, api='shared_office365', op='SendEmailV2', path=COMP % 'action.Mail'):
+            text = MAIL % (inputs, api, op)
+            return [(f.line, f.severity) for f in found(text, 'JH153', path)], line_of(text, 'operationId')
+        got, at = hits(AUTO_TO)
+        self.assertEqual(got, [(at, 'major')])
+        got, at = hits('')                                     # no input listed: the AI fills every one
+        self.assertEqual(got, [(at, 'major')])
+        for api, op in (('shared_outlook', 'SendEmail'), ('shared_office365', 'SharedMailboxSendEmailV2'),
+                        ('shared_gmail', 'SendEmail'), ('shared_office365', 'ForwardEmail_V2'),
+                        ('shared_office365', 'SendApprovalMail')):
+            got, at = hits(AUTO_TO, api, op)
+            self.assertEqual(got, [(at, 'major')], op)
+        self.assertEqual(hits(MANUAL_TO % ('To', '=System.User.Email'))[0], [])
+        self.assertEqual(hits(MANUAL_TO % ("'emailMessage/To'", 'helpdesk@example.invalid'))[0], [])
+        self.assertEqual(hits(MANUAL_TO % ('ToRecipients', '=System.User.Email'), op='ForwardEmail_V2')[0], [])
+        self.assertEqual(hits(MANUAL_TO % ('Subject', 'Your order'))[0][0][1], 'major')     # only the subject is fixed
+        self.assertEqual(hits(AUTO_TO, op='GetEmailsV3')[0], [])
+        self.assertEqual(hits(AUTO_TO, op='ReplyToV3')[0], [])
+        self.assertEqual(hits(AUTO_TO, api='shared_sharepointonline')[0], [])
+        self.assertEqual(hits(AUTO_TO, path='notes/mail.yaml')[0], [])
+        msg = found(MAIL % (AUTO_TO, 'shared_office365', 'SendEmailV2'), 'JH153', COMP % 'action.Mail')[0].message
+        self.assertIn("The tool 'Send an email (V2)' sends email (SendEmailV2) and the AI chooses who receives it", msg)
+
+    def test_credentials_written_into_a_topic(self):
+        token = 'Qm7' + 'x2Lp9Zr4Kd8W'
+        for header, hit in (('Authorization: Bearer %s', True), ('Authorization: ="Bearer %s"', True),
+                            ('x-api-key: %s', True), ('X-Functions-Key: %s', True),
+                            ('Ocp-Apim-Subscription-Key: ="%s"', True), ("'api-key': =\"%s\"", True),
+                            ('x-api-key: =Env.cr123_key', False), ('x-api-key: ="Bearer " & Env.cr123_key', False),
+                            ('x-api-key: your-key-here', False), ('Content-Type: %s', False)):
+            text = topic_http('https://api.example.invalid/', '      headers:\n        %s\n' % (
+                header % token if '%s' in header else header))
+            hits = found(text, 'JH101', COMP % 'topic.Orders')
+            self.assertEqual([(f.line, f.severity) for f in hits], [(11, 'critical')] if hit else [], header)
+            for f in hits:
+                self.assertNotIn(token, f.evidence + f.message)
+        text = topic_http('https://api.example.invalid/', '      headers:\n        x-api-key: %s\n' % token)
+        self.assertEqual(found(text, 'JH101', 'notes/topic.yaml'), [])
+
+    def test_a_solution_zip_with_an_agent(self):
+        token = 'Wq3' + 'n8Kd2Lx7Pz5'
+        export = solution_zip({
+            'bots/cr123_helpdesk/bot.xml': BOT % 1, 'bots/cr123_helpdesk/configuration.json': config(True),
+            'botcomponents/cr123_helpdesk.gpt.default/data': GPT % '',
+            'botcomponents/cr123_helpdesk.action.Lookup/data': TOOL % ('Lookup accounts', 'Maker'),
+            'botcomponents/cr123_helpdesk.topic.Orders/data': topic_http(
+                'https://api.example.invalid/', '      headers:\n        x-api-key: %s\n' % token)})
+        root = tempfile.mkdtemp(prefix='jh-cs-')
+        try:
+            with open(os.path.join(root, 'agent.zip'), 'wb') as fh:
+                fh.write(export)
+            p = run_cli('scan', root, '--json', '--no-config')
+            got = sorted((f['rule'], f['path'], f['severity']) for f in json.loads(p.stdout)['findings']
+                         if f['rule'] in ('JH101', 'JH148', 'JH150', 'JH151', 'JH152', 'JH153'))
+            self.assertEqual(got, [
+                ('JH101', 'agent.zip!/botcomponents/cr123_helpdesk.topic.Orders/data', 'critical'),
+                ('JH148', 'agent.zip!/bots/cr123_helpdesk/bot.xml', 'major'),
+                ('JH150', 'agent.zip!/botcomponents/cr123_helpdesk.action.Lookup/data', 'critical'),
+                ('JH152', 'agent.zip!/botcomponents/cr123_helpdesk.gpt.default/data', 'minor')])
+            for fmt in ('--json', '--md', '--sarif', '--html'):
+                self.assertNotIn(token, run_cli('scan', root, fmt, '--no-config').stdout, fmt)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 def envdef(schema, typ, default=None, display=None):
