@@ -76,7 +76,7 @@ class N8nParsing(unittest.TestCase):
         f = workflow(node())
         cases = [json.dumps(f)[:-1], json.dumps(f).replace('"connections": {}', '"connections": {}, "connections": {}')]
         for mutate in (lambda x: x['nodes'].append(copy.deepcopy(x['nodes'][0])),
-                       lambda x: x['nodes'][0].pop('id'), lambda x: x.pop('connections'),
+                       lambda x: x['nodes'][0].update(id=5), lambda x: x.pop('connections'),
                        lambda x: x.update(connections={'missing': {'main': [[]]}})):
             bad = copy.deepcopy(f)
             mutate(bad)

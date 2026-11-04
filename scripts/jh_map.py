@@ -2155,7 +2155,8 @@ def adapt_n8n(ctx: Ctx, item: Item) -> None:
                     g.nodes[principal]['attributes']['trigger'] = trigger
             g.add_edge(workflow, principal, 'depends-on', 'none', 'declared', 'high', evidence=ev)
             for typ, ref in n['credentials'].items():
-                identity = g.add_node('identity', ['n8n', typ, ref['id']], typ + ':' + ref['name'],
+                ident = ref['id'] if ref['id'] is not None else 'name:' + ref['name']    # an older export names it only
+                identity = g.add_node('identity', ['n8n', typ, ident], typ + ':' + ref['name'],
                     attributes={'platform': 'n8n', 'credential_refs': [G.sanitize_text(typ + ':' + ref['name'])]}, evidence=ev)
                 g.add_edge(principal, identity, 'authenticates-as', 'none', 'declared', 'high', evidence=ev)
             engine, cap, scope = jh_n8n.operation(raw)

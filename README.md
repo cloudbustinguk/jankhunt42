@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.9.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.10.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -79,6 +79,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - invisible Unicode.
 - **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.
 - **Power Platform checks** (`JH144`-`JH153`): solution exports and flow packages, zipped or unpacked, canvas apps (`.msapp`), and Copilot Studio agents cloned with the VS Code extension (`*.mcs.yml`). Flows: HTTP triggers open to anyone, secrets shown in run history, consumer-account connectors, and personal data sent to AI services. Copilot Studio agents: no sign-in, tools that run with the maker's credentials, HTTP requests over plain HTTP or around a connector, generative orchestration with no instructions, and email sent wherever the AI chooses. Environment variables that keep a secret as plain text. Secrets in a zipped flow, a canvas app's formulas or an agent's topics are found too. See [the Power Platform guide](references/powerplatform.md).
+- **n8n checks** (`JH156`-`JH159`): exported workflows, older exports included. Triggers anyone with the URL can use (Webhook, public Chat Trigger, Form Trigger); shell commands and SQL built from workflow data or written by an AI agent, critical when an open trigger feeds them; and personal fields sent to an AI model. See [the n8n guide](references/n8n.md).
 - **The citizen profile** will not pass a release without:
   - an owner, and an engineering custodian named by the operator;
   - observed tests and CI;
@@ -319,7 +320,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/scoring.md`](references/scoring.md) | Jank Score 3.0 formula, weights, and limits |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
-| [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, comparing versions |
+| [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, the JH156-JH159 checks, comparing versions |
 | [`references/powerplatform.md`](references/powerplatform.md) | Power Automate flows in solution exports and flow packages: open HTTP triggers, secrets in run history, consumer connectors, personal data to AI |
 | [`references/change-review.md`](references/change-review.md) | `passport --base`: the new access a change asks for, and approving one change so CI passes it next time |
 | [`references/sandbox.md`](references/sandbox.md) | `sandbox`: running the install hooks, the dependencies as they load, and what runs on open in a sandbox, the audit log, canaries and limits |

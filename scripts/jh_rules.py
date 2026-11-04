@@ -462,6 +462,31 @@ RULES: List[Rule] = [
       "data to any address.",
       "Make the recipient a fixed input, limit it to the signed-in user, or require a person to confirm each email.",
       confidence="medium", langs=("yaml",), check="powerplatform_ai_email", tags=("powerplatform", "citizen", "ai")),
+    # n8n workflow exports (JSON), read by jh_n8n: the same mistakes as in Power Automate, in n8n's shapes
+    R("JH156", "n8n workflow starts from a trigger open to anyone", "major", "security",
+      "A Webhook, public Chat Trigger or Form Trigger with authentication None runs the workflow for whoever has its "
+      "URL; the URL is the only key.",
+      "Set the trigger's Authentication (Header Auth, Basic Auth or JWT; n8n User Auth for chats), or check a "
+      "signature in the first step. Restrict the webhook to known IP addresses where you can.",
+      confidence="medium", langs=("json",), check="n8n_open_trigger", tags=("n8n", "citizen")),
+    R("JH157", "n8n runs a shell command built from workflow data", "major", "security",
+      "An Execute Command or SSH node (or an AI agent's command tool) puts workflow data or AI-chosen text into a "
+      "shell command, so that data can run commands of its own (critical when an open trigger supplies it).",
+      "Do the work with a dedicated node instead. If a command is unavoidable, keep it fixed, and check each value "
+      "against a strict allow-list in a step before it.",
+      confidence="high", langs=("json",), check="n8n_command", tags=("n8n", "citizen")),
+    R("JH158", "n8n SQL query built from workflow data", "major", "security",
+      "A Postgres, MySQL or Microsoft SQL query (or an AI agent's database tool) has workflow data or AI-chosen text "
+      "spliced into it, so that data can rewrite the query (critical when an open trigger supplies it).",
+      "Write $1, $2 placeholders in the query and pass the values as Query Parameters. Give an AI agent fixed queries "
+      "with parameters, never a tool that runs the SQL it writes.",
+      confidence="high", langs=("json",), check="n8n_sql", tags=("n8n", "citizen")),
+    R("JH159", "n8n workflow sends personal data to an AI model", "major", "security",
+      "An AI agent, chain or model node is given personal fields (email, phone, birth date, address) with no visible "
+      "redaction.",
+      "Send only the fields the prompt needs, redact or pseudonymise personal data first (the Guardrails node can), and "
+      "use an AI service approved for the data, or a local model.",
+      confidence="medium", langs=("json",), check="n8n_ai_personal", tags=("n8n", "citizen", "ai")),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",
@@ -1094,6 +1119,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     import jh_supabase
     supabase_context = jh_supabase.context(sources)
     import jh_powerplatform
+    import jh_n8n
 
     for sf in sources:
         python_docstrings = None
@@ -1135,7 +1161,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         result.findings.append(f)
             if rule.check:
                 fn = CHECKS.get(rule.check)
-                if not fn and not rule.check.startswith(("dotnet_", "powerplatform_", "supabase_")):
+                if not fn and not rule.check.startswith(("dotnet_", "powerplatform_", "supabase_", "n8n_")):
                     continue
                 try:
                     if rule.check.startswith("dotnet_"):
@@ -1144,6 +1170,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         found = jh_powerplatform.findings(sf, rule)
                     elif rule.check.startswith("supabase_"):
                         found = jh_supabase.findings(sf, rule, supabase_context)
+                    elif rule.check.startswith("n8n_"):
+                        found = jh_n8n.findings(sf, rule)
                     else:
                         found = fn(sf, rule)
                 except Exception as exc:  # a broken check must not kill the scan

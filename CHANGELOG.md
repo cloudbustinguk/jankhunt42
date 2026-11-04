@@ -4,6 +4,36 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.10.0] — unreleased
+
+n8n workflows get the checks Power Automate flows already had, in n8n's own shapes: who can start a workflow, and what
+its data can reach. The reader also accepts the older exports n8n itself still imports. The catalog has 108 rules.
+
+### Added
+
+- **JH156: n8n workflow starts from a trigger open to anyone** (major). A Webhook with authentication None and no IP
+  allow-list, a public Chat Trigger with no authentication, or a Form Trigger with none (minor: a form is often meant
+  to be public).
+- **JH157: n8n runs a shell command built from workflow data** (major). An Execute Command or SSH node, or an AI
+  agent's command tool, whose command reads workflow data or text the AI writes (`$fromAI`). Critical when an open
+  trigger's data reaches it, along the connections or through the agent the tool is plugged into.
+- **JH158: n8n SQL query built from workflow data** (major). A Postgres, MySQL or Microsoft SQL query, or an AI
+  agent's database tool, with values spliced in, or the whole query taken from data or the AI. Critical when an open
+  trigger's data reaches it; minor when every value escapes its quotes by hand. Query Parameters are not reported.
+- **JH159: n8n workflow sends personal data to an AI model** (major). Personal fields read into an AI agent, chain,
+  model node or an HTTP request to an AI API, unless read from a redaction step or a Guardrails node, or the model
+  is local.
+- Values that are not workflow data are not reported: `$env`, `$vars`, `$now`, another node's settings, and Set node
+  fields the author typed in.
+
+### Changed
+
+- **Older n8n exports are read**, as n8n itself imports them: nodes without IDs (identified by name), credentials
+  given by name only (one map identity per name), and outputs written as `null`. On three public template collections
+  this took the workflows read from 747 to 1,161 of 2,629; the rest are not what n8n writes.
+- **An n8n export the reader rejects is reported** under the scan's warnings ("n8n workflow the reader rejects (...),
+  not checked") instead of being skipped silently.
+
 ## [4.9.0] — 2026-11-04
 
 A Supabase project's migrations are read together, as the database they build, instead of one file at a time. Missing

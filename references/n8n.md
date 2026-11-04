@@ -5,7 +5,8 @@ exported n8n workflows (JSON) and show what each one can reach: the HTTP
 services it calls, the databases and spreadsheets it reads, writes or
 deletes, and the credentials it uses. With `passport --base`, new access in a
 workflow shows up as a change for IT to review, the same as new access in
-code.
+code. `scan` checks the same exports for the mistakes that make a workflow
+dangerous ([JH156-JH159](#checks-jh156-jh159)).
 
 jankhunt42 only reads the export. It never runs a workflow, evaluates an
 expression, runs a Code node, loads a package, fetches a URL, or opens a
@@ -22,6 +23,15 @@ These count as workflows:
   node exports included);
 - files under test folders too, so moving a workflow there does not hide
   it.
+
+**Older exports** are read as n8n reads them:
+- **Without node IDs** (before mid-2022): n8n gives each node a new random ID
+  on import, so the node's name is its identity. Renaming it reads as a new
+  node.
+- **Credentials named, not numbered:** a node that names its credential (or
+  gives it no ID) still uses it; n8n finds it by name. The map keeps one
+  identity per name.
+- **An output with nothing connected** may be written as `null`.
 
 Ordinary graph JSON with only `nodes` is not a workflow. An n8n-looking file
 that fails validation makes coverage partial; it is never read as an empty
@@ -130,6 +140,54 @@ never contains the value or a fingerprint of it. Normal scan suppressions
 apply; `passport --base` compares the unsuppressed requests. Shareable
 outputs strip graph attributes and access labels.
 
+## Checks (JH156-JH159)
+
+`scan` reads each workflow for four mistakes, the n8n forms of the Power
+Automate checks. Expressions are read as text, never evaluated. An export
+leaves out a setting at its default, so a trigger with no `authentication`
+has none. A disabled node does not run and is not reported; the map still
+lists it.
+
+| Rule | Reports | Severity |
+|---|---|---|
+| `JH156` | A trigger anyone with the URL can use: a Webhook with authentication None and no IP allow-list, a Chat Trigger made public with no authentication, or a Form Trigger with none | major; minor for a form, which is often meant to be public |
+| `JH157` | An Execute Command or SSH node (or an AI agent's command tool) whose command is built from workflow data or written by the AI (`$fromAI`) | major; **critical** when an open trigger's data reaches it |
+| `JH158` | A Postgres, MySQL or Microsoft SQL query (or an AI agent's database tool) with workflow data or AI-chosen text spliced in, or the whole query taken from data or the AI | major; **critical** when an open trigger's data reaches it; minor when every value has its quotes escaped by hand |
+| `JH159` | Personal fields (email, phone, birth date, passport, address, full or last name) sent to an AI agent, chain, model node, or an HTTP request to an AI API, with no redaction step | major |
+
+**What counts as workflow data:** an expression that reads the current item
+(`$json`, `$input`, `$binary`), another node's output (`$('Name')`,
+`$node["Name"]`, `$items()`) or a value the AI chooses (`$fromAI`). These are
+not data:
+- `$env`, `$vars`, `$now`, `$execution` and `$workflow`;
+- another node's settings (`$('Name').params`);
+- a Set node field the author typed in, or filled only from those.
+
+**Where data reaches:** along the workflow's connections from an open
+trigger, and from an AI agent to the tools plugged into it. An agent behind
+a public chat can be steered by anyone who reaches the chat.
+
+**SQL:** the database nodes put `{{ }}` values into the query text before
+it runs, so a quote in a value rewrites the query. Values passed as Query
+Parameters (`$1`, `$2`) are not reported. **Commands:** n8n 2.0 and later
+turn Execute Command off unless the instance turns it back on; the finding
+says so.
+
+**Personal data:** a field counts by its name: `email`, `customerEmail` and
+`Phone Number` do, `email_subject` and `ip_address` do not. A field read from
+a step named for redaction (redact, anonymise, pseudonymise, mask) or from a
+Guardrails node is not reported. Local models (Ollama, Lemonade) are not
+reported.
+
+Sources: the upstream
+[Execute Command](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/ExecuteCommand/ExecuteCommand.node.ts),
+[SSH](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Ssh/Ssh.node.ts),
+[Postgres query](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Postgres/v2/actions/database/executeQuery.operation.ts),
+[Form Trigger](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Form/v2/FormTriggerV2.node.ts)
+and [Chat Trigger](https://github.com/n8n-io/n8n/blob/master/packages/%40n8n/nodes-langchain/nodes/trigger/ChatTrigger/ChatTrigger.node.ts)
+descriptions, and the
+[default node exclusions](https://github.com/n8n-io/n8n/blob/master/packages/%40n8n/config/src/configs/nodes.config.ts).
+
 ## Comparing two versions (`passport --base`)
 
 **How the comparison works:** for unresolved nodes, jankhunt42 compares the
@@ -164,8 +222,10 @@ The map's usual limits also apply. Reaching any limit makes coverage
 partial; nothing is truncated silently.
 
 **What needs manual review:**
-- malformed exports;
-- partial clipboard exports without IDs;
+- malformed exports, and exports n8n itself would not write, such as
+  connections keyed by node ID (some template collections rewrite them);
+  `scan` lists each one under its warnings as "n8n workflow the reader
+  rejects (...), not checked";
 - unsupported versions;
 - ordinary graph JSON that only looks like n8n, which can still be read as
   a candidate.
