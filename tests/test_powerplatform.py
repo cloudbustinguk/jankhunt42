@@ -452,6 +452,21 @@ class CopilotStudioComponents(unittest.TestCase):
             ('JH153', 'agent/actions/Mail.mcs.yml', 15, 'major')])
         agent = scan_tree(files, {'JH148', 'JH152'})
         self.assertIn("'Help Desk' is set to No authentication (authenticationMode: None)", agent[0].message + agent[1].message)
+        crlf = dict(files, **{'agent/settings.mcs.yml': (SETTINGS % ('None', 'true')).replace('\n', '\r\n')})
+        self.assertEqual(sorted((f.rule, f.severity) for f in scan_tree(crlf, {'JH148', 'JH150', 'JH152'})),
+                         [('JH148', 'major'), ('JH150', 'critical'), ('JH152', 'minor')])
+        root = tempfile.mkdtemp(prefix='jh-cs-')         # a scan of actions/ alone does not read the settings above it
+        try:
+            for rel, text in files.items():
+                os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+                with open(os.path.join(root, rel), 'w', encoding='utf-8') as fh:
+                    fh.write(text)
+            for base, rel in (('agent', 'actions/Lookup.mcs.yml'), ('agent/actions', 'Lookup.mcs.yml')):
+                sf = source_from_text(rel, os.path.join(root, base, rel), files['agent/actions/Lookup.mcs.yml'])
+                got = [f.severity for f in scan_sources([sf], ScanOptions(rule_ids={'JH150'})).findings]
+                self.assertEqual(got, ['critical' if base == 'agent' else 'major'], base)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
         files['agent/settings.mcs.yml'] = SETTINGS % ('Integrated', 'false')
         self.assertEqual(sorted((f.rule, f.severity) for f in scan_tree(files, {'JH148', 'JH150', 'JH152'})),
                          [('JH150', 'major')])
