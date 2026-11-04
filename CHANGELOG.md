@@ -4,6 +4,31 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.9.0] — unreleased
+
+A Supabase project's migrations are read together, as the database they build, instead of one file at a time. Missing
+row-level security was the most common weakness in published scans of vibe-coded apps, and Supabase's 2026 grant
+change means the migrations can now say which tables are actually served. The catalog has 104 rules.
+
+### Added
+
+- **Supabase migrations as one database.** `supabase/migrations/*.sql` are replayed in name order: tables, renames,
+  drops, row-level security turned on or off (also inside a `DO` block), grants and revokes to `anon`, `authenticated`
+  and `PUBLIC` (`on all tables in schema`, `alter default privileges`), policies and views. The served schemas come
+  from `supabase/config.toml`.
+- **JH134** reports a served table that the migrations leave without row-level security: critical when it is granted
+  to `anon`, major when only to `authenticated`, and a medium-confidence major when nothing grants it. It notes any
+  policies that are not enforced.
+- **JH154: Supabase policy trusts metadata users can change** (major). A policy that decides access from
+  `user_metadata`, which every signed-in user can set for themselves.
+- **JH155: Supabase view bypasses row-level security** (major; critical for a view of `auth.users`). A view in a
+  served schema without `security_invoker`, or a materialized view, over tables protected by row-level security.
+
+### Changed
+
+- Inside a Supabase migration folder, JH134 no longer reports a grant to `anon` on its own line. With row-level
+  security it is how Supabase serves a table, and a table without it is now reported where it is created.
+
 ## [4.8.0] — 2026-11-04
 
 Copilot Studio agents are now read past their sign-in setting: their topics, tools and instructions. The new rules
