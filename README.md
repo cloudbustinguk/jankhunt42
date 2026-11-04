@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.10.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.11.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -89,6 +89,8 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
 - **AI governance**:
   - The passport inventories the AI model services and agent tooling a repository uses.
   - Every rule maps to the NIST AI RMF and AIGP outcomes it informs. This is orientation, not certification.
+  - Every scanner rule names the OWASP Citizen Development (`CD-SEC`) and Agentic Applications (`ASI`) risks its findings are an instance of: in the catalog, in each report format (SARIF tags included), and counted in the passport. Also orientation.
+- **Fix prompts**: every finding carries a short instruction for the citizen's coding agent (Claude Code, Cursor, Copilot): the file, the change and the check to rerun, never a secret's value. `jankhunt42 scan . --prompt` prints one prompt for all of them, most serious first.
 
 Details and limits: [`references/citizen.md`](references/citizen.md) and [`references/ai-governance.md`](references/ai-governance.md).
 
@@ -148,6 +150,7 @@ jankhunt42 scan .                        # TTY "code autopsy"; Markdown when pip
 jankhunt42 scan . --json                 # full machine report
 jankhunt42 scan . --sarif > jank.sarif   # SARIF 2.1.0 for code scanning
 jankhunt42 scan . --html > jankhunt42.html
+jankhunt42 scan . --prompt               # one prompt to paste into your coding agent to fix the findings
 jankhunt42 scan . --fail-on critical     # explicit CI gate
 jankhunt42 scan . --score --json         # Jank Score 3.0 breakdown
 jankhunt42 rules --category security     # the rule catalog
@@ -316,7 +319,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/connectivity.md`](references/connectivity.md) | `map`: adapters, edge semantics, blast radius, exposure, inventory format, graph deltas |
 | [`references/passport.md`](references/passport.md) | `passport`: sections, rules, policy precedence, declarations, acceptance, comparison |
 | [`references/citizen.md`](references/citizen.md) | The citizen profile, agent workspace checks, and the incidents they map to |
-| [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, and the NIST AI RMF / AIGP crosswalk |
+| [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, the NIST AI RMF / AIGP crosswalk, and OWASP risks per rule |
 | [`references/scoring.md`](references/scoring.md) | Jank Score 3.0 formula, weights, and limits |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |

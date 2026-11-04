@@ -67,6 +67,29 @@ just `public`.
 Nothing is run, and the live database may differ from what the migrations
 say.
 
+## Fix with your coding agent (`scan --prompt`)
+
+A citizen developer fixes things by asking their coding agent, not by
+reading remediation advice. Every finding carries a short instruction for
+that agent (`prompt` in `scan --json`, a "Fix it with your coding agent"
+box in `--html`), and `jankhunt42 scan . --prompt` prints one prompt for all
+of them, most serious first (20 at most; the rest wait for the next scan).
+The Markdown and HTML reports end with the same text.
+
+**Each prompt:**
+- names the file and line, what is wrong and what to change;
+- says how to check the fix: `jankhunt42 scan . --rule JHxxx`;
+- forbids silencing the finding (a suppression comment, a deleted check or a
+  skipped test);
+- for a secret, says never to print or commit the value, to move it to the
+  environment or a secret store, and that it must be rotated.
+
+**What a prompt never carries:** the finding's evidence, so never a secret's
+value. Names from the project (file paths, node or step names) are quoted,
+invisible characters are shown as `<U+XXXX>`, and the prompt tells the agent
+to treat those names as data, not instructions: a project can name a file
+or a workflow step to steer an agent.
+
 ## What the agent can reach (`map`)
 
 `map` reads MCP server definitions from `.mcp.json`, `.cursor/mcp.json`,

@@ -5,6 +5,7 @@ it exists (`git archive`, read-only, no fetch). Without it the test is
 skipped with an explicit reason, never reported as a pass."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,18 @@ REMOVED_RULES = {"JH202", "JH203", "JH205", "JH206", "JH207", "JH301", "JH302", 
                  "JH308", "JH315", "JH413", "JH503", "JH601", "JH901"}
 REMOVED_KEYS = {"calibration", "cve", "cve_packages", "dynamic"}   # dynamic: JH901 was the only one
 RESCORED_KEYS = {"jank", "jank_score"}      # Jank Score 3.0 has no maintainability dimension
+# 4.11.0 adds, per finding and rule, the OWASP risks it is an instance of and a fix prompt; SARIF tags gain the IDs
+ADDED_FIELDS = {"owasp", "prompt"}
+OWASP_ID = re.compile(r"^(?:CD-SEC-\d\d|ASI\d\d)$")
+
+
+def without_added(obj):
+    """A new report with the 4.11.0 additions taken out, so every older field is still compared."""
+    if isinstance(obj, dict):
+        return {k: without_added(v) for k, v in obj.items() if k not in ADDED_FIELDS}
+    if isinstance(obj, list):
+        return [without_added(v) for v in obj if not (isinstance(v, str) and OWASP_ID.match(v))]
+    return obj
 
 
 def without_removed(obj):
@@ -143,14 +156,16 @@ class CrossVersion(unittest.TestCase):
                         r["category"] = "reliability"     # 4.6.0: the maintainability category is gone
             if isinstance(new, dict):
                 new = {k: v for k, v in new.items() if k not in ADDED_KEYS - set(old)}
-            self.assertEqual(without_removed(strip_volatile(old)), without_removed(strip_volatile(new)), args)
+            self.assertEqual(without_removed(strip_volatile(old)), without_removed(strip_volatile(without_added(new))),
+                             args)
 
     def test_markdown_scan_identical_modulo_version(self):
         # The only intentional human-output change in 2.0: the product name is
         # written in lowercase (documented in CHANGELOG and README migration notes).
         old = self.run_old("scan", self.root, "--md").stdout.replace("Jank" + "Hunt42", "jankhunt42")
         new = run_cli("scan", self.root, "--md").stdout
-        # 4.6.0: the Jank Score is 3.0 (no maintainability row), so score lines are compared by the tests above
+        new = new.split("## Fix with your coding agent\n")[0]       # 4.11.0: the fix prompt closes the report
+        new = re.sub(r"(?m)^  - owasp: .*\n", "", new)        # 4.6.0: the Jank Score is 3.0 (no maintainability row), so score lines are compared by the tests above
         drop = lambda t: [l for l in t.splitlines() if "elapsed" not in l and " in " not in l and "v1." not in l
                           and "v2." not in l and "Scan time" not in l and "Minified bundles" not in l
                           and "Jank:" not in l and "Maintainability" not in l and "_Score " not in l

@@ -45,6 +45,8 @@ import jh_capabilities  # noqa: E402
 import jh_capability_approval  # noqa: E402
 import jh_views  # noqa: E402
 import jh_explorer  # noqa: E402
+import jh_frameworks  # noqa: E402
+import jh_prompt  # noqa: E402
 import jh_sandbox  # noqa: E402
 import jh_agent_fuzz  # noqa: E402
 import jh_agent_fuzz_eval  # noqa: E402
@@ -249,7 +251,8 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
         "config": meta.get("config"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         "minified": meta.get("minified", []),
-        "findings": [asdict(f) for f in result.findings],
+        "findings": [dict(asdict(f), owasp=jh_frameworks.owasp(f.rule), prompt=jh_prompt.finding_prompt(f))
+                     for f in result.findings],
     }
     for key in ("ignored_rules", "rulesets"):          # only when used, so a default report is unchanged
         if meta.get(key):
@@ -274,7 +277,7 @@ def _sarif(result: ScanResult, notes: Sequence[str] = ()) -> str:
                     "category": f.category,
                     "severity": f.severity,
                     "confidence": f.confidence,
-                    "tags": list(f.tags),
+                    "tags": list(f.tags) + jh_frameworks.owasp(f.rule),     # OWASP risk IDs, for code scanning filters
                 },
             }
         results.append({
@@ -298,6 +301,7 @@ def _sarif(result: ScanResult, notes: Sequence[str] = ()) -> str:
                 "evidence": f.evidence,
                 "fix": f.fix,
                 "tags": list(f.tags),
+                "owasp": jh_frameworks.owasp(f.rule),
             },
         })
     sarif = {
@@ -326,16 +330,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
                   file=sys.stderr)
             return 2
         return cmd_score(args)
-    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html) if enabled)
+    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html, args.prompt) if enabled)
     if formats > 1:
-        print("jankhunt42: choose one output format: --md, --json, --sarif, or --html",
+        print("jankhunt42: choose one output format: --md, --json, --sarif, --html, or --prompt",
               file=sys.stderr)
         return 2
-    tty = sys.stdout.isatty() and not args.md and not args.json and not args.sarif and not args.html
+    tty = sys.stdout.isatty() and not args.md and not args.json and not args.sarif and not args.html and not args.prompt
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
     if args.json:
         print(_scan_json(root, result, meta))
+    elif args.prompt:
+        print(jh_prompt.combined(result.findings))
     elif args.sarif:
         print(_sarif(result, meta.get("archive_warnings") or ()))
     elif args.html:
@@ -450,15 +456,17 @@ def cmd_rules(args: argparse.Namespace) -> int:
         print(json.dumps([{
             "id": r.id, "title": r.title, "severity": r.severity, "category": r.category,
             "confidence": r.confidence, "message": r.message, "fix": r.fix,
-            "tags": list(r.tags),
+            "tags": list(r.tags), "owasp": jh_frameworks.owasp(r.id),
         } for r in rows], indent=2, ensure_ascii=False))
         return 0
     print("# jankhunt42 rule catalog\n")
-    print("| Rule | Severity | Category | Confidence | Title |")
-    print("|---|---|---|---|---|")
+    print("| Rule | Severity | Category | Confidence | Title | OWASP |")
+    print("|---|---|---|---|---|---|")
     for r in rows:
-        print("| `%s` | %s | %s | %s | %s |" % (r.id, r.severity, r.category, r.confidence, r.title))
-    print("\n%d rules shown." % len(rows))
+        print("| `%s` | %s | %s | %s | %s | %s |" % (r.id, r.severity, r.category, r.confidence, r.title,
+                                                   ", ".join(jh_frameworks.owasp(r.id))))
+    print("\n%d rules shown. OWASP: the Citizen Development (CD-SEC) and Agentic Applications (ASI) risk each rule's "
+          "findings are an instance of; orientation, not compliance." % len(rows))
     return 0
 
 
@@ -959,6 +967,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 for CI code scanning")
         sp.add_argument("--md", action="store_true", help="force Markdown output")
         sp.add_argument("--html", action="store_true", help="self-contained HTML report (stdout)")
+        sp.add_argument("--prompt", action="store_true",
+                        help="one prompt to paste into your coding agent (Claude Code, Cursor, Copilot) to fix the "
+                             "findings, most serious first")
         add_common_scan_inputs(sp)
         sp.add_argument("--max-findings", type=int, default=300,
                         help="display cap (JSON/SARIF keep all)")

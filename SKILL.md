@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.10.0"
+  version: "4.11.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -25,6 +25,7 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 | The user wants… | Run | Then read |
 |---|---|---|
 | a security pass, "is this safe", a score | `jankhunt42 scan .`, `jankhunt42 scan . --score` | `references/scoring.md`; for ASP.NET Core, `references/dotnet.md` |
+| the findings fixed, or a prompt for a coding agent to fix them | `jankhunt42 scan . --prompt` (or `prompt` per finding in `--json`) | `references/citizen.md` |
 | a PR or diff reviewed | `jankhunt42 review . --base <ref> --brief` | `references/review.md` |
 | "what does this talk to", data exposure, blast radius | `jankhunt42 map .`, `jankhunt42 map . --base <ref>` | `references/connectivity.md` |
 | "can we ship this", ownership, a software passport | `jankhunt42 passport .` | `references/passport.md` |
@@ -33,6 +34,7 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 | an AI agent workspace reviewed: settings, MCP servers, instruction files | `jankhunt42 scan . --category agent` | `references/citizen.md` |
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
+| OWASP Citizen Development (`CD-SEC`) or Agentic (`ASI`) risks | `jankhunt42 rules`, `jankhunt42 passport . --json` (`assessment.owasp`) | `references/ai-governance.md` |
 | an n8n workflow, a Power Platform solution export (flows, canvas apps, Copilot Studio agents), or an agent cloned with the Copilot Studio VS Code extension (`*.mcs.yml`), reviewed | `jankhunt42 scan .`, then `jankhunt42 map .` for what an n8n workflow reaches | `references/n8n.md`, `references/powerplatform.md` |
 | what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox .` | `references/sandbox.md` |
 | a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --ignore-rule JH417` | `references/rulesets.md` |
@@ -56,6 +58,7 @@ When a request spans several rows, answer in order: what's broken, then what it 
 jankhunt42 scan .                             # leads, worst first
 jankhunt42 scan . --score                     # Jank Score 3.0: where to look first
 jankhunt42 scan . --sarif > jankhunt42.sarif  # CI code scanning
+jankhunt42 scan . --prompt                    # one fix prompt for a coding agent, most serious first
 jankhunt42 review . --base HEAD~1 --json      # receipts for committed changes (HEAD tree, never a dirty worktree)
 jankhunt42 review . --staged --md
 jankhunt42 review . --base HEAD~1 --brief     # handoff to the semantic reviewer
