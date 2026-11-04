@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.9.0] — unreleased
+## [4.9.0] — 2026-11-04
 
 A Supabase project's migrations are read together, as the database they build, instead of one file at a time. Missing
 row-level security was the most common weakness in published scans of vibe-coded apps, and Supabase's 2026 grant
