@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.10.0] — unreleased
+## [4.10.0] — 2026-11-04
 
 n8n workflows get the checks Power Automate flows already had, in n8n's own shapes: who can start a workflow, and what
 its data can reach. The reader also accepts the older exports n8n itself still imports. The catalog has 108 rules.
