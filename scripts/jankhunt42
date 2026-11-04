@@ -94,6 +94,8 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
     import jh_powerplatform
     jh_powerplatform.GAPS.clear()
     jh_powerplatform.MEMBERS.clear()
+    import jh_n8n
+    jh_n8n.GAPS.clear()
     sources = []
     skipped = 0
     for idx, path in enumerate(files, 1):
@@ -202,8 +204,9 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         "skipped": skipped,
     }
     import jh_powerplatform
-    if jh_powerplatform.GAPS:
-        meta["archive_warnings"] = list(jh_powerplatform.GAPS[:50])
+    import jh_n8n
+    if jh_powerplatform.GAPS or jh_n8n.GAPS:
+        meta["archive_warnings"] = list((jh_powerplatform.GAPS + jh_n8n.GAPS)[:50])
     if cfg.source:
         meta["config"] = cfg.source
     if ignored_rules(args):

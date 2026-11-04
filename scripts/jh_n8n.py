@@ -189,6 +189,10 @@ def parse(path, text):
         for ni, node in enumerate(root['nodes']):
             if not isinstance(node, dict) or not isinstance(node.get('parameters'), dict):
                 raise ValueError('n8n node shape')
+            if 'id' not in node and isinstance(node.get('name'), str):
+                # an export from before node IDs (mid-2022): n8n gives each node a new random ID on import, so its name
+                # is the only stable identity. The node is this parse's own copy.
+                node['id'] = 'name:' + node['name']
             for field in ('id', 'name', 'type'):
                 if not isinstance(node.get(field), str) or not 1 <= len(node[field]) <= 256:
                     raise ValueError('n8n missing/oversized identity')
@@ -197,10 +201,16 @@ def parse(path, text):
             ids.add(node['id'])
             names[node['name']] = node['id']
             creds = node.get('credentials', {})
-            if not isinstance(creds, dict) or any(not isinstance(v, dict) or
-                    not isinstance(v.get('name'), str) or not isinstance(v.get('id'), (str, int)) for v in creds.values()):
+            if not isinstance(creds, dict):
                 raise ValueError('n8n credential reference shape')
-            refs = {k: {f: v.get(f) for f in ('id', 'name')} for k, v in creds.items()}
+            refs = {}
+            for k, v in creds.items():
+                if isinstance(v, str):      # before credential IDs a node named its credential; n8n still finds it by name
+                    v = {'id': None, 'name': v}
+                if not isinstance(v, dict) or not isinstance(v.get('name'), str) or \
+                        v.get('id') is not None and not isinstance(v.get('id'), (str, int)):
+                    raise ValueError('n8n credential reference shape')
+                refs[k] = {'id': v.get('id'), 'name': v['name']}
             definition = {k: v for k, v in node.items() if k not in ('position', 'notes', 'notesInFlow', 'credentials')}
             definition['credentials'] = refs
             nodes.append(dict(raw=node, pointer=([wi] if isinstance(raw, list) else []) + ['nodes', ni],
@@ -209,7 +219,7 @@ def parse(path, text):
         if workflow_key in seen_workflows:
             raise ValueError('n8n duplicate workflow identity')
         seen_workflows.add(workflow_key)
-        links = []
+        links, edges = [], []
         for source, outputs in root['connections'].items():
             if source not in names or not isinstance(outputs, dict):
                 raise ValueError('n8n connection source')
@@ -217,6 +227,8 @@ def parse(path, text):
                 if not isinstance(groups, list):
                     raise ValueError('n8n connection groups')
                 for group in groups:
+                    if group is None:       # an output with nothing connected: n8n's own connection type allows null
+                        continue
                     if not isinstance(group, list):
                         raise ValueError('n8n connection group')
                     for link in group:
@@ -227,6 +239,7 @@ def parse(path, text):
                                 isinstance(link.get('index'), bool) or link['index'] < 0 or link.get('type') != channel:
                             raise ValueError('n8n connection target')
                         links.append((names[source], names[link['node']]))
+                        edges.append((names[source], names[link['node']], channel))
         context = dict(nodes=sorted([n['definition'] for n in nodes], key=lambda n: n['id']),
                        connections=_normalized(root['connections']), settings=_normalized(root.get('settings', {})),
                        active=root.get('active'), disabled=root.get('disabled'))
@@ -238,7 +251,7 @@ def parse(path, text):
         # store reference extras alone are safely excluded from definitions.
         comparable = all(_normalized(n['raw']['parameters']) == n['raw']['parameters'] for n in nodes)
         comparable = comparable and _normalized(root.get('settings', {})) == root.get('settings', {})
-        out.append(dict(key=workflow_key, name=root.get('name', 'workflow'), nodes=nodes, links=links,
+        out.append(dict(key=workflow_key, name=root.get('name', 'workflow'), nodes=nodes, links=links, edges=edges,
                         active=root.get('active'), settings=root.get('settings', {}),
                         definition=json.dumps(context, sort_keys=True) if comparable else None))
     return out
@@ -374,3 +387,361 @@ def operation(node):
     op = p.get('operation')  # Require explicit operations for data nodes in this first reader.
     cap = table.get(str(op), 'unknown') if p.get('resource', resource) == resource else 'unknown'
     return engine, cap, {k: literal(p.get(k)) for k in fields}
+
+
+# ------------------------------------------------------------------ rules: JH156-JH159
+#
+# What an exported workflow declares, read from exact upstream parameter names. Expressions are matched as text and
+# never evaluated. An export leaves out parameters left at their default, so a missing authentication is the default,
+# None. A disabled node is not reported (it does not run); the map still lists it.
+
+_BASE, _LANGCHAIN = 'n8n-nodes-base.', '@n8n/n8n-nodes-langchain.'
+_EXPR = re.compile(r'\{\{(.*?)\}\}', re.S)
+# a reference to another node's output: $('Name'), $node["Name"], $items("Name"), then an optional .item / .first() /
+# .last() / .all()[0] / [0], then .json and the field it reads
+_REF = re.compile(r'''\$(?:\(\s*|node\s*\[\s*|items\s*\(\s*)(['"])((?:(?!\1)[^\\\n]){1,256})\1\s*[)\]]'''
+                  r'''(?:\s*\.\s*(?:item\b|(?:first|last)\s*\(\s*\)|all\s*\(\s*\)\s*\[\s*\d+\s*\])|\s*\[\s*\d+\s*\])?'''
+                  r'''\s*\.\s*json\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(['"])([^'"\\\n]{1,256})\4\s*\])''')
+# what makes an expression read workflow data: the current item, another node's output, or an AI-chosen value.
+# $env, $vars, $now, $execution and $workflow are not data a caller supplies.
+_DATA = re.compile(r'''\$(?:json|input|binary|items?|node)\b|\$\(|\$fromai\s*\(''', re.I)
+_FROM_AI = re.compile(r'\$fromai\s*\(', re.I)
+# another node's settings, not its output: $('Local File Trigger').params.path, $node["X"].parameter["path"]
+_PARAMS = re.compile(r'''\$(?:\(\s*|node\s*\[\s*)(['"])(?:(?!\1)[^\\\n]){1,256}\1\s*[)\]]\s*\.\s*param(?:eter|s)\b''')
+
+
+GAPS = []       # workflow exports the rules could not read during this scan, for the report's warnings
+
+
+def flows(sf):
+    """The workflows in a scanned file, parsed once per file; [] for anything else. An export that fails validation
+    is not checked, and the report says so."""
+    cached = getattr(sf, '_jh_n8n', None)
+    if cached is not None:
+        return cached
+    result = []
+    if sf.lang == 'json':
+        try:
+            result = parse(sf.rel, sf.text) or []
+        except (ValueError, RecursionError) as exc:
+            reason = str(exc).removeprefix('n8n ') if isinstance(exc, ValueError) else 'nested too deeply'
+            GAPS.append('%s: n8n workflow the reader rejects (%s), not checked' % (sf.rel, reason[:60]))
+    sf._jh_n8n = result
+    return result
+
+
+def _short(node):
+    """'webhook' for n8n-nodes-base.webhook, 'agent' for the LangChain agent; None for a community node."""
+    for prefix in (_BASE, _LANGCHAIN):
+        if node['type'].startswith(prefix):
+            return node['type'][len(prefix):]
+    return None
+
+
+def open_trigger(node):
+    """'webhook', 'form' or 'chat' when an enabled trigger node answers anyone who has its URL, else None."""
+    if node.get('disabled') is True:
+        return None
+    p, typ = node['parameters'], node['type']
+    auth = p.get('authentication', 'none')
+    if typ == _BASE + 'webhook':
+        options = p.get('options') if isinstance(p.get('options'), dict) else {}
+        return 'webhook' if auth == 'none' and not options.get('ipWhitelist') else None
+    if typ == _BASE + 'formTrigger':
+        return 'form' if auth == 'none' else None         # version 1 has no authentication option at all
+    if typ == _LANGCHAIN + 'chatTrigger':
+        return 'chat' if p.get('public') is True and auth == 'none' else None   # not public: the editor's chat only
+    return None
+
+
+def _fed(flow):
+    """{node id: (kind, trigger name)} for every node an open trigger's data can reach: along main connections, and
+    from an AI node to the model, memory and tools plugged into it."""
+    raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    nexts = {}
+    for src, dst, channel in flow['edges']:
+        if channel == 'main':
+            nexts.setdefault(src, []).append(dst)
+        elif channel.startswith('ai_'):
+            nexts.setdefault(dst, []).append(src)
+    fed = {}
+    for nid in sorted(raw):
+        kind = open_trigger(raw[nid])
+        todo = [nid] if kind else []
+        while todo:
+            cur = todo.pop()
+            if cur not in fed:
+                fed[cur] = (kind, raw[nid]['name'])
+                todo.extend(nexts.get(cur, ()))
+    return fed
+
+
+def _constants(flow):
+    """{node name: field names} for the fields Set nodes give a value that reads no workflow data (typed in, or from
+    $env or another node's settings): reading one of those fields reads what the workflow's author chose."""
+    out = {}
+    for n in flow['nodes']:
+        raw = n['raw']
+        if raw['type'] != _BASE + 'set':
+            continue
+        names, todo = set(), [raw['parameters']]
+        while todo:
+            v = todo.pop()
+            if isinstance(v, dict):
+                # one field: {name, value} (3.3+), {name, stringValue} (3.0-3.2), {name, value} under values.string
+                if isinstance(v.get('name'), str) and not any(
+                        _reads_data(s, {}) for x in v.values() for s in _segments(x)):
+                    names.add(v['name'])
+                todo.extend(v.values())
+            elif isinstance(v, list):
+                todo.extend(v)
+        out[raw['name']] = names
+    return out
+
+
+def _reads_data(segment, constants):
+    """Whether an expression reads workflow data, once reads of other nodes' settings and of Set node fields that
+    hold no data are taken out."""
+    def strip(m):
+        field = m.group(3) or m.group(5)
+        return '' if field in constants.get(m.group(2), ()) else m.group(0)
+    return bool(_DATA.search(_REF.sub(strip, _PARAMS.sub('', segment))))
+
+
+def _segments(value, always=False):
+    """The {{ }} expressions n8n evaluates in a parameter: in an expression value (it starts with '='), or anywhere in
+    a SQL query, which the database nodes resolve themselves."""
+    if not isinstance(value, str) or not (always or value.startswith('=')):
+        return []
+    return [m.group(1) for m in _EXPR.finditer(value)]
+
+
+def _whole(value):
+    """The parameter is a single expression: the data supplies all of it, not a value inside it."""
+    return isinstance(value, str) and value.count('{{') == 1 and bool(re.fullmatch(r'=?\s*\{\{.*\}\}\s*', value, re.S))
+
+
+def _line(sf, node):
+    for key, value in (('id', node['id']), ('name', node['name'])):
+        for text in (json.dumps(value, ensure_ascii=False), json.dumps(value)):
+            m = re.search(r'"%s"\s*:\s*%s' % (key, re.escape(text)), sf.text)
+            if m:
+                return sf.text.count('\n', 0, m.start()) + 1
+    return 1
+
+
+def _show(segment):
+    return sanitize_text('{{ %s }}' % ' '.join(segment.split()), 100)
+
+
+def _finding(sf, rule, n, message, segment=None, **kw):
+    from jh_core import make_finding
+    raw = n['raw']
+    evidence = sanitize_text(raw['name'], 60) + (': ' + _show(segment) if segment else '')
+    return make_finding(rule, sf, _line(sf, raw), evidence=evidence, message=message,
+                        extra={'json_pointer': safe_pointer(pointer(n['pointer']))}, **kw)
+
+
+def _fed_by(fed, raw, tool):
+    if raw['id'] not in fed:
+        return ''
+    kind, name = fed[raw['id']]
+    if tool:
+        return (" The agent answers an open %s trigger ('%s'), so anyone who can reach it can steer the AI."
+                % (kind, sanitize_text(name, 60)))
+    return (" The workflow starts from an open %s trigger ('%s'), so anyone who finds its URL supplies that data."
+            % (kind, sanitize_text(name, 60)))
+
+
+_TRIGGER_TEXT = {
+    'webhook': ("The Webhook node '%s' starts the workflow for anyone who calls its URL: its authentication is None. "
+                "The URL is the only key, and it travels in logs, browser history and shared templates."),
+    'form': ("The Form Trigger '%s' publishes a form anyone with the link can submit: its authentication is None. "
+             "Check the form is meant to be public, and that the workflow treats every answer as untrusted."),
+    'chat': ("The Chat Trigger '%s' makes the chat public with no authentication: anyone with the URL can talk to the "
+             "agent behind it and make it use its tools."),
+}
+
+
+def _open_triggers(sf, rule, flow, fed, constants):
+    out = []
+    for n in flow['nodes']:
+        kind = open_trigger(n['raw'])
+        if kind:
+            out.append(_finding(sf, rule, n, _TRIGGER_TEXT[kind] % sanitize_text(n['raw']['name'], 60),
+                                **({'severity': 'minor', 'confidence': 'low'} if kind == 'form' else {})))
+    return out
+
+
+_SHELL = {'executeCommand': 'Execute Command', 'ssh': 'SSH'}
+
+
+def _commands(sf, rule, flow, fed, constants):
+    out = []
+    for n in flow['nodes']:
+        raw = n['raw']
+        short = _short(raw) if raw['type'].startswith(_BASE) else None
+        tool = bool(short) and short.endswith('Tool')
+        label = _SHELL.get(short[:-4] if tool else short) if short else None
+        p = raw['parameters']
+        if not label or raw.get('disabled') is True or label == 'SSH' and (
+                p.get('resource', 'command') != 'command' or p.get('operation', 'execute') != 'execute'):
+            continue
+        data = [s for s in _segments(p.get('command')) if _reads_data(s, constants)]
+        if not data:
+            continue
+        where = 'on the n8n host' if label == 'Execute Command' else 'on the server the SSH credential reaches'
+        name = sanitize_text(raw['name'], 60)
+        if any(_FROM_AI.search(s) for s in data):
+            message = ("The AI agent's %s tool '%s' runs a command the AI writes (%s) %s: instructions hidden in a "
+                       "message, email or web page the agent reads can make it any command." % (label, name, _show(data[0]), where))
+        elif _whole(p.get('command')):
+            message = ("The %s node '%s' runs a command taken whole from workflow data (%s) %s: whatever writes that "
+                       "field chooses the command." % (label, name, _show(data[0]), where))
+        else:
+            message = ("The %s node '%s' builds a shell command from workflow data (%s): a quote, semicolon or $( ) in "
+                       "that data runs a command of its own %s." % (label, name, _show(data[0]), where))
+        if label == 'Execute Command':
+            message += " n8n 2.0 and later leave this node off unless the instance turns it back on."
+        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0],
+                            **({'severity': 'critical'} if raw['id'] in fed else {})))
+    return out
+
+
+_SQL_NODES = {'postgres': 'Postgres', 'mySql': 'MySQL', 'microsoftSql': 'Microsoft SQL'}
+# a value whose quotes are doubled in the expression: .replace(/'/g, "''"), .replaceAll("'", "''")
+_ESCAPED = re.compile(r'''\.replace(?:All)?\s*\(\s*(?:/'/g|["']'["']|"\\'"|'\\''),\s*["']''["']\s*\)''')
+
+
+def _queries(sf, rule, flow, fed, constants):
+    out = []
+    for n in flow['nodes']:
+        raw = n['raw']
+        short = _short(raw) if raw['type'].startswith(_BASE) else None
+        tool = bool(short) and short.endswith('Tool')
+        label = _SQL_NODES.get(short[:-4] if tool else short) if short else None
+        p = raw['parameters']
+        if not label or raw.get('disabled') is True or p.get('operation') != 'executeQuery':
+            continue
+        data = [s for s in _segments(p.get('query'), always=True) if _reads_data(s, constants)]
+        if not data:
+            continue
+        data.sort(key=lambda s: bool(_ESCAPED.search(s)))      # show a value nothing escapes, if there is one
+        name = sanitize_text(raw['name'], 60)
+        ai = any(_FROM_AI.search(s) for s in data)
+        if _whole(p.get('query')):
+            message = ("The %s node '%s' runs SQL taken whole from %s (%s): whoever shapes that %s chooses the query, "
+                       "and can read or change anything the credential reaches." % (
+                           label, name, 'what the AI writes' if ai else 'workflow data', _show(data[0]),
+                           'prompt' if ai else 'data'))
+        else:
+            message = ("The %s node '%s' splices %s into its SQL (%s): a quote in a value rewrites the query. Use $1, "
+                       "$2 placeholders and pass the values as Query Parameters." % (
+                           label, name, 'values the AI chooses' if ai else 'workflow data', _show(data[0])))
+        if _ESCAPED.search(data[0]):
+            message = ("The %s node '%s' puts workflow data into its SQL (%s) and escapes quotes by hand. One value "
+                       "it misses, or a backslash on MySQL, rewrites the query; use $1, $2 placeholders and Query "
+                       "Parameters." % (label, name, _show(data[0])))
+            out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0], severity='minor',
+                                confidence='low'))
+            continue
+        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0],
+                            **({'severity': 'critical'} if raw['id'] in fed else {})))
+    return out
+
+
+# AI nodes that send their parameters to a model. Chains and agents send to the model plugged into them; the vendor
+# nodes are the model. Local runtimes (Ollama, Lemonade) keep the data on the machine.
+_AI_CHAINS = {'agent', 'agenttool', 'chainllm', 'chainsummarization', 'chainretrievalqa', 'informationextractor',
+              'textclassifier', 'sentimentanalysis', 'openaiassistant'}
+_AI_VENDORS = {'openai': 'OpenAI', 'anthropic': 'Anthropic', 'googlegemini': 'Google Gemini', 'alibabacloud': 'Alibaba Cloud',
+               'minimax': 'MiniMax', 'moonshot': 'Moonshot', 'mistralai': 'Mistral AI', 'perplexity': 'Perplexity'}
+_LOCAL = re.compile(r'(?i)ollama|lemonade')
+_PERSONAL = re.compile(r'(?i)^\w*?(?:e_?mail(?:_?address)?|phone(?:_?number)?|mobile(?:_?number)?|birth_?date|birthday|'
+                       r'date_?of_?birth|dob|ssn|social_?security(?:_?number)?|national_?id|passport(?:_?number)?|'
+                       r'full_?name|surname|last_?name|address)\d?$')
+_NOT_PERSONAL = re.compile(r'(?i)(?:ip|mac|wallet|contract|server|host|node|web|url|bitcoin|btc|eth|token|base|pool|'
+                           r'vault|ens)_?address\d?$')
+_REDACTOR = re.compile(r'(?i)redact|anonymi[sz]|pseudonymi[sz]|mask|guardrail')
+_FIELD = re.compile(r'''\.\s*([A-Za-z_$][\w$]*)|\[\s*(['"])([^'"\\\n]{1,100})\2\s*\]''')
+_SOURCE = re.compile(r'''\$(?:\(\s*|node\s*\[\s*|items\s*\(\s*)(['"])((?:(?!\1)[^\\\n]){1,256})\1''')
+
+
+def _strings(value):
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+    elif isinstance(value, str):
+        yield value
+
+
+def _personal(parameters, types):
+    """Personal field names an AI node's expressions read, except from a node named or built for redaction."""
+    found = []
+    for value in _strings(parameters):
+        for segment in _segments(value):
+            sources = [(m.start(), m.group(2)) for m in _SOURCE.finditer(segment)]
+            for m in _FIELD.finditer(segment):
+                field = m.group(1) or m.group(3)
+                plain = re.sub(r'[\s-]+', '_', field)
+                if not _PERSONAL.match(plain) or _NOT_PERSONAL.search(plain):
+                    continue
+                source = [name for at, name in sources if at < m.start()]
+                if source and (_REDACTOR.search(source[-1]) or _REDACTOR.search(types.get(source[-1], ''))):
+                    continue
+                if field not in found:
+                    found.append(field)
+    return found
+
+
+def _ai_personal(sf, rule, flow, fed, constants):
+    raw_by_id = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    types = {n['raw']['name']: n['raw']['type'] for n in flow['nodes']}
+    models = {}
+    for src, dst, channel in flow['edges']:
+        if channel == 'ai_languageModel':
+            models.setdefault(dst, []).append(raw_by_id[src])
+    out = []
+    for n in flow['nodes']:
+        raw = n['raw']
+        short = (_short(raw) or '').lower()
+        if raw.get('disabled') is True:
+            continue
+        if short in _AI_CHAINS and raw['type'].startswith(_LANGCHAIN):
+            attached = models.get(raw['id'], [])
+            if attached and all(_LOCAL.search(m['type']) for m in attached):
+                continue
+            target = ', '.join("'%s'" % sanitize_text(m['name'], 40) for m in attached[:2]) or 'its model'
+        elif short in _AI_VENDORS:
+            target = _AI_VENDORS[short]
+        elif raw['type'] == _BASE + 'httpRequest' and _ai_host(raw['parameters'].get('url')):
+            target = 'an AI API'
+        else:
+            continue
+        fields = _personal(raw['parameters'], types)
+        if fields:
+            out.append(_finding(sf, rule, n, (
+                "The node '%s' sends personal data (%s) to an AI model (%s) with no visible redaction. Check the "
+                "service is approved for this data and that only what the prompt needs is sent." % (
+                    sanitize_text(raw['name'], 60), ', '.join(sanitize_text(f, 40) for f in fields[:4]), target))))
+    return out
+
+
+def _ai_host(url):
+    from jh_powerplatform import _AI_HOST
+    return isinstance(url, str) and not dynamic(url) and bool(_AI_HOST.match(url))
+
+
+_CHECKS = {'n8n_open_trigger': _open_triggers, 'n8n_command': _commands, 'n8n_sql': _queries,
+           'n8n_ai_personal': _ai_personal}
+
+
+def findings(sf, rule):
+    check = _CHECKS.get(rule.check)
+    out = []
+    for flow in flows(sf) if check else ():
+        out.extend(check(sf, rule, flow, _fed(flow), _constants(flow)))
+    return out
