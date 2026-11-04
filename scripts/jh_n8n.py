@@ -406,6 +406,7 @@ _REF = re.compile(r'''\$(?:\(\s*|node\s*\[\s*|items\s*\(\s*)(['"])((?:(?!\1)[^\\
 # $env, $vars, $now, $execution and $workflow are not data a caller supplies.
 _DATA = re.compile(r'''\$(?:json|input|binary|items?|node)\b|\$\(|\$fromai\s*\(''', re.I)
 _FROM_AI = re.compile(r'\$fromai\s*\(', re.I)
+_JSON_ONLY = re.compile(r'''\s*\$json\s*(?:\.\s*[A-Za-z_$][\w$]*|\[\s*(['"])[^'"\\\n]{1,256}\1\s*\])\s*''')   # {{ $json.script }}
 # another node's settings, not its output: $('Local File Trigger').params.path, $node["X"].parameter["path"]
 _PARAMS = re.compile(r'''\$(?:\(\s*|node\s*\[\s*)(['"])(?:(?!\1)[^\\\n]){1,256}\1\s*[)\]]\s*\.\s*param(?:eter|s)\b''')
 
@@ -454,9 +455,40 @@ def open_trigger(node):
     return None
 
 
+_CODE_NODES = {_BASE + 'code', _BASE + 'function', _BASE + 'functionItem'}
+_REFUSES = re.compile(r'\b(?:throw|raise)\b|\b(?:createHmac|timingSafeEqual|compare_digest)\b')   # refuses, or verifies a signature
+_BRANCH_NODES = {_BASE + 'if', _BASE + 'switch', _BASE + 'filter'}
+
+
+def _guard(flow, trigger):
+    """The name of the step that checks a request header before anything else runs, else None: every node the
+    trigger starts is an enabled Code node that reads the headers and throws or verifies a signature (an HMAC), or an
+    If, Switch or Filter on a header."""
+    raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    starts = [raw[dst] for src, dst, channel in flow['edges'] if src == trigger['id'] and channel == 'main']
+
+    def checks(n):
+        p = n['parameters']
+        if n.get('disabled') is True:
+            return False
+        if n['type'] in _CODE_NODES:
+            code = '\n'.join(p[k] for k in ('jsCode', 'pythonCode', 'functionCode') if isinstance(p.get(k), str))
+            return 'headers' in code and bool(_REFUSES.search(code))
+        return n['type'] in _BRANCH_NODES and 'headers' in json.dumps(p)
+    return starts[0]['name'] if starts and all(checks(n) for n in starts) else None
+
+
+def _built_by_code(flow, node):
+    """The Code node that writes this node's input, when every connection into it comes from one, else None."""
+    raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    before = [raw[src] for src, dst, channel in flow['edges'] if dst == node['id'] and channel == 'main']
+    return before[0]['name'] if before and all(n['type'] in _CODE_NODES for n in before) else None
+
+
 def _fed(flow):
     """{node id: (kind, trigger name)} for every node an open trigger's data can reach: along main connections, and
-    from an AI node to the model, memory and tools plugged into it."""
+    from an AI node to the model, memory and tools plugged into it. A trigger whose first step checks a header is not
+    open here."""
     raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
     nexts = {}
     for src, dst, channel in flow['edges']:
@@ -467,7 +499,7 @@ def _fed(flow):
     fed = {}
     for nid in sorted(raw):
         kind = open_trigger(raw[nid])
-        todo = [nid] if kind else []
+        todo = [nid] if kind and not _guard(flow, raw[nid]) else []
         while todo:
             cur = todo.pop()
             if cur not in fed:
@@ -567,7 +599,15 @@ def _open_triggers(sf, rule, flow, fed, constants):
     out = []
     for n in flow['nodes']:
         kind = open_trigger(n['raw'])
-        if kind:
+        guard = kind and _guard(flow, n['raw'])
+        if guard:
+            out.append(_finding(sf, rule, n, (
+                "The %s trigger '%s' has authentication None; its first step ('%s') checks a request header instead. "
+                "n8n's own authentication turns a caller away before the workflow runs. A check in a node runs it, "
+                "and lets everyone in if its secret is ever unset." % (
+                    kind, sanitize_text(n['raw']['name'], 60), sanitize_text(guard, 60))),
+                severity='minor', confidence='low'))
+        elif kind:
             out.append(_finding(sf, rule, n, _TRIGGER_TEXT[kind] % sanitize_text(n['raw']['name'], 60),
                                 **({'severity': 'minor', 'confidence': 'low'} if kind == 'form' else {})))
     return out
@@ -592,19 +632,26 @@ def _commands(sf, rule, flow, fed, constants):
             continue
         where = 'on the n8n host' if label == 'Execute Command' else 'on the server the SSH credential reaches'
         name = sanitize_text(raw['name'], 60)
+        extra = {}
         if any(_FROM_AI.search(s) for s in data):
             message = ("The AI agent's %s tool '%s' runs a command the AI writes (%s) %s: instructions hidden in a "
                        "message, email or web page the agent reads can make it any command." % (label, name, _show(data[0]), where))
         elif _whole(p.get('command')):
             message = ("The %s node '%s' runs a command taken whole from workflow data (%s) %s: whatever writes that "
                        "field chooses the command." % (label, name, _show(data[0]), where))
+            author = _built_by_code(flow, raw) if _JSON_ONLY.fullmatch(data[0]) else None
+            if author:
+                message += (" The Code node '%s' writes it: check that it quotes every value it takes from a request."
+                            % sanitize_text(author, 60))
+                extra['confidence'] = 'medium'
         else:
             message = ("The %s node '%s' builds a shell command from workflow data (%s): a quote, semicolon or $( ) in "
                        "that data runs a command of its own %s." % (label, name, _show(data[0]), where))
         if label == 'Execute Command':
             message += " n8n 2.0 and later leave this node off unless the instance turns it back on."
-        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0],
-                            **({'severity': 'critical'} if raw['id'] in fed else {})))
+        if raw['id'] in fed:
+            extra['severity'] = 'critical'
+        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0], **extra))
     return out
 
 
@@ -629,11 +676,17 @@ def _queries(sf, rule, flow, fed, constants):
         data.sort(key=lambda s: bool(_ESCAPED.search(s)))      # show a value nothing escapes, if there is one
         name = sanitize_text(raw['name'], 60)
         ai = any(_FROM_AI.search(s) for s in data)
+        extra = {}
         if _whole(p.get('query')):
             message = ("The %s node '%s' runs SQL taken whole from %s (%s): whoever shapes that %s chooses the query, "
                        "and can read or change anything the credential reaches." % (
                            label, name, 'what the AI writes' if ai else 'workflow data', _show(data[0]),
                            'prompt' if ai else 'data'))
+            author = _built_by_code(flow, raw) if _JSON_ONLY.fullmatch(data[0]) else None
+            if author:
+                message += (" The Code node '%s' writes it: check that it quotes every value it takes from a request."
+                            % sanitize_text(author, 60))
+                extra['confidence'] = 'medium'
         else:
             message = ("The %s node '%s' splices %s into its SQL (%s): a quote in a value rewrites the query. Use $1, "
                        "$2 placeholders and pass the values as Query Parameters." % (
@@ -645,8 +698,9 @@ def _queries(sf, rule, flow, fed, constants):
             out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0], severity='minor',
                                 confidence='low'))
             continue
-        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0],
-                            **({'severity': 'critical'} if raw['id'] in fed else {})))
+        if raw['id'] in fed:
+            extra['severity'] = 'critical'
+        out.append(_finding(sf, rule, n, message + _fed_by(fed, raw, tool), data[0], **extra))
     return out
 
 
