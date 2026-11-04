@@ -389,7 +389,7 @@ def _line_at(text: str, pos: int) -> int:
 
 # The VS Code extension writes the same choice to settings.mcs.yml as a top-level authenticationMode: None.
 _SETTINGS_FILE = re.compile(r"(?i)(?:^|/)settings\.mcs\.ya?ml$")
-_MCS_NO_AUTH = re.compile(r"(?m)^authenticationMode:[ \t]*['\"]?None['\"]?[ \t]*$")
+_MCS_NO_AUTH = re.compile(r"(?m)^authenticationMode:[ \t]*['\"]?None['\"]?[ \t]*\r?$")      # a file saved on Windows too
 
 
 def _no_sign_in(text: Optional[str], settings: bool) -> Optional["re.Match[str]"]:
@@ -449,11 +449,18 @@ def _component(sf: SourceFile) -> Optional[str]:
 
 def _sibling(sf: SourceFile, rel: str) -> Optional[str]:
     """Another file of the same export, by a path relative to this one: from the zip's members when this source came
-    from a zip, else from disk (not through a link, and not if large). None when it is not there."""
+    from a zip, else from disk, inside the folder being scanned (not through a link, and not if large). None when it
+    is not there."""
     target = os.path.normpath(os.path.join(os.path.dirname(sf.abspath), rel))
     if "!" + os.sep in sf.abspath or "!/" in sf.abspath:
         return MEMBERS.get(target)
+    posix = sf.abspath.replace(os.sep, "/")
+    if not posix.endswith("/" + sf.rel):
+        return None
+    root = os.path.realpath(sf.abspath[:len(sf.abspath) - len(sf.rel)])
     try:
+        if not os.path.realpath(target).startswith(os.path.join(root, "")):
+            return None                                  # above the folder being scanned
         if os.path.islink(target) or os.path.getsize(target) > MAX_MEMBER_BYTES:
             return None
         with open(target, encoding="utf-8-sig", errors="replace") as fh:
@@ -632,7 +639,7 @@ def _generative(text: Optional[str], settings: bool) -> bool:
     if not text:
         return False
     if settings:
-        return bool(re.search(r"(?mi)^[ \t]+GenerativeActionsEnabled:[ \t]*true[ \t]*$", text))
+        return bool(re.search(r"(?mi)^[ \t]+GenerativeActionsEnabled:[ \t]*true[ \t]*\r?$", text))
     try:
         doc = json.loads(text)
     except ValueError:
