@@ -339,7 +339,9 @@ class CitizenApp(Fixture):
         self.assertEqual(rules, {4: "critical", 5: "major"})
         self.assertEqual([f["line"] for f in hits(self.findings, "JH134", "database.rules.json")], [3])
         sql = sorted(f["line"] for f in hits(self.findings, "JH134", "supabase/migrations/001_init.sql"))
-        self.assertEqual(sql, [2, 4, 6])
+        # inside a Supabase migration folder the grant to anon (line 6) is not reported on its own: the table's
+        # exposure is judged across the migrations, and here it is reported where row-level security is disabled
+        self.assertEqual(sql, [2, 4])
         tf = {f["line"]: f["severity"] for f in hits(self.findings, "JH134", "infra/storage.tf")}
         self.assertEqual(tf, {2: "major", 8: "major"})
 
