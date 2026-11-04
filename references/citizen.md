@@ -17,7 +17,7 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 
 | Class | Public example | What jankhunt42 checks |
 |---|---|---|
-| Data store left open to the internet | Lovable-generated apps without row-level security (CVE-2025-48757, reported May 2025); the Tea app's open Firebase storage (July 2025) | `JH134`: open Firebase/Firestore rules, disabled row-level security, `USING (true)` write policies, writes granted to `anon`, public buckets |
+| Data store left open to the internet | Lovable-generated apps without row-level security (CVE-2025-48757, reported May 2025); the Tea app's open Firebase storage (July 2025) | `JH134`: open Firebase/Firestore rules, disabled row-level security, `USING (true)` write policies, public buckets, and Supabase tables that the migrations, read together, leave without row-level security (critical when granted to `anon`); `JH154`: policies that trust `user_metadata`; `JH155`: views that bypass row-level security or expose `auth.users` |
 | Secret shipped to every visitor | a payments secret key in client-side JavaScript of an AI-built app (reported February 2026) | `JH132`: secrets under `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_` and similar prefixes, including Supabase `service_role` keys; `JH133`: `dangerouslyAllowBrowser` LLM clients |
 | Agent runs without asking | the s1ngularity npm malware (August 2025) ran installed AI CLIs with their permission-bypass flags | `JH702`: agent CLIs started with approvals disabled in scripts, CI, and package scripts |
 | Repository config that disables approvals or runs code on open | VS Code agent auto-approve written by prompt injection (CVE-2025-53773); project settings that rerouted Claude Code's API traffic before the trust prompt (CVE-2026-21852); a trusted Cursor MCP config swapped after approval (MCPoison, CVE-2025-54136) | `JH703`: auto-approve and bypass settings; `JH704`: tasks that run on folder open, dev container `initializeCommand` (runs on the host), project hooks, credential helpers, base-URL and proxy overrides |
@@ -30,6 +30,41 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 
 Each rule's message names the exact line. A finding is a lead: confirm it
 in context, then fix it or suppress it with a reason.
+
+### Supabase migrations
+
+A Supabase project's `supabase/migrations/*.sql` files are replayed in name
+order as one database, so row-level security turned on in a later file counts.
+What is tracked:
+
+- tables, renames and drops, and row-level security turned on or off (also
+  inside a `DO` block);
+- grants and revokes to `anon`, `authenticated` and `PUBLIC`, including
+  `on all tables in schema` and `alter default privileges`;
+- policies and views.
+
+The API schemas come from `[api] schemas` in `supabase/config.toml`, or are
+just `public`.
+
+- **JH134:** reports a served table with no row-level security at the line
+  that creates it. Severity depends on what the migrations grant:
+  - critical when granted to `anon` or `PUBLIC`;
+  - major when granted only to `authenticated`;
+  - a medium-confidence major when nothing grants it, because projects made
+    before May 30, 2026 served new public tables automatically.
+
+  A table whose row-level security is enabled by a loop (`execute format(...)`)
+  cannot be told apart, so a folder with such a loop reports no tables. Inside
+  a migration folder, a grant to `anon` is not reported on its own: with
+  row-level security it is how Supabase serves a table.
+- **JH154:** reports a policy that reads `user_metadata` (or
+  `raw_user_meta_data`). Signed-in users can change those fields themselves.
+- **JH155:** reports a view in a served schema that reads a table protected by
+  row-level security, without `security_invoker`. It also reports a
+  materialized view of such a table. A view of `auth.users` is critical.
+
+Nothing is run, and the live database may differ from what the migrations
+say.
 
 ## What the agent can reach (`map`)
 

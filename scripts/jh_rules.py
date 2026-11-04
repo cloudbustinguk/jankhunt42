@@ -355,6 +355,18 @@ RULES: List[Rule] = [
       "Security rules, row-level security, storage ACLs, or database firewalls let anyone on the internet read or change the data.",
       "Require authentication and per-user conditions in rules and policies, enable row-level security on every exposed table, keep buckets private, and keep databases off the public internet.",
       confidence="high", check="public_data_store"),
+    # Supabase: a project's migrations replayed as one database (jh_supabase)
+    R("JH154", "Supabase policy trusts metadata users can change", "major", "security",
+      "A row-level security policy decides access from user_metadata, which every signed-in user can set for "
+      "themselves, so a user can grant themselves what the policy checks.",
+      "Decide access from app_metadata (only the server can set it) or from a table that only admins can write.",
+      confidence="high", langs=("sql",), check="supabase_user_metadata", tags=("citizen", "supabase")),
+    R("JH155", "Supabase view bypasses row-level security", "major", "security",
+      "A view in an API schema runs as its owner (or a materialized view keeps a copy), so the row-level security of "
+      "the tables it reads does not apply; a view of auth.users exposes every user (critical).",
+      "Create views with (security_invoker = true), keep materialized views and views of auth.users out of the API "
+      "schemas, or revoke them from anon and authenticated.",
+      confidence="high", langs=("sql",), check="supabase_view_bypass", tags=("citizen", "supabase")),
 
     # --------------------------------------------------------------- ASP.NET Core
     R("JH135", "ASP.NET data endpoint without authorization", "major", "security",
@@ -1079,6 +1091,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     acceptor = _FindingAcceptor(opts, _collect_suppressions(sources))
     import jh_dotnet
     dotnet_context = jh_dotnet.context(sources)
+    import jh_supabase
+    supabase_context = jh_supabase.context(sources)
     import jh_powerplatform
 
     for sf in sources:
@@ -1109,6 +1123,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     _example_context(f)
                     if acceptor.accept(f):
                         result.findings.append(f)
+            if rule.id == 'JH134' and sf.lang == 'sql' and jh_supabase.in_migrations(sf.rel):
+                for f in jh_supabase.table_findings(sf, rule, supabase_context):   # tables across migrations
+                    _example_context(f)
+                    if acceptor.accept(f):
+                        result.findings.append(f)
             if rule.id == 'JH101' and sf.lang == 'yaml' and jh_powerplatform.is_component(sf.rel):
                 for f in jh_powerplatform.header_secrets(sf, rule):        # a Copilot Studio topic's HTTP headers
                     _example_context(f)
@@ -1116,13 +1135,15 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         result.findings.append(f)
             if rule.check:
                 fn = CHECKS.get(rule.check)
-                if not fn and not rule.check.startswith(("dotnet_", "powerplatform_")):
+                if not fn and not rule.check.startswith(("dotnet_", "powerplatform_", "supabase_")):
                     continue
                 try:
                     if rule.check.startswith("dotnet_"):
                         found = jh_dotnet.findings(sf, rule, dotnet_context)
                     elif rule.check.startswith("powerplatform_"):
                         found = jh_powerplatform.findings(sf, rule)
+                    elif rule.check.startswith("supabase_"):
+                        found = jh_supabase.findings(sf, rule, supabase_context)
                     else:
                         found = fn(sf, rule)
                 except Exception as exc:  # a broken check must not kill the scan

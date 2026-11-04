@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.8.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.9.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -71,10 +71,11 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - unpinned or credential-holding MCP servers;
   - hidden instructions in agent files;
   - untrusted issue and PR text fed to AI steps in CI.
-- **Mistakes AI-built apps make** (`JH131`-`JH134`):
+- **Mistakes AI-built apps make** (`JH131`-`JH134`, `JH154`, `JH155`):
   - secrets behind `NEXT_PUBLIC_`/`VITE_`-style prefixes;
   - `dangerouslyAllowBrowser` LLM clients;
   - open Firebase rules, disabled row-level security, and public buckets;
+  - Supabase migrations read together as one database: tables served to the API without row-level security, policies that trust `user_metadata`, and views that bypass row-level security or show `auth.users`;
   - invisible Unicode.
 - **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.
 - **Power Platform checks** (`JH144`-`JH153`): solution exports and flow packages, zipped or unpacked, canvas apps (`.msapp`), and Copilot Studio agents cloned with the VS Code extension (`*.mcs.yml`). Flows: HTTP triggers open to anyone, secrets shown in run history, consumer-account connectors, and personal data sent to AI services. Copilot Studio agents: no sign-in, tools that run with the maker's credentials, HTTP requests over plain HTTP or around a connector, generative orchestration with no instructions, and email sent wherever the AI chooses. Environment variables that keep a secret as plain text. Secrets in a zipped flow, a canvas app's formulas or an agent's topics are found too. See [the Power Platform guide](references/powerplatform.md).

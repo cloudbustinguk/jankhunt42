@@ -1119,8 +1119,14 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
                     "Realtime Database rules let anyone %s this path." % m.group(1))))
         return out[:10]
     if sf.lang == "sql":
+        import jh_supabase
         text = "\n".join(sf.nocomment)
+        # in a Supabase project a grant to anon is how a protected table is served; whether that table has row-level
+        # security is judged across all its migrations (jh_supabase), so the grant alone is not reported there
+        migration = jh_supabase.in_migrations(sf.rel)
         for rx, severity, message in _SQL_STATEMENT_RES:
+            if migration and rx is _SQL_STATEMENT_RES[2][0]:
+                continue
             for m in rx.finditer(text):
                 sev, msg = severity, message
                 # the TO clause after ON <table>; a quoted policy name may say "to" too
