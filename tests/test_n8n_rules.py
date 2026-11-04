@@ -74,6 +74,33 @@ class OpenTriggers(unittest.TestCase):
             with self.subTest(n=n):
                 self.assertEqual(found(workflow([n]), 'JH156'), [])
 
+    def test_a_header_check_in_the_first_step(self):
+        guard = node('Secret Guard', 'code', {'jsCode': "const h = $input.first().json.headers || {};\n"
+                                                        "if (h['x-hook-secret'] !== $env.HOOK_SECRET) throw new Error('no');\n"
+                                                        "return $input.all();"}, version=2)
+        branch = node('Has key?', 'if', {'conditions': {'conditions': [
+            {'leftValue': "={{ $json.headers['x-api-key'] }}", 'rightValue': '={{ $env.KEY }}'}]}}, version=2)
+        cmd = node('Run', 'executeCommand', {'command': '={{ $json.body.cmd }}'})
+        signed = node('Verify', 'code', {'jsCode': "const sig = $json.headers['x-slack-signature'];\n"
+                                                  "const ok = crypto.timingSafeEqual(a, b);\n"
+                                                  "return [{json: {ok}}];"}, version=2)
+        for first in (guard, branch, signed):
+            with self.subTest(first=first['name']):
+                text = workflow([HOOK, first, cmd], link(('Hook', first['name']), (first['name'], 'Run')))
+                [t] = found(text, 'JH156')
+                self.assertEqual((t.severity, t.confidence), ('minor', 'low'))
+                self.assertIn("its first step ('%s') checks a request header instead" % first['name'], t.message)
+                [c] = found(text, 'JH157')
+                self.assertEqual(c.severity, 'major')                       # the guarded trigger feeds nothing
+        silent = node('Log', 'code', {'jsCode': 'console.log($json.headers); return $input.all();'}, version=2)
+        off = dict(guard, disabled=True)
+        for text in (workflow([HOOK, guard, cmd], link(('Hook', 'Secret Guard'), ('Hook', 'Run'))),   # a path around it
+                     workflow([HOOK, silent, cmd], link(('Hook', 'Log'), ('Log', 'Run'))),           # never refuses
+                     workflow([HOOK, off, cmd], link(('Hook', 'Secret Guard'), ('Secret Guard', 'Run')))):
+            with self.subTest(text=text[-120:]):
+                self.assertEqual(found(text, 'JH156')[0].severity, 'major')
+                self.assertEqual(found(text, 'JH157')[0].severity, 'critical')
+
     def test_public_chat_and_form(self):
         [chat] = found(workflow([node('Chat', LC + 'chatTrigger', {'public': True, 'mode': 'webhook'})]), 'JH156')
         self.assertEqual(chat.severity, 'major')
@@ -134,6 +161,23 @@ class ShellCommands(unittest.TestCase):
         self.assertIn('builds a shell command', f.message)                    # two values, not one whole command
         self.assertEqual(found(workflow([node('Run', 'executeCommand', {'command': '=ls {{ $json.d }}'},
                                               disabled=True)]), 'JH157'), [])
+
+    def test_a_command_a_code_node_writes(self):
+        build = node('Build', 'code', {'jsCode': 'return [{json: {script: "ls"}}];'}, version=2)
+        run = node('Run', 'executeCommand', {'command': '={{ $json.script }}'})
+        [f] = found(workflow([build, run], link(('Build', 'Run'))), 'JH157')
+        self.assertEqual((f.severity, f.confidence), ('major', 'medium'))
+        self.assertIn("The Code node 'Build' writes it", f.message)
+        sql = node('Query', 'postgres', {'operation': 'executeQuery', 'query': '={{ $json.sql }}'}, version=2.5)
+        [f] = found(workflow([build, sql], link(('Build', 'Query'))), 'JH158')
+        self.assertEqual(f.confidence, 'medium')
+        tidy = node('Tidy', 'set', {'mode': 'raw'})
+        for text in (workflow([tidy, run], link(('Tidy', 'Run'))),                     # not a Code node
+                     workflow([build, tidy, run], link(('Build', 'Run'), ('Tidy', 'Run')))):   # not only one
+            with self.subTest(text=text[-90:]):
+                [f] = found(text, 'JH157')
+                self.assertEqual(f.confidence, 'high')
+                self.assertNotIn('writes it', f.message)
 
     def test_agent_command_tool(self):
         chat = node('Chat', LC + 'chatTrigger', {'public': True})

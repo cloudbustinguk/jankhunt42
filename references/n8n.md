@@ -167,6 +167,19 @@ not data:
 trigger, and from an AI agent to the tools plugged into it. An agent behind
 a public chat can be steered by anyone who reaches the chat.
 
+**A check in the first step:** when every node a trigger starts is a Code
+node that reads the request headers and throws (or raises) or verifies a
+signature (an HMAC), or an If, Switch or Filter on a header, the trigger is
+not treated as open. `JH156` still
+reports it as minor: n8n's own authentication turns a caller away before the
+workflow runs, while a check in a node runs it and lets everyone in if its
+secret is ever unset.
+
+**A command or query a Code node writes:** when the whole command or query
+is one field (`{{ $json.script }}`) and every connection into the node comes
+from a Code node, the finding names that Code node at medium confidence: the
+code may quote what it takes from a request, and only reading it can tell.
+
 **SQL:** the database nodes put `{{ }}` values into the query text before
 it runs, so a quote in a value rewrites the query. Values passed as Query
 Parameters (`$1`, `$2`) are not reported. **Commands:** n8n 2.0 and later

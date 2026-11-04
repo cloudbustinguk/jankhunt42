@@ -25,6 +25,9 @@ its data can reach. The reader also accepts the older exports n8n itself still i
   is local.
 - Values that are not workflow data are not reported: `$env`, `$vars`, `$now`, another node's settings, and Set node
   fields the author typed in.
+- A trigger whose first step checks a request header (a Code node that throws or verifies a signature, or an If,
+  Switch or Filter on a header) is reported as minor and does not make what follows critical. A whole command or
+  query written by a Code node names that node, at medium confidence.
 
 ### Changed
 
