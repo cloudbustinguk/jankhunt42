@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, safe_text
 import jh_score
+from jh_frameworks import OWASP_RISKS, owasp
+from jh_prompt import combined
 
 
 def color_enabled(no_color: bool = False) -> bool:
@@ -358,6 +360,8 @@ def _scan_markdown_findings(findings: Sequence[Finding], max_findings: int) -> L
                     out.append("  - why: %s" % f.message)
                 if f.fix:
                     out.append("  - fix: %s" % f.fix)
+                if owasp(f.rule):
+                    out.append("  - owasp: %s" % ", ".join("%s %s" % (r, OWASP_RISKS[r]) for r in owasp(f.rule)))
             out.append("")
         if len(findings) > max_findings:
             out.append("_Showing %d of %d findings. Use `--json` or `--sarif` for the full set._"
@@ -380,6 +384,12 @@ def scan_markdown(result, meta: Dict[str, object], max_findings: int = 300) -> s
                   report.grade, report.label, report.policy))
     out.extend(_scan_markdown_meta(result, meta, root, report, findings))
     out.extend(_scan_markdown_findings(findings, max_findings))
+    if findings:
+        prompt = combined(findings)
+        fence = "`" * max(3, 1 + max((len(run) for run in re.findall(r"`+", prompt)), default=0))
+        out += ([""] if out[-1] else []) + ["## Fix with your coding agent", "",
+                "Paste this into Claude Code, Cursor or Copilot (`jankhunt42 scan . --prompt` prints it alone):", "",
+                fence + "text", prompt, fence]
     return "\n".join(out)
 
 
@@ -550,6 +560,7 @@ def scan_tty(result, meta: Dict[str, object], max_findings: int = 300) -> str:
         return "\n".join(out)
     out.extend(_tty_finding_cards(findings, max_findings, width, color))
     out.append(color.dim("  " + "─" * (width - 4)))
+    out.append("  " + color.grey("fix with your coding agent: ") + color.cyan("jankhunt42 scan . --prompt"))
     out.append("  " + color.grey("next: ") + color.cyan("jankhunt42 scan . --json") + color.grey("  ·  ")
                + color.cyan("jankhunt42 map .") + color.grey("  ·  ") + color.cyan("jankhunt42 passport ."))
     return "\n".join(out)

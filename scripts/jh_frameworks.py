@@ -135,3 +135,93 @@ def alignment(triggered: Iterable[str]) -> Dict[str, Any]:
         "triggered": {rule: refs(rule) for rule in triggered if rule in RULES},
         "subcategories": {sub: AI_RMF[sub] for sub in used},
     }
+
+
+# ---------------------------------------------------------------------------
+# OWASP orientation for scanner rules: which OWASP risk a finding is an instance of. Orientation for IT and security
+# approvers who work from these lists, never a compliance claim. A rule with no clear fit has no tag.
+# ---------------------------------------------------------------------------
+
+OWASP_CD = ("OWASP Top 10 Risks for Citizen Development (owasp.org/www-project-citizen-development-top10-security-risks)")
+OWASP_ASI = ("OWASP Top 10 for Agentic Applications 2026, OWASP GenAI Security Project, December 2025 (CC BY-SA 4.0)")
+
+OWASP_RISKS = {
+    "CD-SEC-01": "Blind Trust",
+    "CD-SEC-02": "Account Impersonation",
+    "CD-SEC-03": "Authorization Misuse",
+    "CD-SEC-04": "Sensitive Data Leakage and Handling Failures",
+    "CD-SEC-05": "Authentication and Secure Communication Failures",
+    "CD-SEC-06": "Vulnerable and Untrusted Components",
+    "CD-SEC-07": "Security Misconfiguration",
+    "CD-SEC-08": "Injection Handling Failures",
+    "CD-SEC-09": "Asset Management Failures",
+    "CD-SEC-10": "Security Logging and Monitoring Failures",
+    "ASI01": "Agent Goal Hijack",
+    "ASI02": "Tool Misuse and Exploitation",
+    "ASI03": "Identity and Privilege Abuse",
+    "ASI04": "Agentic Supply Chain Vulnerabilities",
+    "ASI05": "Unexpected Code Execution (RCE)",
+    "ASI06": "Memory & Context Poisoning",
+    "ASI07": "Insecure Inter-Agent Communication",
+    "ASI08": "Cascading Failures",
+    "ASI09": "Human-Agent Trust Exploitation",
+    "ASI10": "Rogue Agents",
+}
+
+_INJECTION, _CONFIG, _AUTHN, _DATA, _COMPONENTS = ("CD-SEC-08",), ("CD-SEC-07",), ("CD-SEC-05",), ("CD-SEC-04",), ("CD-SEC-06",)
+OWASP_RULES: Dict[str, Tuple[str, ...]] = {
+    # code
+    "JH101": ("CD-SEC-03", "CD-SEC-04"), "JH102": ("CD-SEC-08", "ASI05"), "JH103": ("CD-SEC-08", "ASI05"),
+    "JH104": _INJECTION, "JH105": _AUTHN, "JH106": _INJECTION, "JH107": _AUTHN, "JH108": _CONFIG, "JH109": _CONFIG,
+    "JH110": _CONFIG, "JH111": _COMPONENTS, "JH112": _AUTHN, "JH115": _AUTHN, "JH116": _CONFIG, "JH118": _INJECTION,
+    "JH119": _INJECTION, "JH120": _INJECTION, "JH121": _CONFIG, "JH122": _CONFIG, "JH124": _INJECTION,
+    "JH125": _INJECTION, "JH126": _INJECTION, "JH127": _INJECTION, "JH128": _INJECTION, "JH130": _CONFIG,
+    # what AI-built apps get wrong
+    "JH131": ("CD-SEC-01", "ASI01"), "JH132": _DATA, "JH133": _DATA, "JH134": ("CD-SEC-03", "CD-SEC-04"),
+    "JH154": ("CD-SEC-03",), "JH155": ("CD-SEC-03", "CD-SEC-04"),
+    # .NET
+    "JH135": ("CD-SEC-03",), "JH136": _CONFIG, "JH137": _CONFIG, "JH138": _AUTHN, "JH139": _INJECTION,
+    "JH140": _INJECTION, "JH141": _DATA, "JH142": _COMPONENTS, "JH143": _COMPONENTS,
+    # Power Platform and Copilot Studio
+    "JH144": _AUTHN, "JH145": ("CD-SEC-04", "CD-SEC-10"), "JH146": _DATA, "JH147": _DATA,
+    "JH148": ("CD-SEC-05", "ASI03"), "JH149": _DATA, "JH150": ("CD-SEC-02", "ASI03"), "JH151": _AUTHN,
+    "JH152": _CONFIG, "JH153": ("CD-SEC-04", "ASI01", "ASI02"),
+    # n8n
+    "JH156": _AUTHN, "JH157": ("CD-SEC-08", "ASI05"), "JH158": ("CD-SEC-08", "ASI02"), "JH159": _DATA,
+    # errors that disappear
+    "JH201": ("CD-SEC-10",), "JH217": ("CD-SEC-10",), "JH204": _CONFIG,
+    # containers, Kubernetes, CI and dependencies
+    "JH401": _DATA, "JH402": _COMPONENTS, "JH403": _CONFIG, "JH404": _COMPONENTS, "JH405": _CONFIG, "JH406": _CONFIG,
+    "JH407": _CONFIG, "JH408": _CONFIG, "JH409": _CONFIG, "JH410": _CONFIG, "JH411": _CONFIG, "JH412": _COMPONENTS,
+    "JH414": _CONFIG, "JH415": _DATA, "JH416": ("CD-SEC-01",), "JH417": _COMPONENTS, "JH418": _INJECTION,
+    "JH419": _INJECTION, "JH420": ("CD-SEC-03",), "JH421": _COMPONENTS, "JH422": _COMPONENTS, "JH423": _COMPONENTS,
+    "JH424": _COMPONENTS, "JH425": _CONFIG, "JH426": _COMPONENTS, "JH427": _DATA, "JH428": ("CD-SEC-03",),
+    "JH429": _COMPONENTS, "JH430": _COMPONENTS, "JH431": _COMPONENTS, "JH432": ("CD-SEC-03", "ASI03"),
+    # tests that prove nothing: trusting what was generated without checking it
+    "JH501": ("CD-SEC-01",), "JH502": ("CD-SEC-01",), "JH504": ("CD-SEC-01",), "JH505": ("CD-SEC-01",),
+    # AI agents
+    "JH701": ("CD-SEC-01", "ASI01"), "JH702": ("CD-SEC-07", "ASI02", "ASI05"), "JH703": ("CD-SEC-07", "ASI02", "ASI05"),
+    "JH704": ("CD-SEC-07", "ASI05"), "JH705": ("CD-SEC-06", "ASI04"), "JH706": ("CD-SEC-04", "ASI03"),
+    "JH707": _AUTHN, "JH708": ("CD-SEC-08", "ASI01"), "JH709": ("CD-SEC-07", "ASI02", "ASI05"),
+    "JH710": ("CD-SEC-07", "ASI05"), "JH711": ("CD-SEC-07", "ASI05"),
+}
+
+
+def owasp(rule_id: str) -> List[str]:
+    """The OWASP risk IDs a rule's findings are an instance of; [] for a rule with no clear fit."""
+    return list(OWASP_RULES.get(rule_id, ()))
+
+
+def owasp_counts(findings: Iterable[Any]) -> Dict[str, Any]:
+    """Findings per OWASP risk, in list order, for the passport's orientation line."""
+    counts: Dict[str, int] = {}
+    for f in findings:
+        for rid in owasp(getattr(f, "rule", None) or (f.get("rule") if isinstance(f, dict) else "")):
+            counts[rid] = counts.get(rid, 0) + 1
+    order = list(OWASP_RISKS)
+    return {
+        "note": "orientation only: the OWASP risk each finding is an instance of; not a compliance assessment",
+        "lists": {"citizen_development": OWASP_CD, "agentic": OWASP_ASI},
+        "risks": [{"id": rid, "title": OWASP_RISKS[rid], "findings": counts[rid]}
+                  for rid in sorted(counts, key=order.index)],
+    }

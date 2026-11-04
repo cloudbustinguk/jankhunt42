@@ -708,6 +708,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "assessment": {
             "jank": jank,
             "findings": findings_counts,
+            "owasp": jh_frameworks.owasp_counts(findings),
             "exposure": {"class": exposure, "model": G.EXPOSURE_MODEL,
                          "note": "qualitative exposure from the connectivity map; separate from the Jank Score"},
             "decision": {
@@ -919,6 +920,16 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
 # Views
 # ---------------------------------------------------------------------------
 
+def _owasp_line(owasp: Optional[Dict[str, Any]]) -> List[str]:
+    """Findings by OWASP risk, most common first: orientation for approvers who work from those lists."""
+    risks = sorted((owasp or {}).get("risks") or [], key=lambda r: -r["findings"])
+    if not risks:
+        return []
+    shown = ", ".join("%s %s (%d)" % (r["id"], r["title"], r["findings"]) for r in risks[:6])
+    return ["- Risks by OWASP category: %s%s (orientation, not compliance)" % (
+        shown, "; %d more in JSON" % (len(risks) - 6) if len(risks) > 6 else "")]
+
+
 def markdown(p: Dict[str, Any]) -> str:
     a = p["assessment"]
     d = a["decision"]
@@ -927,6 +938,7 @@ def markdown(p: Dict[str, Any]) -> str:
              "- Release assessment: **%s** (%s; %s)" % (d["result"], d["mode"], d["note"]),
              "- Technical Jank Score: **%s/100** grade %s (%s)" % (a["jank"].get("score"), a["jank"].get("grade"), a["jank"].get("policy")),
              "- Exposure: **%s** (%s)" % (a["exposure"]["class"], a["exposure"]["note"]),
+             ] + _owasp_line(a.get("owasp")) + [
              "- Evidence coverage: %d of %d areas observed, declared, or inferred" % (cov["evidence_areas_present"], cov["evidence_areas_total"]),
              "- Lifecycle: %s; acceptance: %s" % (p["lifecycle"]["state"], p["lifecycle"]["acceptance"]["state"]),
              "- Revision: %s%s" % (p["subject"]["revision"] or "unknown (not a git checkout)",

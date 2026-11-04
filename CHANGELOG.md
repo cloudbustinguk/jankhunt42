@@ -4,6 +4,27 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.11.0] — unreleased
+
+Findings now come with what a citizen developer needs to act on them: a prompt to paste into their coding agent, and
+the OWASP risk each one is an instance of, for the IT and security approvers who work from those lists.
+
+### Added
+
+- **Fix prompts.** Each finding in `scan --json` carries `prompt`: the file and line, what is wrong, what to change,
+  and the check to rerun (`jankhunt42 scan . --rule JHxxx`). It forbids silencing the finding instead of fixing it,
+  never includes the evidence (so never a secret's value), and for a secret says to move and rotate it. Names from
+  the project are quoted, invisible characters shown, and the agent told to treat them as data.
+- **`scan --prompt`** prints one prompt for all findings, most serious first (20 at most). The Markdown and HTML
+  reports end with it; the HTML report also has a copyable prompt on every finding, and the terminal view points to
+  `--prompt`.
+- **OWASP risks per rule.** Every scanner rule names the OWASP Top 10 Risks for Citizen Development (`CD-SEC-01` to
+  `CD-SEC-10`) and OWASP Top 10 for Agentic Applications 2026 (`ASI01` to `ASI10`) risks its findings are an instance
+  of: an OWASP column in `jankhunt42 rules` and `owasp` in `rules --json`, `owasp` on each finding in `scan --json`, the
+  IDs among each rule's SARIF tags, a line per finding in Markdown and HTML, and `assessment.owasp` with a "Risks by
+  OWASP category" line in the passport. Orientation, not compliance; five reliability rules with no clear fit carry
+  none.
+
 ## [4.10.0] — 2026-11-06
 
 n8n workflows get the checks Power Automate flows already had, in n8n's own shapes: who can start a workflow, and what

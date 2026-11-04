@@ -10,6 +10,8 @@ from html import escape
 from typing import Dict, List, Sequence, Tuple
 
 from jh_core import Finding, SEV_LABEL, TOOL, VERSION
+from jh_frameworks import OWASP_RISKS, owasp
+from jh_prompt import combined, finding_prompt
 import jh_score
 
 SEV_ORDER = ("blocker", "critical", "major", "minor", "info")
@@ -235,6 +237,11 @@ def _render_finding_card(finding: Finding, idx: int) -> str:
     tags = ""
     if finding.tags:
         tags = '<div class="tags">%s</div>' % "".join("<span>#%s</span>" % _e(tag) for tag in finding.tags)
+    risks = owasp(finding.rule)
+    if risks:
+        tags += '<p class="owasp"><span class="label">OWASP</span>%s</p>' % "; ".join(
+            "%s %s" % (_e(r), _e(OWASP_RISKS[r])) for r in risks)
+    tags += _prompt_block(finding_prompt(finding), "Fix it with your coding agent")
     return '''<article class="finding sev-%s" data-severity="%s" data-text="%s">
       <div class="finding__rail"></div>
       <div class="finding__body">
@@ -253,6 +260,22 @@ def _render_finding_card(finding: Finding, idx: int) -> str:
         _e(finding.rule), _e(finding.confidence), _e(finding.title),
         _e(finding.path), finding.line, _e(finding.category),
         evidence, why, fix, tags)
+
+
+def _prompt_block(prompt: str, label: str) -> str:
+    return ('<details class="prompt"><summary>%s</summary><pre>%s</pre>'
+            '<button type="button" class="copy" data-copy>Copy</button></details>' % (_e(label), _e(prompt)))
+
+
+def _render_prompt(findings: Sequence[Finding]) -> str:
+    if not findings:
+        return ""
+    return '''<section class="section" id="prompt">
+      <div class="section__head"><div class="eyebrow">Fix</div><h2>One prompt for your coding agent</h2></div>
+      <p class="muted">Paste it into Claude Code, Cursor or Copilot. It lists the most serious findings first and never
+      includes a secret's value. <code>jankhunt42 scan . --prompt</code> prints the same text.</p>
+      %s
+    </section>''' % _prompt_block(combined(findings), "Show the prompt")
 
 
 def _render_findings(findings: Sequence[Finding], max_findings: int) -> str:
@@ -312,6 +335,7 @@ def render_scan(result, meta: Dict[str, object], max_findings: int = 300) -> str
         _render_top(findings),
         _render_toolbar(counts, len(findings)),
         _render_findings(findings, max_findings),
+        _render_prompt(findings),
         _render_footer(),
         "</div>",
         "<script>",
@@ -479,6 +503,13 @@ h1 { margin: 4px 0 12px; font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1.02;
 .finding__body { padding: 14px 16px; min-width: 0; }
 .finding__top { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
 .index { color: var(--sev); font: 900 .8rem var(--mono); letter-spacing: .08em; }
+.owasp { margin: 8px 0 0; color: var(--muted); font-size: .82rem; }
+.prompt { margin-top: 10px; }
+.prompt summary { cursor: pointer; color: var(--cyan); font-size: .84rem; }
+.prompt pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px; font: .8rem/1.5 var(--mono); color: var(--text); }
+.prompt .copy { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 10px; cursor: pointer; font-size: .78rem; }
 .chip { display: inline-flex; border-radius: 7px; background: var(--sev); color: #07090e; padding: 2px 8px; font-size: .64rem; font-weight: 900; letter-spacing: .09em; }
 .rule { color: var(--sev); font-size: .78rem; font-weight: 800; }
 .conf { color: var(--faint); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -588,5 +619,14 @@ _JS = r"""
   });
   search.addEventListener('input', apply);
   apply();
+  document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      const text = button.parentNode.querySelector('pre').textContent;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function () { button.textContent = 'Copied'; },
+                                                 function () { button.textContent = 'Select and copy'; });
+      }
+    });
+  });
 })();
 """
