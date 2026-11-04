@@ -31,6 +31,7 @@ _IDENT = r'(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)'
 _QNAME = r"%s(?:\s*\.\s*%s)?" % (_IDENT, _IDENT)
 _QNAMES = r"%s(?:\s*,\s*%s)*" % (_QNAME, _QNAME)
 _SPECIAL = re.compile(r"--|/\*|['\";$]")
+_COPY_STDIN = re.compile(r"(?is)^copy\b.*\bfrom\s+stdin\b")
 _DOLLAR = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
 
 
@@ -74,12 +75,22 @@ def statements(text: str) -> List[Tuple[int, str, str]]:
             i = n if j < 0 else j + 2
             buf.append(" ")
         elif tok in "'\"":
+            # E'...' takes backslash escapes (E'it\'s'); any string takes a doubled quote ('it''s')
+            escapes = tok == "'" and i > 0 and text[i - 1] in "eE" and not (i > 1 and (text[i - 2].isalnum() or
+                                                                                      text[i - 2] == "_"))
             j = i + 1
             while True:
                 j = text.find(tok, j)
                 if j < 0:
                     j = n
                     break
+                if escapes:
+                    k = j
+                    while k > i + 1 and text[k - 1] == "\\":
+                        k -= 1
+                    if (j - k) % 2:                      # an odd run of backslashes escapes this quote
+                        j += 1
+                        continue
                 if text.startswith(tok * 2, j):      # '' or "" inside the quotes
                     j += 2
                     continue
@@ -102,9 +113,14 @@ def statements(text: str) -> List[Tuple[int, str, str]]:
                 buf.append("$")
                 i += 1
         else:                                            # ;
+            before = len(out)
             flush()
+            copying = len(out) > before and bool(_COPY_STDIN.match(out[-1][1]))
             buf, bodies, first = [], [], None
             i += 1
+            if copying:                                  # COPY ... FROM stdin: data rows up to a line of \.
+                end_data = re.compile(r"(?m)^\\\.\r?$").search(text, i)
+                i = n if end_data is None else end_data.end()
     flush()
     return out
 
@@ -140,6 +156,7 @@ _CREATE_TABLE = re.compile(r"(?is)^create\s+(?:(?:global|local)\s+)?(temp(?:orar
 _ALTER_TABLE = re.compile(r"(?is)^alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(%s)(.*)$" % _QNAME)
 _RLS = re.compile(r"(?is)\b(enable|disable)\s+row\s+level\s+security\b")
 _RENAME = re.compile(r"(?is)^\s*rename\s+to\s+(%s)\s*$" % _IDENT)
+_SET_SCHEMA = re.compile(r"(?is)^\s*set\s+schema\s+(%s)\s*$" % _IDENT)
 _DROP = re.compile(r"(?is)^drop\s+(table|view|materialized\s+view)\s+(?:if\s+exists\s+)?(%s)" % _QNAMES)
 _GRANT = re.compile(r"(?is)^(grant|revoke)\s+(?:grant\s+option\s+for\s+)?(.+?)\s+on\s+(?:table\s+)?(%s)\s+"
                     r"(?:to|from)\s+(.+?)\s*(?:with\s+grant\s+option|granted\s+by\s+\S+|cascade|restrict)?\s*$" % _QNAMES)
@@ -201,6 +218,9 @@ def _apply(state: Dict[str, Any], rel: str, line: int, stmt: str, bodies: str) -
         renamed = _RENAME.match(rest)
         if renamed and key in state["tables"]:
             state["tables"][(key[0], _part(renamed.group(1)))] = state["tables"].pop(key)
+        moved = _SET_SCHEMA.match(rest)
+        if moved and key in state["tables"]:
+            state["tables"][(_part(moved.group(1)), key[1])] = state["tables"].pop(key)
         return
     m = _DROP.match(s)
     if m:

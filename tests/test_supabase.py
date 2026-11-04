@@ -39,6 +39,17 @@ class Statements(unittest.TestCase):
         self.assertIn("'o''k;'", got[2][1])
         self.assertIn('alter table b enable row level security', got[3][2])
 
+    def test_escape_strings_and_copy_data(self):
+        text = ("insert into a values (E'it\\'s; still one', 'x');\n"
+                "insert into a values (E'ends in a backslash\\\\');\n"
+                "copy public.a (x) from stdin;\nsemi;colon\n'quote\n\\.\n;\n"
+                "alter table a enable row level security;\n"
+                "create table c (id int);")
+        got = J.statements(text)
+        self.assertEqual([(line, s.split()[0].lower()) for line, s, _ in got],
+                         [(1, 'insert'), (2, 'insert'), (3, 'copy'), (8, 'alter'), (9, 'create')])
+        self.assertIn("E'it\\'s; still one'", got[0][1])
+
 
 class TablesWithoutRowLevelSecurity(unittest.TestCase):
     def test_exposure_follows_the_grants(self):
@@ -80,6 +91,8 @@ class TablesWithoutRowLevelSecurity(unittest.TestCase):
         self.assertEqual(hits(renamed), [])
         quoted = 'create table "public"."Notes" (id int);\nalter table public."Notes" enable row level security;'
         self.assertEqual(hits({MIG % '001_q': quoted}), [])
+        moved = {MIG % '001_notes': NOTES, MIG % '002_m': 'alter table public.notes set schema private;'}
+        self.assertEqual(hits(moved), [])                                             # no longer served
         mixed = 'create table "public"."Notes" (id int);\nalter table public.notes enable row level security;'
         self.assertEqual(hits({MIG % '001_q': mixed}), [('JH134', '001_q.sql', 1, 'major')])  # "Notes" is not notes
 
