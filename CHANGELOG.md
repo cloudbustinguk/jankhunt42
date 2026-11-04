@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.8.0] — unreleased
+## [4.8.0] — 2026-11-04
 
 Copilot Studio agents are now read past their sign-in setting: their topics, tools and instructions. The new rules
 follow Microsoft's own list of the agent misconfigurations it finds most (February 2026), checked in the export before
