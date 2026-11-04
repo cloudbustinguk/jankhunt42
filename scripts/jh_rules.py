@@ -412,13 +412,14 @@ RULES: List[Rule] = [
       "A flow passes personal fields to an AI connector, AI Builder prompt or AI API with no visible redaction.",
       "Send only the fields the prompt needs, redact or pseudonymise personal data, and use an approved AI service.",
       confidence="medium", langs=("json",), check="powerplatform_ai_personal", tags=("powerplatform", "citizen", "ai")),
-    # Copilot Studio agents (bots/<schema>/bot.xml) and environment variables, from the same exports
+    # Copilot Studio agents (bots/<schema>/bot.xml, settings.mcs.yml) and environment variables, from the same exports
     R("JH148", "Copilot Studio agent needs no sign-in", "major", "security",
       "An agent set to No authentication answers anyone who can reach it, and its connector actions run with the "
       "maker's connections.",
       "Set Authentication to 'Authenticate with Microsoft' (or manual sign-in). If the agent is meant to be public, "
       "give it no actions or knowledge that reach internal data.",
-      confidence="medium", langs=("xml",), check="powerplatform_agent_open", tags=("powerplatform", "citizen", "ai")),
+      confidence="medium", langs=("xml", "yaml"), check="powerplatform_agent_open",
+      tags=("powerplatform", "citizen", "ai")),
     R("JH149", "Power Platform environment variable holds a secret as plain text", "major", "security",
       "A secret-named environment variable is Text, not Secret, so its value is stored and exported in plain text; a "
       "value in the export is the secret itself (critical).",
@@ -426,6 +427,29 @@ RULES: List[Rule] = [
       "current values.",
       confidence="medium", langs=("xml", "json"), check="powerplatform_env_secret",
       tags=("powerplatform", "citizen", "secret")),
+    # Copilot Studio topics, tools and instructions (botcomponents/<schema>/data, or *.mcs.yml from VS Code)
+    R("JH150", "Copilot Studio tool runs with the maker's credentials", "major", "security",
+      "A tool set to Maker-provided credentials lets everyone who chats with the agent act with the maker's own "
+      "access; critical when the agent also needs no sign-in.",
+      "Set the tool's authentication to the user's own credentials (End user credentials), or give it a service "
+      "account with only the access the tool needs.",
+      confidence="high", langs=("yaml",), check="powerplatform_maker_credentials",
+      tags=("powerplatform", "citizen", "ai")),
+    R("JH151", "Copilot Studio HTTP request is unencrypted or bypasses a connector", "major", "security",
+      "A topic's HTTP request uses plain HTTP or a non-standard port, or calls a service that has a connector, "
+      "outside the data policies that govern it (minor).",
+      "Use HTTPS on the standard port, and reach Microsoft services through their connector so data policies apply.",
+      confidence="high", langs=("yaml",), check="powerplatform_agent_http", tags=("powerplatform", "citizen", "ai")),
+    R("JH152", "Copilot Studio agent has no instructions for generative orchestration", "minor", "reliability",
+      "With generative orchestration on and no instructions, the model picks topics, tools and answers with nothing "
+      "stating the agent's purpose, scope or limits.",
+      "Write instructions: what the agent is for, what it must not do, which tools to use when, and when to hand over.",
+      confidence="high", langs=("yaml",), check="powerplatform_no_instructions", tags=("powerplatform", "citizen", "ai")),
+    R("JH153", "Copilot Studio agent emails whoever the AI chooses", "major", "security",
+      "An email tool whose recipient the AI fills in can be steered by injected instructions to send conversation "
+      "data to any address.",
+      "Make the recipient a fixed input, limit it to the signed-in user, or require a person to confirm each email.",
+      confidence="medium", langs=("yaml",), check="powerplatform_ai_email", tags=("powerplatform", "citizen", "ai")),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",
@@ -1082,6 +1106,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 if pointers:
                     f = make_finding(rule, sf, 1, evidence='n8n export contains literal secret-shaped parameters (values withheld)',
                                      extra={'json_pointers': [jh_n8n.safe_pointer(p) for p in pointers[:50]], 'sites': len(pointers)})
+                    _example_context(f)
+                    if acceptor.accept(f):
+                        result.findings.append(f)
+            if rule.id == 'JH101' and sf.lang == 'yaml' and jh_powerplatform.is_component(sf.rel):
+                for f in jh_powerplatform.header_secrets(sf, rule):        # a Copilot Studio topic's HTTP headers
                     _example_context(f)
                     if acceptor.accept(f):
                         result.findings.append(f)

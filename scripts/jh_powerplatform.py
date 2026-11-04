@@ -6,7 +6,9 @@ each named <zip path>!/<member>, so every rule (hardcoded secrets included) read
 unpacked one. Nothing here runs a flow, evaluates an expression, resolves a connection or fetches anything.
 
 What is read: cloud flows (Workflows/*.json, or a flow package's definition.json), Copilot Studio agents
-(bots/<schema>/bot.xml), environment variables (environmentvariabledefinitions/<schema>/), and canvas apps. A canvas app
+(bots/<schema>/bot.xml and configuration.json) and their components (botcomponents/<schema>/data: topics, tools,
+instructions), environment variables (environmentvariabledefinitions/<schema>/), and canvas apps. An agent cloned by
+the Copilot Studio extension for VS Code (*.mcs.yml) is read from disk the same way. A canvas app
 is an .msapp, itself a zip, committed on its own or kept in a solution as CanvasApps/<name>.msapp; one inside a solution
 is opened one level deep and no further. From an app, the Power Fx source (Src/*.pa.yaml) is read as written. An app
 saved before that format exists keeps its formulas in Controls/*.json and Components/*.json; those are read as a
@@ -23,7 +25,9 @@ from __future__ import annotations
 import html
 import io
 import json
+import os
 import re
+import urllib.parse
 import zipfile
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -43,8 +47,11 @@ MAX_APP_MEMBER_BYTES = 16 * 1024 * 1024  # one screen's formulas: a large screen
 # Workflows/<flow>.json; the older flow package (Export > Package (.zip)) keeps each in
 # Microsoft.Flow/flows/<id>/definition.json beside a root manifest.json.
 _READ = re.compile(r"(?i)^(?:solution\.xml|manifest\.json|workflows/[^/]{1,200}\.json|"
-                   r"microsoft\.flow/flows/[^/]{1,100}/definition\.json|bots/[^/]{1,200}/bot\.xml|"
+                   r"microsoft\.flow/flows/[^/]{1,100}/definition\.json|bots/[^/]{1,200}/(?:bot\.xml|configuration\.json)|"
+                   r"botcomponents/[^/]{1,200}/data|"
                    r"environmentvariabledefinitions/[^/]{1,200}/environmentvariable(?:definition\.xml|values\.json))$")
+# an agent's own files, kept by virtual path while a zip's members are loaded, for its components to look up
+_AGENT_FILE = re.compile(r"(?i)(?:^|/)bots/[^/]{1,200}/(?:bot\.xml|configuration\.json)$")
 _PACKAGE_FLOW = re.compile(r"(?i)^microsoft\.flow/flows/[^/]{1,100}/definition\.json$")
 _CANVAS_APP = re.compile(r"(?i)^canvasapps/[^/]{1,200}\.msapp$")
 # inside an .msapp, whose member names use backslashes (read here with forward slashes)
@@ -216,12 +223,12 @@ def formulas(text: str) -> str:
 
 
 GAPS: List[str] = []                     # what load_archive could not read during this load, for the report's warnings
+MEMBERS: Dict[str, str] = {}             # agents' bot.xml and configuration.json read from zips, by virtual path
 
 
 def load_archive(path: Any, root: Any) -> List[SourceFile]:
     """The readable members of a solution zip or canvas app on disk, as sources named <file>!/<member>; gaps go to
-    GAPS."""
-    import os
+    GAPS, and each agent's own files to MEMBERS, where its components look them up."""
     rel = os.path.relpath(str(path), str(root)).replace(os.sep, "/")
     try:
         with open(path, "rb") as fh:
@@ -231,7 +238,10 @@ def load_archive(path: Any, root: Any) -> List[SourceFile]:
     GAPS.extend(gaps)
     out = []
     for name, text in members:
-        sf = source_from_text(name, str(path) + name[len(rel):], text)
+        where = str(path) + name[len(rel):]
+        if _AGENT_FILE.search(name):
+            MEMBERS[os.path.normpath(where)] = text
+        sf = source_from_text(name, where, text)
         if sf is not None:
             out.append(sf)
     return out
@@ -377,18 +387,369 @@ def _line_at(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
 
 
+# The VS Code extension writes the same choice to settings.mcs.yml as a top-level authenticationMode: None.
+_SETTINGS_FILE = re.compile(r"(?i)(?:^|/)settings\.mcs\.ya?ml$")
+_MCS_NO_AUTH = re.compile(r"(?m)^authenticationMode:[ \t]*['\"]?None['\"]?[ \t]*$")
+
+
+def _no_sign_in(text: Optional[str], settings: bool) -> Optional["re.Match[str]"]:
+    """Where an agent's bot.xml (or settings.mcs.yml) says it needs no sign-in, or None."""
+    if not text:
+        return None
+    if settings:
+        return _MCS_NO_AUTH.search(text)
+    if not re.search(r"<bot[\s>]", text[:4096]):
+        return None
+    mode = _AUTH_MODE.search(text)
+    return mode if mode and mode.group(1) == "1" else None
+
+
 def _agent_open(sf: SourceFile, rule: Rule) -> List[Finding]:
-    if not _BOT_FILE.search(sf.rel) or not re.search(r"<bot[\s>]", sf.text[:4096]):
+    settings = bool(_SETTINGS_FILE.search(sf.rel))
+    if not (settings or _BOT_FILE.search(sf.rel)):
         return []
-    mode = _AUTH_MODE.search(sf.text)
-    if not mode or mode.group(1) != "1":
+    mode = _no_sign_in(sf.text, settings)
+    if not mode:
         return []
-    named = re.search(r"<name>([^<]{1,200})</name>", sf.text) or re.search(r'<bot\s+schemaname="([^"]{1,200})"', sf.text)
+    if settings:
+        named = re.search(r"(?m)^displayName:[ \t]*['\"]?([^'\"\n]{1,200})", sf.text)
+        how = "authenticationMode: None"
+    else:
+        named = re.search(r"<name>([^<]{1,200})</name>", sf.text) or \
+            re.search(r'<bot\s+schemaname="([^"]{1,200})"', sf.text)
+        how = "authenticationmode 1"
     label = html.unescape(named.group(1)).strip()[:80] if named else "?"
     return [make_finding(rule, sf, _line_at(sf.text, mode.start()), message=(
-        "The Copilot Studio agent '%s' is set to No authentication (authenticationmode 1): anyone who can reach it, on "
-        "a website, the demo page or another channel, can chat with it without signing in, and the connector actions "
-        "it calls run with the maker's connections, since there is no user to sign in." % label))]
+        "The Copilot Studio agent '%s' is set to No authentication (%s): anyone who can reach it, on a website, the "
+        "demo page or another channel, can chat with it without signing in, and the connector actions it calls run "
+        "with the maker's connections, since there is no user to sign in." % (label, how)))]
+
+
+# ------------------------------------------------------------------ Copilot Studio components
+#
+# An agent's topics, tools (actions) and instructions are components. A solution export keeps each as
+# botcomponents/<schema>/data, YAML, where <schema> is <bot>.<type>.<name>; the agent's settings are in
+# bots/<bot>/configuration.json. The VS Code extension clones an agent as agent.mcs.yml (instructions), settings.mcs.yml
+# and topics/ and actions/ of *.mcs.yml, in the same YAML. Only the keys these rules need are read, line by line by
+# indentation; no expression is evaluated and no connection is resolved.
+
+_COMPONENT = re.compile(r"(?i)(?:^|/)botcomponents/([^/]{1,200})/data$")
+_MCS = re.compile(r"(?i)\.mcs\.ya?ml$")
+
+
+def _component(sf: SourceFile) -> Optional[str]:
+    """The component's name (its schema, or the .mcs.yml file's name), or None for any other file."""
+    m = _COMPONENT.search(sf.rel)
+    if m:
+        return m.group(1)
+    if _MCS.search(sf.rel):
+        return re.sub(r"(?i)\.mcs\.ya?ml$", "", os.path.basename(sf.rel))
+    return None
+
+
+def _sibling(sf: SourceFile, rel: str) -> Optional[str]:
+    """Another file of the same export, by a path relative to this one: from the zip's members when this source came
+    from a zip, else from disk (not through a link, and not if large). None when it is not there."""
+    target = os.path.normpath(os.path.join(os.path.dirname(sf.abspath), rel))
+    if "!" + os.sep in sf.abspath or "!/" in sf.abspath:
+        return MEMBERS.get(target)
+    try:
+        if os.path.islink(target) or os.path.getsize(target) > MAX_MEMBER_BYTES:
+            return None
+        with open(target, encoding="utf-8-sig", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _agent_settings(sf: SourceFile, name: str) -> Tuple[Optional[str], bool]:
+    """The agent's bot.xml (solution export) or settings.mcs.yml (VS Code), and whether it is the latter."""
+    if _COMPONENT.search(sf.rel):
+        return _sibling(sf, "../../bots/%s/bot.xml" % name.split(".")[0]), False
+    for up in ("settings.mcs.yml", "../settings.mcs.yml"):        # agent folder, or its topics/ or actions/
+        text = _sibling(sf, up)
+        if text is not None:
+            return text, True
+    return None, True
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _end(lines: List[str], i: int) -> int:
+    """The index past the block line i opens: the lines after it indented deeper, blank lines included."""
+    base, j = _indent(lines[i]), i + 1
+    while j < len(lines) and (not lines[j].strip() or _indent(lines[j]) > base):
+        j += 1
+    return j
+
+
+def _value(lines: List[str], i: int) -> str:
+    """The scalar after the key on line i: inline, quoted, or a block scalar (| |- >) on the deeper lines below."""
+    rest = lines[i].split(":", 1)[1].strip() if ":" in lines[i] else ""
+    if re.fullmatch(r"[|>][+-]?\d?", rest):
+        return "\n".join(line.strip() for line in lines[i + 1:_end(lines, i)]).strip()
+    if len(rest) >= 2 and rest[0] == rest[-1] and rest[0] in "\"'":
+        rest = rest[1:-1]
+    return rest
+
+
+def _top(lines: List[str], key: str) -> Optional[int]:
+    """The line of a top-level key, or None."""
+    pat = re.compile(r"^%s:(?:\s|$)" % re.escape(key))
+    return next((i for i, line in enumerate(lines) if pat.match(line)), None)
+
+
+def _short(name: str) -> str:
+    """A component's own name: Greeting from <bot>.topic.Greeting."""
+    parts = name.split(".", 2)
+    return parts[2] if len(parts) == 3 and parts[2] else name
+
+
+def _label(sf: SourceFile, name: str) -> str:
+    i = _top(sf.raw, "modelDisplayName")
+    if i is None:
+        i = _top(sf.raw, "displayName")
+    return (_value(sf.raw, i) if i is not None else "")[:80] or _short(name)[:80]
+
+
+def _step(lines: List[str], i: int) -> Optional[Tuple[str, str]]:
+    """The topic step (a list item `- kind: Invoke...`) that holds line i, as (kind, displayName), or None when line i
+    belongs to a tool's own top-level action."""
+    ind = _indent(lines[i])
+    for j in range(i - 1, -1, -1):
+        m = re.match(r"^(\s*)-\s*kind:\s*(Invoke\w+)\s*$", lines[j])
+        if m and len(m.group(1)) < ind:
+            shown = next((_value(lines, k) for k in range(j + 1, _end(lines, j))
+                          if re.match(r"^\s*displayName:", lines[k])), "")
+            return m.group(2), shown[:80]
+        if lines[j].strip() and _indent(lines[j]) == 0:
+            return None
+    return None
+
+
+# --- JH150: a tool runs with the maker's credentials ("Maker-provided credentials")
+
+_TOOL_KIND = {"invokeconnectortaskaction": "connector tool", "invokeflowtaskaction": "flow tool",
+              "invokeexternalagenttaskaction": "MCP server tool", "invokeaiplugintaskaction": "plugin tool",
+              "invokeconnectoraction": "connector action"}
+
+
+def _maker_credentials(sf: SourceFile, rule: Rule) -> List[Finding]:
+    name = _component(sf)
+    if name is None:
+        return []
+    lines, out = sf.raw, []
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*connectionProperties:\s*$", line):
+            continue
+        for j in range(i + 1, _end(lines, i)):
+            if not re.match(r"^\s*mode:\s*['\"]?Maker['\"]?\s*$", lines[j]):
+                continue
+            step = _step(lines, i)
+            if step:                                     # a connector or flow step inside a topic
+                shown = step[1] or step[0]
+                what = "%s '%s' in topic '%s'" % (_TOOL_KIND.get(step[0].lower(), "step"), shown, _short(name)[:80])
+            else:                                        # a tool: the whole component is the tool
+                kind = re.search(r"(?m)^\s+kind:\s*(Invoke\w+)\s*$", sf.text)
+                what = "%s '%s'" % ("MCP server tool" if "ModelContextProtocolMetadata" in sf.text else
+                                    _TOOL_KIND.get(kind.group(1).lower(), "tool") if kind else "tool", _label(sf, name))
+            settings, mcs = _agent_settings(sf, name)
+            if _no_sign_in(settings, mcs):
+                out.append(make_finding(rule, sf, j + 1, severity="critical", message=(
+                    "The %s runs with the maker's own connection (Maker-provided credentials), and the agent needs no "
+                    "sign-in: anyone who reaches the agent acts with the maker's access to that service." % what)))
+            else:
+                out.append(make_finding(rule, sf, j + 1, message=(
+                    "The %s runs with the maker's own connection (Maker-provided credentials): everyone who chats with "
+                    "the agent acts with the maker's access to that service, not their own." % what)))
+    return out
+
+
+# --- JH151: an HTTP request in a topic, over plain HTTP, to an unusual port, or around a connector
+
+_HTTP_ACTION = re.compile(r"^\s*-\s*kind:\s*HttpRequestAction\s*$")
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+# hosts reached through a Microsoft connector, whose data policies a raw HTTP request does not pass through
+_CONNECTOR_HOST = re.compile(r"(?i)^(?:graph\.microsoft\.com|(?:[\w-]+\.)*sharepoint\.com|(?:[\w-]+\.)*dynamics\.com|"
+                             r"outlook\.office(?:365)?\.com|management\.azure\.com|api\.powerbi\.com|"
+                             r"(?:[\w-]+\.)*vault\.azure\.net)$")
+
+
+def _literal_url(value: str) -> Optional[str]:
+    """A URL written as text, or the text a Power Fx URL starts with (="http://host/" & Topic.Id); else None."""
+    v = value.strip()
+    if v.startswith("="):
+        m = re.match(r'=\s*"([^"]*)"', v)
+        if not m:
+            return None
+        v = m.group(1)
+    return v if re.match(r"(?i)^https?://", v) else None
+
+
+def _http_request(sf: SourceFile, rule: Rule) -> List[Finding]:
+    name = _component(sf)
+    if name is None:
+        return []
+    lines, out = sf.raw, []
+    for i, line in enumerate(lines):
+        if not _HTTP_ACTION.match(line):
+            continue
+        at = next((j for j in range(i + 1, _end(lines, i)) if re.match(r"^\s*url:", lines[j])), None)
+        url = _literal_url(_value(lines, at)) if at is not None else None
+        if not url:
+            continue
+        try:
+            parts = urllib.parse.urlsplit(url)
+            host, port = (parts.hostname or "").lower(), parts.port
+        except ValueError:
+            continue
+        if not host or host in _LOOPBACK:
+            continue
+        shown = "%s://%s%s%s" % (parts.scheme.lower(), host, ":%d" % port if port else "", parts.path[:60])
+        if parts.scheme.lower() == "http":
+            out.append(make_finding(rule, sf, at + 1, evidence="url: " + shown, message=(
+                "The topic '%s' sends an HTTP request over plain HTTP (%s): what it sends and receives, including any "
+                "header credential, can be read or changed on the way." % (_short(name)[:80], shown))))
+        elif port and port != 443:
+            out.append(make_finding(rule, sf, at + 1, evidence="url: " + shown, message=(
+                "The topic '%s' sends an HTTP request to a non-standard port (%s): check the endpoint is meant to be "
+                "reached from the agent, and is not a management or test port." % (_short(name)[:80], shown))))
+        elif _CONNECTOR_HOST.match(host):
+            out.append(make_finding(rule, sf, at + 1, severity="minor", evidence="url: " + shown, message=(
+                "The topic '%s' calls %s with a raw HTTP request where a connector exists, so the data policies that "
+                "govern that connector do not apply to this call." % (_short(name)[:80], host))))
+    return out
+
+
+# --- JH152: generative orchestration with no instructions
+
+_AGENT_MCS = re.compile(r"(?i)(?:^|/)agent\.mcs\.ya?ml$")
+
+
+def _generative(text: Optional[str], settings: bool) -> bool:
+    if not text:
+        return False
+    if settings:
+        return bool(re.search(r"(?mi)^[ \t]+GenerativeActionsEnabled:[ \t]*true[ \t]*$", text))
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return False
+    s = doc.get("settings") if isinstance(doc, dict) else None
+    return isinstance(s, dict) and s.get("GenerativeActionsEnabled") is True
+
+
+def _no_instructions(sf: SourceFile, rule: Rule) -> List[Finding]:
+    name = _component(sf)
+    if name is None:
+        return []
+    if _COMPONENT.search(sf.rel):
+        if not name.lower().endswith(".gpt.default"):
+            return []
+        on = _generative(_sibling(sf, "../../bots/%s/configuration.json" % name.split(".")[0]), False)
+    elif _AGENT_MCS.search(sf.rel):
+        on = _generative(_sibling(sf, "settings.mcs.yml"), True)
+    else:
+        return []
+    lines = sf.raw
+    if not on or _top(lines, "kind") is None or _value(lines, _top(lines, "kind")) != "GptComponentMetadata":
+        return []
+    at = _top(lines, "instructions")
+    if at is not None and _value(lines, at):
+        return []
+    return [make_finding(rule, sf, at + 1 if at is not None else 1, evidence="instructions:", message=(
+        "The agent '%s' uses generative orchestration but has no instructions: the model chooses which topics, tools "
+        "and knowledge to use, and what to say, with nothing stating the agent's purpose, scope or limits." % (
+            _label(sf, name.split(".")[0]))))]
+
+
+# --- JH153: a tool sends email to whoever the AI chooses
+
+_MAIL_API = re.compile(r"(?i)\.shared_(?:office365|outlook|gmail|sendmail)\.")
+# operations that send to a recipient given as an input (To, or ToRecipients when forwarding), per Microsoft's
+# connector reference; a reply goes back to the sender and a draft was addressed when it was made
+_MAIL_OP = re.compile(r"(?i)^(?:SendEmail(?:V\d+)?|SendMailWithOptions|SendApprovalMail|SharedMailboxSendEmail(?:V\d+)?|"
+                      r"ForwardEmail(?:_?V\d+)?)$")
+
+
+def _ai_email(sf: SourceFile, rule: Rule) -> List[Finding]:
+    name = _component(sf)
+    if name is None:
+        return []
+    lines = sf.raw
+    kind = _top(lines, "kind")
+    if kind is None or _value(lines, kind) != "TaskDialog":
+        return []
+    ref = next((j for j, line in enumerate(lines) if re.match(r"^\s+connectionReference:", line)), None)
+    op = next((j for j, line in enumerate(lines) if re.match(r"^\s+operationId:", line)), None)
+    if ref is None or op is None or not _MAIL_API.search(_value(lines, ref) + ".") or \
+            not _MAIL_OP.match(_value(lines, op)):
+        return []
+    fixed = False
+    inputs = _top(lines, "inputs")
+    if inputs is not None:
+        end = _end(lines, inputs)
+        for j in range(inputs + 1, end):
+            if not re.match(r"^\s*-\s*kind:\s*ManualTaskInput\s*$", lines[j]):
+                continue
+            for k in range(j + 1, _end(lines, j)):
+                if re.match(r"^\s*propertyName:", lines[k]) and \
+                        _value(lines, k).strip("'\"").split("/")[-1].lower() in ("to", "torecipients"):
+                    fixed = True
+    if fixed:
+        return []
+    return [make_finding(rule, sf, op + 1, message=(
+        "The tool '%s' sends email (%s) and the AI chooses who receives it: a message or document that injects "
+        "instructions can make the agent mail conversation data to any address. Set the recipient as a fixed input, "
+        "or have a person confirm each email." % (_label(sf, name), _value(lines, op)[:40])))]
+
+
+# --- JH101 in topics: a credential header of an HTTP step, written into the agent
+
+_CREDENTIAL_HEADER = re.compile(r"(?i)^(?:(?:proxy-)?authorization|x-?api-?key|api-?key|ocp-apim-subscription-key|"
+                                r"subscription-key|x-functions-key|x-(?:auth|access)-token|access-token|x-token|token|"
+                                r"x-client-secret|client-secret)$")
+_SCHEME = re.compile(r"(?i)^(?:bearer|basic|token|apikey|sharedaccesssignature)\s+")
+
+
+def is_component(rel: str) -> bool:
+    return bool(_COMPONENT.search(rel) or _MCS.search(rel))
+
+
+def header_secrets(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """Credential headers of a topic's HTTP step written as text, plain or as a Power Fx text ="..."; a value read
+    from an environment variable, a variable or any other formula is not written here and is not reported."""
+    name = _component(sf)
+    if name is None:
+        return []
+    lines, out = sf.raw, []
+    for i, line in enumerate(lines):
+        if not _HTTP_ACTION.match(line):
+            continue
+        head = next((j for j in range(i + 1, _end(lines, i)) if re.match(r"^\s*headers:\s*$", lines[j])), None)
+        if head is None:
+            continue
+        for j in range(head + 1, _end(lines, head)):
+            m = re.match(r"^\s*['\"]?([A-Za-z0-9_-]{1,64})['\"]?:", lines[j])
+            if not m or not _CREDENTIAL_HEADER.match(m.group(1)):
+                continue
+            value = _value(lines, j).strip()
+            if value.startswith("="):
+                text = re.fullmatch(r'=\s*"([^"]*)"', value)
+                if not text:
+                    continue                             # Env.cr1_key, Topic.token, a concatenation: not written here
+                value = text.group(1)
+            value = _SCHEME.sub("", value).strip()
+            if not _secret_value(value, True):
+                continue
+            out.append(make_finding(rule, sf, j + 1, evidence="%s: (%d characters, not shown)" % (m.group(1), len(value)),
+                                    message=(
+                "The topic '%s' sends a credential written into the agent (the %s header): anyone who can read the "
+                "export, or open the agent's topics, has it. Keep it in an environment variable of type Secret (Azure "
+                "Key Vault)." % (_short(name)[:80], m.group(1)))))
+    return out
 
 
 # ------------------------------------------------------------------ environment variables
@@ -487,6 +848,14 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
         return _agent_open(sf, rule)
     if rule.check == "powerplatform_env_secret":
         return _env_secret(sf, rule)
+    if rule.check == "powerplatform_maker_credentials":
+        return _maker_credentials(sf, rule)
+    if rule.check == "powerplatform_agent_http":
+        return _http_request(sf, rule)
+    if rule.check == "powerplatform_no_instructions":
+        return _no_instructions(sf, rule)
+    if rule.check == "powerplatform_ai_email":
+        return _ai_email(sf, rule)
     parsed = flow(sf)
     if not parsed:
         return []

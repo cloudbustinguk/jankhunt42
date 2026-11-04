@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.7.0"
+  version: "4.8.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -33,7 +33,7 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 | an AI agent workspace reviewed: settings, MCP servers, instruction files | `jankhunt42 scan . --category agent` | `references/citizen.md` |
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
-| an n8n workflow, or a Power Platform solution export (flows, canvas apps, Copilot Studio agents), reviewed | `jankhunt42 map .` (n8n), `jankhunt42 scan .` (Power Platform) | `references/n8n.md`, `references/powerplatform.md` |
+| an n8n workflow, a Power Platform solution export (flows, canvas apps, Copilot Studio agents), or an agent cloned with the Copilot Studio VS Code extension (`*.mcs.yml`), reviewed | `jankhunt42 map .` (n8n), `jankhunt42 scan .` (Power Platform) | `references/n8n.md`, `references/powerplatform.md` |
 | what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox .` | `references/sandbox.md` |
 | a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --ignore-rule JH417` | `references/rulesets.md` |
 
@@ -61,7 +61,7 @@ jankhunt42 review . --staged --md
 jankhunt42 review . --base HEAD~1 --brief     # handoff to the semantic reviewer
 ```
 
-- Findings are **leads**: secrets, injection, exposed data stores, unsafe CI, container privilege, AI-agent hazards, faked tests, and low-code exports (Power Platform solutions, canvas apps and agents, zipped or not). The score says where to look first, not what is true.
+- Findings are **leads**: secrets, injection, exposed data stores, unsafe CI, container privilege, AI-agent hazards, faked tests, and low-code exports (Power Platform solutions, canvas apps, and agents' settings, tools and topics, zipped or not). The score says where to look first, not what is true.
 - The Jank Score (security, reliability, tests; A-E grades; the headline follows the worst dimension) is a **prioritization device**, not a compliance certificate. Gate CI on `scan --fail-on SEV`; `scan --score --fail-policy` is advisory (`references/scoring.md`).
 - `review` is the deterministic evidence layer (scope, new vs contextual lines, receipts, coverage, baselines). You own intent, reachability, and impact. A receipt is `supported` or `unverified`, never `confirmed` without a repro or runtime evidence. Zero findings with skipped files is not a clean bill of health (`references/review.md`).
 - Style, complexity and dependency advisories are out of scope: use the project's linters, Dependabot or osv-scanner.
