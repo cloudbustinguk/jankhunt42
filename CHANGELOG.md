@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.13.0] — unreleased
+## [4.13.0] — 2026-11-06
 
 Agent Substrate runs AI agents in sandboxes on Kubernetes, with an egress gateway that can put an API key into the
 agent's requests so the key never enters the sandbox. Its own Claude Code demo rendered the key into the agent's
