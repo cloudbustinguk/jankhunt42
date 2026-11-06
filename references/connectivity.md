@@ -265,6 +265,8 @@ as a **declared boundary**:
   external proxy's policy is not inspected.
 - OpenShell policies: every `network_policies` endpoint `host` and
   `allowed_ips` (default deny).
+- Agent Substrate egress policies, and an actor template's
+  `goldenEgressPolicy`: every rule's `hostnames` (default deny).
 
 It is compared with the resolved hosts the map reaches (any principal,
 including AI agents and MCP servers), in both directions, with the evidence
@@ -282,8 +284,8 @@ destination that at least one of them does not admit, with `contexts` naming
 which. Different ports on the same host remain separate; known ports are in
 the optional `port` field of `outside` and `unassessed` rows and are displayed
 with the host in text and HTML views.
-So a repository that commits the Claude Code, Codex and OpenShell policies from
-`--emit-sandbox-policy` gets one answer for all three. Two settings scopes of
+So a repository that commits the Claude Code, Codex, OpenShell and Agent Substrate
+policies from `--emit-sandbox-policy` gets one answer for all four. Two settings scopes of
 the same tool (for example `.claude/settings.json` and
 `.claude/settings.local.json`) merge in ways this does not model, so they make
 coverage unknown.

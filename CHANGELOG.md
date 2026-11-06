@@ -4,6 +4,41 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.13.0] — unreleased
+
+Agent Substrate runs AI agents in sandboxes on Kubernetes, with an egress gateway that can put an API key into the
+agent's requests so the key never enters the sandbox. Its own Claude Code demo rendered the key into the agent's
+template instead. jankhunt42 now reads Substrate manifests and writes Substrate egress policies.
+
+### Added
+
+- **`JH713` Agent sandbox template holds an API key** (major, `agent`). An Agent Substrate actor template
+  (`kubectl ate create actor-template`, also `*.yaml.tmpl`) whose credential-named env var is a literal or a `${VAR}`
+  substitution. The agent, any command a prompt injection makes it run, and the actor's memory snapshots then hold
+  the key. Placeholders, dummies (`crsr_000…`), file paths and URLs without credentials are not reported; the value
+  is never shown. Minor in test data. OWASP `CD-SEC-04`, `CD-SEC-07`, `ASI03`.
+- **`JH709` and `JH710` read Substrate egress policies** (an EgressPolicy's `rules:`, or a template's
+  `goldenEgressPolicy`). `JH709`: a rule for `"*"`, every name under a top-level domain, or every tenant of a shared
+  domain, and (minor) `tlsPassthrough` on every port. `JH710`: `tlsPassthrough` to an API the agent signs in to
+  (Anthropic, OpenAI, Azure OpenAI, Gemini and others), where the gateway cannot inject the key, and `replaceHeaders`
+  on a cleartext `http` rule (minor when every host is a cluster service name).
+- **`passport --emit-sandbox-policy substrate`** writes an EgressPolicy from what the code reaches. The AI APIs the
+  gateway can sign requests to (Anthropic, OpenAI, Gemini, Mistral, Groq, OpenRouter) get an `https` rule that injects
+  the key from a Secret; other APIs that need a key get an `https` rule; everything else is `tlsPassthrough` on its
+  port, which the gateway does not decrypt. Databases and brokers are left out with the reason. Works with
+  `--sandbox-network-ceiling`.
+- **A committed Substrate egress policy is a declared boundary** in `map` and `passport` (`egress`), like the Claude
+  Code, Codex and OpenShell policies.
+
+### Fixed
+
+- **A project kept under a folder named `out`, `build`, `dist`, `target`, `vendor` or `venv` is scanned.** Build-output
+  folders were skipped wherever they appeared in the absolute path, so such a project scanned no files and said so only
+  as `files: 0`. They are now skipped only inside the scan root.
+
+Policies kept only in Substrate's database, or built in code (as most platforms embedding Substrate do), are out of
+reach of a repository scan.
+
 ## [4.12.0] — 2026-11-06
 
 Agent skills are installed from public directories into the projects citizen developers build, and a skill can switch

@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.12.0"
+  version: "4.13.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -32,7 +32,7 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 | the new access a pull request asks for, approving one change | `jankhunt42 passport . --base <ref> --md` | `references/change-review.md` |
 | a non-engineer building or shipping software, "is my app safe to share" | `jankhunt42 passport . --profile citizen` | `references/citizen.md` |
 | an AI agent workspace reviewed: settings, MCP servers, instruction files, skills | `jankhunt42 scan . --category agent` | `references/citizen.md` |
-| a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
+| a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell, Agent Substrate) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
 | OWASP Citizen Development (`CD-SEC`) or Agentic (`ASI`) risks | `jankhunt42 rules`, `jankhunt42 passport . --json` (`assessment.owasp`) | `references/ai-governance.md` |
 | an n8n workflow, a Power Platform solution export (flows, canvas apps, Copilot Studio agents), or an agent cloned with the Copilot Studio VS Code extension (`*.mcs.yml`), reviewed | `jankhunt42 scan .`, then `jankhunt42 map .` for what an n8n workflow reaches | `references/n8n.md`, `references/powerplatform.md` |
