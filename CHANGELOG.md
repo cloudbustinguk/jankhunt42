@@ -12,8 +12,8 @@ log and compares it with what the repository declares.
 ### Added
 
 - **`passport --sandbox-log PATH`** (repeatable, at most 8 files outside the repository): OpenShell's OCSF JSON export
-  (Network Activity and HTTP Activity, plain JSONL or `OCSF-JSON` stderr lines) and Agent Substrate's egress gateway
-  log. Each connection is compared with the repository's map, the hosts its emitted fence would allow (public
+  (Network Activity, and HTTP Activity records that state an outcome; plain JSONL or `OCSF-JSON` stderr lines) and
+  Agent Substrate's egress gateway log. Each connection is compared with the repository's map, the hosts its emitted fence would allow (public
   endpoints, package registries), its committed sandbox policies, and the operator's network ceiling. The passport's
   `sandbox_log` section lists undeclared destinations (allowed or blocked, with the process or actor), blocked
   destinations the repository needs, and what each log cannot show. JSON, Markdown, HTML and `--redact`.

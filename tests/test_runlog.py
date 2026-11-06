@@ -41,8 +41,10 @@ class Parse(unittest.TestCase):
     def test_outcome_from_disposition_only_and_none_without_one(self):
         only_disposition = {"class_uid": 4002, "disposition_id": 2, "dst_endpoint": {"domain": "a.invalid", "port": 80}}
         no_outcome = {"class_uid": 4001, "dst_endpoint": {"domain": "b.invalid", "port": 443}}
-        got = R.parse(json.dumps(only_disposition) + "\n" + json.dumps(no_outcome))
-        self.assertEqual([(e["endpoint"], e["outcome"]) for e in got["events"]], [(("a.invalid", 80), "denied")])
+        conflict = {"class_uid": 4001, "action_id": 1, "disposition_id": 2, "dst_endpoint": {"domain": "c.invalid", "port": 443}}
+        got = R.parse("\n".join(json.dumps(o) for o in (only_disposition, no_outcome, conflict)))
+        self.assertEqual([(e["endpoint"], e["outcome"]) for e in got["events"]],
+                         [(("a.invalid", 80), "denied"), (("c.invalid", 443), "denied")])
         self.assertEqual(got["unparsed"], 1)
 
     def test_substrate_gateway_lines(self):
@@ -170,6 +172,13 @@ class Project(unittest.TestCase):
             self.assertIn("outside the scanned repository", p.stderr)
         finally:
             os.remove(inside)
+
+    def test_distinct_destinations_are_capped(self):
+        from unittest import mock
+        with mock.patch.object(R, "MAX_DESTINATIONS", 2):
+            ev = R.evidence([self.openshell], self.root, None)
+        self.assertEqual(ev["counts"]["destinations"], 2)
+        self.assertGreater(ev["counts"]["beyond_limit"], 0)
 
     def test_too_many_logs(self):
         with self.assertRaises(ValueError):

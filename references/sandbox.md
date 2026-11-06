@@ -339,8 +339,10 @@ repository in its own sandbox leaves a different record: what the sandbox's
 network enforcement allowed and blocked while the agent ran. The passport reads
 two such logs:
 
-- **OpenShell:** the OCSF JSON export (Network Activity 4001 and HTTP Activity
-  4002), as plain JSONL or as the supervisor's `OCSF-JSON` stderr lines.
+- **OpenShell:** the OCSF JSON export (Network Activity 4001, and HTTP Activity
+  4002 records that state an outcome), as plain JSONL or as the supervisor's
+  `OCSF-JSON` stderr lines. A record counts as blocked when its `action_id` or
+  `disposition_id` says so; one that states no outcome is skipped.
   Turn it on with `openshell settings set <sandbox> --key ocsf_json_enabled
   --value true`. Shorthand `OCSF` lines carry no outcome and are skipped.
 - **Agent Substrate:** the egress gateway's JSON log lines (`egress denied: ...`,
