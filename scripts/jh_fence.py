@@ -28,7 +28,17 @@ from typing import AbstractSet, Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_yaml
 
-FORMATS = ("claude-code", "codex", "openshell")
+FORMATS = ("claude-code", "codex", "openshell", "substrate")
+# AI APIs the Agent Substrate egress gateway can sign requests to, so the key stays out of the
+# sandbox: the header each one reads its key from, and the prefix before the key
+SUBSTRATE_KEY_HEADERS = {
+    "api.anthropic.com": ("x-api-key", "", "anthropic"),
+    "api.openai.com": ("Authorization", "Bearer ", "openai"),
+    "generativelanguage.googleapis.com": ("x-goog-api-key", "", "gemini"),
+    "api.mistral.ai": ("Authorization", "Bearer ", "mistral"),
+    "api.groq.com": ("Authorization", "Bearer ", "groq"),
+    "openrouter.ai": ("Authorization", "Bearer ", "openrouter"),
+}
 PROFILE = "jankhunt42-fence"
 CLAUDE_PORT_NOTE = ("port-qualified entries verified on Claude Code 2.1.310; earlier versions are unverified, and the "
                     "sandbox runtime before July 2026 rejected port suffixes")
@@ -59,6 +69,10 @@ ENGINE_HOSTS = {
 DEFAULT_PORTS = {"http": 80, "postgresql": 5432, "mysql": 3306, "mariadb": 3306, "redis": 6379, "mongodb": 27017,
                  "mssql": 1433, "cassandra": 9042, "elasticsearch": 9200, "rabbitmq": 5672, "kafka": 9092,
                  "nats": 4222}
+# database and broker ports: their protocols are neither HTTP nor TLS with SNI from the first byte,
+# so Agent Substrate's egress gateway cannot pass them by host name
+SUBSTRATE_UNSUPPORTED_PORTS = frozenset(p for e, p in DEFAULT_PORTS.items() if e != "http")
+SUBSTRATE_SECRET_URI = "ate-secret://k8s.io/default/replace-with-namespace/%s-api-key/api-key"
 # hosts a registry needs besides its index
 REGISTRY_EXTRA = {"pypi.org": ["files.pythonhosted.org"], "crates.io": ["index.crates.io", "static.crates.io"],
                   "proxy.golang.org": ["sum.golang.org"]}
@@ -239,7 +253,78 @@ def render(fmt: str, p: Dict[str, Any], version: str, port_qualified: bool = Fal
         notes.append("load it with `openshell policy set`; endpoints without rules allow any request to that "
                      "host and port, so add `access` or `rules` where an endpoint needs less")
         return "\n".join(out) + "\n", notes
+    if fmt == "substrate":
+        return _render_substrate(p, version, notes)
     raise ValueError("unknown sandbox policy format: %s" % fmt)
+
+
+def _render_substrate(p: Dict[str, Any], version: str, notes: List[str]) -> Tuple[str, List[str]]:
+    """An Agent Substrate EgressPolicy. AI APIs the gateway can sign requests to get
+    an intercepted https rule that injects the key; other keyed APIs an https rule;
+    everything else TLS passthrough on its port, so the gateway does not decrypt it."""
+    import jh_substrate
+    keyed: List[Dict[str, Any]] = []
+    https: Dict[int, List[Dict[str, Any]]] = {}
+    passthrough: Dict[int, List[Dict[str, Any]]] = {}
+    http: List[Dict[str, Any]] = []
+    for r in p["allow"]:
+        host, port = r["host"], r["port"]
+        if _IPV4_RE.match(host):
+            notes.append("excluded: %s: Substrate egress rules take host names, not IP addresses" % host)
+        elif port in SUBSTRATE_UNSUPPORTED_PORTS:
+            notes.append("excluded: %s:%d: the egress gateway passes only HTTP and TLS with a server name; give the "
+                         "agent an HTTPS API for it, or a tlsPassthrough rule if the client starts TLS at once"
+                         % (host, port))
+        elif port == 80:
+            http.append(r)
+        elif port == 443 and host in SUBSTRATE_KEY_HEADERS:
+            keyed.append(r)
+        elif jh_substrate.keyed_api(host):
+            https.setdefault(port, []).append(r)
+        else:
+            passthrough.setdefault(port, []).append(r)
+    out = ["# Least-privilege egress policy for an Agent Substrate actor, written by jankhunt42 %s." % version,
+           "# Review it before use; jankhunt42 never applies it. Load it with",
+           "# `kubectl ate create egress-policy <actor> -a <atespace> -f <this file>`."]
+    if keyed:
+        out += ["# The gateway signs requests to the AI APIs below with keys from a Secret, so no key enters the",
+                "# sandbox: create each Secret and replace replace-with-namespace with its namespace."]
+    rules: List[str] = []
+
+    def hosts(rows: List[Dict[str, Any]]) -> List[str]:
+        return ["    - %s  # %s" % (_yaml_scalar(r["host"]), r["why"])
+                for r in sorted(rows, key=lambda r: (r["host"].lstrip("*."), r["host"]))]
+
+    for r in sorted(keyed, key=lambda r: r["host"]):
+        header, prefix, name = SUBSTRATE_KEY_HEADERS[r["host"]]
+        rules += ["- https:", "    hostnames:"] + hosts([r]) + [
+            "    effects:", "      replaceHeaders:", "      - header: %s" % _yaml_scalar(header)]
+        if prefix:
+            rules.append("        prefix: %s" % _yaml_scalar(prefix))
+        rules.append("        credentialUri: %s" % _yaml_scalar(SUBSTRATE_SECRET_URI % name))
+    for port in sorted(https):
+        rules += ["- https:", "    hostnames:"] + hosts(https[port])
+        if port != 443:
+            rules += ["    ports:", "      numbers: [%d]" % port]
+    for port in sorted(passthrough):
+        rules += ["- tlsPassthrough:", "    hostnames:"] + hosts(passthrough[port]) + [
+            "    ports:", "      numbers: [%d]" % port]
+    if http:
+        rules += ["- http:", "    hostnames:"] + hosts(http)
+    out += ["rules:"] + rules if rules else ["rules: []"]
+    emitted = {r["host"] for rows in [keyed, http] + list(https.values()) + list(passthrough.values()) for r in rows}
+    notes[0] = "%d host(s) allowed; everything else is denied by the egress gateway" % len(emitted)
+    if keyed:
+        notes.append("the actor sends each injected header with a placeholder value (for example "
+                     "ANTHROPIC_API_KEY=placeholder) and must trust the gateway's CA: mount the egress-mitm.ate.dev "
+                     "trust bundle and point SSL_CERT_FILE or NODE_EXTRA_CA_CERTS at it; a cluster admin must also "
+                     "grant the actor's atespace access to the Secret's namespace")
+    if https:
+        notes.append("https rules are decrypted by the gateway, so the actor must trust its CA; add a replaceHeaders "
+                     "effect where the agent signs in to that API, so its key stays out of the sandbox too")
+    if passthrough:
+        notes.append("tlsPassthrough rules relay TLS without decrypting it: the gateway checks only the server name")
+    return "\n".join(out) + "\n", notes
 
 
 def _yaml_scalar(s: str) -> str:
@@ -325,8 +410,52 @@ def validate(fmt: str, text: str) -> List[str]:
             for b in pol.get("binaries") or []:
                 if not str(b.get("path", "")).startswith("/"):
                     problems.append("binary path %r is not absolute" % b.get("path"))
+    elif fmt == "substrate":
+        problems += _validate_substrate(text)
     else:
         problems.append("unknown format")
+    return problems
+
+
+def _validate_substrate(text: str) -> List[str]:
+    """The EgressPolicy subset jankhunt42 writes, against the API's documented rules."""
+    docs = jh_yaml.load_all(text)
+    doc = docs[0] if len(docs) == 1 else None
+    if not isinstance(doc, dict) or set(doc) != {"rules"} or not isinstance(doc["rules"], list):
+        return ["the policy must be one document with a rules list"]
+    problems: List[str] = []
+    taken = set()
+    for item in doc["rules"]:
+        if not isinstance(item, dict) or len(item) != 1 or next(iter(item)) not in ("http", "https", "tlsPassthrough"):
+            problems.append("a rule must be exactly one of http, https or tlsPassthrough")
+            continue
+        kind, body = next(iter(item.items()))
+        names = body.get("hostnames") if isinstance(body, dict) else None
+        if not isinstance(names, list) or not names:
+            problems.append("a %s rule has no hostnames" % kind)
+            continue
+        ports = body.get("ports")
+        numbers = ports.get("numbers") if isinstance(ports, dict) else None
+        if kind == "tlsPassthrough" and not numbers:
+            problems.append("a tlsPassthrough rule needs port numbers")
+        if numbers is not None and not (isinstance(numbers, list) and numbers and
+                                        all(isinstance(n, int) and 0 < n < 65536 for n in numbers)):
+            problems.append("bad port numbers %r" % numbers)
+            numbers = None
+        for h in names:
+            if not isinstance(h, str) or clean_host(h, wildcard=True) != h or _IPV4_RE.match(h) or h != h.lower():
+                problems.append("bad host %r" % h)
+            for port in numbers or [80 if kind == "http" else 443]:
+                if (h, port) in taken:
+                    problems.append("two rules for %s on port %d" % (h, port))
+                taken.add((h, port))
+        effects = body.get("effects")
+        if effects is not None:
+            if kind != "https":
+                problems.append("credential effects on a %s rule" % kind)
+            for e in (effects or {}).get("replaceHeaders") or []:
+                if not e.get("header") or not str(e.get("credentialUri", "")).startswith("ate-secret://"):
+                    problems.append("a replaceHeaders entry needs a header and an ate-secret:// credentialUri")
     return problems
 
 
@@ -335,8 +464,9 @@ def emit(fmt: str, report: Dict[str, Any], package_sources: Optional[Dict[str, A
          ) -> Tuple[str, List[str]]:
     proposed = plan(report, package_sources)
     if network_ceiling is not None:
-        if fmt not in ("openshell", "claude-code"):
-            raise ValueError("the network ceiling requires openshell or claude-code: codex domain rules discard destination ports")
+        if fmt not in ("openshell", "claude-code", "substrate"):
+            raise ValueError("the network ceiling requires openshell, claude-code or substrate: codex domain rules "
+                             "discard destination ports")
         import jh_ceiling
         proposed = jh_ceiling.constrain(proposed, network_ceiling)
     text, notes = render(fmt, proposed, version, port_qualified=fmt == "claude-code" and network_ceiling is not None)

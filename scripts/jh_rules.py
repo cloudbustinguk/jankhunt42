@@ -757,11 +757,11 @@ RULES: List[Rule] = [
     R("JH709", "Agent sandbox network or file access too broad", "major", "agent",
       "A committed sandbox setting lets the agent's commands reach any host, a private network, the Docker socket, or credential paths, so a prompt injection can exfiltrate data or escape the sandbox.",
       "Allow named hosts only, keep wildcards off shared cloud domains, keep the Docker socket and home directory out of the sandbox, and scope rules to the binaries that need them.",
-      confidence="high", check="agent_sandbox_scope", kinds=("agent_config", "sandbox_policy")),
+      confidence="high", check="agent_sandbox_scope", kinds=("agent_config", "sandbox_policy", "substrate")),
     R("JH710", "Agent sandbox not enforcing", "major", "agent",
       "The sandbox policy only logs what it should block, skips TLS inspection, lets credentials pass uninspected, or runs without filesystem rules when Landlock is unavailable.",
       "Set enforcement: enforce, landlock compatibility: hard_requirement, keep TLS inspection on, and leave allow_uninspected_credentials off.",
-      confidence="high", check="agent_sandbox_enforcement", kinds=("sandbox_policy",)),
+      confidence="high", check="agent_sandbox_enforcement", kinds=("sandbox_policy", "substrate")),
     R("JH711", "Dev container weakens isolation", "major", "agent",
       "The dev container runs privileged, shares the host network or process namespace, or mounts the Docker socket; an agent or task inside it can take over the host.",
       "Drop --privileged, host networking and extra capabilities; use docker-in-docker or a rootless builder instead of the host Docker socket.",
@@ -771,6 +771,10 @@ RULES: List[Rule] = [
       "List only the commands the skill needs, such as Bash(git status *) or the path of the skill's own script, "
       "and let everything else ask.",
       confidence="high", check="skill_allowed_tools", kinds=("agent_context",)),
+    R("JH713", "Agent sandbox template holds an API key", "major", "agent",
+      "An Agent Substrate actor template puts a credential into the sandbox's environment, where the agent, any command a prompt injection makes it run, and the actor's memory snapshots all hold it.",
+      "Keep the key in a Secret and let the egress gateway inject it: an https egress rule with a replaceHeaders effect, and a placeholder value in the template.",
+      confidence="high", check="sandbox_template_credential", kinds=("substrate",)),
 
 ]
 

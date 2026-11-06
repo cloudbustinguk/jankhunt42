@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.12.0"
+VERSION = "4.13.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -210,6 +210,24 @@ def _looks_like_sandbox_policy(text: str) -> bool:
                 and re.search(r"(?m)^(?:network_policies|filesystem_policy|landlock)\s*:", head))
 
 
+SUBSTRATE_TEMPLATE_EXTS = (".yaml.tmpl", ".yml.tmpl")
+
+
+def substrate_shape(text: str) -> Optional[str]:
+    """An Agent Substrate manifest as `kubectl ate` reads it: an EgressPolicy
+    (`rules:` of http, https or tlsPassthrough entries with hostnames) or an
+    ActorTemplate (`containers:` with a Substrate-only field)."""
+    head = text[:200000]
+    if re.search(r"(?m)^rules\s*:", head) and re.search(r"(?m)^\s*hostnames\s*:", head) and \
+            re.search(r"(?m)^\s*-\s*(?:https?|tlsPassthrough|tls_passthrough)\s*:\s*$", head):
+        return "egress_policy"
+    if re.search(r"(?m)^containers\s*:", head) and re.search(
+            r"(?m)^(?:workerSelector|snapshotConfig|goldenEgressPolicy|golden_egress_policy|worker_selector)\s*:|"
+            r"^metadata\s*:\s*\n\s+atespace\s*:", head):
+        return "actor_template"
+    return None
+
+
 # build output: dist/, build/, assets/, public/, static/, vendor/, .next/, bundles and hashed chunk names
 _MINIFIED_PATH_RE = re.compile(r"(?i)(?:^|/)(?:dist|build|out|assets|static|public|vendors?|bundles?|_next|\.next|\.nuxt|"
                                r"wwwroot/lib|wwwroot/_framework|third[_-]?party)/|\.min\.(?:js|mjs|cjs|css)$|"
@@ -273,6 +291,8 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
         kinds.add("mcp_config")
     if lang in ("yaml", "json") and _looks_like_sandbox_policy(text):
         kinds.add("sandbox_policy")
+    if (lang == "yaml" or base.endswith(SUBSTRATE_TEMPLATE_EXTS)) and substrate_shape(text):
+        kinds.add("substrate")
     if _ends_with_path(posix, ".github/dependabot.yml") or _ends_with_path(posix, ".github/dependabot.yaml"):
         kinds.add("dependabot")
     if is_test_path(rel):
@@ -730,7 +750,11 @@ def discover_files(
         key = str(p.resolve())
         if key in seen:
             return
-        if not p.is_file() or _is_skipped_file(p):
+        try:                            # build folders count inside the scan root only, never above it
+            inside = p.relative_to(base) if base is not None else Path(p.name)
+        except ValueError:
+            inside = Path(p.name)
+        if not p.is_file() or _is_skipped_file(inside):
             return
         try:
             # a Power Platform solution export (.zip) or canvas app (.msapp) is read from inside (jh_powerplatform)

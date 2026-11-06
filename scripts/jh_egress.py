@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import jh_agent
 import jh_yaml
-from jh_core import _looks_like_sandbox_policy as looks_like_sandbox_policy
+from jh_core import _looks_like_sandbox_policy as looks_like_sandbox_policy, SUBSTRATE_TEMPLATE_EXTS, substrate_shape
 from jh_fence import DEFAULT_PORTS, split_claude_domain
 
 TIER = {3: "verified", 2: "supported", 1: "inferred", 0: "unknown"}
@@ -235,6 +235,23 @@ def _openshell(rel: str, text: str) -> List[Dict[str, Any]]:
     return out
 
 
+def _substrate(rel: str, text: str) -> List[Dict[str, Any]]:
+    """An Agent Substrate EgressPolicy, or an ActorTemplate's goldenEgressPolicy:
+    default deny, so only the listed host names are reachable."""
+    import jh_substrate
+    out = []
+    for doc in jh_substrate.docs(text):
+        if "rules" not in doc and not any(k in doc for k in ("goldenEgressPolicy", "golden_egress_policy")):
+            continue                    # an actor template without a policy declares no boundary
+        hosts = [h for _, body in jh_substrate.rules(doc) for h in jh_substrate.hostnames(body)]
+        line = next((i for i, ln in enumerate(text.split("\n"), 1)
+                     if re.match(r"\s*(?:rules|goldenEgressPolicy|golden_egress_policy)\s*:", ln)), 1)
+        out.append({"tool": "substrate", "path": rel, "line": line, "allow": sorted(set(hosts)), "deny": [],
+                    "profile": None, "selected": True, "enabled": True,
+                    "open": False, "note": "default deny: only the listed host names are reachable"})
+    return out
+
+
 def boundaries(items: Sequence[Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for item in items:
@@ -244,6 +261,8 @@ def boundaries(items: Sequence[Any]) -> List[Dict[str, Any]]:
                 out += _codex(item.rel, item.text)
             elif "/.claude/settings" in posix and posix.endswith(".json"):
                 out += _claude(item.rel, item.text)
+            elif posix.endswith((".yaml", ".yml") + SUBSTRATE_TEMPLATE_EXTS) and substrate_shape(item.text):
+                out += _substrate(item.rel, item.text)
             elif posix.endswith((".yaml", ".yml", ".json")) and looks_like_sandbox_policy(item.text):
                 out += _openshell(item.rel, item.text)
         except (RecursionError, ValueError, TypeError, AttributeError):

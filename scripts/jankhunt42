@@ -1103,7 +1103,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="the default branch the change-control checks apply to (default: from git, else main)")
     sandbox.add_argument("--emit-sandbox-policy", metavar="FORMAT", choices=jh_fence.FORMATS,
                          help="write a least-privilege network fence for an AI coding agent from what the code reaches "
-                              "(production assets excluded): claude-code, codex or openshell. A review artefact; "
+                              "(production assets excluded): claude-code, codex, openshell or substrate (an Agent "
+                              "Substrate egress policy). A review artefact; "
                               "jankhunt42 never applies it")
     sandbox.add_argument("--sandbox-network-ceiling", metavar="PATH",
                          help="an operator's JSON list of approved host/port pairs, kept outside the repository: it "

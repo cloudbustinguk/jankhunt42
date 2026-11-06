@@ -1608,6 +1608,96 @@ def _endpoints(doc: Dict[str, Any]) -> Iterator[Tuple[str, Dict[str, Any], List[
                 yield str(name), ep, bins
 
 
+def _host_line(sf: SourceFile, host: str) -> int:
+    """The line of a hostname entry: a list item or a flow-list member."""
+    q = re.escape(host)
+    return _line_matching(sf, r"""(?:^\s*-\s*|[\[,]\s*)['"]?%s['"]?\s*(?:[,\]#]|$)""" % q,
+                          default=_line_matching(sf, q))
+
+
+def _substrate_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH709 for Agent Substrate: egress rules that allow every host, every tenant
+    of a shared domain, or any TLS-wrapped protocol on every port."""
+    import jh_substrate as S
+    out: List[Finding] = []
+    seen = set()
+    for doc in S.docs(sf.text):
+        for kind, body in S.rules(doc):
+            for host in S.hostnames(body):
+                why = _wild_host(host)
+                if why and (kind, host) not in seen:
+                    seen.add((kind, host))
+                    out.append(make_finding(rule, sf, _host_line(sf, host), message=(
+                        "The %s egress rule allows %s (%s): the agent can send what it reads to any server there, "
+                        "and its DNS relay resolves those names too." % (kind, why, trim(host, 50)))))
+            if kind == "tlsPassthrough" and S.all_ports(body):
+                names = ", ".join(trim(h, 40) for h in S.hostnames(body)[:3])
+                out.append(make_finding(rule, sf, _line_matching(sf, r"^\s*all\s*:|\ball\s*:\s*\{\s*\}"),
+                                        severity="minor", message=(
+                    "The tlsPassthrough rule for %s covers every port: any protocol wrapped in TLS gets through "
+                    "uninspected, not only HTTPS. List the ports the agent needs." % names)))
+    return out[:10]
+
+
+def _substrate_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH710 for Agent Substrate: a keyed API behind TLS passthrough (the gateway
+    cannot inject the key, so it must be in the sandbox), and a credential the
+    gateway puts into cleartext HTTP."""
+    import jh_substrate as S
+    out: List[Finding] = []
+    for doc in S.docs(sf.text):
+        for kind, body in S.rules(doc):
+            if kind == "tlsPassthrough":
+                for host in S.hostnames(body):
+                    api = S.keyed_api(host)
+                    if api:
+                        out.append(make_finding(rule, sf, _host_line(sf, host), message=(
+                            "TLS to %s passes through the egress gateway undecrypted, so the gateway cannot inject "
+                            "its API key: the key has to be inside the sandbox, where a prompt injection can read it. "
+                            "Use an https rule with a replaceHeaders effect instead." % trim(host, 50))))
+            elif kind == "http":
+                for eff in S.header_effects(body):
+                    hosts = S.hostnames(body)
+                    names = ", ".join(trim(h, 40) for h in hosts[:3])
+                    inside = bool(hosts) and all(S.cluster_internal(h) for h in hosts)
+                    where = "the cluster network past the gateway" if inside else "the path past the gateway"
+                    out.append(make_finding(rule, sf, _line_matching(sf, r"(?i)replace_?headers"),
+                                            severity="minor" if inside else None, message=(
+                        "The gateway puts a credential into the %s header of cleartext HTTP to %s: anyone on %s "
+                        "can read it. Use an https rule." % (trim(str(eff.get("header")), 30), names, where))))
+                    break
+    return out[:10]
+
+
+@check("sandbox_template_credential")
+def sandbox_template_credential(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH713: an Agent Substrate actor template that puts a credential in the
+    sandbox's environment, where the agent, anything it runs, and the actor's
+    memory snapshots all hold it."""
+    import jh_substrate as S
+    if "substrate" not in sf.kinds:
+        return []
+    out: List[Finding] = []
+    for doc in S.docs(sf.text):
+        for container, name, value in S.env_vars(doc):
+            how = S.credential_value(name, value)
+            if not how:
+                continue
+            start = _line_matching(sf, r"""^\s*-?\s*name\s*:\s*['"]?%s['"]?\s*$""" % re.escape(name)) - 1
+            line = _line_matching(sf, r"^\s*value\s*:", start=start, default=start + 1)
+            source = "is filled in from %s when the template is applied" % trim(str(value).strip(), 40) \
+                if how == "rendered" else "is written into the template"
+            message = ("%s %s, so the key sits inside the sandbox of container '%s': the agent and any command a "
+                       "prompt injection makes it run can read it, and Substrate's memory snapshots store it. Let the "
+                       "egress gateway inject it with an https rule's replaceHeaders, and give the agent a "
+                       "placeholder." % (name, source, trim(container, 30)))
+            severity = None
+            if is_test_path(sf.rel):
+                severity, message = "minor", message + " It is in test data."
+            out.append(make_finding(rule, sf, line, severity=severity, message=message))
+    return out[:10]
+
+
 @check("agent_sandbox_scope")
 def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
@@ -1615,6 +1705,8 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
         return _codex_sandbox(sf, rule)
     if "/.claude/settings" in posix:
         return _claude_sandbox(sf, rule)
+    if "substrate" in sf.kinds:
+        return _substrate_scope(sf, rule)
     if "sandbox_policy" not in sf.kinds:
         return []
     out: List[Finding] = []
@@ -1647,6 +1739,8 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 @check("agent_sandbox_enforcement")
 def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if "substrate" in sf.kinds:
+        return _substrate_enforcement(sf, rule)
     out: List[Finding] = []
     for doc in _openshell_docs(sf):
         land = doc.get("landlock")
