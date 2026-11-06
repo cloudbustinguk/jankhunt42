@@ -271,8 +271,9 @@ The output is deterministic for a given repository and version.
   never enters the sandbox. Create the Secret and put its namespace in the
   `credentialUri`; the actor sends a placeholder in that header and trusts
   the gateway's CA. Other APIs that need a key get an `https` rule, where
-  you can add the same effect. Everything else is `tlsPassthrough` on its
-  port, which the gateway does not decrypt. Databases and brokers are left
+  you can add the same effect. Plain HTTP hosts get an `http` rule, and
+  everything else is `tlsPassthrough` on its port, which the gateway does
+  not decrypt. Databases and brokers are left
   out, because the gateway passes only HTTP and TLS with a server name.
 
 

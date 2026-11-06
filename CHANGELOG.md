@@ -21,11 +21,11 @@ template instead. jankhunt42 now reads Substrate manifests and writes Substrate 
   `goldenEgressPolicy`). `JH709`: a rule for `"*"`, every name under a top-level domain, or every tenant of a shared
   domain, and (minor) `tlsPassthrough` on every port. `JH710`: `tlsPassthrough` to an API the agent signs in to
   (Anthropic, OpenAI, Azure OpenAI, Gemini and others), where the gateway cannot inject the key, and `replaceHeaders`
-  on a cleartext `http` rule (minor when every host is a cluster service name).
+  on a cleartext `http` rule (minor when every host is a `.svc` or `.cluster.local` name).
 - **`passport --emit-sandbox-policy substrate`** writes an EgressPolicy from what the code reaches. The AI APIs the
   gateway can sign requests to (Anthropic, OpenAI, Gemini, Mistral, Groq, OpenRouter) get an `https` rule that injects
-  the key from a Secret; other APIs that need a key get an `https` rule; everything else is `tlsPassthrough` on its
-  port, which the gateway does not decrypt. Databases and brokers are left out with the reason. Works with
+  the key from a Secret; other APIs that need a key get an `https` rule; plain HTTP hosts an `http` rule; everything
+  else is `tlsPassthrough` on its port, which the gateway does not decrypt. Databases and brokers are left out with the reason. Works with
   `--sandbox-network-ceiling`.
 - **A committed Substrate egress policy is a declared boundary** in `map` and `passport` (`egress`), like the Claude
   Code, Codex and OpenShell policies.

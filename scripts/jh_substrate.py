@@ -135,6 +135,7 @@ def credential_value(name: str, value: Any) -> Optional[str]:
 
 
 def cluster_internal(host: str) -> bool:
-    """A Kubernetes service name, reachable only inside the cluster."""
+    """A Kubernetes service name, reachable only inside the cluster. A name without a dot is not counted: it may
+    resolve through other search domains, to a host outside the cluster."""
     h = host.lower().rstrip(".")
-    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local")) or (bool(h) and "." not in h)
+    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local"))
