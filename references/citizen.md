@@ -26,7 +26,8 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 | A skill that turns off the prompt | agent skills that pre-approve `Bash` in `allowed-tools`: Claude Code then runs any shell command without asking during the turn that invokes the skill ([docs](https://code.claude.com/docs/en/skills)) | `JH712`: `allowed-tools` in a `SKILL.md` or a `.claude/commands/` file that names bare `Bash`, `Bash(*)`, or a shell or interpreter followed only by a wildcard (`Bash(python3:*)`, `Bash(sh -c *)`) |
 | Untrusted text steering a CI agent | PromptPwnd (December 2025): issue and PR text fed to AI steps that hold write tokens | `JH708`: AI agent steps that receive issue, PR, or comment fields under outsider-triggered events |
 | Agent code running with power before review | an agent pushes a branch, and a `push` workflow on every branch runs it with deploy secrets | `JH432`: workflows on a push to any branch (or to `claude/`, `copilot/`, `codex/`... branches) whose jobs hold secrets or a write-scoped token, unless the job is pinned to a branch or guarded by an environment |
-| A sandbox that does not contain | sandbox settings that allow every host, the Docker socket, credential paths, or log-only enforcement | `JH709`: [Codex](https://developers.openai.com/codex/config-reference) `network_access = true`, `mode = "full"`, wildcard proxy domains; [Claude Code](https://code.claude.com/docs/en/settings-reference) `allowedDomains` wildcards, `allowAllUnixSockets`, escape-hatch `excludedCommands`, `allowWrite` on home or credential paths; [OpenShell](https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema) `/**` binaries, wildcard hosts on shared cloud domains, private `allowed_ips`, `access: full` on wildcards. `JH710` (OpenShell): `enforcement: audit` (also the default), Landlock `best_effort`, `tls: skip`, `allow_uninspected_credentials`, fail-open middleware |
+| A sandbox that does not contain | sandbox settings that allow every host, the Docker socket, credential paths, or log-only enforcement | `JH709`: [Codex](https://developers.openai.com/codex/config-reference) `network_access = true`, `mode = "full"`, wildcard proxy domains; [Claude Code](https://code.claude.com/docs/en/settings-reference) `allowedDomains` wildcards, `allowAllUnixSockets`, escape-hatch `excludedCommands`, `allowWrite` on home or credential paths; [OpenShell](https://docs.nvidia.com/openshell/latest/how-it-works/policies/schema) `/**` binaries, wildcard hosts on shared cloud domains, private `allowed_ips`, `access: full` on wildcards; [Agent Substrate](https://github.com/agent-substrate/substrate) egress rules for `"*"` or a shared domain, and `tlsPassthrough` on every port. `JH710` (OpenShell): `enforcement: audit` (also the default), Landlock `best_effort`, `tls: skip`, `allow_uninspected_credentials`, fail-open middleware; (Agent Substrate) `tlsPassthrough` to an API the agent signs in to, where the gateway cannot inject the key, and `replaceHeaders` on cleartext `http` |
+| A sandbox that holds the key | an agent sandbox started with its API key in the environment, as in demos that render `${ANTHROPIC_API_KEY}` into the template | `JH713`: an [Agent Substrate](https://github.com/agent-substrate/substrate) actor template whose credential-named env var is a literal or a `${VAR}` substitution; placeholders, file paths and plain URLs are not reported. The agent, anything it runs, and the actor's memory snapshots hold the key |
 | A dev container that owns the host | [dev container](https://containers.dev/implementors/json_reference/) `runArgs` with `--privileged`, host networking or PID, added capabilities, or a mounted Docker socket | `JH711` |
 | An automation anyone can start, feeding a shell or a database | n8n's own SQL editor warns to use query parameters against injection, and n8n 2.0 (December 2025) turned the Execute Command node off by default | `JH156`: n8n Webhooks, public chats and forms with no authentication; `JH157`: shell commands built from workflow data or written by an AI agent; `JH158`: SQL with values spliced in; both critical when an open trigger's data reaches them; `JH159`: personal fields sent to an AI model. Power Automate: `JH144`, `JH147` |
 
@@ -229,6 +230,7 @@ credentials. A fence limits that to what the work needs:
 jankhunt42 passport . --emit-sandbox-policy claude-code   # settings JSON for .claude/settings.json
 jankhunt42 passport . --emit-sandbox-policy codex         # a config.toml permission profile
 jankhunt42 passport . --emit-sandbox-policy openshell     # an OpenShell policy (version 1)
+jankhunt42 passport . --emit-sandbox-policy substrate     # an Agent Substrate egress policy for kubectl ate
 ```
 
 **What goes in:**
@@ -263,6 +265,15 @@ The output is deterministic for a given repository and version.
   paths are the usual Debian and Ubuntu locations; replace them with the
   image's real paths, because OpenShell does not follow symlinks. Endpoints
   without `access` or `rules` allow any request to that host and port.
+- **Agent Substrate.** The egress gateway signs requests to the AI APIs
+  it knows (Anthropic, OpenAI, Gemini, Mistral, Groq, OpenRouter) with a key
+  from a Secret, through an `https` rule with `replaceHeaders`, so the key
+  never enters the sandbox. Create the Secret and put its namespace in the
+  `credentialUri`; the actor sends a placeholder in that header and trusts
+  the gateway's CA. Other APIs that need a key get an `https` rule, where
+  you can add the same effect. Everything else is `tlsPassthrough` on its
+  port, which the gateway does not decrypt. Databases and brokers are left
+  out, because the gateway passes only HTTP and TLS with a server name.
 
 
 - Use the citizen profile when the person says they are not a software

@@ -116,16 +116,16 @@ clear fit carries no risk. Five reliability rules are in that position:
 | CD-SEC-01 Blind Trust | `JH131`, `JH416`, `JH501`, `JH502`, `JH504`, `JH505`, `JH701` |
 | CD-SEC-02 Account Impersonation | `JH150` |
 | CD-SEC-03 Authorization Misuse | `JH101`, `JH134`, `JH135`, `JH154`, `JH155`, `JH420`, `JH428`, `JH432` |
-| CD-SEC-04 Sensitive Data Leakage and Handling Failures | `JH101`, `JH132`, `JH133`, `JH134`, `JH141`, `JH145`, `JH146`, `JH147`, `JH149`, `JH153`, `JH155`, `JH159`, `JH401`, `JH415`, `JH427`, `JH706` |
+| CD-SEC-04 Sensitive Data Leakage and Handling Failures | `JH101`, `JH132`, `JH133`, `JH134`, `JH141`, `JH145`, `JH146`, `JH147`, `JH149`, `JH153`, `JH155`, `JH159`, `JH401`, `JH415`, `JH427`, `JH706`, `JH713` |
 | CD-SEC-05 Authentication and Secure Communication Failures | `JH105`, `JH107`, `JH112`, `JH115`, `JH138`, `JH144`, `JH148`, `JH151`, `JH156`, `JH707` |
 | CD-SEC-06 Vulnerable and Untrusted Components | `JH111`, `JH142`, `JH143`, `JH402`, `JH404`, `JH412`, `JH417`, `JH421`, `JH422`, `JH423`, `JH424`, `JH426`, `JH429`, `JH430`, `JH431`, `JH705` |
-| CD-SEC-07 Security Misconfiguration | `JH108`, `JH109`, `JH110`, `JH116`, `JH121`, `JH122`, `JH130`, `JH136`, `JH137`, `JH152`, `JH204`, `JH403`, `JH405`, `JH406`, `JH407`, `JH408`, `JH409`, `JH410`, `JH411`, `JH414`, `JH425`, `JH702`, `JH703`, `JH704`, `JH709`, `JH710`, `JH711`, `JH712` |
+| CD-SEC-07 Security Misconfiguration | `JH108`, `JH109`, `JH110`, `JH116`, `JH121`, `JH122`, `JH130`, `JH136`, `JH137`, `JH152`, `JH204`, `JH403`, `JH405`, `JH406`, `JH407`, `JH408`, `JH409`, `JH410`, `JH411`, `JH414`, `JH425`, `JH702`, `JH703`, `JH704`, `JH709`, `JH710`, `JH711`, `JH712`, `JH713` |
 | CD-SEC-08 Injection Handling Failures | `JH102`, `JH103`, `JH104`, `JH106`, `JH118`, `JH119`, `JH120`, `JH124`, `JH125`, `JH126`, `JH127`, `JH128`, `JH139`, `JH140`, `JH157`, `JH158`, `JH418`, `JH419`, `JH708` |
 | CD-SEC-09 Asset Management Failures | none |
 | CD-SEC-10 Security Logging and Monitoring Failures | `JH145`, `JH201`, `JH217` |
 | ASI01 Agent Goal Hijack | `JH131`, `JH153`, `JH701`, `JH708` |
 | ASI02 Tool Misuse and Exploitation | `JH153`, `JH158`, `JH702`, `JH703`, `JH709`, `JH712` |
-| ASI03 Identity and Privilege Abuse | `JH148`, `JH150`, `JH432`, `JH706` |
+| ASI03 Identity and Privilege Abuse | `JH148`, `JH150`, `JH432`, `JH706`, `JH713` |
 | ASI04 Agentic Supply Chain Vulnerabilities | `JH705` |
 | ASI05 Unexpected Code Execution (RCE) | `JH102`, `JH103`, `JH157`, `JH702`, `JH703`, `JH704`, `JH709`, `JH710`, `JH711`, `JH712` |
 | ASI06 Memory & Context Poisoning | none |

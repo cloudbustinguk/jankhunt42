@@ -56,6 +56,7 @@ access. This is not a signed approval system.
 |---|---|
 | `openshell` | host and port rules |
 | `claude-code` | port-qualified `allowedDomains` entries such as `api.openai.com:443`, one per host and port |
+| `substrate` | rules on the approved ports only (`https` and `http` rules on 443 and 80 use those defaults) |
 | `codex` | refused: Codex domain rules drop ports, so a host approved for one port would be allowed on every port |
 
 Without a ceiling, Claude Code output is unchanged: port-less entries,

@@ -83,7 +83,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
 | `P-SEC-001` | scanner leads that expose credentials or data to the public: `JH132`–`JH136` (major or above), critical `JH101`/`JH401`/`JH415` | review |
-| `P-AGT-001` | agent-guardrail leads at major or above: any `agent`-category rule (`JH701`-`JH712`: approvals, MCP servers, sandboxes, dev containers), agent-branch CI with secrets (`JH432`), or hidden Unicode in an agent file | review |
+| `P-AGT-001` | agent-guardrail leads at major or above: any `agent`-category rule (`JH701`-`JH713`: approvals, MCP servers, sandboxes, dev containers), agent-branch CI with secrets (`JH432`), or hidden Unicode in an agent file | review |
 | `P-AI-001` | a confidential or restricted data store and an external AI model service are reachable from the same principal (co-reachability, not a data flow) | review |
 | `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
 | `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
