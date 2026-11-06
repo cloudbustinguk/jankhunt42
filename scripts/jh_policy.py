@@ -60,6 +60,7 @@ RULES = {
     "P-SUP-001": "package managers may resolve from a registry outside the allowed list",
     "P-RUN-001": "the sandbox run saw a canary credential read, passed on or sent, or a persistence attempt",
     "P-RUN-002": "the sandbox run tried to reach destinations the repository does not declare",
+    "P-RUN-003": "an agent sandbox's log shows connections to destinations the repository does not declare",
 }
 PROFILES = ("standard", "citizen")
 
@@ -73,7 +74,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
                 "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review",
-                "P-RUN-001": "review", "P-RUN-002": "review"},
+                "P-RUN-001": "review", "P-RUN-002": "review", "P-RUN-003": "review"},
     # Registry URL prefixes or host names packages may come from (operator policy only).
     "allowed_registries": [],
     "capability_approvals": {},
@@ -91,7 +92,7 @@ CITIZEN_PRESET: Dict[str, Any] = {
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
                 "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block",
                 "P-CHG-001": "block", "P-SUP-001": "block", "P-RUN-001": "block",
-                "P-RUN-002": "block"},
+                "P-RUN-002": "block", "P-RUN-003": "block"},
     "max_exposure": "Moderate",
     "static_leads": "block",
 }
@@ -358,6 +359,18 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
             total, ", ".join(undeclared[:5]) + (" ..." if total > 5 else "")) if undeclared else
         "every destination the sandbox run tried is declared by the repository or the operator ceiling"
         if sandbox.get("state") == "matched" and "undeclared" in sandbox else "no comparable sandbox run supplied")
+    # P-RUN-003: an agent sandbox's own log; not bound to a tree, so it too only ever adds an outcome
+    runlog = facts.get("runtime_log") or {}
+    seen = runlog.get("undeclared") or [] if runlog.get("state") == "observed" else []
+    counts = runlog.get("counts") or {}
+    add("P-RUN-003", max("review", _outcome_for(acts["P-RUN-003"]), key=OUTCOME_RANK.get) if seen else "pass",
+        "the sandbox log shows %d destination(s) the repository does not declare (%d reached, the rest blocked): %s" % (
+            counts.get("undeclared") or len(seen), counts.get("undeclared_allowed") or 0,
+            ", ".join(r["target"] for r in seen[:5]) + (" ..." if (counts.get("undeclared") or 0) > 5 else ""))
+        if seen else
+        "every destination in the sandbox log is declared by the repository, its sandbox policies or the operator "
+        "ceiling; a quiet log proves nothing about what it did not record" if runlog.get("state") == "observed"
+        else "no sandbox log supplied")
 
     exposure = facts.get("exposure", "Unknown")
     # P-OWN-001

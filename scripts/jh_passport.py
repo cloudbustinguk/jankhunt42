@@ -23,6 +23,7 @@ import jh_capabilities
 import jh_n8n
 import jh_capability_approval
 import jh_sandbox
+import jh_runlog
 import jh_graph as G
 import jh_map
 import jh_frameworks
@@ -577,7 +578,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           capability_approval_record: Optional[Dict[str, Any]] = None,
           capability_approval_label: str = "", ignored_rules: Sequence[str] = (),
           rulesets: Sequence[Dict[str, Any]] = (),
-          sandbox: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+          sandbox: Optional[Dict[str, Any]] = None,
+          runtime_log: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     evidence: List[Dict[str, Any]] = []
     warns = list(warnings)
     own = ownership(items, passport_cfg.get("owners") or [], evidence, config_path)
@@ -629,8 +631,10 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     sandbox = sandbox or {"state": "not-supplied"}
     if sandbox["state"] == "stale":
         warns.append("the sandbox run (--sandbox-run) was made on a different tree and was not used")
+    runtime_log = runtime_log or {"state": "not-supplied"}
     facts = {
         "sandbox": sandbox,
+        "runtime_log": runtime_log,
         "capability_approval": approval,
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "files_scanned": scan_files,
@@ -685,6 +689,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "capability_delta": capability_delta or jh_capabilities.not_requested(),
         "capability_approval": approval,
         "sandbox_run": sandbox,
+        "sandbox_log": runtime_log,
         "triggers": jh_n8n.trigger_counts((map_report or {}).get('triggers') or jh_n8n.trigger_summary([])),
         "tool": TOOL,
         "tool_version": VERSION,
@@ -792,6 +797,16 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         if rule.get("rule") == "P-RUN-002" and run.get("undeclared"):
             rule["message"] = "the sandbox run tried %d destination(s) the repository does not declare" % max(
                 len(run["undeclared"]), (run.get("counts") or {}).get("UNDECLARED") or 0)
+    log = rep.get("sandbox_log") or {}
+    names: Dict[str, str] = {}
+    for key in ("destinations", "undeclared", "blocked_needed"):
+        for row in log.get(key) or []:
+            row["target"] = names.setdefault(row["target"], "destination-%d" % (len(names) + 1))
+            row["processes"] = ["redacted" for _ in row.get("processes") or []]
+    for rule in decision.get("rules", []) + decision.get("reasons", []):
+        if rule.get("rule") == "P-RUN-003" and log.get("undeclared"):
+            rule["message"] = "the sandbox log shows %d destination(s) the repository does not declare" % (
+                (log.get("counts") or {}).get("undeclared") or len(log["undeclared"]))
     approval = rep.get("capability_approval") or {}
     for key in ("approved_by", "subject_id", "rationale", "record"):
         if key in approval:
@@ -962,6 +977,17 @@ def markdown(p: Dict[str, Any]) -> str:
         for target in (p.get("sandbox_run") or {}).get("undeclared", [])[:20]:
             lines.append("- " + jh_capabilities.markdown_line("Undeclared destination tried: %s" % target))
         lines += [""] if (p.get("sandbox_run") or {}).get("alerts") else []
+    log = p.get("sandbox_log") or {}
+    log_line = jh_runlog.passport_line(log)
+    if log_line:
+        lines += ["## Sandbox log", "", jh_capabilities.markdown_line(log_line), ""]
+        for row in log.get("undeclared", [])[:20]:
+            lines.append("- " + jh_capabilities.markdown_line("Undeclared destination %s: %s %d time(s)%s" % (
+                row["outcome"], row["target"], row["count"],
+                " by " + ", ".join(row["processes"]) if row.get("processes") else "")))
+        for row in log.get("blocked_needed", [])[:20]:
+            lines.append("- " + jh_capabilities.markdown_line("Blocked, but the repository needs it: %s" % row["target"]))
+        lines += [""] + ["_%s._" % jh_capabilities.markdown_line(c) for c in log.get("caveats", [])] + [""]
     if gov.get("profile") == "citizen":
         lines += ["## In plain terms (citizen-developer profile)", ""] + gov.get("brief", []) + [""]
     policy_context = gov.get("agent_policy_evidence")
