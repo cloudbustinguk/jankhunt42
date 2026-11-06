@@ -174,7 +174,7 @@ class AgentWorkspace(Fixture):
         cats = {f["category"] for f in self.findings if f["rule"].startswith("JH7")}
         self.assertEqual(cats, {"agent"})
         listed = json.loads(run_cli("rules", "--json", "--category", "agent").stdout)
-        self.assertEqual(sorted(r["id"] for r in listed), ["JH70%d" % i for i in range(1, 10)] + ["JH710", "JH711", "JH712"])
+        self.assertEqual(sorted(r["id"] for r in listed), ["JH70%d" % i for i in range(1, 10)] + ["JH710", "JH711", "JH712", "JH713"])
 
 
 class HiddenUnicode(Fixture):
