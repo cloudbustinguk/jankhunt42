@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.13.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.14.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -178,6 +178,7 @@ jankhunt42 passport . --acceptance ../acceptance.json     # operator acceptance,
 jankhunt42 sandbox . --json                   # opt-in sandbox run of the install hooks and what runs on open
 jankhunt42 sandbox . --fetch https://registry.npmjs.org/ --json   # dependencies' hooks too: fetches the pinned npm packages, verified
 jankhunt42 passport . --sandbox-run /path/outside/run.json   # carry a saved run into the passport (P-RUN-001, P-RUN-002)
+jankhunt42 passport . --sandbox-log /path/outside/ocsf.jsonl   # what an agent's own sandbox (OpenShell, Agent Substrate) let through or blocked (P-RUN-003)
 jankhunt42 passport . --branch-rules ../rules/app.json    # rulesets exported by an operator: is review enforced?
 jankhunt42 selftest --full                                # self-assurance, with a pass/fail gate
 ```

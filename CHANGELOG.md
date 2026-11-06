@@ -4,6 +4,23 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.14.0] — unreleased
+
+A sandbox policy says what an agent may reach; the sandbox's own log says what it tried. The passport now reads that
+log and compares it with what the repository declares.
+
+### Added
+
+- **`passport --sandbox-log PATH`** (repeatable, at most 8 files outside the repository): OpenShell's OCSF JSON export
+  (Network Activity and HTTP Activity, plain JSONL or `OCSF-JSON` stderr lines) and Agent Substrate's egress gateway
+  log. Each connection is compared with the repository's map, the hosts its emitted fence would allow (public
+  endpoints, package registries), its committed sandbox policies, and the operator's network ceiling. The passport's
+  `sandbox_log` section lists undeclared destinations (allowed or blocked, with the process or actor), blocked
+  destinations the repository needs, and what each log cannot show. JSON, Markdown, HTML and `--redact`.
+- **`P-RUN-003`**: an agent sandbox's log shows a connection to a destination the repository does not declare. Review;
+  block in the citizen profile. A log is not bound to a tree and is collected best-effort, so it only adds outcomes.
+- `--sandbox-network-ceiling` works with `--sandbox-log`.
+
 ## [4.13.0] — 2026-11-06
 
 Agent Substrate runs AI agents in sandboxes on Kubernetes, with an egress gateway that can put an API key into the

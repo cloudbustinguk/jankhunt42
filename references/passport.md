@@ -94,6 +94,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-CAP-001` | `--base REF` and the change asks for new, expanded or unresolved access (see `references/change-review.md`); a matching operator record can cover concrete requests (same page) | pass without `--base`; otherwise review (hard floor) |
 | `P-RUN-001` | `--sandbox-run PATH` was made on this exact tree and its sandbox run raised an ALERT: a canary credential read, passed on or sent, or a persistence attempt (`references/sandbox.md`) | pass when not supplied, made on another tree, or clean; otherwise review (hard floor) |
 | `P-RUN-002` | `--sandbox-run PATH` was made on this exact tree and the run tried to reach a destination that neither the repository's map nor the operator's network ceiling declares | pass when not supplied, made on another tree, or every destination is declared; otherwise review |
+| `P-RUN-003` | an agent sandbox's own log (`--sandbox-log PATH`: OpenShell's OCSF JSON export or Agent Substrate's egress gateway log) shows a connection, allowed or blocked, to a destination that neither the repository's map, the hosts its emitted fence would allow, its committed sandbox policies, nor the operator's network ceiling declares | pass when not supplied or every destination is declared; otherwise review. A log is not bound to a tree, so it only adds outcomes |
 
 Under the default `static_leads: review`, static leads never block on their
 own: an observed `DELETE` or a declared connection asks for grant
