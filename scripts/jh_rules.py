@@ -766,6 +766,11 @@ RULES: List[Rule] = [
       "The dev container runs privileged, shares the host network or process namespace, or mounts the Docker socket; an agent or task inside it can take over the host.",
       "Drop --privileged, host networking and extra capabilities; use docker-in-docker or a rootless builder instead of the host Docker socket.",
       confidence="high", check="devcontainer_isolation", kinds=("agent_config",)),
+    R("JH712", "Agent skill pre-approves any shell command", "major", "agent",
+      "The skill's allowed-tools lets Claude Code run any shell command without asking while the skill runs.",
+      "List only the commands the skill needs, such as Bash(git status *) or the path of the skill's own script, "
+      "and let everything else ask.",
+      confidence="high", check="skill_allowed_tools", kinds=("agent_context",)),
 
 ]
 

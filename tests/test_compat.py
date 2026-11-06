@@ -20,7 +20,7 @@ PREVIOUS = os.environ.get("JH_PREVIOUS_TAG", "v1.1.0")
 # must stay identical; only these ids may be new.
 ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "JH430", "JH431",
                "JH701", "JH702", "JH703", "JH704", "JH705", "JH706", "JH707", "JH708",
-               "JH432", "JH709", "JH710", "JH711"} | {"JH%d" % n for n in range(135, 160)}
+               "JH432", "JH709", "JH710", "JH711", "JH712"} | {"JH%d" % n for n in range(135, 160)}
 # Top-level JSON keys added since 1.1.0 (additive; 2.7.1 lists minified bundles).
 ADDED_KEYS = {"minified"}
 # 4.6.0 pared jankhunt42 down to its core (CHANGELOG): these rules, keys and score parts are gone on purpose.

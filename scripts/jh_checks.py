@@ -1751,6 +1751,106 @@ def _hook_actions(hooks: Any) -> Dict[str, List[Tuple[str, str]]]:
     return out
 
 
+# ---------------------------------------------------------------- agent skills (JH712)
+
+def is_skill_entry(rel: str) -> bool:
+    """A skill's SKILL.md, or a Claude Code command file, which takes the same frontmatter."""
+    low = "/" + rel.replace(os.sep, "/").lower()
+    return low.endswith("/skill.md") or ("/.claude/commands/" in low and low.endswith(".md"))
+
+
+def allowed_tools(lines: Sequence[str]) -> List[Tuple[int, str]]:
+    """(line, entry) for each entry of allowed-tools in the YAML frontmatter: a space- or comma-separated string, a
+    flow list or a block list."""
+    if not lines or lines[0].strip() != "---":
+        return []
+    out: List[Tuple[int, str]] = []
+    inside = False
+    for i in range(1, min(len(lines), 200)):
+        line = lines[i]
+        if line.strip() in ("---", "..."):
+            break
+        key = re.match(r"^([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$", line)
+        if key:
+            inside = key.group(1).lower() == "allowed-tools"
+            if inside and key.group(2):
+                out.extend((i + 1, t) for t in _tool_list(key.group(2)))
+            continue
+        item = re.match(r"^\s*-\s+(.+?)\s*$", line)
+        if inside and item:
+            out.extend((i + 1, t) for t in _tool_list(item.group(1)))
+        elif line.strip() and not line[:1].isspace():
+            inside = False
+    return out
+
+
+def _tool_list(value: str) -> List[str]:
+    v = value.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        v = v[1:-1]
+    flow = v.startswith("[") and v.endswith("]")     # a YAML flow list separates with commas only
+    if flow:
+        v = v[1:-1]
+    out: List[str] = []
+    buf: List[str] = []
+    depth, quote = 0, ""
+    for ch in v:
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "'\"" and flow:
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        if not quote and depth == 0 and (ch == "," or (ch.isspace() and not flow)):
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    out.append("".join(buf))
+    return [t.strip().strip("'\"") for t in out if t.strip().strip("'\"")]
+
+
+# a command that runs whatever text follows it
+_RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "python", "python3", "node",
+            "deno", "bun", "ruby", "perl", "php", "env", "xargs", "sudo", "eval", "exec", "npx", "uvx"}
+
+
+def broad_shell(entry: str) -> Optional[str]:
+    """What a pre-approved Bash entry lets the agent run, when that is any command; None when it is narrower."""
+    m = re.match(r"^Bash(?:\((.*)\))?$", entry)
+    if not m:
+        return None
+    spec = (m.group(1) or "").strip()
+    if spec in ("", "*", "**", ":*"):
+        return "any shell command"
+    wild = re.match(r"^([^\s:*]+)(?:\s+-[ce])?\s*(?::\*|\s\*|\*)$", spec)
+    if wild and wild.group(1).rsplit("/", 1)[-1].lower() in _RUNNERS:
+        return "any command run through %s" % wild.group(1).rsplit("/", 1)[-1]
+    return None
+
+
+@check("skill_allowed_tools")
+def skill_allowed_tools(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if not is_skill_entry(sf.rel):
+        return []
+    noun = "skill" if sf.basename.lower() == "skill.md" else "command"
+    for line_no, entry in allowed_tools(sf.raw):
+        why = broad_shell(entry)
+        if not why:
+            continue
+        message = ("allowed-tools pre-approves %s (`%s`): during the turn that invokes this %s, Claude Code runs it "
+                   "without asking, so a prompt injection in anything the agent reads in that turn can run commands "
+                   "with the user's access." % (why, entry.replace("`", "'"), noun))
+        severity = confidence = None
+        if is_test_path(sf.rel):
+            severity, confidence = "minor", "low"
+            message += " It is in test data."
+        return [make_finding(rule, sf, line_no, severity=severity, confidence=confidence, message=message)]
+    return []
+
+
 @check("agent_config_autorun")
 def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
