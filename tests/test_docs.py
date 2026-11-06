@@ -210,5 +210,19 @@ class SkillContract(unittest.TestCase):
                     self.assertNotIn(bad, fh.read(), os.path.join(base, f))
 
 
+
+class OwaspTable(unittest.TestCase):
+    """references/ai-governance.md lists, for each OWASP risk, exactly the rules mapped to it."""
+
+    def test_the_reference_table_matches(self):
+        import jh_frameworks as F
+        rows = dict(re.findall(r"(?m)^\| ((?:CD-SEC-\d\d|ASI\d\d)) [^|]+\| ([^|]+) \|$", read("references/ai-governance.md")))
+        self.assertEqual(set(rows), set(F.OWASP_RISKS))
+        for rid, cell in rows.items():
+            with self.subTest(risk=rid):
+                self.assertEqual(set(re.findall(r"JH\d+", cell)),
+                                 {r for r, risks in F.OWASP_RULES.items() if rid in risks})
+
+
 if __name__ == "__main__":
     unittest.main()
