@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.14.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.15.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -87,7 +87,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - observed tests and CI;
   - declared data classification.
 
-  It blocks on public exposure, agent-guardrail leads, sensitive data reachable alongside an AI service, exposure above Moderate, and unverified authority over production data. The repository can opt in to the profile but never out.
+  It blocks on public exposure, agent-guardrail leads, sensitive data reachable alongside an AI service, exposure above Moderate, unverified authority over production data, and a development configuration that points at production (or the reverse). The repository can opt in to the profile but never out.
 - **AI governance**:
   - The passport inventories the AI model services and agent tooling a repository uses.
   - Every rule maps to the NIST AI RMF and AIGP outcomes it informs. This is orientation, not certification.
