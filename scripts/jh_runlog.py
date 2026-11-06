@@ -40,6 +40,7 @@ import jh_graph
 MAX_LOG_BYTES = 64 * 1024 * 1024
 MAX_LOGS = 8
 MAX_ROWS = 100
+MAX_DESTINATIONS = 20000            # distinct (host, port, outcome) kept; the rest are counted
 OCSF_CLASSES = (4001, 4002)
 CAVEATS = {
     "openshell": "OpenShell collects audit records best-effort and drops lines when its queue is full",
@@ -81,12 +82,12 @@ def _openshell(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     dst = obj.get("dst_endpoint") if isinstance(obj.get("dst_endpoint"), dict) else {}
     end = _endpoint(dst.get("domain") or dst.get("hostname") or dst.get("ip"), dst.get("port"))
     action, disposition = obj.get("action_id"), obj.get("disposition_id")
-    if action == 1 or (action is None and disposition == 1):
-        outcome = "allowed"
-    elif action == 2 or (action is None and disposition == 2):
+    if action == 2 or disposition == 2:                # blocked wins when the two disagree: never report it reached
         outcome = "denied"
+    elif action == 1 or disposition == 1:
+        outcome = "allowed"
     else:
-        return None                                     # no stated outcome: not evidence either way
+        return None                                     # no stated outcome (OpenShell documents no 4002 fields): skip
     actor = obj.get("actor") if isinstance(obj.get("actor"), dict) else {}
     process = actor.get("process") if isinstance(actor.get("process"), dict) else {}
     rule = obj.get("firewall_rule") if isinstance(obj.get("firewall_rule"), dict) else {}
@@ -193,12 +194,15 @@ def evidence(paths: Sequence[str], root: str, map_report: Optional[Dict[str, Any
         return any(jh_egress.matches(host, p) for p in patterns)
 
     rows: Dict[Tuple[str, Optional[int], str], Dict[str, Any]] = {}
-    nameless = 0
+    nameless = overflow = 0
     for e in events:
         if not e["endpoint"]:
             nameless += 1
             continue
         host, port = e["endpoint"]
+        if (host, port, e["outcome"]) not in rows and len(rows) >= MAX_DESTINATIONS:
+            overflow += 1
+            continue
         row = rows.setdefault((host, port, e["outcome"]), {
             "target": host if port is None else ("[%s]:%d" % (host, port) if ":" in host else "%s:%d" % (host, port)),
             "outcome": e["outcome"], "count": 0, "declared": declared(host, port),
@@ -215,6 +219,7 @@ def evidence(paths: Sequence[str], root: str, map_report: Optional[Dict[str, Any
         "sources": sources, "logs": len(paths), "lines": lines, "unparsed": unparsed,
         "counts": {"events": len(events), "allowed": sum(1 for e in events if e["outcome"] == "allowed"),
                    "denied": sum(1 for e in events if e["outcome"] == "denied"), "no_destination": nameless,
+                   "beyond_limit": overflow,
                    "destinations": len(rows), "undeclared": len(undeclared),
                    "undeclared_allowed": sum(1 for r in undeclared if r["outcome"] == "allowed"),
                    "blocked_needed": sum(1 for r in ordered if r["outcome"] == "denied" and r["needed"])},
