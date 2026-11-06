@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.11.0] — unreleased
+## [4.11.0] — 2026-11-06
 
 Findings now come with what a citizen developer needs to act on them: a prompt to paste into their coding agent, and
 the OWASP risk each one is an instance of, for the IT and security approvers who work from those lists.
