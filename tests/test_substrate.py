@@ -187,6 +187,7 @@ class Project(unittest.TestCase):
         self.assertTrue(S.cluster_internal("edge.mesh.svc.cluster.local"))
         self.assertTrue(S.cluster_internal("edge.mesh.svc"))
         self.assertFalse(S.cluster_internal("metrics.helpdesk.invalid"))
+        self.assertFalse(S.cluster_internal("intranet"))
 
     def test_broad_egress(self):
         self.assertEqual(self.at("JH709", "deploy/egress-policy.yaml"), [(4, "major"), (15, "minor")])
@@ -252,6 +253,10 @@ class Shapes(unittest.TestCase):
             with self.subTest(host=host):
                 self.assertIsNone(S.keyed_api(host))
 
+    def test_golden_policy_stays_a_template(self):
+        self.assertEqual(jh_core.substrate_shape("containers:\n- name: a\n  image: b\ngoldenEgressPolicy:\n  rules:\n"
+                                                 "  - https:\n      hostnames: [a.example]\n"), "actor_template")
+
     def test_snake_case_and_flow_rules(self):
         doc = S.docs("rules:\n- tls_passthrough: {hostnames: [api.openai.com], ports: {numbers: [443]}}\n")[0]
         self.assertEqual([(k, S.hostnames(b)) for k, b in S.rules(doc)], [("tlsPassthrough", ["api.openai.com"])])
@@ -298,6 +303,23 @@ class Emit(unittest.TestCase):
         bounds = jh_egress.boundaries([Item()])
         self.assertEqual([b["tool"] for b in bounds], ["substrate"])
         self.assertIn("api.openai.com", bounds[0]["allow"])
+
+    def test_network_ceiling_from_the_cli(self):
+        import jh_ceiling
+        top = tempfile.mkdtemp()
+        try:
+            path = os.path.join(top, "approved.json")
+            with open(path, "w") as fh:
+                json.dump({"schema": jh_ceiling.SCHEMA, "allow": [{"host": "api.openai.com", "port": 443},
+                                                                  {"host": "registry.npmjs.org", "port": 443}]}, fh)
+            p = run_cli("passport", DEMO, "--emit-sandbox-policy", "substrate", "--sandbox-network-ceiling", path)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertIn("'api.openai.com'", p.stdout)
+            self.assertIn("'registry.npmjs.org'", p.stdout)
+            self.assertNotIn("'pypi.org'", p.stdout)
+            self.assertIn("2 host(s) allowed", p.stderr)
+        finally:
+            shutil.rmtree(top)
 
     def test_validation_catches_what_the_api_rejects(self):
         for text, problem in (("rules:\n- tlsPassthrough:\n    hostnames: [a.example]\n", "needs port numbers"),

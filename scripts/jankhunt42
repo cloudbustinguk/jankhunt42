@@ -591,9 +591,9 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
     if args.sandbox_network_ceiling is not None and not args.base and args.sandbox_run is None and \
-            args.emit_sandbox_policy not in ("openshell", "claude-code"):
-        print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell or claude-code, "
-              "--base, or --sandbox-run", file=sys.stderr)
+            args.emit_sandbox_policy not in ("openshell", "claude-code", "substrate"):
+        print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell, claude-code or "
+              "substrate, --base, or --sandbox-run", file=sys.stderr)
         return 2
     if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
         print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
