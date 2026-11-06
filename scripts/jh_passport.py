@@ -207,13 +207,15 @@ def environment_crossings(map_report: Optional[Dict[str, Any]]) -> List[Dict[str
         if edge.get("verification") == "refuted" or edge["target"] not in nodes or edge["source"] not in nodes:
             continue
         source, target = nodes[edge["source"]], nodes[edge["target"]]
+        if target.get("trust_domain") == "local":
+            continue                    # a local service is not an environment
         refs = [evidence[r] for r in edge.get("evidence_refs", []) if r in evidence]
         crossing = (edge.get("trust_boundary") or {}).get("environment")
         if crossing in ("non-production->production", "production->non-production"):
             ref = refs[0] if refs else {}
             add(edge, crossing, "%s (%s)" % (source.get("display_label") or source["id"], source["environment"]),
                 ref.get("path", ""), ref.get("line", 0))
-        if target.get("environment") not in ("production", "non-production") or target.get("trust_domain") == "local":
+        if target.get("environment") not in ("production", "non-production"):
             continue
         for ref in refs:
             path = ref.get("path") or ""

@@ -52,6 +52,7 @@ class Crossings(unittest.TestCase):
                       node("db-prod", "production"), node("db-stg", "non-production"), node("db-unk", "unknown"),
                       node("db-prod2", "production"), node("local-prod", "production", domain="local"),
                       node("saas-prod", "production", "external", domain="external"),
+                      node("wl-prod", "production", "workload", "web"), node("local-dev", "non-production", domain="local"),
                       node("pay-sandbox", "non-production", "external", domain="external")],
             "edges": [edge("e1", "app", "db-prod", ["v1", "v2"]),                       # .env.local -> prod
                       edge("e2", "app", "db-stg", ["v3"]),                              # .env.production -> staging
@@ -62,7 +63,8 @@ class Crossings(unittest.TestCase):
                       edge("e7", "app", "db-prod", ["v7"], verification="refuted"),
                       edge("e8", "app", "local-prod", ["v1"]),                          # a local service: never
                       edge("e9", "app", "saas-prod", ["v1"]),                           # dev -> a SaaS's prod API: fine
-                      edge("e10", "app", "pay-sandbox", ["v3"])],                       # prod -> a payment sandbox
+                      edge("e10", "app", "pay-sandbox", ["v3"]),                        # prod -> a payment sandbox
+                      edge("e11", "wl-prod", "local-dev", ["v4"], env="production->non-production")],  # local: never
         },
         "evidence": [{"id": "v1", "path": ".env.local", "line": 1}, {"id": "v2", "path": "app.py", "line": 4},
                      {"id": "v3", "path": ".env.production", "line": 1}, {"id": "v4", "path": "k8s/worker.yaml", "line": 9},

@@ -6,8 +6,8 @@ semantic versioning.
 
 ## [4.15.0] — unreleased
 
-The connection string that worked on the builder's laptop is often the production one. The passport now reports
-where non-production and production meet.
+A development configuration often holds the production connection string, and a production one sometimes points at
+a test system. The passport now reports where non-production and production meet.
 
 ### Added
 
