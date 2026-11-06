@@ -151,6 +151,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-SUP-001` package sources | only when `allowed_registries` is set | **block** on a source outside `allowed_registries`; insufficient-evidence when a package manager has no committed registry config |
 | `P-RUN-001` sandbox run (`--sandbox-run`) | review on an ALERT | **block** on an ALERT |
 | `P-RUN-002` sandbox run tried undeclared destinations | review | **block** |
+| `P-RUN-003` agent sandbox log (`--sandbox-log`) shows undeclared destinations | review | **block** |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
 usual meaning.

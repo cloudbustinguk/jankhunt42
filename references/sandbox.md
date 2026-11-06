@@ -332,6 +332,48 @@ lists those destinations, and `--redact` replaces their names.
 at most 4 MB, with no links, read like the other operator inputs.
 `--redact` removes alert details.
 
+## Logs from an agent's own sandbox (`passport --sandbox-log`)
+
+jankhunt42's sandbox runs the repository's hooks. An agent that works on the
+repository in its own sandbox leaves a different record: what the sandbox's
+network enforcement allowed and blocked while the agent ran. The passport reads
+two such logs:
+
+- **OpenShell:** the OCSF JSON export (Network Activity 4001 and HTTP Activity
+  4002), as plain JSONL or as the supervisor's `OCSF-JSON` stderr lines.
+  Turn it on with `openshell settings set <sandbox> --key ocsf_json_enabled
+  --value true`. Shorthand `OCSF` lines carry no outcome and are skipped.
+- **Agent Substrate:** the egress gateway's JSON log lines (`egress denied: ...`,
+  and `egress allowed` at debug level).
+
+```sh
+jankhunt42 passport . --sandbox-log /path/outside/openshell-ocsf.jsonl --sandbox-log /path/outside/gateway.log
+```
+
+Each connection is compared with what is declared: the hosts in the
+repository's map, the public endpoints and package registries its emitted
+fence would allow, its committed sandbox policies (Claude Code, Codex,
+OpenShell, Agent Substrate), and the operator's network ceiling. A connection
+to anything else, whether the sandbox allowed it or blocked it, makes
+`P-RUN-003` review (block in the citizen profile). An agent's own model API is
+one such destination unless a committed policy or the ceiling lists it. A
+blocked connection to a host the repository needs is listed separately: a
+policy like that would break the app.
+
+**What a log cannot say:**
+- It is not bound to a tree. It describes whatever the agent ran, so it can
+  only add outcomes, never clear one.
+- Both tools collect best-effort. OpenShell drops lines when its queue is full,
+  so a quiet log proves nothing.
+- Agent Substrate refuses names outside the policy at DNS and logs nothing for
+  them, and logs allowed requests only at debug level. Its log mostly shows
+  blocked requests to names the policy resolves, or to addresses.
+
+**The files:** at most 8, each a regular file outside the repository of at
+most 64 MB, with no links. A host name that is not a plain DNS name or an
+IP address never becomes a row; it is counted under `no_destination`.
+`--redact` replaces destinations and process names.
+
 ## Evidence and limits
 
 The evidence tier is `sandbox-observed`. It adds to static findings and

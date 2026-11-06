@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.13.0"
+  version: "4.14.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -133,6 +133,7 @@ Failure classes, the profile table, and limits: `references/citizen.md`.
 
 - **Dependencies' hooks** run only from a cache. `--fetch URL` downloads exactly the npm packages the lockfile pins, verified against its `sha512`, and builds the cache offline. It is the one option that uses the network: use it only when the user asks to fetch dependencies, from origins they name or approve, and never fetch with a package manager instead. Otherwise pass `--npm-cache DIR` or `--wheelhouse DIR`, made outside the repository.
 - **Into a passport:** save `sandbox --json` outside the repository and pass `passport --sandbox-run PATH`. It counts only for the exact same tree. ALERTs make `P-RUN-001` review; a destination it tried that the map (or `--sandbox-network-ceiling`) does not declare makes `P-RUN-002` review. Both block in the citizen profile, and a clean run never relieves another rule.
+- **An agent's own sandbox log:** `passport --sandbox-log PATH` reads OpenShell's OCSF JSON export or Agent Substrate's egress gateway log, kept outside the repository. A connection, allowed or blocked, to a destination the repository does not declare (its map, fence, committed policies or the ceiling) makes `P-RUN-003` review, block in the citizen profile. A log is not bound to a tree and is collected best-effort, so it only adds outcomes.
 
 Details: `references/sandbox.md`.
 
