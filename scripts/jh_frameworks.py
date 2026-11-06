@@ -204,6 +204,7 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
     "JH704": ("CD-SEC-07", "ASI05"), "JH705": ("CD-SEC-06", "ASI04"), "JH706": ("CD-SEC-04", "ASI03"),
     "JH707": _AUTHN, "JH708": ("CD-SEC-08", "ASI01"), "JH709": ("CD-SEC-07", "ASI02", "ASI05"),
     "JH710": ("CD-SEC-07", "ASI05"), "JH711": ("CD-SEC-07", "ASI05"),
+    "JH712": ("CD-SEC-07", "ASI02", "ASI05"),
 }
 
 
