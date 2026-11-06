@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.14.0] — unreleased
+## [4.14.0] — 2026-11-06
 
 A sandbox policy says what an agent may reach; the sandbox's own log says what it tried. The passport now reads that
 log and compares it with what the repository declares.
