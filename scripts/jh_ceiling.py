@@ -62,7 +62,7 @@ def inside_repository(path: str, root: str) -> bool:
     return any(_under(candidate, base) for candidate in (absolute, resolved) for base in roots)
 
 
-def read_external_json(path: str, root: str, description: str = "network ceiling", limit: int = MAX_BYTES) -> Any:
+def read_external_bytes(path: str, root: str, description: str, limit: int) -> bytes:
     """Read a bounded regular file outside both root spellings; no stdin."""
     absolute, resolved = os.path.abspath(path), os.path.realpath(path)
     if inside_repository(path, root):
@@ -87,6 +87,12 @@ def read_external_json(path: str, root: str, description: str = "network ceiling
         raise ValueError("cannot read operator " + description) from exc
     if len(raw) > limit:
         raise ValueError(description + " exceeds the size limit")
+    return raw
+
+
+def read_external_json(path: str, root: str, description: str = "network ceiling", limit: int = MAX_BYTES) -> Any:
+    """A bounded operator JSON file from outside the repository, with no duplicate keys."""
+    raw = read_external_bytes(path, root, description, limit)
     try:
         doc = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique)
     except (UnicodeError, ValueError, RecursionError) as exc:

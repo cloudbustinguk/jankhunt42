@@ -48,6 +48,7 @@ import jh_explorer  # noqa: E402
 import jh_frameworks  # noqa: E402
 import jh_prompt  # noqa: E402
 import jh_sandbox  # noqa: E402
+import jh_runlog  # noqa: E402
 import jh_agent_fuzz  # noqa: E402
 import jh_agent_fuzz_eval  # noqa: E402
 
@@ -590,10 +591,10 @@ def cmd_passport(args: argparse.Namespace) -> int:
 def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not _one_format(args, ("json", "html", "md")):
         return 2
-    if args.sandbox_network_ceiling is not None and not args.base and args.sandbox_run is None and \
-            args.emit_sandbox_policy not in ("openshell", "claude-code", "substrate"):
+    if args.sandbox_network_ceiling is not None and not args.base and args.sandbox_run is None and not args.sandbox_log \
+            and args.emit_sandbox_policy not in ("openshell", "claude-code", "substrate"):
         print("jankhunt42: passport: --sandbox-network-ceiling requires --emit-sandbox-policy openshell, claude-code or "
-              "substrate, --base, or --sandbox-run", file=sys.stderr)
+              "substrate, --base, --sandbox-run, or --sandbox-log", file=sys.stderr)
         return 2
     if args.emit_sandbox_policy and (args.json or args.html or args.md or args.compare or args.against):
         print("jankhunt42: passport: --emit-sandbox-policy writes the policy itself; it cannot be combined with "
@@ -758,6 +759,11 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         except ValueError as exc:
             print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
+    try:
+        runtime_log = jh_runlog.evidence(args.sandbox_log, root, map_report, network_ceiling, package_sources)
+    except ValueError as exc:
+        print("jankhunt42: passport: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+        return 2
     top = jh_map.git_toplevel(root)
     passport = jh_passport.build(
         name=os.path.basename(root) or "application",
@@ -774,7 +780,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
         package_sources=package_sources, capability_delta=capability_delta,
         capability_approval_record=capability_approval_record,
-        capability_approval_label=os.path.basename(args.capability_approval or ""), sandbox=sandbox)
+        capability_approval_label=os.path.basename(args.capability_approval or ""), sandbox=sandbox,
+        runtime_log=runtime_log)
     if args.emit_capability_approval:
         decision_policy = passport["assessment"]["decision"]["policy"]
         print(json.dumps(jh_capability_approval.template(capability_delta, decision_policy["effective"],
@@ -1083,6 +1090,11 @@ def build_parser() -> argparse.ArgumentParser:
     sandbox.add_argument("--sandbox-run", metavar="PATH",
                          help="a `sandbox --json` result kept outside the repository; used only if made on this exact "
                               "tree, and it can only add outcomes (P-RUN-001, P-RUN-002)")
+    sandbox.add_argument("--sandbox-log", metavar="PATH", action="append", default=[],
+                         help="an agent sandbox's network log kept outside the repository: OpenShell's OCSF JSON "
+                              "export or Agent Substrate's egress gateway log (repeatable). Connections to "
+                              "destinations the repository does not declare add P-RUN-003; a log is not bound to a "
+                              "tree, so it can only add outcomes")
     change.add_argument("--emit-capability-approval", action="store_true", help="print a pre-filled unsigned approval template for IT to complete")
     decision.add_argument("--policy", metavar="PATH",
                           help="policy JSON; operator-supplied if outside the repo, tighten-only if inside it")

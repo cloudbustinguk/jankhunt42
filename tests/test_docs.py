@@ -24,6 +24,7 @@ SKIP = [
     ("--online", "lets --verify fetch from GitHub; the suite is offline"),
     ("sandbox", "needs a container engine and the sandbox image; tests/test_sandbox.py covers it"),
     ("--sandbox-run", "needs a sandbox result kept outside the repository; tests/test_sandbox.py covers it"),
+    ("--sandbox-log", "needs an agent sandbox log kept outside the repository; tests/test_runlog.py covers it"),
     ("--emit-capability-approval", "needs an operator policy outside the repository; tests/test_capability_approval.py "
                                    "covers it"),
     ("--sandbox-network-ceiling", "reads an operator's file from outside the repository; tests/test_network_ceiling.py "
