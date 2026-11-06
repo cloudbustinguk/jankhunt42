@@ -95,6 +95,7 @@ RULES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "P-CUS-001": (("GOVERN 2.1", "GOVERN 3.2"), ("I", "III")),
     "P-DAT-001": (("MEASURE 2.10", "MAP 4.1"), ("II", "IV")),
     "P-DAT-002": (("MEASURE 2.7", "MAP 5.1", "MANAGE 1.3"), ("IV",)),
+    "P-ENV-001": (("MEASURE 2.7", "MAP 4.1", "MANAGE 1.3"), ("III", "IV")),
     "P-DAT-003": (("MAP 1.1", "MEASURE 2.10"), ("III",)),
     "P-SEC-001": (("MEASURE 2.7",), ("IV",)),
     "P-AGT-001": (("GOVERN 3.2", "MAP 3.5", "GOVERN 6.1"), ("IV",)),

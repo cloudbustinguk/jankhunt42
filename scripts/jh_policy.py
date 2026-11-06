@@ -61,6 +61,7 @@ RULES = {
     "P-RUN-001": "the sandbox run saw a canary credential read, passed on or sent, or a persistence attempt",
     "P-RUN-002": "the sandbox run tried to reach destinations the repository does not declare",
     "P-RUN-003": "an agent sandbox's log shows connections to destinations the repository does not declare",
+    "P-ENV-001": "a non-production component or configuration reaches a production asset, or the reverse",
 }
 PROFILES = ("standard", "citizen")
 
@@ -74,7 +75,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
                 "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review",
-                "P-RUN-001": "review", "P-RUN-002": "review", "P-RUN-003": "review"},
+                "P-RUN-001": "review", "P-RUN-002": "review", "P-RUN-003": "review", "P-ENV-001": "review"},
     # Registry URL prefixes or host names packages may come from (operator policy only).
     "allowed_registries": [],
     "capability_approvals": {},
@@ -92,7 +93,7 @@ CITIZEN_PRESET: Dict[str, Any] = {
                 "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
                 "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block",
                 "P-CHG-001": "block", "P-SUP-001": "block", "P-RUN-001": "block",
-                "P-RUN-002": "block", "P-RUN-003": "block"},
+                "P-RUN-002": "block", "P-RUN-003": "block", "P-ENV-001": "block"},
     "max_exposure": "Moderate",
     "static_leads": "block",
 }
@@ -424,6 +425,22 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
             "declared or observed sensitive export to an external destination; verify the flow", static_x)
     else:
         add("P-DAT-001", "pass", "0 sensitive external exports observed (co-reachability alone is not a flow)")
+    # P-ENV-001: non-production meets production (unknown environments never count)
+    crossings = facts.get("environment_crossings") or []
+    if crossings:
+        verified_c = [c["edge"] for c in crossings if c.get("verification") == "provider-verified"]
+        listed = "; ".join("%s: %s reaches %s" % (c["direction"], c["source"], c["target"]) for c in crossings[:3])
+        more = " ..." if len(crossings) > 3 else ""
+        if verified_c:
+            add("P-ENV-001", _outcome_for(acts["P-ENV-001"]), "%d verified crossing(s): %s%s" % (
+                len(crossings), listed, more), verified_c)
+        else:
+            add("P-ENV-001", _outcome_for(acts["P-ENV-001"]) if acts["P-ENV-001"] != "block" or cap == "block"
+                else "review", "%d declared or observed crossing(s): %s%s" % (len(crossings), listed, more),
+                [c["edge"] for c in crossings])
+    else:
+        add("P-ENV-001", "pass", "no non-production component or configuration reaches a production asset, or the "
+                                 "reverse; unknown environments never count")
     # P-DAT-002
     verified_a, potential_a = [], []
     for e in edges:

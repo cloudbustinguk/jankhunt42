@@ -146,6 +146,89 @@ def agent_policy_evidence(items: Sequence[jh_map.Item], findings: Sequence[Any])
     }
 
 
+# environment words in a configuration file's name or folder; "live" is left out: live_chat.py is not production
+_CONFIG_PROD = ("prod", "production", "prd")
+_CONFIG_NONPROD = ("dev", "develop", "development", "test", "testing", "staging", "stage", "stg", "qa", "uat",
+                   "sandbox", "local", "preview")
+# configuration, not code: a script named dev_server.py or rt-live-test.mjs is not a deployment setting
+_CONFIG_EXTS = (".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".properties", ".conf", ".cfg", ".config",
+                ".tf", ".tfvars", ".hcl", ".xml")
+MAX_CROSSINGS = 50
+CROSSING_WORDS = {"non-production->production": "Non-production reaches production",
+                  "production->non-production": "Production reaches non-production"}
+
+
+def config_environment(rel: str) -> str:
+    """The environment a configuration file is for, from its name (.env.development, appsettings.Production.json,
+    docker-compose.dev.yml) or a folder named exactly for one (staging/, prod/); otherwise unknown. Code files never
+    count, and a name with words for both (live-test) is ambiguous."""
+    parts = [p for p in rel.lower().replace("\\", "/").split("/") if p]
+    if not parts or not (parts[-1].startswith(".env") or parts[-1].endswith(_CONFIG_EXTS)):
+        return "unknown"
+    words = set(re.split(r"[^a-z0-9]+", parts[-1]))
+    prod, nonprod = bool(words & set(_CONFIG_PROD + ("live",))), bool(words & set(_CONFIG_NONPROD))
+    if prod and nonprod:
+        return "unknown"
+    for token_set, env in ((_CONFIG_PROD, "production"), (_CONFIG_NONPROD, "non-production")):
+        if words & set(token_set):
+            return env
+    for folder in reversed(parts[:-1]):
+        if folder in _CONFIG_PROD:
+            return "production"
+        if folder in _CONFIG_NONPROD:
+            return "non-production"
+    return "unknown"
+
+
+def environment_crossings(map_report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Where non-production meets production: an edge between components in different known environments, or an
+    edge into a production (non-production) asset written in a non-production (production) configuration file.
+    Unknown environments never count, test code is left out, and a development configuration may call a third
+    party's production API (production calling a third party's sandbox still counts)."""
+    if not map_report:
+        return []
+    graph = map_report.get("graph") or {}
+    nodes = {n["id"]: n for n in graph.get("nodes", [])}
+    evidence = {e["id"]: e for e in map_report.get("evidence", [])}
+    out: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(edge: Dict[str, Any], direction: str, source: str, path: str, line: int) -> None:
+        target = nodes[edge["target"]]
+        key = (target["id"], direction, source, path)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"edge": edge["id"], "direction": direction, "source": safe_text(source)[:120],
+                    "target": safe_text(target.get("display_label") or target["id"])[:120],
+                    "path": safe_text(path)[:200], "line": line, "verification": edge.get("verification", "unknown")})
+
+    for edge in graph.get("edges", []):
+        if edge.get("verification") == "refuted" or edge["target"] not in nodes or edge["source"] not in nodes:
+            continue
+        source, target = nodes[edge["source"]], nodes[edge["target"]]
+        refs = [evidence[r] for r in edge.get("evidence_refs", []) if r in evidence]
+        crossing = (edge.get("trust_boundary") or {}).get("environment")
+        if crossing in ("non-production->production", "production->non-production"):
+            ref = refs[0] if refs else {}
+            add(edge, crossing, "%s (%s)" % (source.get("display_label") or source["id"], source["environment"]),
+                ref.get("path", ""), ref.get("line", 0))
+        if target.get("environment") not in ("production", "non-production") or target.get("trust_domain") == "local":
+            continue
+        for ref in refs:
+            path = ref.get("path") or ""
+            env = config_environment(path) if path and not is_test_path(path) else "unknown"
+            if env in ("production", "non-production") and env != target["environment"]:
+                if env == "non-production" and target.get("kind") == "external":
+                    break               # a third party's production API is the only one there is; its sandbox is not
+                add(edge, "%s->%s" % (env, target["environment"]), "%s configuration %s" % (env, path), path,
+                    ref.get("line", 0))
+                break
+    order = {"non-production->production": 0, "production->non-production": 1}
+    out.sort(key=lambda c: (order.get(c["direction"], 2), c["target"], c["path"], c["line"]))
+    return out
+
+
 def agent_tooling(map_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """What the repository's AI agent configuration wires an agent to."""
     if map_report is None:
@@ -632,7 +715,9 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     if sandbox["state"] == "stale":
         warns.append("the sandbox run (--sandbox-run) was made on a different tree and was not used")
     runtime_log = runtime_log or {"state": "not-supplied"}
+    crossings = environment_crossings(map_report)
     facts = {
+        "environment_crossings": crossings,
         "sandbox": sandbox,
         "runtime_log": runtime_log,
         "capability_approval": approval,
@@ -690,6 +775,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "capability_approval": approval,
         "sandbox_run": sandbox,
         "sandbox_log": runtime_log,
+        "environment_crossings": {"count": len(crossings), "rows": crossings[:MAX_CROSSINGS]},
         "triggers": jh_n8n.trigger_counts((map_report or {}).get('triggers') or jh_n8n.trigger_summary([])),
         "tool": TOOL,
         "tool_version": VERSION,
@@ -797,6 +883,11 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
         if rule.get("rule") == "P-RUN-002" and run.get("undeclared"):
             rule["message"] = "the sandbox run tried %d destination(s) the repository does not declare" % max(
                 len(run["undeclared"]), (run.get("counts") or {}).get("UNDECLARED") or 0)
+    for i, row in enumerate((rep.get("environment_crossings") or {}).get("rows", []), 1):
+        row.update(source="component-%d" % i, target="asset-%d" % i, path="redacted")
+    for rule in decision.get("rules", []) + decision.get("reasons", []):
+        if rule.get("rule") == "P-ENV-001" and (rep.get("environment_crossings") or {}).get("count"):
+            rule["message"] = "%d place(s) where non-production and production meet" % rep["environment_crossings"]["count"]
     log = rep.get("sandbox_log") or {}
     names: Dict[str, str] = {}
     for key in ("destinations", "undeclared", "blocked_needed"):
@@ -977,6 +1068,16 @@ def markdown(p: Dict[str, Any]) -> str:
         for target in (p.get("sandbox_run") or {}).get("undeclared", [])[:20]:
             lines.append("- " + jh_capabilities.markdown_line("Undeclared destination tried: %s" % target))
         lines += [""] if (p.get("sandbox_run") or {}).get("alerts") else []
+    cross = p.get("environment_crossings") or {}
+    if cross.get("count"):
+        lines += ["## Where non-production meets production", ""]
+        for row in cross.get("rows", [])[:20]:
+            lines.append("- " + jh_capabilities.markdown_line("%s: %s reaches %s (%s:%d, %s)" % (
+                CROSSING_WORDS.get(row["direction"], row["direction"]), row["source"], row["target"],
+                row["path"] or "no file", row["line"], row["verification"])))
+        if cross["count"] > 20:
+            lines.append("- " + jh_capabilities.markdown_line("and %d more" % (cross["count"] - 20)))
+        lines.append("")
     log = p.get("sandbox_log") or {}
     log_line = jh_runlog.passport_line(log)
     if log_line:
