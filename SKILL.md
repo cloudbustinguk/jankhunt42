@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.11.0"
+  version: "4.12.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -31,7 +31,7 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 | "can we ship this", ownership, a software passport | `jankhunt42 passport .` | `references/passport.md` |
 | the new access a pull request asks for, approving one change | `jankhunt42 passport . --base <ref> --md` | `references/change-review.md` |
 | a non-engineer building or shipping software, "is my app safe to share" | `jankhunt42 passport . --profile citizen` | `references/citizen.md` |
-| an AI agent workspace reviewed: settings, MCP servers, instruction files | `jankhunt42 scan . --category agent` | `references/citizen.md` |
+| an AI agent workspace reviewed: settings, MCP servers, instruction files, skills | `jankhunt42 scan . --category agent` | `references/citizen.md` |
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
 | which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
 | OWASP Citizen Development (`CD-SEC`) or Agentic (`ASI`) risks | `jankhunt42 rules`, `jankhunt42 passport . --json` (`assessment.owasp`) | `references/ai-governance.md` |
