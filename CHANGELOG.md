@@ -4,6 +4,24 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.15.0] — unreleased
+
+The connection string that worked on the builder's laptop is often the production one. The passport now reports
+where non-production and production meet.
+
+### Added
+
+- **`P-ENV-001` Non-production meets production.** A non-production configuration file (`.env.local`,
+  `.env.development`, `appsettings.Development.json`, `docker-compose.dev.yml`, a `staging/` or `dev/` folder) whose
+  connection reaches a production asset; a production configuration (`.env.production`, a `prod/` folder) that reaches
+  a non-production system, such as a payment provider's sandbox; or an edge between components the map places in
+  different known environments. Review; block in the citizen profile. Only configuration files count (not code such
+  as `dev_server.py`), and only when a word in the name names one environment (`dev-portal/`, `live_chat.json` and
+  `live-test.json` do not). Unknown environments, local services and test code never count, and a development
+  configuration may call a third party's production API.
+- The passport's `environment_crossings` section (direction, component or file, asset, file and line, evidence state)
+  in JSON and Markdown; `--redact` replaces names and paths.
+
 ## [4.14.0] — 2026-11-06
 
 A sandbox policy says what an agent may reach; the sandbox's own log says what it tried. The passport now reads that

@@ -152,6 +152,7 @@ operator policy, and a repository can opt in with `passport.profile:
 | `P-RUN-001` sandbox run (`--sandbox-run`) | review on an ALERT | **block** on an ALERT |
 | `P-RUN-002` sandbox run tried undeclared destinations | review | **block** |
 | `P-RUN-003` agent sandbox log (`--sandbox-log`) shows undeclared destinations | review | **block** |
+| `P-ENV-001` non-production meets production (a dev config pointing at the production database) | review | **block** |
 
 Coverage (`P-COV-001`) and supply-chain evidence (`P-EVD-001`) keep their
 usual meaning.
