@@ -4,6 +4,21 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.12.0] — unreleased
+
+Agent skills are installed from public directories into the projects citizen developers build, and a skill can switch
+off the prompt that would otherwise stop a command.
+
+### Added
+
+- **`JH712` Agent skill pre-approves any shell command** (major, `agent`). `allowed-tools` in a skill's `SKILL.md`,
+  or in a Claude Code command file (`.claude/commands/*.md`, which takes the same frontmatter), that names bare
+  `Bash`, `Bash(*)`, or a shell or interpreter followed only by a wildcard (`Bash(python3:*)`, `Bash(sh -c *)`,
+  `Bash(npx:*)`). Claude Code then runs any shell command without asking during the turn that invokes the skill, so a
+  prompt injection in anything the agent reads in that turn can run commands with the user's access. Narrow entries
+  (`Bash(git status *)`, a skill's own script) are not reported. All three YAML forms are read: a space- or
+  comma-separated string, a flow list and a block list. Minor in test data. OWASP `CD-SEC-07`, `ASI02`, `ASI05`.
+
 ## [4.11.0] — 2026-11-06
 
 Findings now come with what a citizen developer needs to act on them: a prompt to paste into their coding agent, and

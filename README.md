@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.11.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.12.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -62,7 +62,7 @@ jankhunt42 passport . --base <ref> --md   # what new access this change asks for
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
 
-- **Agent workspace checks** (`JH701`-`JH711`, `JH432`):
+- **Agent workspace checks** (`JH701`-`JH712`, `JH432`):
   - approval bypasses committed in VS Code, Claude Code, Codex, or Zed settings;
   - sandboxes that let agent commands reach any host, the Docker socket, or credential paths (Codex, Claude Code, OpenShell), and dev containers that weaken isolation;
   - CI that runs any pushed branch, an agent's included, with secrets or a write token;
@@ -70,6 +70,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - agent CLIs started with bypass flags;
   - unpinned or credential-holding MCP servers;
   - hidden instructions in agent files;
+  - agent skills and commands whose `allowed-tools` pre-approves any shell command;
   - untrusted issue and PR text fed to AI steps in CI.
 - **Mistakes AI-built apps make** (`JH131`-`JH134`, `JH154`, `JH155`):
   - secrets behind `NEXT_PUBLIC_`/`VITE_`-style prefixes;
