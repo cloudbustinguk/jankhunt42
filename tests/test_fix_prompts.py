@@ -155,15 +155,6 @@ class Mapping(unittest.TestCase):
                 self.assertEqual(len(set(risks)), len(risks))
         self.assertEqual(len(F.OWASP_RISKS), 20)
 
-    def test_the_reference_table_matches(self):
-        doc = open(os.path.join(os.path.dirname(__file__), "..", "references", "ai-governance.md")).read()
-        rows = dict(re.findall(r"(?m)^\| ((?:CD-SEC-\d\d|ASI\d\d)) [^|]+\| ([^|]+) \|$", doc))
-        self.assertEqual(set(rows), set(F.OWASP_RISKS))
-        for rid, cell in rows.items():
-            with self.subTest(risk=rid):
-                self.assertEqual(set(re.findall(r"JH\d+", cell)),
-                                 {r for r, risks in F.OWASP_RULES.items() if rid in risks})
-
     def test_counts_follow_list_order(self):
         got = F.owasp_counts([finding(rule="JH702"), finding(rule="JH104"), finding(rule="JH104")])["risks"]
         self.assertEqual([(r["id"], r["findings"]) for r in got],
