@@ -9,8 +9,7 @@ explainable policy. It is a **local assessment**:
   `accepted` requires a separately supplied operator acceptance record (see
   below), which this tool never creates or infers;
 - attestation verification states are what the **exporter** recorded, or
-  what a native verifier reported under `--verify`; jankhunt42 itself never
-  verifies signatures or signer identity;
+  jankhunt42 itself never verifies signatures or signer identity;
 - evidence that was not found is `not-observed` (unknown), never "absent".
 
 ## Commands
@@ -29,7 +28,6 @@ jankhunt42 passport . --inventory ../inventory.json
 jankhunt42 passport . --acceptance ../acceptance.json        # operator acceptance record
 jankhunt42 passport . --compare old-passport.json            # what changed since a stored passport
 jankhunt42 passport --compare old.json --against new.json    # two stored passports, no scan
-jankhunt42 passport . --verify ../verify-plan.json           # run gh/cosign/jf on the provenance first
 jankhunt42 passport . --branch-rules ../rules/app.json       # the repository's rulesets, exported by an operator
 jankhunt42 passport . --emit-sandbox-policy claude-code       # an agent network fence instead of a passport (citizen.md)
 ```
@@ -84,10 +82,11 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-ENV-001` | non-production meets production: a development or other non-production configuration file (`.env.local`, `.env.development`, `appsettings.Development.json`, a `staging/` folder) whose connection reaches a production asset, a production configuration that reaches a non-production one, or an edge between components in different known environments. Only configuration files count, by a word in the file name or a folder named exactly for an environment; unknown environments, local services and test code never count, and a development configuration may call a third party's production API (production calling a third party's sandbox still counts) | review (block in the citizen profile); the passport lists each crossing with its file and line |
 | `P-DAT-003` | `require.classification` and a reachable database, storage, or queue has unknown sensitivity | pass unless required; then insufficient-evidence |
 | `P-SEC-001` | scanner leads that expose credentials or data to the public: `JH132`–`JH136` (major or above), critical `JH101`/`JH401`/`JH415` | review |
-| `P-AGT-001` | agent-guardrail leads at major or above: any `agent`-category rule (`JH701`-`JH713`: approvals, MCP servers, sandboxes, dev containers), agent-branch CI with secrets (`JH432`), or hidden Unicode in an agent file | review |
+| `P-AGT-001` | agent-guardrail leads at major or above: any `agent`-category rule except `JH714` (`JH701`-`JH713`: approvals, MCP servers, sandboxes, dev containers), agent-branch CI with secrets (`JH432`), or hidden Unicode in an agent file | review |
+| `P-AGT-002` | an agent holds untrusted input, sensitive data and a way to act (`JH714`, [impact-model.md](impact-model.md)): K3, nothing approves the step that acts, takes the rule's action; K4, every acting step asks a person, is review at most; a K4 resting on a 'possible' (a GitHub server's reach) is left out | review |
 | `P-AI-001` | a confidential or restricted data store and an external AI model service are reachable from the same principal (co-reachability, not a data flow) | review |
 | `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
-| `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet; or `--verify` did not end with every check `tool-verified` | insufficient-evidence |
+| `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
 | `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
 | `P-CHG-001` | `require.change_control` and code can reach the default branch without an independent human review: no pull-request rule with an approval, or a GitHub App or deploy key that can bypass the rules (weaker gaps such as no last-push approval or no required checks: review) | pass unless required; then review (unknown → insufficient-evidence) |

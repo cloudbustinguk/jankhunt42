@@ -2021,6 +2021,60 @@ def _mcp(sf: SourceFile) -> List[jh_agent.McpServer]:
         return []
 
 
+@check("agent_rule_of_two")
+def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH714: one agent with untrusted input, sensitive data and a way to act (jh_rule2)."""
+    import jh_n8n
+    import jh_rule2
+    from jh_core import visible_text
+    if "mcp_config" in sf.kinds:
+        found = jh_rule2.mcp_agent(sf.rel, sf.text, sf.abspath)
+        agents = [found] if found else []
+    elif sf.lang == "json":
+        agents = jh_rule2.n8n_agents(sf)
+    else:
+        return []
+    out: List[Finding] = []
+    for v in agents:
+        if v["verdict"] == "none":
+            continue
+        n8n = "raw" in v
+        who = ("The n8n AI Agent '%s'" % trim(v["agent"], 60)) if n8n else "The agent this file configures"
+        if n8n:
+            line = jh_n8n._line(sf, v["raw"])
+        else:
+            here = [p for p in v["acting"] if p["file"] == sf.rel]
+            line = here[0]["line"] if here else 1
+        held = "Untrusted input: %s. Sensitive data: %s. A way to act: %s." % tuple(
+            jh_rule2.sources(v, k) for k in jh_rule2.PROPS)
+        doubt = [jh_rule2.WORDS[k] for k in jh_rule2.PROPS if v["best"][k] == jh_rule2.RANK[jh_rule2.POSSIBLE]]
+        if doubt:
+            held += (" Possible rather than certain: %s, which depends on what the configuration does not show "
+                     "(which repositories a token reaches, and whether they are public)." % " and ".join(doubt))
+        if v["verdict"] == "K3":
+            unapproved = ["%s (%s)" % (p["source"], p["why"]) for p in v["acting"]]
+            message = ("%s holds all three parts of the Agents Rule of Two, and nothing approves its actions: %s. %s"
+                       % (who, "; ".join(unapproved[:3]), held))
+            severity, confidence = ("critical", "high") if v["certain"] else ("major", "medium")
+        else:
+            unapproved = []
+            message = ("%s holds all three parts of the Agents Rule of Two; every tool that acts asks a person "
+                       "first, so those approvals are all that stands between a prompt injection and the data. %s"
+                       % (who, held))
+            # approvals in place, and the three resting partly on a 'possible': for information only
+            severity, confidence = ("minor" if v["certain"] else "info"), "medium"
+        out.append(make_finding(rule, sf, line, severity=severity, confidence=confidence,
+                                message=visible_text(message),           # names come from the scanned file
+                                evidence=trim(v["agent"], 60) if n8n else None,
+                                extra={"verdict": v["verdict"], "certain": bool(v.get("certain")),
+                                       "agent": trim(v["agent"], 60) if n8n else sf.rel,
+                                       "untrusted_input": jh_rule2.sources(v, "A", 10),
+                                       "sensitive_data": jh_rule2.sources(v, "B", 10),
+                                       "acts": jh_rule2.sources(v, "C", 10), "unapproved": unapproved[:10],
+                                       "unknown_servers": list(v.get("unknown") or [])[:10]}))
+    return out[:10]
+
+
 @check("mcp_unpinned")
 def mcp_unpinned(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []

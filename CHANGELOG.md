@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.16.0] — 2026-11-07
+
+An AI agent that reads text anyone can write, reaches private data and can act is one prompt injection away from
+leaking that data: Simon Willison's "lethal trifecta", Meta's "Agents Rule of Two". jankhunt42 now finds those agents
+in the configuration a repository commits, and the passport decides on them.
+
+### Added
+
+- **`JH714` AI agent holds untrusted input, private data and a way to act.** For each agent (an MCP client
+  configuration with the Claude Code or VS Code settings beside it, or an n8n AI Agent node with its triggers and
+  tools), whether it holds [A] untrusted input, [B] sensitive data and [C] a way to act, and whether a person approves
+  the steps that act. All three with something acting unapproved (K3) is critical, or major when part of it is only
+  possible (which repositories a GitHub token reaches); all three with every acting step approved (K4) is minor. The
+  message names the servers, tools and settings behind each part.
+  - What servers and tools give comes from their own documentation: the reference MCP servers (GitHub, GitLab, Fetch,
+    browsers, search, Slack, PostgreSQL, SQLite, Redis, Google Drive, Sentry, Git, Filesystem by the folders it is
+    given), vendor servers (Supabase, Neon, Linear, Atlassian, Notion, Stripe, Resend, Auth0, Context7, Firecrawl,
+    Tavily, Exa, Chrome DevTools, Reddit) and n8n tool nodes by their fixed operation. An unknown server counts for
+    nothing and is listed.
+  - Approvals: Claude Code `bypassPermissions`, `allow` entries (`WebFetch` for any address, broad `Bash`,
+    `mcp__<server>[__<tool>]`), `deny` entries (which win, including every acting tool of a server with documented
+    tools) and `disabledMcpjsonServers`; `autoApprove` and `alwaysAllow` lists (only acting tools count); VS Code
+    `chat.tools.autoApprove`; Codex `approval_policy = "never"`; n8n human review nodes (`<service>HitlTool`).
+  - Read-only modes: GitHub `--read-only`, `GITHUB_READ_ONLY=1`, the `/readonly` remote and `X-MCP-Readonly`;
+    Supabase and Neon `--read-only` or `read_only=true`.
+- **`P-AGT-002` Agents Rule of Two.** A K3 agent takes the rule's action (review; block in the citizen profile); a K4
+  agent is review at most, since its approvals are all that stands between an injection and the data. A K4 resting on
+  a 'possible' is reported by the scan for information and left out of the passport. The passport lists the agents
+  (`agent_rule_of_two`, also in HTML), the citizen brief explains it in plain words, and `JH714` counts here, not in
+  `P-AGT-001`.
+- `references/impact-model.md`: the impact maths in one place (evidence tiers and max-min reach, the exposure class,
+  the Rule of Two, and the adopted `jankhunt.impact.v2` design for the next releases).
+
+### Fixed
+
+- README and `references/passport.md` no longer describe `passport --verify` and the `tool-verified` state, removed
+  in 4.6.0.
+
 ## [4.15.0] — 2026-11-07
 
 A development configuration often holds the production connection string, and a production one sometimes points at

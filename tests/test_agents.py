@@ -148,7 +148,10 @@ class AgentWorkspace(Fixture):
         self.assertNotIn("ghp_" + "a" * 36, blob)
         plain = hits(self.findings, "JH707")
         self.assertEqual([f["extra"]["server"] for f in plain], ["remote"])
-        self.assertEqual([f for f in self.findings if f["path"].startswith("clean/")], [])
+        self.assertEqual([f for f in self.findings if f["path"].startswith("clean/") and f["rule"] != "JH714"], [])
+        # a GitHub server whose acting tools ask first: the Rule of Two for information only (test_rule2)
+        self.assertEqual([(f["extra"]["verdict"], f["severity"]) for f in self.findings
+                          if f["path"].startswith("clean/") and f["rule"] == "JH714"], [("K4", "info")])
 
     def test_agent_instruction_file(self):
         got = {f["line"]: f for f in hits(self.findings, "JH701", "AGENTS.md")}
@@ -174,7 +177,7 @@ class AgentWorkspace(Fixture):
         cats = {f["category"] for f in self.findings if f["rule"].startswith("JH7")}
         self.assertEqual(cats, {"agent"})
         listed = json.loads(run_cli("rules", "--json", "--category", "agent").stdout)
-        self.assertEqual(sorted(r["id"] for r in listed), ["JH70%d" % i for i in range(1, 10)] + ["JH710", "JH711", "JH712", "JH713"])
+        self.assertEqual(sorted(r["id"] for r in listed), ["JH70%d" % i for i in range(1, 10)] + ["JH710", "JH711", "JH712", "JH713", "JH714"])
 
 
 class HiddenUnicode(Fixture):

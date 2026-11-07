@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.15.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.16.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -62,7 +62,8 @@ jankhunt42 passport . --base <ref> --md   # what new access this change asks for
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
 
-- **Agent workspace checks** (`JH701`-`JH713`, `JH432`):
+- **Agent workspace checks** (`JH701`-`JH714`, `JH432`):
+  - an agent that holds untrusted input, private data and a way to act with nothing approving the step that acts (the Agents Rule of Two, `JH714`: MCP configurations with their Claude Code or VS Code settings, and n8n AI Agent nodes);
   - approval bypasses committed in VS Code, Claude Code, Codex, or Zed settings;
   - sandboxes that let agent commands reach any host, the Docker socket, or credential paths (Codex, Claude Code, OpenShell, Agent Substrate), and dev containers that weaken isolation;
   - Agent Substrate actor templates that put an API key inside the sandbox, and egress rules that pass a keyed API through where the gateway cannot inject the key;
@@ -193,7 +194,6 @@ Policy precedence is defaults, then an operator `--policy` from outside the repo
 | `declared` | Configuration or a manifest says so: env values, Kubernetes RBAC, workflow `permissions:`, `.jankhunt42.json` declarations |
 | `inferred` | A heuristic: an SDK import, a manifest dependency, an endpoint resolved by environment-variable name |
 | `provider-verified` / `verified` | From an operator-supplied inventory **outside** the repository, or an exporter-recorded attestation verification |
-| `tool-verified` | A native verifier (`gh`, `cosign`, `jf`) checked the signature against a plan naming the signer; jankhunt42 itself verifies no signatures |
 | `unknown` | Not established. Never treated as safe, never as proven dangerous |
 | `refuted` | Explicitly refuted by a trusted operator inventory, and excluded |
 
@@ -324,6 +324,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/citizen.md`](references/citizen.md) | The citizen profile, agent workspace checks, and the incidents they map to |
 | [`references/ai-governance.md`](references/ai-governance.md) | AI-use inventory, `P-AI-001`, the NIST AI RMF / AIGP crosswalk, and OWASP risks per rule |
 | [`references/scoring.md`](references/scoring.md) | Jank Score 3.0 formula, weights, and limits |
+| [`references/impact-model.md`](references/impact-model.md) | the impact maths: evidence tiers, the exposure class, the Agents Rule of Two, and the planned `jankhunt.impact.v2` |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, the JH156-JH159 checks, comparing versions |
