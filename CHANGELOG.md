@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.15.0] — unreleased
+## [4.15.0] — 2026-11-07
 
 A development configuration often holds the production connection string, and a production one sometimes points at
 a test system. The passport now reports where non-production and production meet.
