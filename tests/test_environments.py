@@ -129,10 +129,14 @@ class Project(unittest.TestCase):
         self.assertEqual(rule["outcome"], "review")
         self.assertIn("3 declared or observed crossing(s)", rule["message"])
 
+    def test_every_passport_rule_has_plain_words(self):
+        self.assertEqual(sorted(set(jh_policy.RULES) - set(P._PLAIN)), [])
+
     def test_citizen_profile_blocks(self):
         p = json.loads(self.passport("--json", "--profile", "citizen"))
         self.assertEqual(next(r for r in p["assessment"]["decision"]["rules"] if r["rule"] == "P-ENV-001")["outcome"],
                          "block")
+        self.assertIn("Its development settings point at a live production system", "\n".join(p["governance"]["brief"]))
 
     def test_markdown_and_redaction(self):
         md = self.passport("--md")

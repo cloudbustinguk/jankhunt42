@@ -329,6 +329,10 @@ _PLAIN = {
     "P-SUP-001": "It may download packages from places your organization has not allowed.",
     "P-RUN-001": "When it was installed or opened in a sandbox, it read credentials or tried to make itself permanent.",
     "P-RUN-002": "When it ran in a sandbox, it tried to reach places it does not say it uses.",
+    "P-RUN-003": "When an AI agent worked on it in its own sandbox, the agent tried to reach places the project does "
+                 "not say it uses.",
+    "P-ENV-001": "Its development settings point at a live production system (or its production settings at a test "
+                 "system), so a mistake made while trying things out can reach real data.",
 }
 _VERDICT = {
     "block": "Not ready to ship. Fix every blocking item below; then an engineering custodian must review and sign off.",

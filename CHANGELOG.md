@@ -20,7 +20,12 @@ a test system. The passport now reports where non-production and production meet
   `live-test.json` do not). Unknown environments, local services and test code never count, and a development
   configuration may call a third party's production API.
 - The passport's `environment_crossings` section (direction, component or file, asset, file and line, evidence state)
-  in JSON and Markdown; `--redact` replaces names and paths.
+  in JSON, Markdown and HTML; `--redact` replaces names and paths.
+
+### Fixed
+
+- The citizen brief gives P-ENV-001 and P-RUN-003 (new in 4.14.0) plain words, as for every other rule, instead of
+  the rule's technical title; a test now keeps every passport rule covered.
 
 ## [4.14.0] — 2026-11-06
 
