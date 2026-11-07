@@ -127,18 +127,18 @@ Real output from the synthetic fixture `tests/fixtures/demo-app`, a fictional pa
     <td><img src="assets/readme/software-passport.png" alt="HTML passport: summary cards for review, 69 out of 100, High, 4 of 10 and assessed, the three review reasons, and the table of every rule with its outcome"></td>
   </tr>
   <tr>
-    <td colspan="2"><b>Software built by citizen developers.</b> <code>jankhunt42 passport . --profile citizen</code> leads with a plain-language brief: why it blocks, what the software and its AI agent's tool servers can reach, and who must sign off.</td>
+    <td colspan="2"><b>Software built by citizen developers.</b> <code>jankhunt42 passport . --profile citizen</code> leads with a plain-language brief: why it blocks (here, among other things, development settings that point at the production database), what the software and its AI agent's tool servers can reach, and who must sign off.</td>
   </tr>
   <tr>
-    <td><img src="assets/readme/terminal-citizen.png" alt="Terminal citizen passport: release assessment BLOCK, Jank Score 80 out of 100, exposure High, and an in-plain-terms box listing eight blocking reasons, what the software can reach, the AI service it uses, and an unpinned database tool server reaching a production host"></td>
-    <td><img src="assets/readme/citizen-passport.png" alt="HTML citizen passport: release assessment block under the citizen profile with no custodian named, exposure High, and the plain-language brief with the blocking reasons and what the software and its agent set-up can reach"></td>
+    <td><img src="assets/readme/terminal-citizen.png" alt="Terminal citizen passport: release assessment BLOCK, Jank Score 69 out of 100, exposure High, and an in-plain-terms box listing nine blocking reasons, among them development settings that point at a live production system, then the most serious problem found and what the software can reach"></td>
+    <td><img src="assets/readme/citizen-passport.png" alt="HTML citizen passport: release assessment block under the citizen profile with no custodian named, exposure High, and the plain-language brief with nine blocking reasons, the most serious problem found, what the software can reach and the AI service it uses"></td>
   </tr>
   <tr>
-    <td colspan="2"><b>Run it in a sandbox (opt-in).</b> <code>jankhunt42 sandbox .</code> runs the install hooks and what runs when the folder is opened, in a disposable container with the network off and canary credentials, and reads like a firewall log. <code>passport --sandbox-run</code> sets what it tried against what the code declares.</td>
+    <td colspan="2"><b>Run it in a sandbox (opt-in).</b> <code>jankhunt42 sandbox .</code> runs the install hooks and what runs when the folder is opened, in a disposable container with the network off and canary credentials, and reads like a firewall log. <code>passport --sandbox-run</code> sets what it tried against what the code declares, and <code>passport --sandbox-log</code> does the same for an AI agent's own sandbox (OpenShell or Agent Substrate).</td>
   </tr>
   <tr>
-    <td><img src="assets/readme/terminal-sandbox.png" alt="Terminal sandbox run: 3 ALERT and 3 DENY with complete coverage; an npm postinstall and a VS Code folder-open task ran; the audit log shows canary reads of ~/.aws/credentials and ~/.npmrc, a persistence attempt on ~/.bashrc, two DNS lookups and a blocked connection to 203.0.113.9:443."></td>
-    <td><img src="assets/readme/sandbox-passport.png" alt="HTML passport with the sandbox run: review on P-RUN-001 for 3 ALERTs and P-RUN-002 for 2 destinations the repository does not declare; a table marks api.invoices.example.com declared, and collector.telemetry-cdn.example and 203.0.113.9:443 undeclared."></td>
+    <td><img src="assets/readme/terminal-sandbox.png" alt="Terminal sandbox run: 3 ALERT and 3 DENY with complete coverage of the install, import and open surfaces; an npm postinstall and a VS Code folder-open task ran; the audit log shows canary reads of ~/.aws/credentials and ~/.npmrc, a persistence attempt on ~/.bashrc, two DNS lookups and a blocked connection to 203.0.113.9:443."></td>
+    <td><img src="assets/readme/sandbox-passport.png" alt="HTML passport with the sandbox run and an agent's sandbox log: review on P-RUN-001 for 3 ALERTs, P-RUN-002 for 2 undeclared destinations and P-RUN-003 for 3 destinations in the agent's OpenShell log that the repository does not declare; the run table marks api.invoices.example.com declared, and the log table shows paste.example.net reached and undeclared, two blocked attempts, and the npm registry declared."></td>
   </tr>
 </table>
 
