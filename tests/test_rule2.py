@@ -154,8 +154,9 @@ class Table(unittest.TestCase):
 
     def test_acting_tools(self):
         self.assertEqual([R.acting_tool(n) for n in ("create_pull_request", "fetch", "postMessage", "mcp__x__push_files",
-                                                     "get_issue", "query", "read_file", "list_repos", "search_code")],
-                         [True] * 4 + [False] * 5)
+                                                     "upsert_rows", "get_issue", "query", "read_file", "list_repos",
+                                                     "search_code")],
+                         [True] * 5 + [False] * 5)
 
     def test_approvals(self):
         # Claude Code: a bare name is a built-in tool (WebFetch), never an MCP tool
@@ -207,7 +208,7 @@ class Scan(unittest.TestCase):
         return text[:text.index('"id": "a"')].count("\n") + 1
 
     def test_verdicts(self):
-        want = {"bypass": [("K3", "critical", 2)], "asks": [("K4", "minor", 2)], "onesite": [("K4", "minor", 2)],
+        want = {"bypass": [("K3", "major", 2)], "asks": [("K4", "minor", 2)], "onesite": [("K4", "minor", 2)],
                 "anysite": [("K3", "critical", 1)], "denied": [], "switched": [],
                 "github": [("K3", "major", 2)], "readonly": [], "readtools": [("K4", "info", 2)],
                 "vscode": [("K3", "critical", 2)], "home": [("K3", "critical", 2)], "project": [],
@@ -215,7 +216,7 @@ class Scan(unittest.TestCase):
                 "n8n-half": [("K3", "critical", "agent")], "n8n-schedule": [], "n8n-fixedurl": [],
                 # an address the model picks is untrusted input and a way out at once
                 "n8n-anyurl": [("K3", "critical", "agent")], "n8n-off": [],
-                "slackdeny": [], "slackpart": [("K3", "critical", 2)], "n8n-post": [],
+                "slackdeny": [], "slackpart": [("K3", "major", 2)], "n8n-post": [],
                 "n8n-history": [("K3", "critical", "agent")]}
         for project, expected in want.items():
             with self.subTest(project=project):
@@ -228,9 +229,14 @@ class Scan(unittest.TestCase):
         self.assertIn("Sensitive data: Claude Code shell, PostgreSQL server 'db'.", bypass["message"])
         self.assertEqual(bypass["extra"]["sensitive_data"], "Claude Code shell, PostgreSQL server 'db'")
         self.assertEqual(bypass["extra"]["unapproved"][0], "Fetch server 'web' (permissions are bypassed)")
+        self.assertIn("current Claude Code versions ignore that mode in project files", bypass["message"])
+        self.assertNotIn("ignore that mode", self.found["anysite"][0]["message"])     # an allow entry is honoured
         github = self.found["github"][0]
         self.assertIn("'create_issue' is pre-approved", github["message"])
-        self.assertIn("Possible rather than certain: untrusted input and sensitive data", github["message"])
+        self.assertIn("Possible rather than certain: untrusted input (GitHub server 'github': which repositories its "
+                      "token reaches, and whether they are public); sensitive data (GitHub server 'github':",
+                      github["message"])
+        self.assertIn("chat.tools.autoApprove (.vscode/settings.json)", github["fix"])
         self.assertFalse(github["extra"]["certain"])
         half = self.found["n8n-half"][0]
         self.assertIn("The n8n AI Agent 'Helpdesk agent'", half["message"])

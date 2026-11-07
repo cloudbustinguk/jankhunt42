@@ -783,7 +783,9 @@ RULES: List[Rule] = [
       "Take one of the three away from this agent: split it in two, keep it away from untrusted input, give it no "
       "private data, or limit fetching to named sites (WebFetch(domain:...)); a GitHub server can run read-only "
       "(--read-only). Or make every tool that acts ask a person first: remove bypassPermissions and broad allow "
-      "entries, take acting tools out of autoApprove and alwaysAllow, put n8n tools behind a human review node.",
+      "entries (.claude/settings.json), chat.tools.autoApprove (.vscode/settings.json) or approval_policy = "
+      "\"never\" (Codex), take acting tools out of autoApprove and alwaysAllow, put n8n tools behind a human review "
+      "node.",
       confidence="high", langs=("json", "toml"), check="agent_rule_of_two"),
 
 ]
