@@ -2047,15 +2047,19 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
             line = here[0]["line"] if here else 1
         held = "Untrusted input: %s. Sensitive data: %s. A way to act: %s." % tuple(
             jh_rule2.sources(v, k) for k in jh_rule2.PROPS)
-        doubt = [jh_rule2.WORDS[k] for k in jh_rule2.PROPS if v["best"][k] == jh_rule2.RANK[jh_rule2.POSSIBLE]]
+        doubt = jh_rule2.doubts(v)
         if doubt:
-            held += (" Possible rather than certain: %s, which depends on what the configuration does not show "
-                     "(which repositories a token reaches, and whether they are public)." % " and ".join(doubt))
+            held += " Possible rather than certain: %s." % "; ".join(doubt)
         if v["verdict"] == "K3":
             unapproved = ["%s (%s)" % (p["source"], p["why"]) for p in v["acting"]]
             message = ("%s holds all three parts of the Agents Rule of Two, and nothing approves its actions: %s. %s"
                        % (who, "; ".join(unapproved[:3]), held))
             severity, confidence = ("critical", "high") if v["certain"] else ("major", "medium")
+            if all(p.get("bypass_only") for p in v["acting"]):
+                # project settings: current Claude Code ignores bypassPermissions there, older versions honour it
+                severity, confidence = "major", "medium"
+                message += (" Only bypassPermissions in the project settings removes the approvals: current Claude "
+                            "Code versions ignore that mode in project files, older versions honour it.")
         else:
             unapproved = []
             message = ("%s holds all three parts of the Agents Rule of Two; every tool that acts asks a person "

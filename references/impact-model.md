@@ -92,6 +92,13 @@ The three must hold for the same agent: two agents that hold two properties each
 the same anchoring the exposure class uses (per principal, then the maximum), and it avoids reporting a combination
 no single agent has.
 
+Two boundaries are deliberate. A fixed address (an HTTP tool whose URL is written into the workflow) is treated
+like an internal service: its owner writes it, not anyone, so it is neither untrusted input nor a way out. And
+`JH714` reads the agents an MCP configuration or an n8n workflow defines; Claude Code's own tools (WebFetch, the
+shell) count alongside an MCP configuration, while a project whose settings bypass approvals with no MCP
+configuration is `JH703`'s finding. `bypassPermissions` in project settings is honoured only by older Claude Code
+versions, so a K3 that rests on it alone is major, not critical.
+
 What a part contributes comes from a table of servers and tools built from each one's own documentation. A server
 the table does not know counts for nothing and is named in the finding's `unknown_servers`. The table is the main
 limit on recall: on public repositories that commit MCP configurations, most servers are still outside it.

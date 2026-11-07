@@ -134,10 +134,13 @@ def read_only_github(server: jh_agent.McpServer) -> bool:
 
 # ---------------------------------------------------------------- approvals
 
-_ACT_WORDS = {"create", "post", "send", "write", "push", "update", "delete", "remove", "merge", "comment", "fetch",
-              "navigate", "click", "fill", "submit", "execute", "exec", "run", "commit", "insert", "edit", "move",
-              "upload", "publish", "reply", "forward", "put", "patch", "add", "set", "evaluate", "type", "close",
-              "fork", "assign", "label", "request", "drop", "alter", "invite", "archive", "transfer"}
+_ACT_WORDS = {"create", "post", "send", "write", "push", "update", "upsert", "delete", "remove", "merge", "comment",
+              "fetch", "navigate", "click", "fill", "submit", "execute", "exec", "run", "commit", "insert", "edit",
+              "move", "upload", "publish", "reply", "forward", "put", "patch", "add", "set", "evaluate", "type",
+              "close", "fork", "assign", "label", "request", "drop", "alter", "invite", "archive", "transfer", "clear",
+              "lock", "replace", "rename", "deploy", "invoke", "trigger", "save", "store", "share", "grant", "revoke",
+              "cancel", "restart", "terminate", "kill", "approve", "apply", "install", "purge", "truncate",
+              "overwrite", "import", "modify", "change", "schedule", "refund", "charge", "transfer", "trade", "order"}
 
 
 def acting_tool(name: str) -> bool:
@@ -264,26 +267,30 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
                        what=cap["what"] + " (its acting tools are denied)")
         spec = container.get(s.name) if isinstance(container.get(s.name), dict) else {}
         listed = [x for k in ("autoApprove", "alwaysAllow") for x in (spec.get(k) or []) if isinstance(x, str)]
-        approved = "all" if everything else (_approved(claude["allow"], s.name, False)
-                                             or _approved(listed, s.name, True))
+        explicit = _approved(claude["allow"], s.name, False) or _approved(listed, s.name, True)
+        approved = "all" if everything else explicit
         why = ("permissions are bypassed" if claude["bypass"] else "every tool call is auto-approved") if everything \
             else ("every tool of '%s' is pre-approved" % s.name if approved == "all"
                   else "'%s' is pre-approved" % approved if approved else "")
-        parts.append({"source": "%s server '%s'" % (cap["label"], s.name), "file": rel, "line": s.line,
+        parts.append({"source": "%s server '%s'" % (cap["label"], s.name), "label": cap["label"], "file": rel,
+                      "line": s.line,
                       "A": cap["A"], "B": cap["B"], "C": cap["C"], "what": cap["what"],
-                      "supervised": not approved, "why": why})
+                      "supervised": not approved, "why": why,
+                      "bypass_only": claude["bypass"] and not explicit})
     if claude["file"]:
-        if (claude["bypass"] or _webfetch_any(claude["allow"])) and "WebFetch" not in claude["deny"]:
+        fetch_allowed, bash_allowed = _webfetch_any(claude["allow"]), any(a in _BROAD_BASH for a in claude["allow"])
+        if (claude["bypass"] or fetch_allowed) and "WebFetch" not in claude["deny"]:
             parts.append({"source": "Claude Code WebFetch", "file": claude["file"], "line": claude["line"],
                           "A": YES, "B": "", "C": YES, "what": "any web page, and a request to any address",
-                          "supervised": False, "why": "permissions are bypassed" if claude["bypass"]
-                          else "WebFetch is pre-approved for any address"})
-        if (claude["bypass"] or any(a in _BROAD_BASH for a in claude["allow"])) \
-                and not _BROAD_BASH & set(claude["deny"]):
-            parts.append({"source": "Claude Code shell", "file": claude["file"], "line": claude["line"],
+                          "supervised": False, "bypass_only": not fetch_allowed,
+                          "why": "WebFetch is pre-approved for any address" if fetch_allowed
+                          else "permissions are bypassed"})
+        if (claude["bypass"] or bash_allowed) and not _BROAD_BASH & set(claude["deny"]):
+            parts.append({"source": "Claude Code shell", "label": "Claude Code shell", "file": claude["file"],
+                          "line": claude["line"],
                           "A": "", "B": POSSIBLE, "C": YES, "what": "any command, with the developer's files and "
-                          "credentials", "supervised": False, "why": "permissions are bypassed" if claude["bypass"]
-                          else "any shell command is pre-approved"})
+                          "credentials", "supervised": False, "bypass_only": not bash_allowed,
+                          "why": "any shell command is pre-approved" if bash_allowed else "permissions are bypassed"})
     out = assess(parts)
     out["unknown"] = unknown
     return out
@@ -387,12 +394,42 @@ def n8n_agents(sf: Any) -> List[Dict[str, Any]]:
                     if cap is None:
                         continue
                     label, a, b, c = cap
-                    parts.append({"source": "%s tool '%s'" % (label, raw[tid]["name"]), "node": raw[tid]["name"],
+                    parts.append({"source": "%s tool '%s'" % (label, raw[tid]["name"]), "label": "n8n " + label,
+                                  "node": raw[tid]["name"],
                                   "A": a, "B": b, "C": c, "supervised": gate, "what": "",
                                   "why": "" if gate else "n8n runs an agent's tools without asking"})
             verdict = assess(parts)
             verdict.update(agent=node["name"], unknown=[], raw=node)
             out.append(verdict)
+    return out
+
+
+# Why a part's property is only "possible", by the part's label
+DOUBTS = {"GitHub": "which repositories its token reaches, and whether they are public",
+          "GitLab": "which projects its token reaches, and whether they are public",
+          "Filesystem": "whether the folders it is given hold sensitive files",
+          "Git": "whether the repository is private",
+          "Claude Code shell": "which files and credentials a command can reach",
+          "Resend": "whether the account holds contacts"}
+_USER_TEXT = ("Supabase", "Neon", "Linear", "Atlassian", "Notion", "Sentry")
+
+
+def doubts(verdict: Dict[str, Any]) -> List[str]:
+    """'<property> (<part>: <why it is only possible>)' for each property that rests on a 'possible'."""
+    out = []
+    for k in PROPS:
+        if verdict["best"][k] != RANK[POSSIBLE]:
+            continue
+        why = []
+        for p in verdict["parts"]:
+            if p[k] != POSSIBLE:
+                continue
+            label = p.get("label", "")
+            reason = DOUBTS.get(label) or ("whether text its users write reaches the agent" if label in _USER_TEXT
+                                           and k == "A" else "the tool's operation is not set, so it may write"
+                                           if k == "C" else "what the configuration does not show")
+            why.append("%s: %s" % (p["source"], reason))
+        out.append("%s (%s)" % (WORDS[k], "; ".join(sorted(set(why))[:2])))
     return out
 
 
