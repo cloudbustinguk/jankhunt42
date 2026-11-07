@@ -51,6 +51,7 @@ RULES = {
     "P-DAT-003": "reachable data stores without a declared classification",
     "P-SEC-001": "credentials or data exposed to the public",
     "P-AGT-001": "AI agent guardrails bypassed, or agent tooling unpinned",
+    "P-AGT-002": "an AI agent holds untrusted input, sensitive data and a way to act (the Agents Rule of Two)",
     "P-AI-001": "sensitive data and an external AI service are reachable together",
     "P-OPS-001": "automated tests or CI not observed",
     "P-EVD-001": "mandatory supply-chain evidence missing",
@@ -72,7 +73,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
                 "verified_attestation": False, "custodian": False, "tests": False, "ci": False,
                 "classification": False, "change_control": False, "registry_pinning": False},
     "actions": {"P-OWN-001": "review", "P-CUS-001": "block", "P-DAT-001": "review", "P-DAT-002": "review",
-                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review",
+                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "review", "P-AGT-001": "review", "P-AGT-002": "review",
                 "P-AI-001": "review", "P-OPS-001": "review", "P-EVD-001": "insufficient-evidence",
                 "P-JNK-001": "review", "P-EXP-001": "review", "P-CHG-001": "review", "P-SUP-001": "review", "P-CAP-001": "review",
                 "P-RUN-001": "review", "P-RUN-002": "review", "P-RUN-003": "review", "P-ENV-001": "review"},
@@ -90,7 +91,7 @@ CITIZEN_PRESET: Dict[str, Any] = {
     "require": {"owner": True, "custodian": True, "tests": True, "ci": True, "classification": True,
                 "change_control": True, "registry_pinning": True},
     "actions": {"P-OWN-001": "block", "P-CUS-001": "block", "P-DAT-001": "block", "P-DAT-002": "block",
-                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block",
+                "P-DAT-003": "insufficient-evidence", "P-SEC-001": "block", "P-AGT-001": "block", "P-AGT-002": "block",
                 "P-AI-001": "block", "P-OPS-001": "block", "P-JNK-001": "block", "P-EXP-001": "block",
                 "P-CHG-001": "block", "P-SUP-001": "block", "P-RUN-001": "block",
                 "P-RUN-002": "block", "P-RUN-003": "block", "P-ENV-001": "block"},
@@ -486,6 +487,24 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
                 ["finding:%s:%s:%s" % (f["rule"], f["path"], f["line"]) for f in found])
         else:
             add(rule, "pass", "0 %s leads" % what)
+    # P-AGT-002: K3 (nothing approves the step that acts) takes the rule's action; K4 (every acting step asks a
+    # person) at most review, since the approvals are all that stands between an injection and the data
+    r2 = list(facts.get("rule_of_two") or [])
+    k3 = [r for r in r2 if r["verdict"] == "K3"]
+    shown = "; ".join("%s %s:%s" % (r["verdict"], r["path"], r["line"])
+                      for r in sorted(r2, key=lambda r: r["verdict"])[:5])
+    if k3:
+        add("P-AGT-002", _outcome_for(acts["P-AGT-002"]),
+            "%d agent(s) hold untrusted input, sensitive data and a way to act with nothing approving the step "
+            "that acts%s: %s" % (len(k3), "" if len(r2) == len(k3) else ", %d more with approvals" % (len(r2) - len(k3)),
+                                  shown), ["finding:%s:%s:%s" % (r["rule"], r["path"], r["line"]) for r in r2])
+    elif r2:
+        cap = acts["P-AGT-002"] if ACTION_RANK[acts["P-AGT-002"]] < ACTION_RANK["review"] else "review"
+        add("P-AGT-002", _outcome_for(cap),
+            "%d agent(s) hold untrusted input, sensitive data and a way to act; every acting step asks a person "
+            "first: %s" % (len(r2), shown), ["finding:%s:%s:%s" % (r["rule"], r["path"], r["line"]) for r in r2])
+    else:
+        add("P-AGT-002", "pass", "no agent holds untrusted input, sensitive data and a way to act together")
     # P-AI-001: co-reachability, not a data flow; it asks for the provider's
     # data handling to be checked before release.
     pairs = list(facts.get("ai_sensitive_pairs") or [])

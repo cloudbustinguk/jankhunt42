@@ -673,7 +673,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     gov_rules = set(jh_passport.GOVERNANCE_RULES)
     # an operator's --ignore-rule is the operator's own call, so it applies to the governance scans too, and the
     # passport records it (scope.ignored_rules)
-    raw = scan_sources(raw_pre[1], ScanOptions(min_severity="major", rule_ids=gov_rules, max_per_file_rule=1000,
+    # every severity: the leads keep major and above, and P-AGT-002 also counts the minor K4 agents (JH714)
+    raw = scan_sources(raw_pre[1], ScanOptions(min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000,
                                                max_per_rule=100000, honor_suppressions=False,
                                                ignore_rule_ids=ignored)).findings
     tuned = jh_config.apply_to_findings(scan_cfg, scan_sources(main_pre[1], ScanOptions(

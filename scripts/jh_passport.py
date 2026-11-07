@@ -51,7 +51,8 @@ EXPOSURE_RULES = {"JH132", "JH133", "JH134", "JH135", "JH136"}
 SECRET_RULES = {"JH101", "JH401", "JH415"}
 # agent guardrails, sandboxes and dev containers, and CI that runs agent branches with secrets
 AGENT_RULES = {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711", "JH432"}
-GOVERNANCE_RULES = EXPOSURE_RULES | SECRET_RULES | AGENT_RULES | {"JH131"}
+RULE2_RULES = {"JH714"}           # the Agents Rule of Two: P-AGT-002, not P-AGT-001
+GOVERNANCE_RULES = EXPOSURE_RULES | SECRET_RULES | AGENT_RULES | RULE2_RULES | {"JH131"}
 
 
 def _lead(f: Any) -> Dict[str, Any]:
@@ -68,9 +69,25 @@ def governance_leads(findings: Sequence[Any]) -> Tuple[List[Dict[str, Any]], Lis
     serious = [f for f in findings if SEV_RANK.get(f.severity, 99) <= SEV_RANK["major"]]
     exposure = {_lead_key(d): d for d in (_lead(f) for f in serious if f.rule in EXPOSURE_RULES
                 or (f.rule in SECRET_RULES and f.severity in ("blocker", "critical")))}
-    agent = {_lead_key(d): d for d in (_lead(f) for f in serious if f.category == "agent" or f.rule in AGENT_RULES
-             or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path))))}
+    agent = {_lead_key(d): d for d in (_lead(f) for f in serious if f.rule not in RULE2_RULES and (
+             f.category == "agent" or f.rule in AGENT_RULES
+             or (f.rule == "JH131" and (is_agent_context(f.path) or is_mcp_config(f.path)))))}
     return [exposure[k] for k in sorted(exposure)], [agent[k] for k in sorted(agent)]
+
+
+def rule_of_two_leads(findings: Sequence[Any]) -> List[Dict[str, Any]]:
+    """Agents that hold untrusted input, sensitive data and a way to act (JH714), sorted: K3 (nothing approves
+    the step that acts) and K4 (every acting step asks a person). A K4 that rests partly on a 'possible' (a GitHub
+    server's reach) is left out: the scan reports it for information only."""
+    rows = {}
+    for f in findings:
+        verdict = f.extra.get("verdict") if f.rule in RULE2_RULES else None
+        if verdict == "K3" or (verdict == "K4" and f.extra.get("certain")):
+            d = _lead(f)
+            d.update(verdict=f.extra["verdict"], certain=bool(f.extra.get("certain")),
+                     agent=safe_text(str(f.extra.get("agent", "")))[:80])
+            rows[_lead_key(d)] = d
+    return [rows[k] for k in sorted(rows)]
 
 
 def agent_policy_evidence(items: Sequence[jh_map.Item], findings: Sequence[Any]) -> Dict[str, Any]:
@@ -320,6 +337,8 @@ _PLAIN = {
     "P-DAT-003": "Nobody has said how sensitive the data it touches is.",
     "P-SEC-001": "Secret keys or data are exposed to the public.",
     "P-AGT-001": "The AI agent set-up can act without asking, or pulls tools that can change without notice.",
+    "P-AGT-002": "An AI agent here reads text anyone can write, reaches private data, and can act on it; a message "
+                 "planted in what it reads could make it send or change that data.",
     "P-AI-001": "It may send sensitive data to an outside AI service; nobody has checked how that service handles it.",
     "P-OPS-001": "There are no automated tests or CI to catch mistakes before they ship.",
     "P-EVD-001": "Required build records are missing.",
@@ -618,6 +637,10 @@ def remediation(decision: Dict[str, Any], ops: Dict[str, Dict[str, Any]], owner_
         elif rule == "P-AGT-001":
             steps.append("Remove agent approval bypasses, auto-run hooks, and credential literals from the repository, "
                          "and pin every MCP server (`jankhunt42 scan . --category agent`).")
+        elif rule == "P-AGT-002":
+            steps.append("Take one of the three away from each agent listed (untrusted input, private data, or the "
+                         "way to act), or make every tool that acts ask a person first "
+                         "(`jankhunt42 scan . --rule JH714`).")
         elif rule == "P-OPS-001":
             steps.append("Add automated tests and a CI workflow that runs them on every change.")
         elif rule == "P-AI-001":
@@ -685,6 +708,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
     eff = jh_policy.merge(operator_policy, repo_policies, warns, profile)
     declared_custodians = _declared_custodians(passport_cfg, warns)
     exposure_leads, agent_leads = governance_leads(governance_tuned if governance_tuned is not None else findings)
+    rule_of_two = rule_of_two_leads(governance_tuned if governance_tuned is not None else findings)
     suppressed = 0
     if governance_findings is not None:
         raw_exposure, raw_agent = governance_leads(governance_findings)
@@ -695,6 +719,8 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             # (the tuned lead comes last, so a raised severity is kept).
             exposure_leads = sorted({_lead_key(d): d for d in raw_exposure + exposure_leads}.values(), key=_lead_key)
             agent_leads = sorted({_lead_key(d): d for d in raw_agent + agent_leads}.values(), key=_lead_key)
+            rule_of_two = sorted({_lead_key(d): d for d in rule_of_two_leads(governance_findings) + rule_of_two}
+                                 .values(), key=_lead_key)
         if suppressed:
             warns.append("%d public-exposure or agent lead(s) are suppressed or re-rated by repository scan config or "
                          "inline pragmas%s" % (suppressed, "; the citizen profile does not honour them"
@@ -745,6 +771,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "declared_custodians": declared_custodians,
         "exposure_findings": exposure_leads,
         "agent_findings": agent_leads,
+        "rule_of_two": rule_of_two,
         "ai_sensitive_pairs": ai["sensitive_data_with_ai"],
         "operations": {k: v["state"] for k, v in ops.items()},
         "change_control": {"state": cc["state"], "severe": severe, "weak": weak, "unknown": unknown,
@@ -782,6 +809,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "sandbox_run": sandbox,
         "sandbox_log": runtime_log,
         "environment_crossings": {"count": len(crossings), "rows": crossings[:MAX_CROSSINGS]},
+        "agent_rule_of_two": {"count": len(rule_of_two), "rows": rule_of_two[:MAX_CROSSINGS]},
         "triggers": jh_n8n.trigger_counts((map_report or {}).get('triggers') or jh_n8n.trigger_summary([])),
         "tool": TOOL,
         "tool_version": VERSION,

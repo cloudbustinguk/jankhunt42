@@ -99,6 +99,7 @@ RULES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "P-DAT-003": (("MAP 1.1", "MEASURE 2.10"), ("III",)),
     "P-SEC-001": (("MEASURE 2.7",), ("IV",)),
     "P-AGT-001": (("GOVERN 3.2", "MAP 3.5", "GOVERN 6.1"), ("IV",)),
+    "P-AGT-002": (("MAP 3.5", "MEASURE 2.7", "GOVERN 3.2"), ("III", "IV")),
     "P-AI-001": (("MEASURE 2.10", "MAP 4.1", "GOVERN 6.1", "MANAGE 3.1"), ("II", "IV")),
     "P-OPS-001": (("MEASURE 2.1", "MEASURE 2.5"), ("III",)),
     "P-EVD-001": (("GOVERN 6.1", "MAP 4.1", "MANAGE 3.1"), ("IV",)),
@@ -208,6 +209,7 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
     "JH710": ("CD-SEC-07", "ASI05"), "JH711": ("CD-SEC-07", "ASI05"),
     "JH712": ("CD-SEC-07", "ASI02", "ASI05"),
     "JH713": ("CD-SEC-04", "CD-SEC-07", "ASI03"),
+    "JH714": ("CD-SEC-04", "CD-SEC-07", "ASI01", "ASI02"),
 }
 
 

@@ -775,6 +775,16 @@ RULES: List[Rule] = [
       "An Agent Substrate actor template puts a credential into the sandbox's environment, where the agent, any command a prompt injection makes it run, and the actor's memory snapshots all hold it.",
       "Keep the key in a Secret and let the egress gateway inject it: an https egress rule with a replaceHeaders effect, and a placeholder value in the template.",
       confidence="high", check="sandbox_template_credential", kinds=("substrate",)),
+    R("JH714", "AI agent holds untrusted input, private data and a way to act", "critical", "agent",
+      "One agent configuration grants all three parts of the Agents Rule of Two (the lethal trifecta): it reads text "
+      "anyone can write, it reaches sensitive data, and it can change things or send data out, with no person "
+      "approving the step that acts. A prompt injection in what it reads can make it read the data and send or "
+      "change it.",
+      "Take one of the three away from this agent: split it in two, keep it away from untrusted input, give it no "
+      "private data, or limit fetching to named sites (WebFetch(domain:...)); a GitHub server can run read-only "
+      "(--read-only). Or make every tool that acts ask a person first: remove bypassPermissions and broad allow "
+      "entries, take acting tools out of autoApprove and alwaysAllow, put n8n tools behind a human review node.",
+      confidence="high", langs=("json", "toml"), check="agent_rule_of_two"),
 
 ]
 
