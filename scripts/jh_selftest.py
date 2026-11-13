@@ -713,7 +713,7 @@ MUTANTS = [
     ('M345-cs-http-port-ignored', 'a topic HTTP request to a non-standard port is not reported', 'jh_powerplatform.py', '        elif port and port != 443:', '        elif False:', 'test_powerplatform.py'),
     ('M346-cs-http-connector-host-ignored', 'a raw HTTP request to a service with a connector is not reported', 'jh_powerplatform.py', '        elif _CONNECTOR_HOST.match(host):', '        elif False:', 'test_powerplatform.py'),
     ('M347-cs-http-loopback-reported', 'a topic HTTP request to localhost is reported', 'jh_powerplatform.py', '        if not host or host in _LOOPBACK:', '        if not host:', 'test_powerplatform.py'),
-    ('M348-cs-http-query-shown', "a topic URL's query string is shown in the evidence", 'jh_powerplatform.py', '":%d" % port if port else "", parts.path[:60])', '":%d" % port if port else "", (parts.path + "?" + parts.query)[:60])', 'test_powerplatform.py'),
+    ('M348-cs-http-query-shown', "a topic URL's query string is shown in the evidence", 'jh_powerplatform.py', 'cut(parts.path, 60)', 'cut(parts.path + "?" + parts.query, 60)', 'test_powerplatform.py'),
     ('M349-cs-instructions-present-reported', 'an agent with instructions is reported as having none', 'jh_powerplatform.py', '    if at is not None and _value(lines, at):', '    if False:', 'test_powerplatform.py'),
     ('M350-cs-generative-off-reported', 'an agent without generative orchestration is reported for missing instructions', 'jh_powerplatform.py', '    if not on or _top(lines, "kind") is None', '    if _top(lines, "kind") is None', 'test_powerplatform.py'),
     ('M351-cs-gpt-other-read', 'a GPT component other than gpt.default is read as the instructions', 'jh_powerplatform.py', '        if not name.lower().endswith(".gpt.default"):', '        if False:', 'test_powerplatform.py'),
@@ -782,7 +782,7 @@ MUTANTS = [
     ('M418-n8n-ai-http-skipped', 'an HTTP request to an AI API is not read', 'jh_n8n.py', "        elif raw['type'] == _BASE + 'httpRequest' and _ai_host(raw['parameters'].get('url')):", '        elif False:', 'test_n8n_rules.py'),
     ('M419-n8n-any-host-is-ai', 'an HTTP request to any host counts as an AI API', 'jh_n8n.py', '    return isinstance(url, str) and not dynamic(url) and bool(_AI_HOST.match(url))', '    return isinstance(url, str)', 'test_n8n_rules.py'),
     ('M420-n8n-dispatch-off', 'the n8n rules never run', 'jh_rules.py', '                    elif rule.check.startswith("n8n_"):\n                        found = jh_n8n.findings(sf, rule)', '                    elif rule.check.startswith("n8n_"):\n                        found = []', 'test_n8n_rules.py'),
-    ('M421-n8n-rejection-silent', 'an export the reader rejects is skipped without a word', 'jh_n8n.py', "            GAPS.append('%s: n8n workflow the reader rejects (%s), not checked' % (sf.rel, reason[:60]))", '            pass', 'test_n8n_rules.py'),
+    ('M421-n8n-rejection-silent', 'an export the reader rejects is skipped without a word', 'jh_n8n.py', "            GAPS.append('%s: n8n workflow the reader rejects (%s), not checked' % (sf.rel, cut(reason, 60)))", '            pass', 'test_n8n_rules.py'),
     ('M422-n8n-rejection-not-reported', "a rejected export's warning is left out of the report", 'jankhunt42', '        meta["archive_warnings"] = list((jh_powerplatform.GAPS + jh_n8n.GAPS)[:50])', '        meta["archive_warnings"] = list(jh_powerplatform.GAPS[:50])', 'test_n8n_rules.py'),
     ('M423-n8n-legacy-credential-rejected', 'an older export that names its credentials is rejected', 'jh_n8n.py', '                if isinstance(v, str):', '                if False:', 'test_n8n_rules.py'),
     ('M424-n8n-null-output-rejected', 'an output with nothing connected rejects the export', 'jh_n8n.py', '                    if group is None:', '                    if False:', 'test_n8n_rules.py'),
@@ -891,7 +891,7 @@ MUTANTS = [
     ('M527-env-saas-prod-counted', "a development configuration calling a third party's production API counts", 'jh_passport.py', '                if env == "non-production" and target.get("kind") == "external":', '                if False:', 'test_environments.py'),
     ('M528-env-brief-raw-rule-text', "the citizen brief shows P-ENV-001's rule text instead of plain words", 'jh_passport.py', '    "P-ENV-001": "Its development settings point at a live production system (or its production settings at a test "', '    "P-ENV-001-": "Its development settings point at a live production system (or its production settings at a test "', 'test_environments.py'),
     ('M529-r2-bare-claude-allow', "a bare name in Claude Code's allow list (WebFetch) counts as pre-approving an MCP tool", 'jh_rule2.py', '        if (m and m.group(1) != server) or (not m and not bare):', '        if (m and m.group(1) != server):', 'test_rule2.py'),
-    ('M530-r2-deny-server-ignored', 'a server Claude Code denies still counts', 'jh_rule2.py', '               and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])]', '               and True]', 'test_rule2.py'),
+    ('M530-r2-deny-server-ignored', 'a server Claude Code denies still counts', 'jh_rule2.py', '               and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])', '               and True', 'test_rule2.py'),
     ('M531-r2-deny-webfetch-ignored', 'a denied WebFetch still counts under bypassPermissions', 'jh_rule2.py', '        if (claude["bypass"] or fetch_allowed) and "WebFetch" not in claude["deny"]:', '        if (claude["bypass"] or fetch_allowed):', 'test_rule2.py'),
     ('M532-r2-github-readonly-ignored', 'a read-only GitHub server still has a way to act', 'jh_rule2.py', '            if label == "GitHub" and read_only_github(server):', '            if False:', 'test_rule2.py'),
     ('M533-r2-supervision-anywhere', 'supervision is judged on every part, not on the parts that act', 'jh_rule2.py', '        unsupervised = [p for p in parts if p["C"] and not p["supervised"]]', '        unsupervised = [p for p in parts if not p["supervised"]]', 'test_rule2.py'),
@@ -1155,7 +1155,12 @@ def check_mutants() -> Check:
               "survived": [r["id"] for r in results if r["status"] == "survived"],
               "invalid": [r["id"] for r in results if r["status"] == "invalid"], "mutants": results}
     c.status = "pass" if killed == len(results) == len(MUTANTS) else "fail"
-    c.detail = "%d/%d mutants killed" % (killed, len(MUTANTS))
+    invalid = c.data["invalid"]
+    if invalid:
+        c.detail = "%d/%d mutants killed; %d anchor(s) no longer apply: %s" % (
+            killed, len(MUTANTS), len(invalid), ", ".join(invalid))
+    else:
+        c.detail = "%d/%d mutants killed" % (killed, len(MUTANTS))
     return c
 
 
