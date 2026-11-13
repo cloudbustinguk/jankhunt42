@@ -1420,6 +1420,56 @@ def _line_matching(sf: SourceFile, pattern: str, start: int = 0, default: int = 
 _SHELL_ALLOW_ALL = {"Bash", "Bash(*)", "Bash(:*)", "Bash(**)"}
 
 
+def claude_scope(rel: str) -> str:
+    """Which Claude Code settings file this is: 'managed' (managed-settings.json or a managed-settings.d
+    fragment, which an administrator deploys and every key applies from), 'local' (.claude/settings.local.json),
+    'project' (.claude/settings.json), or '' for any other file. Claude Code ignores some keys in the last two."""
+    posix = "/" + rel.replace(os.sep, "/").lower()
+    if posix.endswith("/managed-settings.json") or (posix.endswith(".json") and "/managed-settings.d/" in posix):
+        return "managed"
+    if "/.claude/settings.local" in posix:
+        return "local"
+    return "project" if "/.claude/settings" in posix else ""
+
+
+def _cursor_cli_approvals(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
+    """.cursor/cli.json: permissions.allow entries that pre-approve any command, every MCP tool or any address."""
+    perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+    allow = [str(e).strip() for e in perms.get("allow") or [] if isinstance(e, str)] \
+        if isinstance(perms.get("allow"), list) else []
+    deny = {str(e).strip() for e in perms.get("deny") or [] if isinstance(e, str)} \
+        if isinstance(perms.get("deny"), list) else set()
+    start = _line_matching(sf, r'"allow"\s*:') - 1
+    out: List[Finding] = []
+    seen = set()
+    for entry in allow:
+        if entry in deny:
+            continue
+        m = re.match(r"^(Shell|Mcp|WebFetch)\((.*)\)$", entry)
+        if not m or m.group(1) in seen:
+            continue
+        kind, spec = m.group(1), m.group(2).strip()
+        base = spec.split(":", 1)[0].split()[0].rsplit("/", 1)[-1].lower() if spec.split(":", 1)[0].split() else ""
+        if kind == "Shell" and (base in ("*", "**") or base in _RUNNERS):
+            what, severity = ("any shell command" if base in ("*", "**") else "any command run through %s" % base), "major"
+            message = ("The Cursor CLI's project permissions pre-approve %s (`%s`), so the agent runs it without "
+                       "asking." % (what, entry.replace("`", "'")))
+        elif kind == "Mcp" and spec.replace(" ", "") in ("*:*", "*"):
+            severity = "major"
+            message = ("The Cursor CLI's project permissions pre-approve every tool of every MCP server (`%s`), "
+                       "including servers that later commits add." % entry)
+        elif kind == "WebFetch" and spec in ("*", "**"):
+            severity = "minor"
+            message = ("The Cursor CLI's project permissions pre-approve fetching any address (`%s`): the agent "
+                       "reads any web page, and can send a request anywhere, without asking." % entry)
+        else:
+            continue
+        seen.add(kind)
+        out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % entry), start), severity=severity,
+                                message=message))
+    return out
+
+
 @check("agent_config_approvals")
 def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
@@ -1441,22 +1491,34 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
     data = _settings(sf)
     if data is None:
         return out
+    scope = claude_scope(sf.rel)
+    if posix.endswith(".cursor/cli.json"):
+        return _cursor_cli_approvals(sf, rule, data)
     if posix.endswith(".vscode/settings.json"):
         for key in ("chat.tools.autoApprove", "chat.tools.global.autoApprove"):
             if data.get(key) is True:
                 add(re.escape('"%s"' % key), "critical", (
                     "VS Code agent mode auto-approves every tool call for anyone who opens this folder; this is "
                     "the setting prompt-injection attacks write to gain code execution (CVE-2025-53773)."))
-    elif "/.claude/settings" in posix:
+    elif scope:
         perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
         if perms.get("defaultMode") == "bypassPermissions":
             add(r'"defaultMode"', "major", (
+                "Managed settings start every Claude Code session with every permission prompt skipped."
+                if scope == "managed" else
                 "Claude Code would skip every permission prompt; current versions ignore this mode in project "
                 "files, older versions honour it."))
+        # the shared project file cannot set this one; a committed local file and managed settings can
+        if data.get("skipDangerousModePermissionPrompt") is True and scope in ("local", "managed"):
+            add(r'"skipDangerousModePermissionPrompt"', "major", (
+                "Claude Code enters bypassPermissions mode without its confirmation dialog, so nothing warns the "
+                "person before every permission prompt is skipped."))
         allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
         for entry in allow:
             if isinstance(entry, str) and entry.strip() in _SHELL_ALLOW_ALL:
                 add(re.escape('"%s"' % entry), "major",
+                    "Unrestricted shell access is pre-approved for every session these managed settings reach."
+                    if scope == "managed" else
                     "Unrestricted shell access is pre-approved for every session that trusts this repository.",
                     start=_line_matching(sf, r'"allow"\s*:') - 1)
                 break
@@ -1526,6 +1588,16 @@ def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
             yield i + 1, section, m.group(1).strip("\"'"), m.group(2)
 
 
+# network proxy switches that widen what Codex's sandboxed commands reach (true is the widening value)
+_CODEX_PROXY_WIDEN = {
+    "dangerously_allow_all_unix_sockets": ("lets sandboxed commands connect to every Unix socket, including the "
+                                           "Docker socket, which controls the host", "major"),
+    "dangerously_allow_non_loopback_proxy": ("may listen beyond this machine, so other hosts on the network can "
+                                             "send traffic through it", "major"),
+    "allow_local_binding": ("lets sandboxed commands reach services on this machine and on private addresses", "minor"),
+}
+
+
 def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
     for line, section, key, value in _toml_sections(sf):
@@ -1545,14 +1617,28 @@ def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
                 "Codex's default permission profile has no filesystem or network sandbox.")))
         elif re.search(r"network_proxy$", section) and key == "domains" and re.search(r"""["']\*["']\s*=\s*["']allow""", value):
             out.append(make_finding(rule, sf, line, message="The Codex network allowlist admits every host."))
+        elif re.search(r"(?:^|\.)network(?:_proxy)?$", section) and v == "true" and key in _CODEX_PROXY_WIDEN:
+            why, severity = _CODEX_PROXY_WIDEN[key]
+            out.append(make_finding(rule, sf, line, severity=severity, message="Codex's sandbox network proxy %s." % why))
+        elif (re.search(r"(?:^|\.)network(?:_proxy)?\.unix_sockets$", section) and v == "allow"
+              and re.search(r"docker\.sock|podman", key)) or \
+                (re.search(r"(?:^|\.)network(?:_proxy)?$", section) and key == "unix_sockets"
+                 and re.search(r"""(?:docker\.sock|podman)[^"']*["']\s*=\s*["']allow""", value)):
+            out.append(make_finding(rule, sf, line, message=(
+                "Codex's sandboxed commands can use the container engine socket, which controls the host.")))
     return out[:10]
+
+
+def _str_list(value: Any) -> List[str]:
+    return [str(v) for v in value if isinstance(v, str)] if isinstance(value, list) else []
 
 
 def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     data = _settings(sf)
-    box = data.get("sandbox") if isinstance(data, dict) else None
-    if not isinstance(box, dict):
+    if not isinstance(data, dict):
         return []
+    box = data.get("sandbox") if isinstance(data.get("sandbox"), dict) else {}
+    scope = claude_scope(sf.rel)
     out: List[Finding] = []
 
     def add(key: str, message: str, severity: Optional[str] = None) -> None:
@@ -1583,9 +1669,70 @@ def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
         if _CRED_PATHS.match(str(p).strip().rstrip("/") or "/"):
             add("allowWrite", "Sandboxed commands can write to %s (home, root, or credential paths)." % trim(str(p), 40))
             break
+    for p in _str_list(fs.get("allowRead")):
+        if _CRED_PATHS.match(p.strip().rstrip("/") or "/"):
+            add("allowRead", "Sandboxed commands can read %s again (home, root, or credential paths), where a "
+                             "denyRead rule had closed it." % trim(p, 40))
+            break
+    perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+    for p in _str_list(perms.get("additionalDirectories")):
+        if _CRED_PATHS.match(p.strip().rstrip("/") or "/"):
+            add("additionalDirectories", "Claude Code's file tools reach %s (home, root, or credential paths), "
+                                         "outside the project." % trim(p, 40))
+            break
+    if net.get("allowLocalBinding") is True:
+        add("allowLocalBinding", "Sandboxed commands can listen on ports and connect to services on this machine "
+                                 "(macOS), such as a local database or a development server.", "minor")
     if box.get("enableWeakerNestedSandbox") is True:
         add("enableWeakerNestedSandbox", "The nested Linux sandbox shares the container's /proc; it is weaker by "
                                          "design and relies on the outer container.", "minor")
+    if scope == "managed":      # Claude Code ignores these three in a repository's own settings files
+        if fs.get("disabled") is True:
+            add("disabled", "Managed settings switch off the sandbox's filesystem isolation: sandboxed commands "
+                            "read and write wherever the user can.")
+        if box.get("allowNestedUserNamespaces") is True:
+            add("allowNestedUserNamespaces", "Sandboxed commands may create user namespaces (Linux, WSL2), which "
+                                             "lets them get around the sandbox's file protections.")
+        if box.get("allowAppleEvents") is True:
+            add("allowAppleEvents", "Sandboxed commands may send Apple Events (macOS), which drive other "
+                                    "applications outside the sandbox.")
+    return out[:10]
+
+
+def _claude_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH710 for Claude Code settings: the sandbox is on paper but something else decides, or nothing reports."""
+    data = _settings(sf)
+    box = data.get("sandbox") if isinstance(data, dict) else None
+    if not isinstance(box, dict):
+        return []
+    scope = claude_scope(sf.rel)
+    out: List[Finding] = []
+
+    def add(key: str, message: str, severity: Optional[str] = None) -> None:
+        out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % key)), message=message,
+                                severity=severity or rule.severity))
+
+    net = box.get("network") if isinstance(box.get("network"), dict) else {}
+    for key, kind in (("httpProxyPort", "HTTP"), ("socksProxyPort", "SOCKS5")):
+        if isinstance(net.get(key), int) and not isinstance(net.get(key), bool):
+            add(key, "Sandboxed commands send their %s traffic to whatever listens on local port %d, in place of "
+                     "the proxy Claude Code runs; that program, not the sandbox's allowed domains, decides what "
+                     "they reach." % (kind, net[key]))
+            break
+    if box.get("enableWeakerNetworkIsolation") is True:
+        add("enableWeakerNetworkIsolation", "The macOS sandbox's network isolation is loosened so gh, gcloud and "
+                                            "terraform can verify TLS behind an inspecting proxy; it is a "
+                                            "weaker boundary by design.", "minor")
+    silenced = box.get("ignoreViolations")
+    if isinstance(silenced, dict) and any(
+            str(cmd).strip() in ("*", "") and any(str(v).strip() in ("*", "", "/") for v in _str_list(what))
+            for cmd, what in silenced.items()):
+        add("ignoreViolations", "Sandbox violation reports are silenced for every command and every path, so "
+                                "a blocked attempt leaves no notice.", "minor")
+    creds = box.get("credentials") if isinstance(box.get("credentials"), dict) else {}
+    if scope == "managed" and creds.get("allowPlaintextInject") is True:   # ignored in a repository's own files
+        add("allowPlaintextInject", "The sandbox proxy puts real credentials into plain HTTP requests, where "
+                                    "anything on the path can read them.")
     return out[:10]
 
 
@@ -1703,7 +1850,7 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
     if posix.endswith(".codex/config.toml"):
         return _codex_sandbox(sf, rule)
-    if "/.claude/settings" in posix:
+    if claude_scope(sf.rel):
         return _claude_sandbox(sf, rule)
     if "substrate" in sf.kinds:
         return _substrate_scope(sf, rule)
@@ -1741,6 +1888,8 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
 def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
     if "substrate" in sf.kinds:
         return _substrate_enforcement(sf, rule)
+    if claude_scope(sf.rel):
+        return _claude_enforcement(sf, rule)
     out: List[Finding] = []
     for doc in _openshell_docs(sf):
         land = doc.get("landlock")
@@ -1842,6 +1991,47 @@ def _hook_actions(hooks: Any) -> Dict[str, List[Tuple[str, str]]]:
                 for kind in ("command", "url"):
                     if isinstance(hook.get(kind), str) and hook[kind].strip():
                         out.setdefault(str(event), []).append((kind, hook[kind]))
+    return out
+
+
+def _claude_plugins(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
+    """Plugin marketplaces a repository registers for everyone (extraKnownMarketplaces) and the plugins it turns
+    on from them (enabledPlugins): a plugin brings hooks, MCP servers and commands of its own."""
+    out: List[Finding] = []
+    markets = data.get("extraKnownMarketplaces") if isinstance(data.get("extraKnownMarketplaces"), dict) else {}
+    enabled = data.get("enabledPlugins") if isinstance(data.get("enabledPlugins"), dict) else {}
+    remote: List[Tuple[int, str, str, List[str]]] = []      # (line, marketplace, where, plugins turned on)
+    for name, spec in sorted(markets.items()):
+        src = spec.get("source") if isinstance(spec, dict) else None
+        if not isinstance(src, dict):
+            continue
+        kind = str(src.get("source") or src.get("type") or "")
+        where = str(src.get("repo") or src.get("url") or src.get("path") or kind)
+        line_no = _line_matching(sf, re.escape('"%s"' % name), _line_matching(sf, r'"extraKnownMarketplaces"') - 1)
+        if re.match(r"(?i)^http://(?!localhost[:/]|127\.0\.0\.1[:/])", where):
+            out.append(make_finding(rule, sf, line_no, severity="major", message=(
+                "Plugin marketplace '%s' is fetched over plain HTTP, so anyone on the network path can swap the "
+                "plugins it lists." % trim(str(name), 40)), evidence=redact_secrets(trim(where, 160))))
+        helper = src.get("headersHelper")
+        if isinstance(helper, str) and helper.strip():
+            out.append(make_finding(rule, sf, _line_matching(sf, r'"headersHelper"', line_no - 1), severity="minor",
+                                    message="Plugin marketplace '%s' runs a shell command from committed project "
+                                    "settings to make its request headers." % trim(str(name), 40),
+                                    evidence=redact_secrets(trim(helper, 160))))
+        plugins = sorted(str(k).rsplit("@", 1)[0] for k, v in enabled.items()
+                         if v is True and isinstance(k, str) and k.rsplit("@", 1)[-1] == name and "@" in k)
+        if plugins and kind not in ("file", "directory", "settings"):
+            remote.append((line_no, str(name), where, plugins))
+    if remote:      # one finding for the file, at the first marketplace
+        names = [n for _, n, _, _ in remote]
+        plugins = sorted({p for _, _, _, ps in remote for p in ps})
+        out.insert(0, make_finding(rule, sf, remote[0][0], severity="minor", message=(
+            "Project settings register %d plugin marketplace(s) (%s) and turn on %d plugin(s) from them (%s) for "
+            "everyone who trusts this repository; a plugin brings its own hooks, MCP servers and commands, and "
+            "whoever controls a marketplace controls its updates."
+            % (len(names), trim(", ".join("'%s'" % n for n in names[:3]), 90), len(plugins),
+               trim(", ".join(plugins[:3]), 60))),
+            evidence=redact_secrets(trim("; ".join(w for _, _, w, _ in remote[:3]), 160))))
     return out
 
 
@@ -1979,8 +2169,11 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                     "malicious repositories use this to run code on open." % trim(str(task.get("label", "?")), 40)),
                     evidence=redact_secrets(trim(command, 160))))
         return out
-    if "/.claude/settings" not in posix and not posix.endswith("/.gemini/settings.json"):
+    scope = claude_scope(sf.rel)
+    # managed settings are an administrator's own hooks, helpers and gateway: by design, not a repository's doing
+    if scope == "managed" or (not scope and not posix.endswith("/.gemini/settings.json")):
         return out
+    plugins = _claude_plugins(sf, rule, data) if scope else []
     for event, actions in sorted(_hook_actions(data.get("hooks")).items()):
         urls = [v for k, v in actions if k == "url"]
         line_no = _line_matching(sf, re.escape('"%s"' % event))
@@ -2009,7 +2202,10 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                                     severity="minor" if local else severity, message=(
                 "Committed agent settings set %s, which reroutes the agent's API traffic (and its key) or loads "
                 "code into it (CVE-2026-21852 class)." % key)))
-    return out[:10]
+    # the scan keeps the first few findings per file and rule: the marketplace summary and anything major about
+    # one go first, a marketplace's helper command after the hooks
+    first = [f for f in plugins if f.severity == "major" or "turn on" in f.message]
+    return first[:3] + out[:10] + [f for f in plugins if f not in first][:2]
 
 
 # --------------------------------------------------------------------------- MCP servers

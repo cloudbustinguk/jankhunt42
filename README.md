@@ -10,7 +10,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.16.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.17.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -64,8 +64,9 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
 
 - **Agent workspace checks** (`JH701`-`JH714`, `JH432`):
   - an agent that holds untrusted input, private data and a way to act with nothing approving the step that acts (the Agents Rule of Two, `JH714`: MCP configurations with their Claude Code or VS Code settings, and n8n AI Agent nodes);
-  - approval bypasses committed in VS Code, Claude Code, Codex, or Zed settings;
-  - sandboxes that let agent commands reach any host, the Docker socket, or credential paths (Codex, Claude Code, OpenShell, Agent Substrate), and dev containers that weaken isolation;
+  - approval bypasses committed in VS Code, Claude Code, Codex, Zed, or Cursor CLI settings;
+  - sandboxes that let agent commands reach any host, the Docker socket, or credential paths, or that hand their network decisions to another program (Codex, Claude Code, OpenShell, Agent Substrate), and dev containers that weaken isolation;
+  - Claude Code managed settings that switch a protection off, and plugin marketplaces a project turns on for everyone;
   - Agent Substrate actor templates that put an API key inside the sandbox, and egress rules that pass a keyed API through where the gateway cannot inject the key;
   - CI that runs any pushed branch, an agent's included, with secrets or a write token;
   - commands that run on folder open, in dev containers, or in hooks;

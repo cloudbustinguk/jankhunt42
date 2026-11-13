@@ -202,6 +202,36 @@ def vscode_auto_approve(project: str) -> bool:
                                                                      "chat.tools.global.autoApprove"))
 
 
+def cursor_cli(project: str) -> Dict[str, List[Tuple[str, str]]]:
+    """The Cursor CLI's project permissions (.cursor/cli.json): the (server, tool) pairs of its Mcp(server:tool)
+    allow and deny entries; '*' stands for any."""
+    out: Dict[str, List[Tuple[str, str]]] = {"allow": [], "deny": []}
+    doc = _json(os.path.join(project, ".cursor", "cli.json"), project) if project else None
+    perms = doc.get("permissions") if isinstance(doc, dict) and isinstance(doc.get("permissions"), dict) else {}
+    for key in out:
+        for entry in perms.get(key) if isinstance(perms.get(key), list) else []:
+            m = re.fullmatch(r"Mcp\(\s*([^:()]+?)\s*(?::\s*([^()]+?)\s*)?\)", entry) if isinstance(entry, str) else None
+            if m:
+                out[key].append((m.group(1), m.group(2) or "*"))
+    return out
+
+
+def _cursor_approved(cli: Dict[str, List[Tuple[str, str]]], server: str) -> Optional[str]:
+    """'all' when .cursor/cli.json pre-approves every tool of a server, the first acting tool it pre-approves,
+    else None; a deny entry for the whole server wins."""
+    if any(s in ("*", server) and t == "*" for s, t in cli["deny"]):
+        return None
+    denied = {t for s, t in cli["deny"] if s in ("*", server)}
+    for s, t in cli["allow"]:
+        if s not in ("*", server) or t in denied:
+            continue
+        if t == "*":
+            return "all"
+        if acting_tool(t):
+            return t
+    return None
+
+
 _BROAD_BASH = {"Bash", "Bash(*)", "Bash(:*)", "Bash(**)"}
 
 
@@ -242,6 +272,7 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
     posix = rel.replace(os.sep, "/").lower()
     project = _project_of(abspath)
     claude = claude_settings(project if os.path.basename(posix) == ".mcp.json" else "")
+    cursor = cursor_cli(project if posix.endswith(".cursor/mcp.json") else "")
     # Claude Code applies deny rules even when permissions are bypassed
     servers = [s for s in servers if s.name not in claude["disabled"]
                and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])]
@@ -267,7 +298,8 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
                        what=cap["what"] + " (its acting tools are denied)")
         spec = container.get(s.name) if isinstance(container.get(s.name), dict) else {}
         listed = [x for k in ("autoApprove", "alwaysAllow") for x in (spec.get(k) or []) if isinstance(x, str)]
-        explicit = _approved(claude["allow"], s.name, False) or _approved(listed, s.name, True)
+        explicit = _approved(claude["allow"], s.name, False) or _approved(listed, s.name, True) \
+            or _cursor_approved(cursor, s.name)
         approved = "all" if everything else explicit
         why = ("permissions are bypassed" if claude["bypass"] else "every tool call is auto-approved") if everything \
             else ("every tool of '%s' is pre-approved" % s.name if approved == "all"
