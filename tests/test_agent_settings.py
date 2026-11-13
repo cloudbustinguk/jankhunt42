@@ -132,7 +132,29 @@ FILES = {
         '[permissions."demo.network"]\ndangerously_allow_all_unix_sockets = true\nmode = "full"\n\n'
         '["features.network_proxy.unix_sockets"]\n"/var/run/docker.sock" = "allow"\n\n'
         '["features.network_proxy.domains"]\n"*" = "allow"\n'),
-    "codex-app/.codex/config.toml": '[application.network.domains]\n"*" = "allow"\n',
+    # the desktop app's table belongs to requirements.toml and is not a command sandbox setting
+    "codex-app/.codex/config.toml": ('[application.network.domains]\n"*" = "allow"\n\n'
+                                     '[application.network]\ndangerously_allow_all_unix_sockets = true\n'),
+    # a header the reader cannot follow ends the table before it; text inside a string is not a setting
+    "codex-array/.codex/config.toml": '[features.network_proxy]\n[[unrelated]]\ndangerously_allow_all_unix_sockets = true\n',
+    "codex-bracket/.codex/config.toml": ('[features.network_proxy]\n["unrelated]table"]\n'
+                                         'dangerously_allow_all_unix_sockets = true\n'),
+    "codex-string/.codex/config.toml": ('[features.network_proxy]\nnote = """\n'
+                                        'dangerously_allow_all_unix_sockets = true\n"""\n'
+                                        "other = \'\'\'\nallow_local_binding = true\n\'\'\'\n"),
+    "codex-after-string/.codex/config.toml": ('[features.network_proxy]\nnote = """\ntext\n"""\n'
+                                              'dangerously_allow_all_unix_sockets = true\n'),
+    # a token as a job name, a Copilot Studio agent name and a policy name, placed where a length cap falls in it
+    "secret4/.github/workflows/ci.yml": ("on: push\npermissions: write-all\njobs:\n  " + CANARY +
+                                         ":\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"),
+    "secret4/src/bots/cr123_helpdesk/bot.xml": (
+        '<bot schemaname="cr123_helpdesk">\n<authenticationmode>1</authenticationmode>\n'
+        '<name>' + "x" * 64 + " " + CANARY + '</name>\n</bot>'),
+    "secret4/supabase/migrations/001_notes.sql": (
+        'create table public.notes(id int);\ncreate policy "' + "x" * 44 + " " + CANARY +
+        '" on public.notes using ((auth.jwt() -> \'user_metadata\' ->> \'role\') = \'admin\');\n'),
+    "secret4/.claude/settings.json": {"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "echo " + "x" * 140 + " " + CANARY}]}]}},
 }
 
 
@@ -230,11 +252,16 @@ class Settings(unittest.TestCase):
 
     def test_no_secret_reaches_any_output(self):
         root = os.path.join(self.root, "secret")
-        for sub in ("secret", "secret2", "secret3"):
+        for sub in ("secret", "secret2", "secret3", "secret4"):
             for fmt in ("--json", "--md", "--sarif", "--html", "--prompt"):
                 out = run_cli("scan", os.path.join(self.root, sub), fmt, "--no-progress", "--min-severity", "info")
                 for canary in (CANARY, AWS_CANARY, LOWER_CANARY):
+                    # not the token, and not its first characters where a length cap fell inside it
                     self.assertNotIn(canary, out.stdout, (sub, fmt))
+                    self.assertNotIn(canary[:12], out.stdout, (sub, fmt))
+        found = run_cli("scan", os.path.join(self.root, "secret4"), "--json", "--no-progress", "--min-severity", "info")
+        rules = {f["rule"] for f in json.loads(found.stdout)["findings"]}
+        self.assertLessEqual({"JH432", "JH148", "JH154", "JH704"}, rules)     # the findings are still made
         # the findings those canaries sit in are still made: six from the settings file, two from Codex's
         self.assertEqual(len(self.got("JH709", "secret3/.claude/settings.json")), 5)      # the scan's cap of five
         self.assertEqual(len(self.got("JH709", "secret3/.codex/config.toml")), 2)
@@ -254,8 +281,10 @@ class Settings(unittest.TestCase):
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
         self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
-        app = self.got("JH709", "codex-app/.codex/config.toml")
-        self.assertEqual([s for s, _ in app], ["major"])
+        for project in ("codex-app", "codex-array", "codex-bracket", "codex-string"):
+            self.assertEqual([f for f in self.found if f["path"].startswith(project + "/")], [], project)
+        after = self.got("JH709", "codex-after-string/.codex/config.toml")     # the string closed: a real setting
+        self.assertEqual([s for s, _ in after], ["major"])
 
     def test_managed_hooks_and_gateway_are_by_design(self):
         self.assertEqual(self.got("JH704", "it/managed-settings.json"), [])

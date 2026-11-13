@@ -15,6 +15,7 @@ from jh_core import (
     Rule,
     SourceFile,
     SEV_RANK,
+    cut,
     _regex_literal_end,
     is_test_path,
     make_finding,
@@ -1378,7 +1379,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 severity, confidence = "minor", "low"
                                 message = ("A database password in a connection string for a database on this machine "
                                            "or in a local container (%s): usually a development default. Keep it to "
-                                           "local work, and make sure it is used nowhere else." % host.group(1)[:40])
+                                           "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
                             host = _DSN_HOST_RE.match(line, m.end())
                             if m.group(0).endswith("unix(") or (host and _local_db_host(host.group(1))):

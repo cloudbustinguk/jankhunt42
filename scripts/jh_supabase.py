@@ -20,7 +20,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from jh_core import Finding, Rule, SourceFile, make_finding
+from jh_core import Finding, Rule, SourceFile, cut, make_finding
 
 _MIGRATION = re.compile(r"(?i)(?:^|/)supabase/migrations/[^/]+\.sql$")
 _CONFIG = re.compile(r"(?i)(?:^|/)supabase/config\.toml$")
@@ -373,7 +373,7 @@ def findings(sf: SourceFile, rule: Rule, ctx: Dict[str, Dict[str, Any]]) -> List
                 out.append(make_finding(rule, sf, p["line"], message=(
                     "The policy '%s' on %s decides access from user_metadata, which every signed-in user can change "
                     "for themselves (auth.updateUser), so a user can grant themselves what it checks." % (
-                        p["name"][:60], _show(p["table"])))))
+                        cut(p["name"], 60), _show(p["table"])))))
     if rule.check == "supabase_view_bypass":
         for key, v in sorted(state["views"].items(), key=lambda kv: kv[1]["line"]):
             if v["rel"] != sf.rel or v["invoker"] or key[0] not in state["schemas"] or \

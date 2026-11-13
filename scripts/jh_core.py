@@ -1032,8 +1032,25 @@ def make_finding(
         fix=rule.fix,
         confidence=confidence or rule.confidence,
         tags=rule.tags,
-        extra=extra or {},
+        extra=_redact_tree(extra) if extra else {},
     )
+
+
+def cut(text: object, limit: int) -> str:
+    """Repository text shortened for a message or evidence: secrets are removed first, because a token cut short
+    is no longer recognised as one and its first characters would be shown."""
+    return redact_secrets(str(text))[:limit]
+
+
+def _redact_tree(value: object, depth: int = 0) -> object:
+    """A finding's extra data with every string redacted, keys included (a job or server name is repository text)."""
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if depth < 6 and isinstance(value, dict):
+        return {(redact_secrets(k) if isinstance(k, str) else k): _redact_tree(v, depth + 1) for k, v in value.items()}
+    if depth < 6 and isinstance(value, (list, tuple)):
+        return [_redact_tree(v, depth + 1) for v in value]
+    return value
 
 
 def sev_at_least(sev: str, threshold: str) -> bool:
