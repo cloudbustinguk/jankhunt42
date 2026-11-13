@@ -46,6 +46,16 @@ from.
   file with many hooks now keeps a rerouted API or a plain-HTTP marketplace ahead of them.
 - `JH714` drops a Cursor MCP server, or its acting tools, that `.cursor/cli.json` denies.
 
+### Fixed
+
+- **Every finding's message is redacted like its evidence.** A check's message can quote the repository (a path, a
+  host, a socket, a profile or marketplace name); a token written there appeared in JSON, Markdown, SARIF and HTML
+  reports. This also closes two cases present in 4.16.0: a Claude Code `allowUnixSockets` path and a Codex
+  permission profile name. Quoted text is redacted before it is shortened.
+- **Codex `config.toml`: a quoted key with dots in it is one key, not a table path.** `["features.network_proxy"]`
+  or `[permissions."demo.network"]` no longer counts as the network table, and the allowlist checks (`"*" =
+  "allow"`) count only in the tables Codex reads, where 4.16.0 matched any table ending in `network.domains`.
+
 ### Not reported, on purpose
 
 - Settings Claude Code ignores in a repository's own files: `sandbox.network.strictAllowlist`,
@@ -55,7 +65,7 @@ from.
 - Codex network keys outside `[features.network_proxy]` and `[permissions.<name>.network]`, which Codex does not read.
 - A Cursor `Shell(...)` entry with arguments (`Shell(python:--version)`), or one a `deny` entry covers.
 
-Audited before release by Codex (gpt-6-astra): six blocking findings and two others, all fixed here, each with a test.
+Audited before release by Codex (gpt-6-astra): eight findings, then two more classes on re-check, all fixed here, each with a test.
 
 ## [4.16.0] — 2026-11-07
 

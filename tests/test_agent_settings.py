@@ -12,6 +12,8 @@ import jh_checks
 import jh_rule2 as R
 
 CANARY = "ghp_" + "Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2Uv3Wx4"      # invented, assembled so this file holds no token
+AWS_CANARY = "AKIA" + "B2C3D4E5F6G7H8J9"
+LOWER_CANARY = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"
 PG_FETCH = {"mcpServers": {
     "web": {"command": "uvx", "args": ["mcp-server-fetch==2025.4.7"]},
     "db": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres@0.6.2",
@@ -110,9 +112,27 @@ FILES = {
             CANARY: {"source": {"source": "url", "url": "http://plugins.example.com/m.json"}},
             "team": {"source": {"source": "github", "repo": "example-org/plugins"}}},
         "enabledPlugins": {CANARY + "@team": True, "x@" + CANARY: True}},
-    # only the tables Codex reads count
-    "codex-other/.codex/config.toml": ('[unrelated.network]\ndangerously_allow_all_unix_sockets = true\n\n'
-                                       '[unrelated.network.unix_sockets]\n"/var/run/docker.sock" = "allow"\n'),
+    # paths, hosts, sockets and profile names a repository writes reach a message redacted, before shortening
+    "secret3/.claude/settings.json": {
+        "permissions": {"additionalDirectories": ["~/.aws/" + AWS_CANARY]},
+        "sandbox": {"filesystem": {"denyRead": ["~/"], "allowRead": ["~/.ssh/" + AWS_CANARY],
+                                   "allowWrite": ["~/.ssh/" + AWS_CANARY]},
+                    "excludedCommands": ["bash *"],
+                    "network": {"allowUnixSockets": ["/" + CANARY + "/docker.sock"],
+                                "allowedDomains": ["*." + LOWER_CANARY + ".github.io"]}}},
+    "secret3/.codex/config.toml": ('[permissions.%s.network]\nmode = "full"\n\n'
+                                   '[features.network_proxy.domains]\n"*.%s.github.io" = "allow"\n'
+                                   % (CANARY, LOWER_CANARY)),
+    # only the tables Codex reads count; a quoted key with dots in it is one key, not a table path
+    "codex-other/.codex/config.toml": (
+        '[unrelated.network]\ndangerously_allow_all_unix_sockets = true\n\n'
+        '[unrelated.network.unix_sockets]\n"/var/run/docker.sock" = "allow"\n\n'
+        '[unrelated.network.domains]\n"*" = "allow"\n\n'
+        '["features.network_proxy"]\ndangerously_allow_all_unix_sockets = true\n\n'
+        '[permissions."demo.network"]\ndangerously_allow_all_unix_sockets = true\nmode = "full"\n\n'
+        '["features.network_proxy.unix_sockets"]\n"/var/run/docker.sock" = "allow"\n\n'
+        '["features.network_proxy.domains"]\n"*" = "allow"\n'),
+    "codex-app/.codex/config.toml": '[application.network.domains]\n"*" = "allow"\n',
 }
 
 
@@ -210,10 +230,14 @@ class Settings(unittest.TestCase):
 
     def test_no_secret_reaches_any_output(self):
         root = os.path.join(self.root, "secret")
-        for sub in ("secret", "secret2"):
+        for sub in ("secret", "secret2", "secret3"):
             for fmt in ("--json", "--md", "--sarif", "--html", "--prompt"):
                 out = run_cli("scan", os.path.join(self.root, sub), fmt, "--no-progress", "--min-severity", "info")
-                self.assertNotIn(CANARY, out.stdout, (sub, fmt))
+                for canary in (CANARY, AWS_CANARY, LOWER_CANARY):
+                    self.assertNotIn(canary, out.stdout, (sub, fmt))
+        # the findings those canaries sit in are still made: six from the settings file, two from Codex's
+        self.assertEqual(len(self.got("JH709", "secret3/.claude/settings.json")), 5)      # the scan's cap of five
+        self.assertEqual(len(self.got("JH709", "secret3/.codex/config.toml")), 2)
         rules = {f["rule"] for f in self.found if f["path"].startswith("secret/")}
         self.assertLessEqual({"JH703", "JH704"}, rules)       # the findings are still made
         self.assertTrue(os.path.isdir(root))
@@ -229,6 +253,9 @@ class Settings(unittest.TestCase):
 
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
+        self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
+        app = self.got("JH709", "codex-app/.codex/config.toml")
+        self.assertEqual([s for s, _ in app], ["major"])
 
     def test_managed_hooks_and_gateway_are_by_design(self):
         self.assertEqual(self.got("JH704", "it/managed-settings.json"), [])
