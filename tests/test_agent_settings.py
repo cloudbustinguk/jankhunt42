@@ -11,6 +11,12 @@ from _util import run_cli
 import jh_checks
 import jh_rule2 as R
 
+CANARY = "ghp_" + "Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2Uv3Wx4"      # invented, assembled so this file holds no token
+PG_FETCH = {"mcpServers": {
+    "web": {"command": "uvx", "args": ["mcp-server-fetch==2025.4.7"]},
+    "db": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres@0.6.2",
+                                      "postgresql://app@crm-db.example.com/crm"]}}}
+
 
 def write(root, files):
     for rel, text in files.items():
@@ -39,13 +45,16 @@ FILES = {
     "app/.claude/settings.json": {
         "permissions": {"additionalDirectories": ["../shared", "~/.aws"]},
         "sandbox": {"enabled": True, "enableWeakerNetworkIsolation": True,
-                    "ignoreViolations": {"*": ["*"]},
+                    "ignoreViolations": {"*": ["*", "/"]},      # literal substrings: not "everything"
                     "filesystem": {"denyRead": ["~/"], "allowRead": ["~/.ssh", "./vendor"]},
                     "network": {"allowLocalBinding": True, "httpProxyPort": 8080}},
         "extraKnownMarketplaces": {
             "team-tools": {"source": {"source": "github", "repo": "example-org/claude-plugins"}},
+            # Claude Code skips a helper unless the catalog is a url source over https
             "mirror": {"source": {"source": "url", "url": "http://plugins.example.com/marketplace.json",
-                                  "headersHelper": "sh ./tools/token.sh"}},
+                                  "headersHelper": "sh ./tools/skipped.sh"}},
+            "catalog": {"source": {"source": "url", "url": "https://plugins.example.com/marketplace.json",
+                                   "headersHelper": "sh ./tools/token.sh"}},
             "in-repo": {"source": {"source": "directory", "path": "./plugins"}},
             "second": {"source": {"source": "git", "url": "https://git.example.com/plugins.git"}},
             "unused": {"source": {"source": "github", "repo": "example-org/other"}}},
@@ -79,16 +88,31 @@ FILES = {
         "allow": ["Shell(git)", "Shell(bash)", "Shell(python:*)", "Read(src/**)", "WebFetch(*)", "Mcp(*:*)",
                   "WebFetch(*.example.com)", "Shell(rm)"],
         "deny": ["Shell(rm)", "Read(.env*)"]}},
-    "cursor/.cursor/mcp.json": {"mcpServers": {
-        "web": {"command": "uvx", "args": ["mcp-server-fetch==2025.4.7"]},
-        "db": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres@0.6.2",
-                                          "postgresql://app@crm-db.example.com/crm"]}}},
-    "cursor-asks/.cursor/cli.json": {"permissions": {"allow": ["Shell(git)", "Mcp(db:query)", "Mcp(web:*)"],
-                                                     "deny": ["Mcp(web:*)"]}},
-    "cursor-asks/.cursor/mcp.json": {"mcpServers": {
-        "web": {"command": "uvx", "args": ["mcp-server-fetch==2025.4.7"]},
-        "db": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-postgres@0.6.2",
-                                          "postgresql://app@crm-db.example.com/crm"]}}},
+    "cursor/.cursor/mcp.json": PG_FETCH,
+    # nothing that acts is pre-approved: every acting step asks
+    "cursor-asks/.cursor/cli.json": {"permissions": {"allow": ["Shell(git)", "Mcp(db:query)"]}},
+    "cursor-asks/.cursor/mcp.json": PG_FETCH,
+    # the fetch server is denied whole, or its one tool is: no untrusted input and no way out is left
+    "cursor-denied/.cursor/cli.json": {"permissions": {"allow": ["Mcp(web:*)"], "deny": ["Mcp(web:*)"]}},
+    "cursor-denied/.cursor/mcp.json": PG_FETCH,
+    "cursor-tool-denied/.cursor/cli.json": {"permissions": {"allow": ["Mcp(web:*)"], "deny": ["Mcp(web:fetch)"]}},
+    "cursor-tool-denied/.cursor/mcp.json": PG_FETCH,
+    # arguments narrow an entry, and a deny for the whole command covers it
+    "cursor-narrow/.cursor/cli.json": {"permissions": {
+        "allow": ["Shell(python:--version)", "Shell(bash)", "Mcp(*:*)", "WebFetch(*)"],
+        "deny": ["Shell(*)", "Mcp(*:*)", "WebFetch(*)"]}},
+    # names a repository chooses reach the report redacted
+    "secret/.cursor/cli.json": {"permissions": {"allow": ["Shell(bash:*)", "Shell(sh:echo %s)" % CANARY,
+                                                          "Mcp(*:*)", "Mcp(%s:*)" % CANARY]}},
+    "secret2/.cursor/cli.json": {"permissions": {"allow": ["Shell(%s)" % CANARY, "Shell(*:%s)" % CANARY]}},
+    "secret/.claude/settings.json": {
+        "extraKnownMarketplaces": {
+            CANARY: {"source": {"source": "url", "url": "http://plugins.example.com/m.json"}},
+            "team": {"source": {"source": "github", "repo": "example-org/plugins"}}},
+        "enabledPlugins": {CANARY + "@team": True, "x@" + CANARY: True}},
+    # only the tables Codex reads count
+    "codex-other/.codex/config.toml": ('[unrelated.network]\ndangerously_allow_all_unix_sockets = true\n\n'
+                                       '[unrelated.network.unix_sockets]\n"/var/run/docker.sock" = "allow"\n'),
 }
 
 
@@ -128,8 +152,8 @@ class Settings(unittest.TestCase):
 
     def test_claude_project_sandbox_enforcement(self):
         self.assertEqual(
-            self.keys("JH710", "app/.claude/settings.json", ("local port 8080", "inspecting proxy", "silenced")),
-            {"local port 8080": "major", "inspecting proxy": "minor", "silenced": "minor"})
+            self.keys("JH710", "app/.claude/settings.json", ("local port 8080", "inspecting proxy")),
+            {"local port 8080": "major", "inspecting proxy": "minor"})
 
     def test_plugin_marketplaces(self):
         got = self.keys("JH704", "app/.claude/settings.json", ("plain HTTP", "request headers", "turn on 3 plugin"))
@@ -138,6 +162,8 @@ class Settings(unittest.TestCase):
         self.assertIn("2 plugin marketplace(s) ('second', 'team-tools')", message)      # one finding for the file
         self.assertIn("deployer, formatter, helper", message)
         self.assertNotIn("in-repo", message)
+        helpers = [f["evidence"] for f in self.found if "request headers" in f["message"]]
+        self.assertEqual(helpers, ["sh ./tools/token.sh"])       # the helper of the plain-HTTP catalog never runs
 
     def test_plugins_do_not_crowd_out_hooks(self):
         hooks = {"Event%02d" % i: [{"hooks": [{"type": "command", "command": "sh ./tools/h.sh"}]}] for i in range(12)}
@@ -148,10 +174,61 @@ class Settings(unittest.TestCase):
             got = [f["message"] for f in scan(root) if f["rule"] == "JH704"]
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        # the scan keeps five findings per file and rule: the marketplace summary and the plain-HTTP one lead
+        # the scan keeps five findings per file and rule: the major leads, then what 4.16.0 reported
         self.assertEqual(len(got), 5)
-        self.assertEqual(len([m for m in got if "project hook" in m]), 3)
-        self.assertEqual(len([m for m in got if "turn on" in m or "plain HTTP" in m]), 2)
+        self.assertEqual(len([m for m in got if "plain HTTP" in m]), 1)
+        self.assertEqual(len([m for m in got if "project hook" in m]), 4)
+
+    def test_a_marketplace_never_displaces_a_major(self):
+        """Four hooks and a rerouted API filled the cap in 4.16.0; a marketplace must not push the major out."""
+        doc = {"hooks": {e: [{"hooks": [{"type": "command", "command": "echo ok"}]}]
+                         for e in ("SessionStart", "PreToolUse", "PostToolUse", "Stop")},
+               "extraKnownMarketplaces": {"team": {"source": {"source": "github", "repo": "example-org/plugins"}}},
+               "enabledPlugins": {"formatter@team": True},
+               "env": {"ANTHROPIC_BASE_URL": "https://gateway.example.com"}}
+        root = tempfile.mkdtemp(prefix="jh-agent-settings-")
+        try:
+            write(root, {".claude/settings.json": doc})
+            got = [(f["severity"], f["message"]) for f in scan(root) if f["rule"] == "JH704"]
+            gate = run_cli("scan", root, "--json", "--no-progress", "--category", "agent", "--fail-on", "major")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        self.assertEqual([s for s, _ in got], ["major"] + ["minor"] * 4)
+        self.assertIn("ANTHROPIC_BASE_URL", got[0][1])
+        self.assertEqual(gate.returncode, 1)
+
+    def test_every_plain_http_marketplace_is_reported(self):
+        doc = {"extraKnownMarketplaces": {"m%d" % i: {"source": {"source": "url", "url": "http://p%d.example.com/m.json" % i}}
+                                          for i in range(4)}}
+        root = tempfile.mkdtemp(prefix="jh-agent-settings-")
+        try:
+            write(root, {".claude/settings.json": doc})
+            out = run_cli("scan", root, "--json", "--no-progress", "--category", "agent", "--max-per-file-rule", "100")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        self.assertEqual(len([f for f in json.loads(out.stdout)["findings"] if f["rule"] == "JH704"]), 4)
+
+    def test_no_secret_reaches_any_output(self):
+        root = os.path.join(self.root, "secret")
+        for sub in ("secret", "secret2"):
+            for fmt in ("--json", "--md", "--sarif", "--html", "--prompt"):
+                out = run_cli("scan", os.path.join(self.root, sub), fmt, "--no-progress", "--min-severity", "info")
+                self.assertNotIn(CANARY, out.stdout, (sub, fmt))
+        rules = {f["rule"] for f in self.found if f["path"].startswith("secret/")}
+        self.assertLessEqual({"JH703", "JH704"}, rules)       # the findings are still made
+        self.assertTrue(os.path.isdir(root))
+
+    def test_project_bypass_mode_is_a_note_not_a_lead(self):
+        root = tempfile.mkdtemp(prefix="jh-agent-settings-")
+        try:
+            write(root, {".claude/settings.json": {"permissions": {"defaultMode": "bypassPermissions"}}})
+            got = [(f["rule"], f["severity"]) for f in scan(root)]
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        self.assertEqual(got, [("JH703", "minor")])
+
+    def test_codex_keys_in_other_tables_are_quiet(self):
+        self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
 
     def test_managed_hooks_and_gateway_are_by_design(self):
         self.assertEqual(self.got("JH704", "it/managed-settings.json"), [])
@@ -184,6 +261,7 @@ class Settings(unittest.TestCase):
         got = self.keys("JH703", "cursor/.cursor/cli.json", ("through bash", "every MCP server", "any address"))
         self.assertEqual(got, {"through bash": "major", "every MCP server": "major", "any address": "minor"})
         self.assertEqual(self.got("JH703", "cursor-asks/.cursor/cli.json"), [])
+        self.assertEqual(self.got("JH703", "cursor-narrow/.cursor/cli.json"), [])
 
     def test_cursor_approvals_reach_the_rule_of_two(self):
         self.assertEqual(R._cursor_approved({"allow": [("*", "*")], "deny": []}, "db"), "all")
@@ -197,6 +275,9 @@ class Settings(unittest.TestCase):
         self.assertIn("pre-approved", k3[0]["message"])
         asks = [f for f in self.found if f["rule"] == "JH714" and f["path"] == "cursor-asks/.cursor/mcp.json"]
         self.assertEqual([f["severity"] for f in asks], ["minor"])
+        for project in ("cursor-denied", "cursor-tool-denied"):
+            self.assertEqual([f for f in self.found if f["rule"] == "JH714" and f["path"].startswith(project)], [],
+                             project)
 
 
 if __name__ == "__main__":

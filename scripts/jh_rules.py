@@ -760,7 +760,7 @@ RULES: List[Rule] = [
       confidence="high", check="agent_sandbox_scope", kinds=("agent_config", "sandbox_policy", "substrate")),
     R("JH710", "Agent sandbox not enforcing", "major", "agent",
       "The sandbox policy only logs what it should block, skips TLS inspection, lets credentials pass uninspected, runs without filesystem rules when Landlock is unavailable, or hands its network decisions to another program.",
-      "Set enforcement: enforce, landlock compatibility: hard_requirement, keep TLS inspection on, and leave allow_uninspected_credentials off; in Claude Code settings, remove the proxy port, weaker-isolation and ignoreViolations entries.",
+      "Set enforcement: enforce, landlock compatibility: hard_requirement, keep TLS inspection on, and leave allow_uninspected_credentials off; in Claude Code settings, remove the proxy port and weaker-isolation entries.",
       confidence="high", check="agent_sandbox_enforcement", kinds=("agent_config", "sandbox_policy", "substrate")),
     R("JH711", "Dev container weakens isolation", "major", "agent",
       "The dev container runs privileged, shares the host network or process namespace, or mounts the Docker socket; an agent or task inside it can take over the host.",

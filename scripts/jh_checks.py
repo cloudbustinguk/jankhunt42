@@ -1442,26 +1442,42 @@ def _cursor_cli_approvals(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> L
     start = _line_matching(sf, r'"allow"\s*:') - 1
     out: List[Finding] = []
     seen = set()
-    for entry in allow:
-        if entry in deny:
-            continue
+
+    def parts(entry: str) -> Optional[Tuple[str, str, str]]:
+        """(kind, command base or server, arguments or tool) of an entry; '*' where a part is absent."""
         m = re.match(r"^(Shell|Mcp|WebFetch)\((.*)\)$", entry)
-        if not m or m.group(1) in seen:
+        if not m:
+            return None
+        head, _, tail = m.group(2).strip().partition(":")
+        return m.group(1), head.strip().rsplit("/", 1)[-1].lower() or "*", tail.strip() or "*"
+
+    denied = [d for d in (parts(e) for e in deny) if d]
+
+    def covered(kind: str, base: str) -> bool:
+        """A deny entry for the whole of this command, server or address wins over the allow entry."""
+        return any(k == kind and b in ("*", "**", base) and a in ("*", "**") for k, b, a in denied)
+
+    for entry in allow:
+        got = parts(entry)
+        if entry in deny or not got or got[0] in seen:
             continue
-        kind, spec = m.group(1), m.group(2).strip()
-        base = spec.split(":", 1)[0].split()[0].rsplit("/", 1)[-1].lower() if spec.split(":", 1)[0].split() else ""
-        if kind == "Shell" and (base in ("*", "**") or base in _RUNNERS):
+        kind, base, rest = got
+        shown = redact_secrets(entry).replace("`", "'")
+        if covered(kind, base):
+            continue
+        # arguments narrow an entry: Shell(python:--version) is one command, Shell(python) and Shell(python:*) any
+        if kind == "Shell" and rest in ("*", "**") and (base in ("*", "**") or base in _RUNNERS):
             what, severity = ("any shell command" if base in ("*", "**") else "any command run through %s" % base), "major"
             message = ("The Cursor CLI's project permissions pre-approve %s (`%s`), so the agent runs it without "
-                       "asking." % (what, entry.replace("`", "'")))
-        elif kind == "Mcp" and spec.replace(" ", "") in ("*:*", "*"):
+                       "asking." % (what, shown))
+        elif kind == "Mcp" and base in ("*", "**") and rest in ("*", "**"):
             severity = "major"
             message = ("The Cursor CLI's project permissions pre-approve every tool of every MCP server (`%s`), "
-                       "including servers that later commits add." % entry)
-        elif kind == "WebFetch" and spec in ("*", "**"):
+                       "including servers that later commits add." % shown)
+        elif kind == "WebFetch" and base in ("*", "**") and rest in ("*", "**"):
             severity = "minor"
             message = ("The Cursor CLI's project permissions pre-approve fetching any address (`%s`): the agent "
-                       "reads any web page, and can send a request anywhere, without asking." % entry)
+                       "reads any web page, and can send a request anywhere, without asking." % shown)
         else:
             continue
         seen.add(kind)
@@ -1503,11 +1519,13 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
     elif scope:
         perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
         if perms.get("defaultMode") == "bypassPermissions":
-            add(r'"defaultMode"', "major", (
+            # a repository's own files: ignored since Claude Code 2.1.257 (September 2026), so it is kept as a
+            # minor note for people on older versions and no longer counts as a guardrail lead
+            add(r'"defaultMode"', "major" if scope == "managed" else "minor", (
                 "Managed settings start every Claude Code session with every permission prompt skipped."
                 if scope == "managed" else
-                "Claude Code would skip every permission prompt; current versions ignore this mode in project "
-                "files, older versions honour it."))
+                "Claude Code would skip every permission prompt; versions from 2.1.257 ignore this mode in "
+                "project files, older versions honour it."))
         # the shared project file cannot set this one; a committed local file and managed settings can
         if data.get("skipDangerousModePermissionPrompt") is True and scope in ("local", "managed"):
             add(r'"skipDangerousModePermissionPrompt"', "major", (
@@ -1598,6 +1616,10 @@ _CODEX_PROXY_WIDEN = {
 }
 
 
+# the two tables Codex reads its sandbox network settings from; any other table with these key names is not one
+_CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network)$")
+
+
 def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
     for line, section, key, value in _toml_sections(sf):
@@ -1617,12 +1639,12 @@ def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
                 "Codex's default permission profile has no filesystem or network sandbox.")))
         elif re.search(r"network_proxy$", section) and key == "domains" and re.search(r"""["']\*["']\s*=\s*["']allow""", value):
             out.append(make_finding(rule, sf, line, message="The Codex network allowlist admits every host."))
-        elif re.search(r"(?:^|\.)network(?:_proxy)?$", section) and v == "true" and key in _CODEX_PROXY_WIDEN:
+        elif _CODEX_NET.match(section) and v == "true" and key in _CODEX_PROXY_WIDEN:
             why, severity = _CODEX_PROXY_WIDEN[key]
             out.append(make_finding(rule, sf, line, severity=severity, message="Codex's sandbox network proxy %s." % why))
-        elif (re.search(r"(?:^|\.)network(?:_proxy)?\.unix_sockets$", section) and v == "allow"
-              and re.search(r"docker\.sock|podman", key)) or \
-                (re.search(r"(?:^|\.)network(?:_proxy)?$", section) and key == "unix_sockets"
+        elif (section.endswith(".unix_sockets") and _CODEX_NET.match(section[:-len(".unix_sockets")])
+              and v == "allow" and re.search(r"docker\.sock|podman", key)) or \
+                (_CODEX_NET.match(section) and key == "unix_sockets"
                  and re.search(r"""(?:docker\.sock|podman)[^"']*["']\s*=\s*["']allow""", value)):
             out.append(make_finding(rule, sf, line, message=(
                 "Codex's sandboxed commands can use the container engine socket, which controls the host.")))
@@ -1700,7 +1722,7 @@ def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 
 def _claude_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
-    """JH710 for Claude Code settings: the sandbox is on paper but something else decides, or nothing reports."""
+    """JH710 for Claude Code settings: the sandbox is on paper but something else decides what it lets through."""
     data = _settings(sf)
     box = data.get("sandbox") if isinstance(data, dict) else None
     if not isinstance(box, dict):
@@ -1723,12 +1745,6 @@ def _claude_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
         add("enableWeakerNetworkIsolation", "The macOS sandbox's network isolation is loosened so gh, gcloud and "
                                             "terraform can verify TLS behind an inspecting proxy; it is a "
                                             "weaker boundary by design.", "minor")
-    silenced = box.get("ignoreViolations")
-    if isinstance(silenced, dict) and any(
-            str(cmd).strip() in ("*", "") and any(str(v).strip() in ("*", "", "/") for v in _str_list(what))
-            for cmd, what in silenced.items()):
-        add("ignoreViolations", "Sandbox violation reports are silenced for every command and every path, so "
-                                "a blocked attempt leaves no notice.", "minor")
     creds = box.get("credentials") if isinstance(box.get("credentials"), dict) else {}
     if scope == "managed" and creds.get("allowPlaintextInject") is True:   # ignored in a repository's own files
         add("allowPlaintextInject", "The sandbox proxy puts real credentials into plain HTTP requests, where "
@@ -2008,20 +2024,22 @@ def _claude_plugins(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Fi
         kind = str(src.get("source") or src.get("type") or "")
         where = str(src.get("repo") or src.get("url") or src.get("path") or kind)
         line_no = _line_matching(sf, re.escape('"%s"' % name), _line_matching(sf, r'"extraKnownMarketplaces"') - 1)
+        shown = trim(redact_secrets(str(name)), 40)      # names come from the repository: never shown unredacted
         if re.match(r"(?i)^http://(?!localhost[:/]|127\.0\.0\.1[:/])", where):
             out.append(make_finding(rule, sf, line_no, severity="major", message=(
                 "Plugin marketplace '%s' is fetched over plain HTTP, so anyone on the network path can swap the "
-                "plugins it lists." % trim(str(name), 40)), evidence=redact_secrets(trim(where, 160))))
+                "plugins it lists." % shown), evidence=redact_secrets(trim(where, 160))))
         helper = src.get("headersHelper")
-        if isinstance(helper, str) and helper.strip():
+        # Claude Code runs the helper only for a url source over https
+        if isinstance(helper, str) and helper.strip() and kind == "url" and where.lower().startswith("https://"):
             out.append(make_finding(rule, sf, _line_matching(sf, r'"headersHelper"', line_no - 1), severity="minor",
                                     message="Plugin marketplace '%s' runs a shell command from committed project "
-                                    "settings to make its request headers." % trim(str(name), 40),
+                                    "settings to make its request headers." % shown,
                                     evidence=redact_secrets(trim(helper, 160))))
         plugins = sorted(str(k).rsplit("@", 1)[0] for k, v in enabled.items()
                          if v is True and isinstance(k, str) and k.rsplit("@", 1)[-1] == name and "@" in k)
         if plugins and kind not in ("file", "directory", "settings"):
-            remote.append((line_no, str(name), where, plugins))
+            remote.append((line_no, shown, where, [redact_secrets(p) for p in plugins]))
     if remote:      # one finding for the file, at the first marketplace
         names = [n for _, n, _, _ in remote]
         plugins = sorted({p for _, _, _, ps in remote for p in ps})
@@ -2202,10 +2220,9 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                                     severity="minor" if local else severity, message=(
                 "Committed agent settings set %s, which reroutes the agent's API traffic (and its key) or loads "
                 "code into it (CVE-2026-21852 class)." % key)))
-    # the scan keeps the first few findings per file and rule: the marketplace summary and anything major about
-    # one go first, a marketplace's helper command after the hooks
-    first = [f for f in plugins if f.severity == "major" or "turn on" in f.message]
-    return first[:3] + out[:10] + [f for f in plugins if f not in first][:2]
+    # the scan keeps the first few findings per file and rule, so the most serious go first; at equal severity
+    # what 4.16.0 reported stays ahead of the marketplace findings
+    return sorted(out[:10] + plugins, key=lambda f: SEV_RANK.get(f.severity, 99))
 
 
 # --------------------------------------------------------------------------- MCP servers
