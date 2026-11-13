@@ -1242,7 +1242,7 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
             severity = "critical"
             preview = redact_secrets(decoded)
             message = ("%d invisible Unicode tag characters hide text that renders as nothing but is read by "
-                       "language models%s." % (classes["tag"], (': they spell "%s"' % trim(preview, 60)) if preview else ""))
+                       "language models%s." % (classes["tag"], (': they spell "%s"' % _shown(preview, 60)) if preview else ""))
         elif worst == "bidi":
             severity = "critical" if agent else "major"
             message = ("Bidirectional control characters make this line display differently from how it is "
@@ -1613,6 +1613,12 @@ _TOML_HEADER = re.compile(r"""^\s*\[(?!\[)\s*((?:"[^"]*"|'[^']*'|[^\]"'\[])+?)\s
 _NO_TABLE = _KEY_DOT + "?"      # a header this reader does not follow: nothing under it is read as a setting
 
 
+def _toml_delimiters(line: str, quotes: str) -> int:
+    """How many multi-line string delimiters a line holds. In a basic string (\"\"\") a backslash escapes the next
+    character, so an escaped quote is text; a literal string (''') has no escapes."""
+    return (re.sub(r"\\.", "", line) if quotes == '"""' else line).count(quotes)
+
+
 def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
     """(line, section, key, raw value) for simple TOML key = value lines; see _toml_table for the section.
     Lines under an array table ([[name]]) or a header it cannot read belong to no table, and the lines of a
@@ -1620,7 +1626,7 @@ def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
     section, inside = "", ""
     for i, line in enumerate(sf.nocomment):
         if inside:                                  # in a multi-line string until its closing quotes
-            if line.count(inside) % 2:
+            if _toml_delimiters(line, inside) % 2:
                 inside = ""
             continue
         if line.lstrip().startswith("["):
@@ -1628,7 +1634,7 @@ def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
             section = _toml_table(m.group(1)) if m else _NO_TABLE
             continue
         for quotes in ('"""', "'''"):
-            if line.count(quotes) % 2:
+            if _toml_delimiters(line, quotes) % 2:
                 inside = quotes
         if inside:
             continue
@@ -1825,9 +1831,9 @@ def _substrate_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
                     seen.add((kind, host))
                     out.append(make_finding(rule, sf, _host_line(sf, host), message=(
                         "The %s egress rule allows %s (%s): the agent can send what it reads to any server there, "
-                        "and its DNS relay resolves those names too." % (kind, why, trim(host, 50)))))
+                        "and its DNS relay resolves those names too." % (kind, why, _shown(host, 50)))))
             if kind == "tlsPassthrough" and S.all_ports(body):
-                names = ", ".join(trim(h, 40) for h in S.hostnames(body)[:3])
+                names = ", ".join(_shown(h, 40) for h in S.hostnames(body)[:3])
                 out.append(make_finding(rule, sf, _line_matching(sf, r"^\s*all\s*:|\ball\s*:\s*\{\s*\}"),
                                         severity="minor", message=(
                     "The tlsPassthrough rule for %s covers every port: any protocol wrapped in TLS gets through "
@@ -1850,11 +1856,11 @@ def _substrate_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
                         out.append(make_finding(rule, sf, _host_line(sf, host), message=(
                             "TLS to %s passes through the egress gateway undecrypted, so the gateway cannot inject "
                             "its API key: the key has to be inside the sandbox, where a prompt injection can read it. "
-                            "Use an https rule with a replaceHeaders effect instead." % trim(host, 50))))
+                            "Use an https rule with a replaceHeaders effect instead." % _shown(host, 50))))
             elif kind == "http":
                 for eff in S.header_effects(body):
                     hosts = S.hostnames(body)
-                    names = ", ".join(trim(h, 40) for h in hosts[:3])
+                    names = ", ".join(_shown(h, 40) for h in hosts[:3])
                     inside = bool(hosts) and all(S.cluster_internal(h) for h in hosts)
                     where = "the cluster network past the gateway" if inside else "the path past the gateway"
                     out.append(make_finding(rule, sf, _line_matching(sf, r"(?i)replace_?headers"),
@@ -1886,7 +1892,7 @@ def sandbox_template_credential(sf: SourceFile, rule: Rule) -> List[Finding]:
             message = ("%s %s, so the key sits inside the sandbox of container '%s': the agent and any command a "
                        "prompt injection makes it run can read it, and Substrate's memory snapshots store it. Let the "
                        "egress gateway inject it with an https rule's replaceHeaders, and give the agent a "
-                       "placeholder." % (name, source, trim(container, 30)))
+                       "placeholder." % (name, source, _shown(container, 30)))
             severity = None
             if is_test_path(sf.rel):
                 severity, message = "minor", message + " It is in test data."
@@ -1915,21 +1921,21 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
                     seen_bins.add(name)
                     out.append(make_finding(rule, sf, _line_matching(sf, re.escape(path)), message=(
                         "Network rule '%s' applies to every executable (%s), not to the binaries that need it."
-                        % (trim(name, 40), path))))
+                        % (_shown(name, 40), path))))
             host = str(ep.get("host") or "")
             why = _wild_host(host) if host else None
             if why:
                 out.append(make_finding(rule, sf, _line_matching(sf, re.escape(host)), message=(
-                    "Network rule '%s' allows %s (%s)." % (trim(name, 40), why, trim(host, 50)))))
+                    "Network rule '%s' allows %s (%s)." % (_shown(name, 40), why, _shown(host, 50)))))
             for ip in ep.get("allowed_ips") if isinstance(ep.get("allowed_ips"), list) else []:
                 why_ip = _private_cidr(str(ip))
                 if why_ip:
                     out.append(make_finding(rule, sf, _line_matching(sf, re.escape(str(ip))), message=(
-                        "Network rule '%s' lets the sandbox reach %s (%s)." % (trim(name, 40), why_ip, ip))))
+                        "Network rule '%s' lets the sandbox reach %s (%s)." % (_shown(name, 40), why_ip, ip))))
                     break
             if ep.get("access") == "full" and (why or not host):
                 out.append(make_finding(rule, sf, _line_matching(sf, r"access\s*:\s*full"), message=(
-                    "Network rule '%s' gives full read-write access on a wildcard or hostless endpoint." % trim(name, 40))))
+                    "Network rule '%s' gives full read-write access on a wildcard or hostless endpoint." % _shown(name, 40))))
     return out[:10]
 
 
@@ -1951,7 +1957,7 @@ def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
                 "cannot be applied; set compatibility: hard_requirement.")))
         implicit = []
         for name, ep, _ in _endpoints(doc):
-            label = trim(name, 40)
+            label = _shown(name, 40)
             if ep.get("enforcement") == "audit":
                 out.append(make_finding(rule, sf, _line_matching(sf, r"enforcement\s*:\s*audit"), message=(
                     "Network rule '%s' is in audit mode: requests that break its rules are logged and allowed." % label)))
@@ -2001,7 +2007,7 @@ def devcontainer_isolation(sf: SourceFile, rule: Rule) -> List[Finding]:
             if rx.match(a.strip()) and why not in reported:
                 reported.add(why)
                 out.append(make_finding(rule, sf, _line_matching(sf, re.escape(a.split()[0])), message=(
-                    "The dev container %s (%s)." % (why, trim(a, 40)))))
+                    "The dev container %s (%s)." % (why, _shown(a, 40)))))
     if data.get("privileged") is True and "runs privileged, with every capability and host devices" not in reported:
         out.append(make_finding(rule, sf, _line_matching(sf, r'"privileged"'), message=(
             "The dev container runs privileged, with every capability and host devices.")))
@@ -2080,8 +2086,8 @@ def _claude_plugins(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Fi
             "Project settings register %d plugin marketplace(s) (%s) and turn on %d plugin(s) from them (%s) for "
             "everyone who trusts this repository; a plugin brings its own hooks, MCP servers and commands, and "
             "whoever controls a marketplace controls its updates."
-            % (len(names), trim(", ".join("'%s'" % n for n in names[:3]), 90), len(plugins),
-               trim(", ".join(plugins[:3]), 60))),
+            % (len(names), _shown(", ".join("'%s'" % n for n in names[:3]), 90), len(plugins),
+               _shown(", ".join(plugins[:3]), 60))),
             evidence=trim(redact_secrets("; ".join(w for _, _, w, _ in remote[:3])), 160)))
     return out
 
@@ -2285,7 +2291,7 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
         if v["verdict"] == "none":
             continue
         n8n = "raw" in v
-        who = ("The n8n AI Agent '%s'" % trim(v["agent"], 60)) if n8n else "The agent this file configures"
+        who = ("The n8n AI Agent '%s'" % _shown(v["agent"], 60)) if n8n else "The agent this file configures"
         if n8n:
             line = jh_n8n._line(sf, v["raw"])
         else:
@@ -2315,9 +2321,9 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
             severity, confidence = ("minor" if v["certain"] else "info"), "medium"
         out.append(make_finding(rule, sf, line, severity=severity, confidence=confidence,
                                 message=visible_text(message),           # names come from the scanned file
-                                evidence=trim(v["agent"], 60) if n8n else None,
+                                evidence=_shown(v["agent"], 60) if n8n else None,
                                 extra={"verdict": v["verdict"], "certain": bool(v.get("certain")),
-                                       "agent": trim(v["agent"], 60) if n8n else sf.rel,
+                                       "agent": _shown(v["agent"], 60) if n8n else sf.rel,
                                        "untrusted_input": jh_rule2.sources(v, "A", 10),
                                        "sensitive_data": jh_rule2.sources(v, "B", 10),
                                        "acts": jh_rule2.sources(v, "C", 10), "unapproved": unapproved[:10],

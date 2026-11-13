@@ -142,6 +142,11 @@ FILES = {
     "codex-string/.codex/config.toml": ('[features.network_proxy]\nnote = """\n'
                                         'dangerously_allow_all_unix_sockets = true\n"""\n'
                                         "other = \'\'\'\nallow_local_binding = true\n\'\'\'\n"),
+    "codex-escaped/.codex/config.toml": ('[features.network_proxy]\nnote = """\n\\"""\n'
+                                         'dangerously_allow_all_unix_sockets = true\n"""\n'),
+    # OpenShell network policy names a repository chooses, with a token where the 40-character cut falls
+    "secret5/policy.yaml": ("version: 1\nnetwork_policies:\n  " + "x" * 24 + " " + CANARY + ":\n    endpoints:\n"
+                            "      - host: \"*\"\n        port: 443\n        enforcement: audit\n"),
     "codex-after-string/.codex/config.toml": ('[features.network_proxy]\nnote = """\ntext\n"""\n'
                                               'dangerously_allow_all_unix_sockets = true\n'),
     # a token as a job name, a Copilot Studio agent name and a policy name, placed where a length cap falls in it
@@ -252,7 +257,7 @@ class Settings(unittest.TestCase):
 
     def test_no_secret_reaches_any_output(self):
         root = os.path.join(self.root, "secret")
-        for sub in ("secret", "secret2", "secret3", "secret4"):
+        for sub in ("secret", "secret2", "secret3", "secret4", "secret5"):
             for fmt in ("--json", "--md", "--sarif", "--html", "--prompt"):
                 out = run_cli("scan", os.path.join(self.root, sub), fmt, "--no-progress", "--min-severity", "info")
                 for canary in (CANARY, AWS_CANARY, LOWER_CANARY):
@@ -262,6 +267,8 @@ class Settings(unittest.TestCase):
         found = run_cli("scan", os.path.join(self.root, "secret4"), "--json", "--no-progress", "--min-severity", "info")
         rules = {f["rule"] for f in json.loads(found.stdout)["findings"]}
         self.assertLessEqual({"JH432", "JH148", "JH154", "JH704"}, rules)     # the findings are still made
+        found = run_cli("scan", os.path.join(self.root, "secret5"), "--json", "--no-progress", "--min-severity", "info")
+        self.assertLessEqual({"JH709", "JH710"}, {f["rule"] for f in json.loads(found.stdout)["findings"]})
         # the findings those canaries sit in are still made: six from the settings file, two from Codex's
         self.assertEqual(len(self.got("JH709", "secret3/.claude/settings.json")), 5)      # the scan's cap of five
         self.assertEqual(len(self.got("JH709", "secret3/.codex/config.toml")), 2)
@@ -281,7 +288,7 @@ class Settings(unittest.TestCase):
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
         self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
-        for project in ("codex-app", "codex-array", "codex-bracket", "codex-string"):
+        for project in ("codex-app", "codex-array", "codex-bracket", "codex-string", "codex-escaped"):
             self.assertEqual([f for f in self.found if f["path"].startswith(project + "/")], [], project)
         after = self.got("JH709", "codex-after-string/.codex/config.toml")     # the string closed: a real setting
         self.assertEqual([s for s, _ in after], ["major"])
