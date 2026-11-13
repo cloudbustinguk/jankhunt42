@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.16.0"
+VERSION = "4.17.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -154,7 +154,7 @@ AGENT_CONTEXT_DIRS = (".cursor/rules/", ".windsurf/rules/", ".clinerules/", ".ki
 # Settings files that change what an agent or editor may do without asking.
 AGENT_CONFIG_FILES = (".vscode/settings.json", ".vscode/tasks.json", ".claude/settings.json",
                       ".claude/settings.local.json", ".codex/config.toml", ".gemini/settings.json",
-                      ".zed/settings.json")
+                      ".zed/settings.json", ".cursor/cli.json", "managed-settings.json")
 MCP_CONFIG_FILES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", ".gemini/settings.json",
                     ".codex/config.toml", ".amazonq/mcp.json", ".roo/mcp.json", ".kiro/settings/mcp.json",
                     "claude_desktop_config.json", "opencode.json", "opencode.jsonc")
@@ -285,6 +285,7 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
     if is_agent_context(rel):
         kinds.add("agent_context")
     if any(_ends_with_path(posix, f) for f in AGENT_CONFIG_FILES) or base == ".devcontainer.json" \
+            or (base.endswith(".json") and "/managed-settings.d/" in "/" + posix.lower()) \
             or (base == "devcontainer.json" and "/.devcontainer/" in "/" + posix.lower()):
         kinds.add("agent_config")
     if is_mcp_config(rel, text):

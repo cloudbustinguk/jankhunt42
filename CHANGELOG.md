@@ -4,6 +4,44 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.17.0] — unreleased
+
+The agent tools changed their settings faster than the rules that read them. This release brings the agent workspace
+checks up to the vendors' documentation as of 2026-11-13, and reports each setting only in the file it takes effect
+from.
+
+### Added
+
+- **Cursor CLI project permissions (`.cursor/cli.json`).** `JH703` reports `permissions.allow` entries that
+  pre-approve any command (`Shell(bash)`, `Shell(python:*)` and other programs that run what follows them), every
+  tool of every MCP server (`Mcp(*:*)`), and any address (`WebFetch(*)`, minor). A matching `deny` entry wins.
+  `JH714` counts `Mcp(server:tool)` entries as approvals for the servers in `.cursor/mcp.json`.
+- **Claude Code managed settings** (`managed-settings.json`, `managed-settings.d/*.json`) are read as agent
+  configuration, for the repository an administrator keeps them in. Every key applies there: `JH703` reports
+  `defaultMode: bypassPermissions` and `skipDangerousModePermissionPrompt`; `JH709` reports
+  `sandbox.filesystem.disabled`, `sandbox.allowNestedUserNamespaces` and `sandbox.allowAppleEvents`; `JH710` reports
+  `sandbox.credentials.allowPlaintextInject`.
+- **`JH710` reads Claude Code settings**: `sandbox.network.httpProxyPort` or `socksProxyPort` (the program on that
+  port, not the allowed domains, decides what sandboxed commands reach), `sandbox.enableWeakerNetworkIsolation`
+  (minor), and `sandbox.ignoreViolations` that silences every command and path (minor).
+- **`JH709`, Claude Code**: `sandbox.filesystem.allowRead` and `permissions.additionalDirectories` on home, root or
+  credential paths, and `sandbox.network.allowLocalBinding` (minor).
+- **`JH709`, Codex**: the network proxy's `dangerously_allow_all_unix_sockets`,
+  `dangerously_allow_non_loopback_proxy`, `allow_local_binding` (minor), and a container engine socket allowed in
+  `unix_sockets`, in `[features.network_proxy]` and in a permission profile's network table.
+- **`JH704`, Claude Code plugins**: a project that registers a plugin marketplace (`extraKnownMarketplaces`) and
+  turns plugins on from it (`enabledPlugins`) for everyone who trusts the repository (minor); a marketplace fetched
+  over plain HTTP (major); a marketplace `headersHelper`, which runs a command (minor). One finding per file names the marketplaces. A marketplace inside the
+  repository (`directory`, `file`) is not reported.
+- `JH703`: `skipDangerousModePermissionPrompt` in a committed `.claude/settings.local.json`.
+- `references/citizen.md`: which Claude Code file each setting counts in, and what the agent rules do not read yet.
+
+### Not reported, on purpose
+
+- Settings Claude Code ignores in a repository's own files: `sandbox.network.strictAllowlist`,
+  `sandbox.network.tlsTerminate`, `autoMode`, `skipAutoPermissionPrompt`, and the managed-only keys above. A
+  subagent file's `permissionMode: bypassPermissions` applies only when the main conversation is already in that mode.
+
 ## [4.16.0] — 2026-11-07
 
 An AI agent that reads text anyone can write, reaches private data and can act is one prompt injection away from

@@ -103,7 +103,7 @@ What a part contributes comes from a table of servers and tools built from each 
 the table does not know counts for nothing and is named in the finding's `unknown_servers`. The table is the main
 limit on recall: on public repositories that commit MCP configurations, most servers are still outside it.
 
-## jankhunt.impact.v2 (adopted design, planned for 4.17.0)
+## jankhunt.impact.v2 (adopted design, planned for 4.18.0)
 
 v2 extends the exposure class with the same conjunctive structure the Rule of Two uses, so that combinations raise
 the class, not only single conditions. Per principal it reads five ingredients, each as an evidence tier:
@@ -138,7 +138,7 @@ unknown ingredient says so; the level's evidence is its best-supported driver. P
 - **Conservative extension:** `level ≥ class_v1` for every principal, by construction (v1's conditions are kept as
   drivers).
 
-**Remediation levers (planned for 4.18.0).** To bring the level down, remove one ingredient from every top-level
+**Remediation levers (planned for 4.19.0).** To bring the level down, remove one ingredient from every top-level
 combination instance: a minimum hitting set, with adding an approval as a lever alongside removing an ingredient, and
 a minimum edge cut where the ingredient is reach over several paths. Each lever shows the code behind it and the
 level that remains after it, so a change that clears one combination but leaves another is visible.
