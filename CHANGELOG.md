@@ -22,8 +22,8 @@ from.
   `sandbox.filesystem.disabled`, `sandbox.allowNestedUserNamespaces` and `sandbox.allowAppleEvents`; `JH710` reports
   `sandbox.credentials.allowPlaintextInject`.
 - **`JH710` reads Claude Code settings**: `sandbox.network.httpProxyPort` or `socksProxyPort` (the program on that
-  port, not the allowed domains, decides what sandboxed commands reach), `sandbox.enableWeakerNetworkIsolation`
-  (minor), and `sandbox.ignoreViolations` that silences every command and path (minor).
+  port, not the allowed domains, decides what sandboxed commands reach) and `sandbox.enableWeakerNetworkIsolation`
+  (minor).
 - **`JH709`, Claude Code**: `sandbox.filesystem.allowRead` and `permissions.additionalDirectories` on home, root or
   credential paths, and `sandbox.network.allowLocalBinding` (minor).
 - **`JH709`, Codex**: the network proxy's `dangerously_allow_all_unix_sockets`,
@@ -31,16 +31,31 @@ from.
   `unix_sockets`, in `[features.network_proxy]` and in a permission profile's network table.
 - **`JH704`, Claude Code plugins**: a project that registers a plugin marketplace (`extraKnownMarketplaces`) and
   turns plugins on from it (`enabledPlugins`) for everyone who trusts the repository (minor); a marketplace fetched
-  over plain HTTP (major); a marketplace `headersHelper`, which runs a command (minor). One finding per file names the marketplaces. A marketplace inside the
+  over plain HTTP (major); the `headersHelper` of an https `url` marketplace, which runs a command (minor). One finding per file names the marketplaces. A marketplace inside the
   repository (`directory`, `file`) is not reported.
 - `JH703`: `skipDangerousModePermissionPrompt` in a committed `.claude/settings.local.json`.
 - `references/citizen.md`: which Claude Code file each setting counts in, and what the agent rules do not read yet.
+
+### Changed
+
+- **`JH703`: `defaultMode: bypassPermissions` in a repository's own Claude Code settings is now minor** (it was
+  major). Claude Code has ignored it there since 2.1.257 (September 2026); the finding stays as a note for people on
+  older versions, and no longer counts towards `P-AGT-001`, so it no longer blocks a citizen passport by itself. In
+  managed settings it is major.
+- `JH704` returns its findings for a file most serious first. The scan keeps five findings per file and rule, so a
+  file with many hooks now keeps a rerouted API or a plain-HTTP marketplace ahead of them.
+- `JH714` drops a Cursor MCP server, or its acting tools, that `.cursor/cli.json` denies.
 
 ### Not reported, on purpose
 
 - Settings Claude Code ignores in a repository's own files: `sandbox.network.strictAllowlist`,
   `sandbox.network.tlsTerminate`, `autoMode`, `skipAutoPermissionPrompt`, and the managed-only keys above. A
   subagent file's `permissionMode: bypassPermissions` applies only when the main conversation is already in that mode.
+- `sandbox.ignoreViolations`: its values are literal substrings, so no entry silences everything.
+- Codex network keys outside `[features.network_proxy]` and `[permissions.<name>.network]`, which Codex does not read.
+- A Cursor `Shell(...)` entry with arguments (`Shell(python:--version)`), or one a `deny` entry covers.
+
+Audited before release by Codex (gpt-6-astra): six blocking findings and two others, all fixed here, each with a test.
 
 ## [4.16.0] — 2026-11-07
 

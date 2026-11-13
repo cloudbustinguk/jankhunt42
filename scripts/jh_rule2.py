@@ -275,7 +275,8 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
     cursor = cursor_cli(project if posix.endswith(".cursor/mcp.json") else "")
     # Claude Code applies deny rules even when permissions are bypassed
     servers = [s for s in servers if s.name not in claude["disabled"]
-               and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])]
+               and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])
+               and not any(n in ("*", s.name) and t == "*" for n, t in cursor["deny"])]
     if not servers:
         return None
     container: Dict[str, Any] = {}
@@ -292,7 +293,8 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
         if cap is None:
             unknown.append(s.name)
             continue
-        denied = {d.split("__", 2)[2] for d in claude["deny"] if d.startswith("mcp__%s__" % s.name)}
+        denied = {d.split("__", 2)[2] for d in claude["deny"] if d.startswith("mcp__%s__" % s.name)} \
+            | {t for n, t in cursor["deny"] if n in ("*", s.name)}
         if cap["label"] in ACTING_TOOLS and ACTING_TOOLS[cap["label"]] <= denied:
             cap = dict(cap, C="", A="" if cap["label"] == "Fetch" else cap["A"],
                        what=cap["what"] + " (its acting tools are denied)")
