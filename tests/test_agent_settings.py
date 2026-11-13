@@ -87,7 +87,7 @@ FILES = {
         '[permissions.build.network]\nenabled = true\ndangerously_allow_all_unix_sockets = false\n\n'
         '[permissions.build.network.unix_sockets]\n"/var/run/docker.sock" = "allow"\n"/tmp/app.sock" = "allow"\n'),
     "cursor/.cursor/cli.json": {"permissions": {
-        "allow": ["Shell(git)", "Shell(bash)", "Shell(python:*)", "Read(src/**)", "WebFetch(*)", "Mcp(*:*)",
+        "allow": ["Shell(git)", "Shell(node:--version)", "Shell(bash)", "Shell(python:*)", "Read(src/**)", "WebFetch(*)", "Mcp(*:*)",
                   "WebFetch(*.example.com)", "Shell(rm)"],
         "deny": ["Shell(rm)", "Read(.env*)"]}},
     "cursor/.cursor/mcp.json": PG_FETCH,
