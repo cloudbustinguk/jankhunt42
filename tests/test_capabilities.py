@@ -297,6 +297,78 @@ class CapabilityChanges(unittest.TestCase):
                 self.assertEqual(r["capability_delta"]["counts"]["unknown"], 0)
                 self.assertEqual(self.cap_rule(r)["outcome"], "pass")
 
+    def definitions(self, report):
+        return sorted((r["target"]["definition"], r["target"]["path"], r["definition_change"])
+                      for r in report["capability_delta"]["requests"] if r["target"].get("definition"))
+
+    def test_agent_definitions_are_locked(self):
+        """4.18.0: an added or edited instruction file, skill file, command, subagent or agent settings file is a
+        change IT approves; an untouched one is not, and test data is left out."""
+        self.write("AGENTS.md", "Run the tests before committing.\n")
+        self.write(".claude/skills/report/SKILL.md", "---\nname: report\ndescription: weekly report\n---\nRun it.\n")
+        self.write(".claude/skills/report/scripts/build.py", "print('report')\n")
+        self.write(".claude/agents/reviewer.md", "---\nname: reviewer\n---\nReview.\n")
+        self.write("tests/fixtures/demo/CLAUDE.md", "fixture\n")
+        base = self.commit()
+        self.write("AGENTS.md", "Run the tests before committing.\nAlso deploy when they pass.\n")
+        self.write(".claude/skills/report/scripts/build.py", "print('report and upload')\n")
+        self.write(".claude/commands/ship.md", "Ship it.\n")
+        self.write("tests/fixtures/demo/CLAUDE.md", "fixture, edited\n")
+        self.commit()
+        r = self.passport(base)
+        self.assertEqual(self.definitions(r), [
+            ("command", ".claude/commands/ship.md", "added"),
+            ("instructions", "AGENTS.md", "changed"),
+            ("skill file", ".claude/skills/report/scripts/build.py", "changed")])
+        self.assertEqual(self.cap_rule(r)["outcome"], "review")
+        rows = [x for x in r["capability_delta"]["requests"] if x["target"].get("definition")]
+        self.assertTrue(all(x["kind"] == "agent" and x["certainty"] == "supported" for x in rows))
+        lines = C.approver_lines(r["capability_delta"])
+        self.assertTrue(any("an agent definition was changed: instructions AGENTS.md (content " in l for l in lines), lines)
+
+    def test_a_definition_change_can_be_approved(self):
+        """Definitions are concrete requests, so a change to them alone is reviewable by an approval record."""
+        import jh_capability_approval as A
+        self.write("AGENTS.md", "one\n")
+        base = self.commit()
+        self.write("AGENTS.md", "two\n")
+        self.commit()
+        delta = self.passport(base)["capability_delta"]
+        self.assertEqual(delta["counts"]["total"], 1)
+        self.assertEqual(A.unreviewable(delta), [])
+
+    def test_a_secret_value_alone_does_not_change_a_definition(self):
+        token = "ghp_" + "Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2Uv3Wx4"
+        self.write(".claude/settings.local.json", json.dumps(dict(env=dict(SERVICE_TOKEN=token))))
+        base = self.commit()
+        self.write(".claude/settings.local.json", json.dumps(dict(env=dict(SERVICE_TOKEN=token[:-4] + "Zz99"))))
+        self.commit()
+        r = self.passport(base)
+        self.assertEqual(self.definitions(r), [])
+        self.assertNotIn(token[:12], json.dumps(r))
+
+    def test_unchanged_definitions_need_nothing(self):
+        self.write("CLAUDE.md", "Keep it simple.\n")
+        self.write(".claude/settings.json", json.dumps(dict(permissions=dict(allow=["Read"]))))
+        base = self.commit()
+        self.write("CLAUDE.md", "Keep it simple.   \r\n")      # trailing spaces and line ends do not count
+        self.write("app.py", "value = 2\n")
+        self.commit()
+        r = self.passport(base)
+        self.assertEqual(self.definitions(r), [])
+        self.assertEqual(self.cap_rule(r)["outcome"], "pass")
+
+    def test_settings_and_skill_controls_are_in_the_comparison(self):
+        base = self.commit()
+        self.write(".claude/settings.json", json.dumps(dict(permissions=dict(allow=["Bash(curl:*)"]))))
+        self.write(".claude/skills/ops/SKILL.md", "---\nname: ops\nallowed-tools: Bash\n---\nOperate.\n")
+        self.commit()
+        r = self.passport(base)
+        self.assertEqual([d[:2] for d in self.definitions(r)],
+                         [("agent settings", ".claude/settings.json"), ("skill", ".claude/skills/ops/SKILL.md")])
+        controls = {x["target"].get("control") for x in r["capability_delta"]["requests"] if x["kind"] == "agent"}
+        self.assertIn("JH712", controls)
+
     def test_redaction_covers_unchanged_unknowns(self):
         label = "-".join(("invented", "opaque", "label"))
         self.write(".mcp.json", json.dumps(dict(mcpServers={label: dict(command="invented-tool")})))
