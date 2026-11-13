@@ -19,14 +19,55 @@ import jh_config
 import jh_graph as G
 import jh_map
 import jh_n8n
-from jh_core import VERSION, source_from_text, is_mcp_config
+from jh_core import VERSION, source_from_text, is_mcp_config, is_agent_context, is_test_path, redact_secrets
 from jh_rules import ScanOptions, scan_sources
 
 MODEL = "jankhunt.capability-delta.v1"
 DISPLAY_LIMIT = 100
 MAX_REQUESTS = 20000
 MUTATING = ("write", "delete", "admin")
-AGENT_RULES = {"JH%d" % i for i in range(701, 712)} | {"JH432"}
+# JH714 reads files beside the one it scans, which a snapshot does not provide; what it judges (the MCP servers
+# and the approval settings) is covered here as definitions and controls.
+AGENT_RULES = {"JH%d" % i for i in range(701, 714)} | {"JH432"}
+# Agent settings that change what an agent may do; an editor's own settings (.vscode, .zed) are left to the controls.
+DEFINITION_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml",
+                       ".cursor/cli.json", ".gemini/settings.json", "managed-settings.json")
+
+
+def _skill_dirs(items):
+    """Folders that hold a SKILL.md: every file in one is part of that skill (its scripts run as the skill)."""
+    return sorted({os.path.dirname(i.rel.replace(os.sep, "/")) for i in items
+                   if os.path.basename(i.rel).lower() == "skill.md"}, key=len, reverse=True)
+
+
+def definition_kind(rel, skill_dirs):
+    """What an agent definition file is, or None: the text an agent follows (instructions, skills and their files,
+    commands, subagents) and the agent settings that decide what it may do. Test data is left out."""
+    posix = rel.replace(os.sep, "/")
+    low, base = "/" + posix.lower(), os.path.basename(posix).lower()
+    if is_test_path(rel):
+        return None
+    if base == "skill.md":
+        return "skill"
+    if any(d and posix.startswith(d + "/") for d in skill_dirs):
+        return "skill file"
+    if "/.claude/commands/" in low or "/.gemini/commands/" in low or "/.opencode/command/" in low:
+        return "command"
+    if "/.claude/agents/" in low or "/.opencode/agent/" in low or low.endswith(".chatmode.md"):
+        return "subagent"
+    if any(low.endswith("/" + f) for f in DEFINITION_SETTINGS) or "/managed-settings.d/" in low:
+        return "agent settings"
+    if is_agent_context(rel):
+        return "instructions"
+    return None
+
+
+def definition_digest(text):
+    """The content of a definition, compared across the two snapshots: secrets are removed first (a changed
+    credential value alone is not a new definition, and no value enters the digest), line ends and trailing
+    spaces do not count."""
+    lines = redact_secrets(text).replace("\r\n", "\n").split("\n")
+    return hashlib.sha256("\n".join(x.rstrip() for x in lines).strip().encode("utf-8")).hexdigest()
 
 
 def digest(value):
@@ -184,9 +225,16 @@ def inventory(report, items):
         for name in principal["attributes"].get("credential_refs", []):
             add("credential", subject, {"logical_name": name}, "pass", principal["evidence_refs"])
     sources = []
+    skill_dirs = _skill_dirs(items)
     for item in items:
         if capped:
             break
+        what = definition_kind(item.rel, skill_dirs)
+        if what:
+            # The content is the identity: an edited definition is a new request that IT approves, so an approved
+            # head cannot change what its agents follow without the change being listed again.
+            add("agent", "agent", dict(definition=what, path=G.sanitize_text(item.rel, 300),
+                                       digest=definition_digest(item.text)), "load", location=(item.rel, 1))
         sf = source_from_text(item.rel, item.rel, item.text)
         if sf:
             sources.append(sf)
@@ -306,6 +354,7 @@ def _definition(row, lines, mcp, n8n):
 def compare(base, head, base_items, head_items, ceiling, context):
     before, bu, br = inventory(base, base_items)
     after, hu, hr = inventory(head, head_items)
+    base_paths = {r["target"]["path"] for r in before.values() if r["action"] == "load" and r["target"].get("definition")}
     requests = []
     for key, row in after.items():
         if key in before:
@@ -316,6 +365,8 @@ def compare(base, head, base_items, head_items, ceiling, context):
                             row["target"].get("port")) in ceiling else "outside" if ceiling is not None else "unknown") \
                             if row["kind"] == "network" else "not-applicable"
         row["approval"] = "within-network-ceiling" if row["ceiling"] == "within" else "needs-approval"
+        if row["action"] == "load" and row["target"].get("definition"):
+            row["definition_change"] = "changed" if row["target"]["path"] in base_paths else "added"
         requests.append(row)
     requests.sort(key=lambda r: (not (r["production"] and r["kind"] == "authority" and r["action"] in MUTATING),
                                  not r["production"], r["kind"] not in ("credential", "agent"), r["id"]))
@@ -355,12 +406,15 @@ def compare(base, head, base_items, head_items, ceiling, context):
 
 
 def _label(target):
+    if target.get("definition"):
+        return "%s %s (content %s)" % (target["definition"], target.get("path", "?"), str(target.get("digest", ""))[:12])
     label = target.get("logical_name") or target.get("name") or target.get("host") or target.get("catalog")
     if not label:
         label = {"JH702": "approval bypass", "JH703": "disabled approvals", "JH704": "workspace hook or command",
                  "JH701": "suspicious agent instruction", "JH705": "unpinned agent tool", "JH706": "MCP credential exposure",
                  "JH707": "plaintext MCP transport", "JH708": "untrusted agent prompt input", "JH432": "agent CI with secrets",
-                 "JH709": "broad sandbox access", "JH710": "unenforced sandbox", "JH711": "weakened container isolation"}.get(
+                 "JH709": "broad sandbox access", "JH710": "unenforced sandbox", "JH711": "weakened container isolation",
+                 "JH712": "skill pre-approving any shell command", "JH713": "API key in an agent sandbox template"}.get(
                      target.get("control"), target.get("kind", "unresolved target"))
     if target.get("port"):
         label += ":%s" % target["port"]
@@ -376,6 +430,9 @@ def approver_lines(delta):
         delta["state"], delta["counts"]["total"], delta["counts"]["unknown"])]
     for row in delta["requests"][:10]:
         target = row["target"]
+        if row.get("definition_change"):
+            lines.append("Needs approval: an agent definition was %s: %s." % (row["definition_change"], _label(target)))
+            continue
         label = _label(target)
         if row["kind"] == "network" and not target.get("port"):
             label += " (unknown port)"
