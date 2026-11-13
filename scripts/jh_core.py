@@ -1027,7 +1027,8 @@ def make_finding(
         column=max(1, column),
         end_line=end_line,
         evidence=trim(visible_text(redact_secrets(ev or "")), 200),     # every rule: a line can hold a secret
-        message=message or rule.message,
+        # a message built by a check can quote the repository (a path, a host, a name): the same rule as evidence
+        message=redact_secrets(message) if message else rule.message,
         fix=rule.fix,
         confidence=confidence or rule.confidence,
         tags=rule.tags,

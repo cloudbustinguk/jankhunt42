@@ -1401,6 +1401,12 @@ def agent_instruction(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 # --------------------------------------------------------------------------- agent workspace config
 
+def _shown(value: Any, limit: int) -> str:
+    """Repository text for a message: secrets removed first, then shortened (a shortened token is no longer
+    recognised as one)."""
+    return trim(redact_secrets(str(value)), limit)
+
+
 def _settings(sf: SourceFile) -> Optional[Dict[str, Any]]:
     try:
         data = jh_agent.loads_jsonc(sf.text)
@@ -1593,13 +1599,23 @@ def _private_cidr(entry: str) -> Optional[str]:
     return "a private network range" if net.is_private or shared else None
 
 
+_KEY_DOT = "\x1f"      # stands for a dot inside a quoted TOML key, which does not separate tables
+
+
+def _toml_table(header: str) -> str:
+    """A table header's path joined by dots, with a dot inside a quoted component replaced by _KEY_DOT:
+    ["features.network_proxy"] is one key of that name, not the table features.network_proxy."""
+    parts = re.findall(r"""\s*("[^"]*"|'[^']*'|[^.\s"']+)\s*(?:\.|$)""", header)
+    return ".".join(p[1:-1].replace(".", _KEY_DOT) if p[:1] in "\"'" else p for p in parts)
+
+
 def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
-    """(line, section, key, raw value) for simple TOML key = value lines."""
+    """(line, section, key, raw value) for simple TOML key = value lines; see _toml_table for the section."""
     section = ""
     for i, line in enumerate(sf.nocomment):
         m = re.match(r"^\s*\[\s*([^\]]+?)\s*\]\s*$", line)
         if m:
-            section = m.group(1).replace('"', "").replace("'", "")
+            section = _toml_table(m.group(1))
             continue
         m = re.match(r"""^\s*("[^"]*"|'[^']*'|[\w.\-*]+)\s*=\s*(.+?)\s*$""", line)
         if m:
@@ -1616,8 +1632,9 @@ _CODEX_PROXY_WIDEN = {
 }
 
 
-# the two tables Codex reads its sandbox network settings from; any other table with these key names is not one
-_CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network)$")
+# the tables Codex reads its sandbox network settings from (the CLI's proxy, a permission profile, the desktop
+# app); any other table with these key names is not one
+_CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network|application\.network)$")
 
 
 def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
@@ -1627,17 +1644,18 @@ def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
         if section == "sandbox_workspace_write" and key == "network_access" and v == "true":
             out.append(make_finding(rule, sf, line, message=(
                 "Codex's workspace-write sandbox lets every command reach any host on the network.")))
-        elif (section.endswith("network_proxy.domains") or re.search(r"(?:^|\.)network\.domains$", section)) \
+        elif section.endswith(".domains") and _CODEX_NET.match(section[:-len(".domains")]) \
                 and v == "allow" and _wild_host(key):
             out.append(make_finding(rule, sf, line, message=(
                 "The Codex network allowlist admits %s." % _wild_host(key))))
         elif re.match(r"^permissions\.[^.]+\.network$", section) and key == "mode" and v == "full":
             out.append(make_finding(rule, sf, line, message=(
-                "Codex permission profile '%s' gives commands full network access." % section.split(".")[1])))
+                "Codex permission profile '%s' gives commands full network access."
+                % _shown(section.split(".")[1].replace(_KEY_DOT, "."), 40))))
         elif not section and key == "default_permissions" and v == ":danger-full-access":
             out.append(make_finding(rule, sf, line, message=(
                 "Codex's default permission profile has no filesystem or network sandbox.")))
-        elif re.search(r"network_proxy$", section) and key == "domains" and re.search(r"""["']\*["']\s*=\s*["']allow""", value):
+        elif _CODEX_NET.match(section) and key == "domains" and re.search(r"""["']\*["']\s*=\s*["']allow""", value):
             out.append(make_finding(rule, sf, line, message="The Codex network allowlist admits every host."))
         elif _CODEX_NET.match(section) and v == "true" and key in _CODEX_PROXY_WIDEN:
             why, severity = _CODEX_PROXY_WIDEN[key]
@@ -1671,7 +1689,7 @@ def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     for d in net.get("allowedDomains") if isinstance(net.get("allowedDomains"), list) else []:
         why = _wild_host(str(d))
         if why:
-            add("allowedDomains", "The Claude Code sandbox pre-allows %s (%s)." % (why, trim(str(d), 40)))
+            add("allowedDomains", "The Claude Code sandbox pre-allows %s (%s)." % (why, _shown(d, 40)))
             break
     if net.get("allowAllUnixSockets") is True:
         add("allowAllUnixSockets", "Sandboxed commands can connect to every Unix socket, including the Docker "
@@ -1679,28 +1697,28 @@ def _claude_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     for p in net.get("allowUnixSockets") if isinstance(net.get("allowUnixSockets"), list) else []:
         if "docker.sock" in str(p) or "podman" in str(p):
             add("allowUnixSockets", "Sandboxed commands can use the container engine socket (%s), which controls "
-                                    "the host." % trim(str(p), 50))
+                                    "the host." % _shown(p, 50))
             break
     for c in box.get("excludedCommands") if isinstance(box.get("excludedCommands"), list) else []:
         if _SANDBOX_ESCAPE_CMDS.match(str(c).strip()):
             add("excludedCommands", "'%s' runs outside the Claude Code sandbox; it can run any other program "
-                                    "unsandboxed." % trim(str(c), 30))
+                                    "unsandboxed." % _shown(c, 30))
             break
     fs = box.get("filesystem") if isinstance(box.get("filesystem"), dict) else {}
     for p in fs.get("allowWrite") if isinstance(fs.get("allowWrite"), list) else []:
         if _CRED_PATHS.match(str(p).strip().rstrip("/") or "/"):
-            add("allowWrite", "Sandboxed commands can write to %s (home, root, or credential paths)." % trim(str(p), 40))
+            add("allowWrite", "Sandboxed commands can write to %s (home, root, or credential paths)." % _shown(p, 40))
             break
     for p in _str_list(fs.get("allowRead")):
         if _CRED_PATHS.match(p.strip().rstrip("/") or "/"):
             add("allowRead", "Sandboxed commands can read %s again (home, root, or credential paths), where a "
-                             "denyRead rule had closed it." % trim(p, 40))
+                             "denyRead rule had closed it." % _shown(p, 40))
             break
     perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
     for p in _str_list(perms.get("additionalDirectories")):
         if _CRED_PATHS.match(p.strip().rstrip("/") or "/"):
             add("additionalDirectories", "Claude Code's file tools reach %s (home, root, or credential paths), "
-                                         "outside the project." % trim(p, 40))
+                                         "outside the project." % _shown(p, 40))
             break
     if net.get("allowLocalBinding") is True:
         add("allowLocalBinding", "Sandboxed commands can listen on ports and connect to services on this machine "
@@ -1827,7 +1845,7 @@ def _substrate_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
                     out.append(make_finding(rule, sf, _line_matching(sf, r"(?i)replace_?headers"),
                                             severity="minor" if inside else None, message=(
                         "The gateway puts a credential into the %s header of cleartext HTTP to %s: anyone on %s "
-                        "can read it. Use an https rule." % (trim(str(eff.get("header")), 30), names, where))))
+                        "can read it. Use an https rule." % (_shown(eff.get("header"), 30), names, where))))
                     break
     return out[:10]
 
@@ -1848,7 +1866,7 @@ def sandbox_template_credential(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             start = _line_matching(sf, r"""^\s*-?\s*name\s*:\s*['"]?%s['"]?\s*$""" % re.escape(name)) - 1
             line = _line_matching(sf, r"^\s*value\s*:", start=start, default=start + 1)
-            source = "is filled in from %s when the template is applied" % trim(str(value).strip(), 40) \
+            source = "is filled in from %s when the template is applied" % _shown(str(value).strip(), 40) \
                 if how == "rendered" else "is written into the template"
             message = ("%s %s, so the key sits inside the sandbox of container '%s': the agent and any command a "
                        "prompt injection makes it run can read it, and Substrate's memory snapshots store it. Let the "
@@ -1939,7 +1957,7 @@ def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
             if isinstance(mw, dict) and mw.get("on_error") == "fail_open":
                 out.append(make_finding(rule, sf, _line_matching(sf, r"on_error\s*:\s*fail_open"), severity="minor",
                                         message="Middleware '%s' fails open: traffic passes uninspected when it errors."
-                                        % trim(str(name), 40)))
+                                        % _shown(name, 40)))
     return out[:10]
 
 
@@ -2184,7 +2202,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                 command = " ".join(str(x) for x in [task.get("command", "")] + list(task.get("args") or []))
                 out.append(make_finding(rule, sf, line_no, message=(
                     "Task '%s' runs automatically when the folder is opened (once workspace trust is granted); "
-                    "malicious repositories use this to run code on open." % trim(str(task.get("label", "?")), 40)),
+                    "malicious repositories use this to run code on open." % _shown(task.get("label", "?"), 40)),
                     evidence=redact_secrets(trim(command, 160))))
         return out
     scope = claude_scope(sf.rel)
@@ -2222,7 +2240,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                 "code into it (CVE-2026-21852 class)." % key)))
     # the scan keeps the first few findings per file and rule, so the most serious go first; at equal severity
     # what 4.16.0 reported stays ahead of the marketplace findings
-    return sorted(out[:10] + plugins, key=lambda f: SEV_RANK.get(f.severity, 99))
+    return sorted(out + plugins, key=lambda f: SEV_RANK.get(f.severity, 99))
 
 
 # --------------------------------------------------------------------------- MCP servers
@@ -2429,7 +2447,7 @@ def gh_branch_push_privileged(sf: SourceFile, rule: Rule) -> List[Finding]:
                                         "a write-scoped GITHUB_TOKEN" if write else ""]))
         return [make_finding(rule, sf, _line_matching(sf, r"^\s*%s\s*:" % re.escape(str(name))), message=(
             "Job '%s' runs on %s with %s; code on a branch nobody has reviewed runs with that power."
-            % (trim(str(name), 40), how, power)), extra={"trigger": how, "job": str(name)})]
+            % (_shown(name, 40), how, power)), extra={"trigger": how, "job": str(name)})]
     return []
 
 
