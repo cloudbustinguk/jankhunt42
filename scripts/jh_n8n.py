@@ -10,7 +10,7 @@ import json
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from jh_core import redact_secrets
+from jh_core import cut, redact_secrets
 from jh_graph import sanitize_text
 
 MAX_BYTES = 2 * 1024 * 1024
@@ -426,7 +426,7 @@ def flows(sf):
             result = parse(sf.rel, sf.text) or []
         except (ValueError, RecursionError) as exc:
             reason = str(exc).removeprefix('n8n ') if isinstance(exc, ValueError) else 'nested too deeply'
-            GAPS.append('%s: n8n workflow the reader rejects (%s), not checked' % (sf.rel, reason[:60]))
+            GAPS.append('%s: n8n workflow the reader rejects (%s), not checked' % (sf.rel, cut(reason, 60)))
     sf._jh_n8n = result
     return result
 

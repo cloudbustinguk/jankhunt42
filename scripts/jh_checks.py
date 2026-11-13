@@ -1609,13 +1609,28 @@ def _toml_table(header: str) -> str:
     return ".".join(p[1:-1].replace(".", _KEY_DOT) if p[:1] in "\"'" else p for p in parts)
 
 
+_TOML_HEADER = re.compile(r"""^\s*\[(?!\[)\s*((?:"[^"]*"|'[^']*'|[^\]"'\[])+?)\s*\]\s*$""")
+_NO_TABLE = _KEY_DOT + "?"      # a header this reader does not follow: nothing under it is read as a setting
+
+
 def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
-    """(line, section, key, raw value) for simple TOML key = value lines; see _toml_table for the section."""
-    section = ""
+    """(line, section, key, raw value) for simple TOML key = value lines; see _toml_table for the section.
+    Lines under an array table ([[name]]) or a header it cannot read belong to no table, and the lines of a
+    multi-line string are text, not settings."""
+    section, inside = "", ""
     for i, line in enumerate(sf.nocomment):
-        m = re.match(r"^\s*\[\s*([^\]]+?)\s*\]\s*$", line)
-        if m:
-            section = _toml_table(m.group(1))
+        if inside:                                  # in a multi-line string until its closing quotes
+            if line.count(inside) % 2:
+                inside = ""
+            continue
+        if line.lstrip().startswith("["):
+            m = _TOML_HEADER.match(line)
+            section = _toml_table(m.group(1)) if m else _NO_TABLE
+            continue
+        for quotes in ('"""', "'''"):
+            if line.count(quotes) % 2:
+                inside = quotes
+        if inside:
             continue
         m = re.match(r"""^\s*("[^"]*"|'[^']*'|[\w.\-*]+)\s*=\s*(.+?)\s*$""", line)
         if m:
@@ -1632,9 +1647,9 @@ _CODEX_PROXY_WIDEN = {
 }
 
 
-# the tables Codex reads its sandbox network settings from (the CLI's proxy, a permission profile, the desktop
-# app); any other table with these key names is not one
-_CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network|application\.network)$")
+# the two tables config.toml gives sandbox network settings in (the proxy, a permission profile); any other table
+# with these key names is not one. The desktop app's application.network belongs to requirements.toml.
+_CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network)$")
 
 
 def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
@@ -2046,14 +2061,14 @@ def _claude_plugins(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Fi
         if re.match(r"(?i)^http://(?!localhost[:/]|127\.0\.0\.1[:/])", where):
             out.append(make_finding(rule, sf, line_no, severity="major", message=(
                 "Plugin marketplace '%s' is fetched over plain HTTP, so anyone on the network path can swap the "
-                "plugins it lists." % shown), evidence=redact_secrets(trim(where, 160))))
+                "plugins it lists." % shown), evidence=trim(redact_secrets(where), 160)))
         helper = src.get("headersHelper")
         # Claude Code runs the helper only for a url source over https
         if isinstance(helper, str) and helper.strip() and kind == "url" and where.lower().startswith("https://"):
             out.append(make_finding(rule, sf, _line_matching(sf, r'"headersHelper"', line_no - 1), severity="minor",
                                     message="Plugin marketplace '%s' runs a shell command from committed project "
                                     "settings to make its request headers." % shown,
-                                    evidence=redact_secrets(trim(helper, 160))))
+                                    evidence=trim(redact_secrets(helper), 160)))
         plugins = sorted(str(k).rsplit("@", 1)[0] for k, v in enabled.items()
                          if v is True and isinstance(k, str) and k.rsplit("@", 1)[-1] == name and "@" in k)
         if plugins and kind not in ("file", "directory", "settings"):
@@ -2067,7 +2082,7 @@ def _claude_plugins(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Fi
             "whoever controls a marketplace controls its updates."
             % (len(names), trim(", ".join("'%s'" % n for n in names[:3]), 90), len(plugins),
                trim(", ".join(plugins[:3]), 60))),
-            evidence=redact_secrets(trim("; ".join(w for _, _, w, _ in remote[:3]), 160))))
+            evidence=trim(redact_secrets("; ".join(w for _, _, w, _ in remote[:3])), 160)))
     return out
 
 
@@ -2190,7 +2205,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
         if isinstance(command, str) and command.strip():
             out.append(make_finding(rule, sf, _line_matching(sf, r'"initializeCommand"'), message=(
                 "Dev container initializeCommand runs on the host machine, outside the container, whenever "
-                "someone reopens this repository in a container."), evidence=redact_secrets(trim(command, 160))))
+                "someone reopens this repository in a container."), evidence=trim(redact_secrets(command), 160)))
         return out
     if posix.endswith(".vscode/tasks.json"):
         start = 0
@@ -2203,7 +2218,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                 out.append(make_finding(rule, sf, line_no, message=(
                     "Task '%s' runs automatically when the folder is opened (once workspace trust is granted); "
                     "malicious repositories use this to run code on open." % _shown(task.get("label", "?"), 40)),
-                    evidence=redact_secrets(trim(command, 160))))
+                    evidence=trim(redact_secrets(command), 160)))
         return out
     scope = claude_scope(sf.rel)
     # managed settings are an administrator's own hooks, helpers and gateway: by design, not a repository's doing
@@ -2216,19 +2231,19 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
         if urls:
             out.append(make_finding(rule, sf, line_no, severity="major", message=(
                 "A project hook sends %s events (tool inputs and outputs) to a remote URL for everyone who trusts "
-                "this repository." % event), evidence=redact_secrets(trim(urls[0], 160))))
+                "this repository." % event), evidence=trim(redact_secrets(urls[0]), 160)))
         commands = [v for k, v in actions if k == "command"]
         if commands:
             out.append(make_finding(rule, sf, line_no, severity="minor", message=(
                 "A project hook runs %d shell command(s) on %s for everyone who trusts this repository."
-                % (len(commands), event)), evidence=redact_secrets(trim(commands[0], 160))))
+                % (len(commands), event)), evidence=trim(redact_secrets(commands[0]), 160)))
     for key in _HELPER_KEYS + ("statusLine",):
         value = data.get(key)
         command = value.get("command") if isinstance(value, dict) else value
         if isinstance(command, str) and command.strip():
             out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % key)), severity="minor",
                                     message="'%s' runs a shell command from committed project settings." % key,
-                                    evidence=redact_secrets(trim(command, 160))))
+                                    evidence=trim(redact_secrets(command), 160)))
     env = data.get("env") if isinstance(data.get("env"), dict) else {}
     for key, severity in sorted(_REROUTE_ENV.items()):
         value = env.get(key)

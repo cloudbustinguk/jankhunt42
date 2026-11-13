@@ -31,7 +31,7 @@ import urllib.parse
 import zipfile
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from jh_core import MAX_ARCHIVE_BYTES, Finding, Rule, SourceFile, make_finding, source_from_text
+from jh_core import MAX_ARCHIVE_BYTES, Finding, Rule, SourceFile, cut, make_finding, source_from_text
 
 MAX_ZIP_BYTES = MAX_ARCHIVE_BYTES        # a solution zip larger than this is not opened
 MAX_MEMBERS = 5000                       # entries in the central directory
@@ -208,11 +208,11 @@ def formulas(text: str) -> str:
         node, depth = stack.pop()
         if not isinstance(node, dict) or depth > MAX_DEPTH:
             continue
-        control = re.sub(r"\s+", " ", str(node.get("Name") or "?"))[:100]
+        control = cut(re.sub(r"\s+", " ", str(node.get("Name") or "?")), 100)
         for rule in node.get("Rules") if isinstance(node.get("Rules"), list) else []:
             script = rule.get("InvariantScript") if isinstance(rule, dict) else None
             if isinstance(script, str) and script.strip():
-                prop = re.sub(r"\s+", " ", str(rule.get("Property") or "?"))[:100]
+                prop = cut(re.sub(r"\s+", " ", str(rule.get("Property") or "?")), 100)
                 first, *rest = script.split("\n")
                 lines.append("%s.%s: =%s" % (control, prop, first))
                 lines.extend("    " + more for more in rest)
@@ -343,7 +343,7 @@ def _at(sf: SourceFile, rule: Rule, name: str, **kw: Any) -> Finding:
     key = json.dumps(name)
     m = re.search(re.escape(key) + r"\s*:", sf.text)
     line = sf.text.count("\n", 0, m.start()) + 1 if m else 1
-    return make_finding(rule, sf, line, evidence=key[:120] + ": {", **kw)
+    return make_finding(rule, sf, line, evidence=cut(key, 120) + ": {", **kw)
 
 
 # "Who can trigger the flow: Anyone". Microsoft documents the options, not their serialization; public flow
@@ -418,7 +418,7 @@ def _agent_open(sf: SourceFile, rule: Rule) -> List[Finding]:
         named = re.search(r"<name>([^<]{1,200})</name>", sf.text) or \
             re.search(r'<bot\s+schemaname="([^"]{1,200})"', sf.text)
         how = "authenticationmode 1"
-    label = html.unescape(named.group(1)).strip()[:80] if named else "?"
+    label = cut(html.unescape(named.group(1)).strip(), 80) if named else "?"
     return [make_finding(rule, sf, _line_at(sf.text, mode.start()), message=(
         "The Copilot Studio agent '%s' is set to No authentication (%s): anyone who can reach it, on a website, the "
         "demo page or another channel, can chat with it without signing in, and the connector actions it calls run "
@@ -518,7 +518,7 @@ def _label(sf: SourceFile, name: str) -> str:
     i = _top(sf.raw, "modelDisplayName")
     if i is None:
         i = _top(sf.raw, "displayName")
-    return (_value(sf.raw, i) if i is not None else "")[:80] or _short(name)[:80]
+    return cut((_value(sf.raw, i) if i is not None else ""), 80) or cut(_short(name), 80)
 
 
 def _step(lines: List[str], i: int) -> Optional[Tuple[str, str]]:
@@ -530,7 +530,7 @@ def _step(lines: List[str], i: int) -> Optional[Tuple[str, str]]:
         if m and len(m.group(1)) < ind:
             shown = next((_value(lines, k) for k in range(j + 1, _end(lines, j))
                           if re.match(r"^\s*displayName:", lines[k])), "")
-            return m.group(2), shown[:80]
+            return m.group(2), cut(shown, 80)
         if lines[j].strip() and _indent(lines[j]) == 0:
             return None
     return None
@@ -557,7 +557,7 @@ def _maker_credentials(sf: SourceFile, rule: Rule) -> List[Finding]:
             step = _step(lines, i)
             if step:                                     # a connector or flow step inside a topic
                 shown = step[1] or step[0]
-                what = "%s '%s' in topic '%s'" % (_TOOL_KIND.get(step[0].lower(), "step"), shown, _short(name)[:80])
+                what = "%s '%s' in topic '%s'" % (_TOOL_KIND.get(step[0].lower(), "step"), shown, cut(_short(name), 80))
             else:                                        # a tool: the whole component is the tool
                 kind = re.search(r"(?m)^\s+kind:\s*(Invoke\w+)\s*$", sf.text)
                 what = "%s '%s'" % ("MCP server tool" if "ModelContextProtocolMetadata" in sf.text else
@@ -614,19 +614,19 @@ def _http_request(sf: SourceFile, rule: Rule) -> List[Finding]:
             continue
         if not host or host in _LOOPBACK:
             continue
-        shown = "%s://%s%s%s" % (parts.scheme.lower(), host, ":%d" % port if port else "", parts.path[:60])
+        shown = "%s://%s%s%s" % (parts.scheme.lower(), host, ":%d" % port if port else "", cut(parts.path, 60))
         if parts.scheme.lower() == "http":
             out.append(make_finding(rule, sf, at + 1, evidence="url: " + shown, message=(
                 "The topic '%s' sends an HTTP request over plain HTTP (%s): what it sends and receives, including any "
-                "header credential, can be read or changed on the way." % (_short(name)[:80], shown))))
+                "header credential, can be read or changed on the way." % (cut(_short(name), 80), shown))))
         elif port and port != 443:
             out.append(make_finding(rule, sf, at + 1, evidence="url: " + shown, message=(
                 "The topic '%s' sends an HTTP request to a non-standard port (%s): check the endpoint is meant to be "
-                "reached from the agent, and is not a management or test port." % (_short(name)[:80], shown))))
+                "reached from the agent, and is not a management or test port." % (cut(_short(name), 80), shown))))
         elif _CONNECTOR_HOST.match(host):
             out.append(make_finding(rule, sf, at + 1, severity="minor", evidence="url: " + shown, message=(
                 "The topic '%s' calls %s with a raw HTTP request where a connector exists, so the data policies that "
-                "govern that connector do not apply to this call." % (_short(name)[:80], host))))
+                "govern that connector do not apply to this call." % (cut(_short(name), 80), host))))
     return out
 
 
@@ -710,7 +710,7 @@ def _ai_email(sf: SourceFile, rule: Rule) -> List[Finding]:
     return [make_finding(rule, sf, op + 1, message=(
         "The tool '%s' sends email (%s) and the AI chooses who receives it: a message or document that injects "
         "instructions can make the agent mail conversation data to any address. Set the recipient as a fixed input, "
-        "or have a person confirm each email." % (_label(sf, name), _value(lines, op)[:40])))]
+        "or have a person confirm each email." % (_label(sf, name), cut(_value(lines, op), 40))))]
 
 
 # --- JH101 in topics: a credential header of an HTTP step, written into the agent
@@ -755,7 +755,7 @@ def header_secrets(sf: SourceFile, rule: Rule) -> List[Finding]:
                                     message=(
                 "The topic '%s' sends a credential written into the agent (the %s header): anyone who can read the "
                 "export, or open the agent's topics, has it. Keep it in an environment variable of type Secret (Azure "
-                "Key Vault)." % (_short(name)[:80], m.group(1)))))
+                "Key Vault)." % (cut(_short(name), 80), m.group(1)))))
     return out
 
 
@@ -824,11 +824,11 @@ def _env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                                  message=(
                 "The environment variable '%s' is Text, not Secret, and the export carries its default value (%d "
                 "characters, not shown): the secret ships with every copy of the solution. Rotate it, clear the default, "
-                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (schema[:80], len(value.strip()))))]
+                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (cut(schema, 80), len(value.strip()))))]
         return [make_finding(rule, sf, _line_at(sf.text, typ.start()), evidence="<type>%s</type>" % TEXT_TYPE, message=(
             "The environment variable '%s' is named for a secret but is Text, not Secret: its value is stored in plain "
             "text, readable by anyone who can read environment variables, and exported with the solution. Make it a "
-            "Secret variable, which keeps the value in Azure Key Vault." % schema[:80]))]
+            "Secret variable, which keeps the value in Azure Key Vault." % cut(schema, 80)))]
     named = bool(_SECRET_NAME.search(_bare_name(schema)))
     if not named and not _KEY_NAME.search(_bare_name(schema)):
         return []
@@ -844,7 +844,7 @@ def _env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
                                     evidence='"value": "(%d characters, not shown)"' % len(value.strip()), message=(
                 "The export carries the current value of the environment variable '%s' (%d characters, not shown): the "
                 "secret ships with every copy of the solution. Rotate it, export the solution without current values, "
-                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (schema[:80], len(value.strip())))))
+                "and make it a Secret variable, which keeps the value in Azure Key Vault." % (cut(schema, 80), len(value.strip())))))
     return out
 
 
@@ -879,12 +879,12 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
                 out.append(_at(sf, rule, name, confidence="medium", message=(
                     "The flow's HTTP trigger '%s' is open to anyone (triggerAuthenticationType '%s'): whoever has its URL "
                     "can start the flow, with no sign-in. The URL is the only key, and it travels in logs, scripts and "
-                    "chat." % (name[:60], mode.strip()[:20]))))
+                    "chat." % (cut(name, 60), cut(mode.strip(), 20)))))
             elif mode is None:
                 out.append(_at(sf, rule, name, severity="minor", confidence="low", message=(
                     "The flow starts from an HTTP request ('%s') and the export does not say who may call it. A flow "
                     "made before sign-in options existed, or set to Anyone, runs for whoever has the URL. Check the "
-                    "trigger's 'Who can trigger the flow' setting." % name[:60])))
+                    "trigger's 'Who can trigger the flow' setting." % cut(name, 60))))
         if kind != "action":
             continue
         api = connector(node, refs)
@@ -893,19 +893,19 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
             if api == "shared_keyvault" and op.lower().startswith("getsecret") and not _secured(node, "outputs"):
                 out.append(_at(sf, rule, name, message=(
                     "The Key Vault action '%s' reads a secret without Secure outputs, so the secret is shown in the "
-                    "flow's run history to anyone with access to it." % name[:60])))
+                    "flow's run history to anyone with access to it." % cut(name, 60))))
             elif typ.lower() == "http" and not _secured(node, "inputs") and (
                     isinstance(inputs.get("authentication"), dict) or
                     any(str(k).lower() in ("authorization", "x-api-key", "api-key", "apikey", "ocp-apim-subscription-key")
                         for k in (inputs.get("headers") or {}) if isinstance(inputs.get("headers"), dict))):
                 out.append(_at(sf, rule, name, severity="minor", confidence="medium", message=(
                     "The HTTP action '%s' sends a credential without Secure inputs, so it is shown in the flow's run "
-                    "history to anyone with access to it." % name[:60])))
+                    "history to anyone with access to it." % cut(name, 60))))
         if rule.check == "powerplatform_consumer" and api in CONSUMER:
             out.append(_at(sf, rule, name, message=(
                 "The action '%s' uses the %s connector, which can connect a personal account. Work data the flow "
                 "handles can leave the organisation through it; the export cannot show whose account it is. Check "
-                "your data policy classifies it." % (name[:60], CONSUMER[api]))))
+                "your data policy classifies it." % (cut(name, 60), CONSUMER[api]))))
         if rule.check == "powerplatform_ai_personal":
             uri = inputs.get("uri") if isinstance(inputs.get("uri"), str) else ""
             ai = api in AI_CONNECTORS or op.lower().startswith("aibuilderpredict") or \
@@ -920,5 +920,5 @@ def findings(sf: SourceFile, rule: Rule) -> List[Finding]:
                 out.append(_at(sf, rule, name, message=(
                     "The action '%s' sends personal data (%s) to an AI service with no visible redaction. Check the "
                     "service is approved for this data and that the minimum is sent." % (
-                        name[:60], ", ".join(f.strip("[]' ") for f in fields[:4])))))
+                        cut(name, 60), ", ".join(f.strip("[]' ") for f in fields[:4])))))
     return out
