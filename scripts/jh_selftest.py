@@ -985,6 +985,8 @@ MUTANTS = [
     ('M606-dl-skill-control-dropped', 'JH712 is not an agent control in the comparison', 'jh_capabilities.py', 'AGENT_RULES = {"JH%d" % i for i in range(701, 714)} | {"JH432"}', 'AGENT_RULES = {"JH%d" % i for i in range(701, 712)} | {"JH432"}', 'test_capabilities.py'),
     ('M607-dl-claude-rules-missed', 'Claude Code rules files are not definitions', 'jh_capabilities.py', '                   ("instructions", ("/.claude/rules/",)))', '                   ("instructions", ()))', 'test_capabilities.py'),
     ('M608-dl-content-ignored', 'only the file mode, not its content, is compared', 'jh_capabilities.py', '        entries[rel[len(prefix):]] = mode + ":" + oid', '        entries[rel[len(prefix):]] = mode', 'test_capabilities.py'),
+    ('M609-dl-skill-name-as-parent', "a standalone skill's own folder name counts as a folder above it", 'jh_capabilities.py', '        above = skill[:anchor.start()] if anchor else os.path.dirname(skill)', '        above = skill[:anchor.start()] if anchor else skill', 'test_capabilities.py'),
+    ('M610-dl-root-skill-swallows-agent-folders', "inside a root skill, an agent folder named test is taken for the skill's test data", 'jh_capabilities.py', '        if inner:       # an agent', '        if False:       # an agent', 'test_capabilities.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

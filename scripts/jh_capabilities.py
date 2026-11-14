@@ -65,18 +65,27 @@ def definition_kind(rel, skill_dirs):
     skill = next((d for d in skill_dirs if d == "" or posix.startswith(d + "/")), None)
     if skill is not None:
         anchor = _ANCHORS.search(skill)
-        above = skill[:anchor.start()] if anchor else skill
-        inside = posix[len(skill) + 1:] if skill else posix
+        # the folders above the skill's own folder (its own name, even "test", is not one of them)
+        above = skill[:anchor.start()] if anchor else os.path.dirname(skill)
         if _test_tree(above):
             return None
         if base == "skill.md" and os.path.dirname(posix) == skill:
             return "skill"
+        inside = posix[len(skill) + 1:] if skill else posix
+        inner = _ANCHORS.search(inside)
+        if inner:       # an agent's own folder inside the skill (a root skill holds the repository's .claude/, .github/)
+            return None if _test_tree(inside[:inner.start()]) else (_location_kind(rel, low, base) or "skill file")
         # a skill's own tests and fixtures are not what it runs
         return None if is_test_path(os.path.dirname(inside) + "/") else "skill file"
     anchor = _ANCHORS.search(posix)
     above = posix[:anchor.start()] if anchor else os.path.dirname(posix)
     if _test_tree(above):
         return None
+    return _location_kind(rel, low, base)
+
+
+def _location_kind(rel, low, base):
+    """The kind of definition a path is by where it lives, or None."""
     for kind, frags in DEFINITION_DIRS:
         if any(f in low for f in frags) and base.endswith(".md"):
             return kind

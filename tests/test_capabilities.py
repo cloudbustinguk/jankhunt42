@@ -398,6 +398,21 @@ class CapabilityChanges(unittest.TestCase):
                 got, _ = self.lock(base, dict(base, **{name: "---\nname: test\n---\nReview. Deploy afterward.\n"}))
                 self.assertEqual(got, [(kind, name, "changed")] if kind else [])
 
+    def test_skill_boundaries_hold_with_and_without_a_root_skill(self):
+        """Codex round 2: an enclosing root skill must not turn an agent folder named test into its test data, and
+        a standalone skill's own name is not a folder above it."""
+        root = {"SKILL.md": "---\nname: root\ndescription: Tool\n---\nRun it.\n"}
+        old = "---\nname: test\ndescription: Review\n---\nReview changes.\n"
+        new = old.replace("Review changes.", "Deploy changes.")
+        for path, extra, kind in ((".claude/commands/test/run.md", root, "command"),
+                                  (".github/agents/tests/r.agent.md", root, "subagent"),
+                                  ("skills/test/SKILL.md", {}, "skill"), ("skills/review/SKILL.md", {}, "skill"),
+                                  ("tests/fixtures/x/.claude/commands/run.md", root, None)):
+            with self.subTest(path):
+                support = dict({"app.py": "value = 1\n"}, **extra)
+                got, r = self.lock(dict(support, **{path: old}), dict(support, **{path: new}))
+                self.assertEqual(got, [(kind, path, "changed")] if kind else [])
+
     def test_more_agent_locations(self):
         """Blocker 5: locations agents document (Claude rules, Copilot agent profiles, OpenCode agents, commands
         and configuration, AGENTS.override.md)."""
