@@ -70,7 +70,7 @@ from.
 - Codex network keys outside `[features.network_proxy]` and `[permissions.<name>.network]`, which Codex does not read.
 - A Cursor `Shell(...)` entry with arguments (`Shell(python:--version)`), or one a `deny` entry covers.
 
-Audited before release by Codex (gpt-6-astra): eight findings, then seven more over three re-checks, all fixed here, each with a test.
+Audited before release by Codex (gpt-6-astra): eight findings, then eight more over four re-checks, all fixed here, each with a test.
 
 ## [4.16.0] — 2026-11-07
 
