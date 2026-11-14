@@ -145,6 +145,11 @@ FILES = {
     "codex-escaped/.codex/config.toml": ('[features.network_proxy]\nnote = """\n\\"""\n'
                                          'dangerously_allow_all_unix_sockets = true\n"""\n'),
     # an escape between quotes must not join them into a delimiter: ""\t" is two quotes, a tab, a quote
+    # not valid TOML: Codex does not start with it, so nothing in it counts (checked where Python has tomllib)
+    "codex-invalid/.codex/config.toml": '[features.network_proxy]\ndangerously_allow_all_unix_sockets = true\noops =\n',
+    # valid TOML the line reader alone misreads: '"""' in a one-line string hides the [unrelated] header from it
+    "codex-quote-in-string/.codex/config.toml": ("[features.network_proxy]\nx = '\"\"\"'\n[unrelated]\ny = '\"\"\"'\n"
+                                                 "dangerously_allow_all_unix_sockets = true\n"),
     "codex-escape-join/.codex/config.toml": ('[features.network_proxy]\nnote = """\n""\\t"\n'
                                              'dangerously_allow_all_unix_sockets = true\n"""\n'),
     # OpenShell network policy names a repository chooses, with a token where the 40-character cut falls
@@ -291,6 +296,13 @@ class Settings(unittest.TestCase):
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
         self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
+        for project in ("codex-invalid", "codex-quote-in-string"):     # the parser decides where Python has one
+            got = [f for f in self.found if f["path"].startswith(project + "/")]
+            self.assertEqual(got, [] if jh_checks.tomllib else got, project)
+        doc = {"features": {"network_proxy": {"a": 1}}, "permissions": {"demo.network": {"b": 2}}}
+        self.assertTrue(jh_checks._toml_present(doc, "features.network_proxy", "a"))
+        self.assertTrue(jh_checks._toml_present(doc, jh_checks._toml_table('permissions."demo.network"'), "b"))
+        self.assertFalse(jh_checks._toml_present(doc, "permissions.demo.network", "b"))
         for project in ("codex-app", "codex-array", "codex-bracket", "codex-string", "codex-escaped",
                         "codex-escape-join"):
             self.assertEqual([f for f in self.found if f["path"].startswith(project + "/")], [], project)

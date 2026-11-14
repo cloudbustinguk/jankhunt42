@@ -319,6 +319,9 @@ The output is deterministic for a given repository and version.
   documentation was confirmed too late for this release: Cursor's `sandbox.json` (`type: "insecure_none"`) and
   project hooks, Codex granular approval policies and `approvals_reviewer = "auto_review"` (a reviewing model, not
   a person, approves). The configuration folders of Antigravity, Amp and OpenClaw are unconfirmed.
+- **Codex `config.toml` on Python 3.9 and 3.10** is read line by line, without a TOML parser, so unusual TOML
+  (a `"""` inside a one-line string, for one) can be misread; Python 3.11 and later confirm each setting with
+  the standard TOML parser.
 - **A managed-settings finding describes the file**, not a machine: it does not show the policy is installed
   anywhere.
 
