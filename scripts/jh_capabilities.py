@@ -19,7 +19,7 @@ import jh_config
 import jh_graph as G
 import jh_map
 import jh_n8n
-from jh_core import VERSION, source_from_text, is_mcp_config, is_agent_context, is_test_path, redact_secrets
+from jh_core import VERSION, source_from_text, is_mcp_config, is_agent_context, is_test_path
 from jh_rules import ScanOptions, scan_sources
 
 MODEL = "jankhunt.capability-delta.v1"
@@ -31,43 +31,104 @@ MUTATING = ("write", "delete", "admin")
 AGENT_RULES = {"JH%d" % i for i in range(701, 714)} | {"JH432"}
 # Agent settings that change what an agent may do; an editor's own settings (.vscode, .zed) are left to the controls.
 DEFINITION_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml",
-                       ".cursor/cli.json", ".gemini/settings.json", "managed-settings.json")
+                       ".cursor/cli.json", ".gemini/settings.json", "managed-settings.json", "opencode.json",
+                       "opencode.jsonc")
+# Folders an agent loads as commands, subagents or rules (path fragments, lower case, with slashes).
+DEFINITION_DIRS = (("command", ("/.claude/commands/", "/.gemini/commands/", "/.opencode/command/",
+                                "/.opencode/commands/")),
+                   ("subagent", ("/.claude/agents/", "/.opencode/agent/", "/.opencode/agents/", "/.github/agents/")),
+                   ("instructions", ("/.claude/rules/",)))
+EXTRA_INSTRUCTIONS = ("agents.override.md",)
+# Where an agent's own folder starts: what lies above it decides whether the whole thing is test data.
+_ANCHORS = re.compile(r"(?:^|/)(?:\.claude|\.codex|\.cursor|\.gemini|\.github|\.opencode|\.windsurf|\.clinerules|"
+                      r"\.kiro|\.roo|\.amazonq|\.continue|\.agents|managed-settings\.d)(?:/|$)", re.I)
 
 
-def _skill_dirs(items):
-    """Folders that hold a SKILL.md: every file in one is part of that skill (its scripts run as the skill)."""
-    return sorted({os.path.dirname(i.rel.replace(os.sep, "/")) for i in items
-                   if os.path.basename(i.rel).lower() == "skill.md"}, key=len, reverse=True)
+def _skill_dirs(paths):
+    """Folders that hold a SKILL.md ("" for one at the root): every file in one is part of that skill."""
+    return sorted({os.path.dirname(p) for p in paths if os.path.basename(p).lower() == "skill.md"},
+                  key=len, reverse=True)
+
+
+def _test_tree(above):
+    """Whether the folders above an agent definition are test data (tests/fixtures/demo/...); a name inside the
+    agent's own folder (a skill or command called test) never makes it test data."""
+    return bool(above) and is_test_path(above.rstrip("/") + "/")
 
 
 def definition_kind(rel, skill_dirs):
-    """What an agent definition file is, or None: the text an agent follows (instructions, skills and their files,
-    commands, subagents) and the agent settings that decide what it may do. Test data is left out."""
+    """What an agent definition file is, or None: the text an agent follows (instructions, skills and every file in
+    a skill's folder, commands, subagents, rules) and the agent settings that decide what it may do. Test data is
+    left out only when the folders above the definition are a test tree."""
     posix = rel.replace(os.sep, "/")
     low, base = "/" + posix.lower(), os.path.basename(posix).lower()
-    if is_test_path(rel):
+    skill = next((d for d in skill_dirs if d == "" or posix.startswith(d + "/")), None)
+    if skill is not None:
+        anchor = _ANCHORS.search(skill)
+        above = skill[:anchor.start()] if anchor else skill
+        inside = posix[len(skill) + 1:] if skill else posix
+        if _test_tree(above):
+            return None
+        if base == "skill.md" and os.path.dirname(posix) == skill:
+            return "skill"
+        # a skill's own tests and fixtures are not what it runs
+        return None if is_test_path(os.path.dirname(inside) + "/") else "skill file"
+    anchor = _ANCHORS.search(posix)
+    above = posix[:anchor.start()] if anchor else os.path.dirname(posix)
+    if _test_tree(above):
         return None
-    if base == "skill.md":
-        return "skill"
-    if any(d and posix.startswith(d + "/") for d in skill_dirs):
-        return "skill file"
-    if "/.claude/commands/" in low or "/.gemini/commands/" in low or "/.opencode/command/" in low:
-        return "command"
-    if "/.claude/agents/" in low or "/.opencode/agent/" in low or low.endswith(".chatmode.md"):
-        return "subagent"
+    for kind, frags in DEFINITION_DIRS:
+        if any(f in low for f in frags) and base.endswith(".md"):
+            return kind
     if any(low.endswith("/" + f) for f in DEFINITION_SETTINGS) or "/managed-settings.d/" in low:
         return "agent settings"
-    if is_agent_context(rel):
+    if base in EXTRA_INSTRUCTIONS or is_agent_context(rel):
         return "instructions"
     return None
 
 
-def definition_digest(text):
-    """The content of a definition, compared across the two snapshots: secrets are removed first (a changed
-    credential value alone is not a new definition, and no value enters the digest), line ends and trailing
-    spaces do not count."""
-    lines = redact_secrets(text).replace("\r\n", "\n").split("\n")
-    return hashlib.sha256("\n".join(x.rstrip() for x in lines).strip().encode("utf-8")).hexdigest()
+def definition_inventory(top, sha, prefix):
+    """{path: (kind, mode and object id)} for every agent definition in a commit, read from the Git tree itself, so
+    files the scanner skips (build folders, binary files, oversized files) are compared too. The object id is the
+    exact content: nothing is redacted or normalised, and it never leaves this process. None when the tree cannot
+    be listed."""
+    try:
+        raw = jh_map._git(top, ["ls-tree", "-r", "-z", "--full-tree", sha] + (["--", prefix] if prefix else []))
+    except jh_map.GitError:
+        return None
+    entries = {}
+    for rec in raw.split(b"\0"):
+        if not rec or b"\t" not in rec:
+            continue
+        meta, path = rec.split(b"\t", 1)
+        mode, _kind, oid = meta.decode("ascii", "replace").split(" ")
+        rel = path.decode("utf-8", "surrogateescape")
+        if prefix and not rel.startswith(prefix):
+            continue
+        entries[rel[len(prefix):]] = mode + ":" + oid
+    skills = _skill_dirs(entries)
+    return {rel: (kind, ident) for rel, ident in entries.items() for kind in [definition_kind(rel, skills)] if kind}
+
+
+def definition_requests(base_defs, head_defs, base_sha, head_sha):
+    """Concrete requests for every agent definition added, changed or removed between two commits. The identity is
+    the full path and the change between these two commits; the content is compared in memory only."""
+    rows = []
+    for rel in sorted(set(base_defs) | set(head_defs)):
+        old, new = base_defs.get(rel), head_defs.get(rel)
+        if old and new and old[1] == new[1]:
+            continue
+        change = "added" if not old else "removed" if not new else "changed"
+        what = (new or old)[0]
+        semantic = dict(kind="agent", principal="agent", action="load",
+                        target=dict(definition=what, path_id=hashlib.sha256(rel.encode("utf-8", "surrogateescape")).hexdigest()),
+                        change=change, base=base_sha, head=head_sha)
+        rows.append(dict(id=digest(semantic), kind="agent", principal="agent", action="load",
+                         target=dict(definition=what, path=G.sanitize_text(rel, 300)), definition_change=change,
+                         certainty="supported", production=False, ceiling="not-applicable", approval="needs-approval",
+                         change="added", evidence=[dict(snapshot=head_sha if new else base_sha,
+                                                        path=G.sanitize_text(rel, 300), line=1)], witness=[]))
+    return rows
 
 
 def digest(value):
@@ -225,16 +286,9 @@ def inventory(report, items):
         for name in principal["attributes"].get("credential_refs", []):
             add("credential", subject, {"logical_name": name}, "pass", principal["evidence_refs"])
     sources = []
-    skill_dirs = _skill_dirs(items)
     for item in items:
         if capped:
             break
-        what = definition_kind(item.rel, skill_dirs)
-        if what:
-            # The content is the identity: an edited definition is a new request that IT approves, so an approved
-            # head cannot change what its agents follow without the change being listed again.
-            add("agent", "agent", dict(definition=what, path=G.sanitize_text(item.rel, 300),
-                                       digest=definition_digest(item.text)), "load", location=(item.rel, 1))
         sf = source_from_text(item.rel, item.rel, item.text)
         if sf:
             sources.append(sf)
@@ -351,10 +405,9 @@ def _definition(row, lines, mcp, n8n):
     return digest(sorted(parts))
 
 
-def compare(base, head, base_items, head_items, ceiling, context):
+def compare(base, head, base_items, head_items, ceiling, context, definitions=None):
     before, bu, br = inventory(base, base_items)
     after, hu, hr = inventory(head, head_items)
-    base_paths = {r["target"]["path"] for r in before.values() if r["action"] == "load" and r["target"].get("definition")}
     requests = []
     for key, row in after.items():
         if key in before:
@@ -365,9 +418,14 @@ def compare(base, head, base_items, head_items, ceiling, context):
                             row["target"].get("port")) in ceiling else "outside" if ceiling is not None else "unknown") \
                             if row["kind"] == "network" else "not-applicable"
         row["approval"] = "within-network-ceiling" if row["ceiling"] == "within" else "needs-approval"
-        if row["action"] == "load" and row["target"].get("definition"):
-            row["definition_change"] = "changed" if row["target"]["path"] in base_paths else "added"
         requests.append(row)
+    # Agent definitions: listed straight from both Git trees, compared by exact content (definition lock)
+    if definitions is not None:
+        if definitions[0] is None or definitions[1] is None:
+            hr = list(hr) + ["agent definitions could not be listed from the Git tree"]
+        else:
+            requests.extend(definition_requests(definitions[0], definitions[1], base["source_revision"],
+                                                head["source_revision"]))
     requests.sort(key=lambda r: (not (r["production"] and r["kind"] == "authority" and r["action"] in MUTATING),
                                  not r["production"], r["kind"] not in ("credential", "agent"), r["id"]))
     # New in head, or unresolved at base and apparently resolved in head (a resolution can hide new authority):
@@ -407,7 +465,7 @@ def compare(base, head, base_items, head_items, ceiling, context):
 
 def _label(target):
     if target.get("definition"):
-        return "%s %s (content %s)" % (target["definition"], target.get("path", "?"), str(target.get("digest", ""))[:12])
+        return "%s %s" % (target["definition"], target.get("path", "?"))
     label = target.get("logical_name") or target.get("name") or target.get("host") or target.get("catalog")
     if not label:
         label = {"JH702": "approval bypass", "JH703": "disabled approvals", "JH704": "workspace hook or command",
@@ -540,6 +598,7 @@ def snapshots(args):
                 raise ValueError("unsafe Git snapshot path")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(item.text, encoding="utf-8")
-        yield dict(root=root, map=reports[1], col=collections[1], frozen=frozen, cfg=configs[1],
+        definitions = [definition_inventory(top, sha, prefix) for sha in (base_sha, head_sha)]
+        yield dict(root=root, map=reports[1], col=collections[1], frozen=frozen, cfg=configs[1], definitions=definitions,
                    reports=reports, collections=collections, inventory=inventory,
                    operator_config=external_cfg.passport if external_cfg is not None else None)
