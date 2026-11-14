@@ -1615,8 +1615,9 @@ _NO_TABLE = _KEY_DOT + "?"      # a header this reader does not follow: nothing 
 
 def _toml_delimiters(line: str, quotes: str) -> int:
     """How many multi-line string delimiters a line holds. In a basic string (\"\"\") a backslash escapes the next
-    character, so an escaped quote is text; a literal string (''') has no escapes."""
-    return (re.sub(r"\\.", "", line) if quotes == '"""' else line).count(quotes)
+    character, so an escaped quote is text; each escape is replaced by a non-quote character, never removed, so
+    quotes it separated are not joined into a delimiter. A literal string (''') has no escapes."""
+    return (re.sub(r"\\.", "_", line) if quotes == '"""' else line).count(quotes)
 
 
 def _toml_sections(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:

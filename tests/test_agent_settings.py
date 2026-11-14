@@ -144,6 +144,9 @@ FILES = {
                                         "other = \'\'\'\nallow_local_binding = true\n\'\'\'\n"),
     "codex-escaped/.codex/config.toml": ('[features.network_proxy]\nnote = """\n\\"""\n'
                                          'dangerously_allow_all_unix_sockets = true\n"""\n'),
+    # an escape between quotes must not join them into a delimiter: ""\t" is two quotes, a tab, a quote
+    "codex-escape-join/.codex/config.toml": ('[features.network_proxy]\nnote = """\n""\\t"\n'
+                                             'dangerously_allow_all_unix_sockets = true\n"""\n'),
     # OpenShell network policy names a repository chooses, with a token where the 40-character cut falls
     "secret5/policy.yaml": ("version: 1\nnetwork_policies:\n  " + "x" * 24 + " " + CANARY + ":\n    endpoints:\n"
                             "      - host: \"*\"\n        port: 443\n        enforcement: audit\n"),
@@ -288,7 +291,8 @@ class Settings(unittest.TestCase):
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
         self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
-        for project in ("codex-app", "codex-array", "codex-bracket", "codex-string", "codex-escaped"):
+        for project in ("codex-app", "codex-array", "codex-bracket", "codex-string", "codex-escaped",
+                        "codex-escape-join"):
             self.assertEqual([f for f in self.found if f["path"].startswith(project + "/")], [], project)
         after = self.got("JH709", "codex-after-string/.codex/config.toml")     # the string closed: a real setting
         self.assertEqual([s for s, _ in after], ["major"])

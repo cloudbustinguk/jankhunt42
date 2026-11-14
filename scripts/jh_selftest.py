@@ -970,8 +970,9 @@ MUTANTS = [
     ('M570-as-cursor-server-deny-ignored', 'a Cursor server denied whole still counts for the Rule of Two', 'jh_rule2.py', '               and not any(n in ("*", s.name) and t == "*" for n, t in cursor["deny"])]', '               and True]', 'test_agent_settings.py'),
     ('M571-as-cursor-approvals-unread', "the Cursor CLI's Mcp approvals are not read by the Rule of Two", 'jh_rule2.py', '            or _cursor_approved(cursor, s.name)', '            or None', 'test_agent_settings.py'),
     ('M572-as-proxy-port-ignored', 'a Claude Code sandbox proxy port is not reported', 'jh_checks.py', '        if isinstance(net.get(key), int) and not isinstance(net.get(key), bool):', '        if False:', 'test_agent_settings.py'),
-    ('M573-as-toml-escape-ignored', 'an escaped quote closes a multi-line TOML string', 'jh_checks.py', '    return (re.sub(r"\\\\.", "", line) if quotes == \'\"\"\"\' else line).count(quotes)', '    return line.count(quotes)', 'test_agent_settings.py'),
+    ('M573-as-toml-escape-ignored', 'an escaped quote closes a multi-line TOML string', 'jh_checks.py', '    return (re.sub(r"\\\\.", "_", line) if quotes == \'\"\"\"\' else line).count(quotes)', '    return line.count(quotes)', 'test_agent_settings.py'),
     ('M574-as-openshell-name-cut-first', 'an OpenShell rule name is shortened before it is redacted', 'jh_checks.py', '            label = _shown(name, 40)', '            label = trim(name, 40)', 'test_agent_settings.py'),
+    ('M575-as-toml-escape-joins-quotes', 'removing an escape joins the quotes around it into a TOML delimiter', 'jh_checks.py', '    return (re.sub(r"\\\\.", "_", line) if quotes == \'\"\"\"\' else line).count(quotes)', '    return (re.sub(r"\\\\.", "", line) if quotes == \'\"\"\"\' else line).count(quotes)', 'test_agent_settings.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
