@@ -58,7 +58,7 @@ jankhunt42 passport . --profile citizen     # a strict release decision, explain
 jankhunt42 passport . --emit-sandbox-policy claude-code   # a least-privilege network fence for the agent (also codex, openshell, substrate)
 jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceiling /etc/it/approved.json   # capped by IT's approved list
 jankhunt42 sandbox .                    # opt-in: run the install hooks, the dependencies as they load, and what runs on open in a sandbox
-jankhunt42 passport . --base <ref> --md   # what new access this change asks for (for IT to approve)
+jankhunt42 passport . --base <ref> --md   # what new access, and which agent definitions, this change asks for (for IT to approve)
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
 
