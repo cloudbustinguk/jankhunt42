@@ -4,6 +4,24 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.18.0] — unreleased
+
+An agent follows what its repository tells it: instruction files, skills and their scripts, commands, subagents and
+settings. A change to any of them now needs approving like new access, so an approved app cannot drift.
+
+### Added
+
+- **The definition lock: `passport --base REF` lists every added or changed agent definition** as a concrete
+  `agent` request (`load`) that IT approves: instruction files (`AGENTS.md`, `CLAUDE.md`, rules and Copilot
+  instructions), each skill's `SKILL.md` and every other file in its folder, Claude Code commands and subagents,
+  and agent settings (`.claude/settings.json`, `.codex/config.toml`, `.cursor/cli.json`, `.gemini/settings.json`,
+  managed settings). A definition is identified by its path and its content after secrets are removed: an edit is
+  *changed*, a new file *added*, and a changed credential value alone, line endings or trailing spaces are nothing.
+  Test data is left out. They count towards `P-CAP-001`, and an approval record can approve them; the record is
+  bound to the head, so a later edit needs approving again. See `references/change-review.md`.
+- `JH712` (a skill that pre-approves any shell command) and `JH713` (an API key in an agent sandbox template) are
+  agent controls in the `--base` comparison, like `JH701`-`JH711`.
+
 ## [4.17.0] — 2026-11-14
 
 The agent tools changed their settings faster than the rules that read them. This release brings the agent workspace

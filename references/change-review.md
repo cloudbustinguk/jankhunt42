@@ -29,11 +29,31 @@ compare against a trusted base, such as the target branch.
 | `credential` | it now reads `STRIPE_SECRET_KEY`, or passes a credential to an MCP server (names only, never values) |
 | `authority` | it can now write, delete or administer a database, bucket, queue or cloud service, or one more scope of it |
 | `production` | it now reaches a production asset, or an asset it reached is now marked production |
-| `agent` | a new MCP server, an approval bypass, a hook, or another agent control |
+| `agent` | a new MCP server, an approval bypass, a hook, or another agent control; an added or changed agent definition (see below) |
 
 Requests are compared by *who* does *what* to *which* target, not by file or
 line. So moving code to another file adds nothing, but a new `delete` is
 reported even where `write` already existed.
+
+### Agent definitions (the definition lock)
+
+What an agent follows is part of the software: a poisoned instruction file or a skill whose script quietly
+changes is how agents are turned against their users, and a scan of the content alone cannot tell a careful
+edit from a malicious one. So `--base` also lists every agent definition the change adds or edits, as a request
+IT approves:
+
+- **instructions:** `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, Copilot instructions, Cursor and
+  Windsurf rules, and the other files agents load into their context;
+- **skills:** each `SKILL.md`, and every other file in a skill's folder (its scripts run as the skill);
+- **commands and subagents:** `.claude/commands/`, `.claude/agents/`, `.gemini/commands/`, `.opencode/`;
+- **agent settings:** `.claude/settings.json` and `settings.local.json`, `.codex/config.toml`,
+  `.cursor/cli.json`, `.gemini/settings.json`, and Claude Code managed settings.
+
+A definition is identified by its path and content, so an edited file is listed as *changed* and a new one as
+*added*; an untouched one, a moved line ending or trailing spaces add nothing. The content is compared after
+secrets are removed, so a changed credential value alone is not a new definition, and no value enters the
+comparison. Test data is left out. These are concrete requests, so an approval record can approve them, and
+because the record is bound to the exact head, any later edit to a definition needs approving again.
 
 **Unresolved items** are where the code reaches something whose target or
 authority cannot be read statically, such as a URL built at run time:
