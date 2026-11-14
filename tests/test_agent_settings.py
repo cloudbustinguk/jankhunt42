@@ -346,6 +346,19 @@ class Settings(unittest.TestCase):
                if f["rule"] == "JH709" and f["path"] == "codex/.codex/config.toml"]
         self.assertEqual(sorted(got), [(3, "major"), (4, "major"), (5, "minor"), (13, "major")])
 
+    def test_the_line_reader_alone_invents_no_setting(self):
+        """Python 3.9 and 3.10 have no tomllib, so the line reader decides alone: it must not read a setting out of a
+        string, an array table or a header it cannot follow. Exercised directly, so it holds on every Python."""
+        import jh_core
+        for project in ("codex-array", "codex-bracket", "codex-string", "codex-escaped", "codex-escape-join"):
+            sf = jh_core.source_from_text(".codex/config.toml", ".codex/config.toml", FILES[project + "/.codex/config.toml"])
+            rows = [r for r in jh_checks._toml_sections(sf) if r[1] == "features.network_proxy" and r[2] != "note"]
+            self.assertEqual(rows, [], project)
+        sf = jh_core.source_from_text(".codex/config.toml", ".codex/config.toml",
+                                      FILES["codex-after-string/.codex/config.toml"])
+        self.assertEqual([r[2] for r in jh_checks._toml_sections(sf) if r[1] == "features.network_proxy"],
+                         ["dangerously_allow_all_unix_sockets"])      # the line that opens a string is skipped
+
     def test_cursor_cli_permissions(self):
         got = self.keys("JH703", "cursor/.cursor/cli.json", ("through bash", "every MCP server", "any address"))
         self.assertEqual(got, {"through bash": "major", "every MCP server": "major", "any address": "minor"})
