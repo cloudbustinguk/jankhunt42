@@ -1664,12 +1664,28 @@ _CODEX_PROXY_WIDEN = {
 _CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network)$")
 
 
-def _toml_present(doc: Any, section: str, key: str) -> bool:
-    """Whether a parsed TOML document holds key in the table named by section (as _toml_table writes it)."""
+_ABSENT = object()
+
+
+def _toml_lookup(doc: Any, section: str, key: str) -> Any:
+    """The value a parsed TOML document holds for key in the table named by section (as _toml_table writes it),
+    or _ABSENT."""
     table = doc
     for part in [p.replace(_KEY_DOT, ".") for p in section.split(".")] if section else []:
         table = table.get(part) if isinstance(table, dict) else None
-    return isinstance(table, dict) and key in table
+    return table.get(key, _ABSENT) if isinstance(table, dict) else _ABSENT
+
+
+def _toml_present(doc: Any, section: str, key: str) -> bool:
+    return _toml_lookup(doc, section, key) is not _ABSENT
+
+
+def _toml_reads_as(raw: str, actual: Any) -> bool:
+    """Whether a line's own value text, parsed alone, is the value the document really holds."""
+    try:
+        return tomllib.loads("v = " + raw)["v"] == actual
+    except (ValueError, RecursionError, KeyError):
+        return False
 
 
 def _codex_settings(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
@@ -1682,8 +1698,16 @@ def _codex_settings(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
             doc = tomllib.loads(sf.text)
         except (ValueError, RecursionError):        # TOMLDecodeError is a ValueError
             return
+    placed = set()
     for line, section, key, value in _toml_sections(sf):
-        if doc is None or _toml_present(doc, section, key):
+        if doc is None:
+            yield line, section, key, value
+            continue
+        actual = _toml_lookup(doc, section, key)
+        # the setting counts with the value Codex reads, at a line whose own value is that value: a misread line
+        # from another table cannot lend its value (or its line) to a key the real table also holds
+        if actual is not _ABSENT and (section, key) not in placed and _toml_reads_as(value, actual):
+            placed.add((section, key))
             yield line, section, key, value
 
 

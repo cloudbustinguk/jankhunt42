@@ -973,8 +973,9 @@ MUTANTS = [
     ('M573-as-toml-escape-ignored', 'an escaped quote closes a multi-line TOML string', 'jh_checks.py', '    return (re.sub(r"\\\\.", "_", line) if quotes == \'\"\"\"\' else line).count(quotes)', '    return line.count(quotes)', 'test_agent_settings.py'),
     ('M574-as-openshell-name-cut-first', 'an OpenShell rule name is shortened before it is redacted', 'jh_checks.py', '            label = _shown(name, 40)', '            label = trim(name, 40)', 'test_agent_settings.py'),
     ('M575-as-toml-escape-joins-quotes', 'removing an escape joins the quotes around it into a TOML delimiter', 'jh_checks.py', '    return (re.sub(r"\\\\.", "_", line) if quotes == \'\"\"\"\' else line).count(quotes)', '    return (re.sub(r"\\\\.", "", line) if quotes == \'\"\"\"\' else line).count(quotes)', 'test_agent_settings.py'),
-    ('M576-as-toml-parse-unchecked', 'a setting the TOML parser does not find still counts', 'jh_checks.py', '        if doc is None or _toml_present(doc, section, key):', '        if True:', 'test_agent_settings.py'),
+    ('M576-as-toml-parse-unchecked', 'a misread value counts because the real table holds the same key', 'jh_checks.py', '        if actual is not _ABSENT and (section, key) not in placed and _toml_reads_as(value, actual):', '        if actual is not _ABSENT and (section, key) not in placed:', 'test_agent_settings.py'),
     ('M577-as-toml-invalid-read', 'settings in a file that is not valid TOML still count', 'jh_checks.py', '        except (ValueError, RecursionError):        # TOMLDecodeError is a ValueError\n            return', '        except (ValueError, RecursionError):        # TOMLDecodeError is a ValueError\n            doc = None', 'test_agent_settings.py'),
+    ('M578-as-toml-key-unchecked', 'a setting the TOML parser does not find still counts', 'jh_checks.py', '        if actual is not _ABSENT and (section, key) not in placed and _toml_reads_as(value, actual):', '        if (section, key) not in placed:', 'test_agent_settings.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

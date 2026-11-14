@@ -150,6 +150,15 @@ FILES = {
     # valid TOML the line reader alone misreads: '"""' in a one-line string hides the [unrelated] header from it
     "codex-quote-in-string/.codex/config.toml": ("[features.network_proxy]\nx = '\"\"\"'\n[unrelated]\ny = '\"\"\"'\n"
                                                  "dangerously_allow_all_unix_sockets = true\n"),
+    # the same key in the real table (false) and, misread, in another table (true): the real value decides
+    "codex-same-key/.codex/config.toml": ("[features.network_proxy]\ndangerously_allow_all_unix_sockets = false\n"
+                                          "x = '\"\"\"'\n[unrelated]\ny = '\"\"\"'\n"
+                                          "dangerously_allow_all_unix_sockets = true\n"),
+    # the real line is hidden from the line reader and a misread one follows: only the value can tell them apart
+    "codex-same-key-hidden/.codex/config.toml": ("[features.network_proxy]\nx = '\"\"\"'\n"
+                                                 "dangerously_allow_all_unix_sockets = false\ny = '\"\"\"'\n"
+                                                 "a = '\"\"\"'\n[unrelated]\nb = '\"\"\"'\n"
+                                                 "dangerously_allow_all_unix_sockets = true\n"),
     "codex-escape-join/.codex/config.toml": ('[features.network_proxy]\nnote = """\n""\\t"\n'
                                              'dangerously_allow_all_unix_sockets = true\n"""\n'),
     # OpenShell network policy names a repository chooses, with a token where the 40-character cut falls
@@ -296,7 +305,8 @@ class Settings(unittest.TestCase):
     def test_codex_keys_in_other_tables_are_quiet(self):
         self.assertEqual([f for f in self.found if f["path"] == "codex-other/.codex/config.toml"], [])
         self.assertEqual(jh_checks._toml_table('permissions."demo.network"').count("."), 1)
-        for project in ("codex-invalid", "codex-quote-in-string"):     # the parser decides where Python has one
+        for project in ("codex-invalid", "codex-quote-in-string", "codex-same-key",
+                        "codex-same-key-hidden"):                       # the parser decides where Python has one
             got = [f for f in self.found if f["path"].startswith(project + "/")]
             self.assertEqual(got, [] if jh_checks.tomllib else got, project)
         doc = {"features": {"network_proxy": {"a": 1}}, "permissions": {"demo.network": {"b": 2}}}
