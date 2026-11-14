@@ -59,7 +59,9 @@ from.
   or `[permissions."demo.network"]` no longer counts as the network table, and the allowlist checks (`"*" =
   "allow"`) count only in the tables Codex reads, where 4.16.0 matched any table ending in `network.domains`
   (the desktop app's `application.network`, which belongs to `requirements.toml`, among them). Lines under an array
-  table or inside a multi-line string (escaped quotes included) are not read as settings.
+  table or inside a multi-line string (escaped quotes included) are not read as settings. On Python 3.11 and later
+  each Codex sandbox setting is also confirmed with Python's TOML parser: it counts only where Codex would read it,
+  and nothing in a file that is not valid TOML counts (Codex does not start with one).
 
 ### Not reported, on purpose
 

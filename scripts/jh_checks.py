@@ -13,6 +13,11 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import jh_agent
 import jh_yaml
+
+try:                                    # Python 3.11+: Codex's own reading of config.toml is checkable exactly
+    import tomllib
+except ImportError:                     # 3.9 and 3.10 keep the line reader alone
+    tomllib = None
 from jh_core import Finding, Rule, SourceFile, SEV_RANK, is_test_path, make_finding, redact_secrets, run_git, trim
 
 CHECKS: Dict[str, object] = {}
@@ -1659,9 +1664,32 @@ _CODEX_PROXY_WIDEN = {
 _CODEX_NET = re.compile(r"^(?:features\.network_proxy|permissions\.[^.]+\.network)$")
 
 
+def _toml_present(doc: Any, section: str, key: str) -> bool:
+    """Whether a parsed TOML document holds key in the table named by section (as _toml_table writes it)."""
+    table = doc
+    for part in [p.replace(_KEY_DOT, ".") for p in section.split(".")] if section else []:
+        table = table.get(part) if isinstance(table, dict) else None
+    return isinstance(table, dict) and key in table
+
+
+def _codex_settings(sf: SourceFile) -> Iterator[Tuple[int, str, str, str]]:
+    """The line reader's settings, each confirmed by a real TOML parser where Python has one: a setting counts only
+    if Codex would read it at that table and key, and nothing in a file that is not valid TOML counts (Codex does
+    not start with it)."""
+    doc = None
+    if tomllib is not None:
+        try:
+            doc = tomllib.loads(sf.text)
+        except (ValueError, RecursionError):        # TOMLDecodeError is a ValueError
+            return
+    for line, section, key, value in _toml_sections(sf):
+        if doc is None or _toml_present(doc, section, key):
+            yield line, section, key, value
+
+
 def _codex_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
-    for line, section, key, value in _toml_sections(sf):
+    for line, section, key, value in _codex_settings(sf):
         v = value.strip().strip("\"'").lower()
         if section == "sandbox_workspace_write" and key == "network_access" and v == "true":
             out.append(make_finding(rule, sf, line, message=(
