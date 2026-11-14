@@ -61,7 +61,8 @@ from.
   (the desktop app's `application.network`, which belongs to `requirements.toml`, among them). Lines under an array
   table or inside a multi-line string (escaped quotes included) are not read as settings. On Python 3.11 and later
   each Codex sandbox setting is also confirmed with Python's TOML parser: it counts only where Codex would read it,
-  and nothing in a file that is not valid TOML counts (Codex does not start with one).
+  with the value Codex reads there, and nothing in a file that is not valid TOML counts (Codex does not start with
+  one).
 
 ### Not reported, on purpose
 
