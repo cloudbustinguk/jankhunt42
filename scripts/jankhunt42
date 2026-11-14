@@ -738,7 +738,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
                        branch_rules=export, default_branch=default_branch,
                        scope=os.path.relpath(root, jh_map.git_toplevel(root)))
         capability_delta = jh_capabilities.compare(*snapshot["reports"],
-            *(c.items for c in snapshot["collections"]), network_ceiling, context)
+            *(c.items for c in snapshot["collections"]), network_ceiling, context,
+            definitions=snapshot.get("definitions"))
         warnings.append("--base assesses committed HEAD; working-tree and untracked changes are excluded")
         if args.capability_approval is not None:
             capability_approval_record = jh_capability_approval.load(args.capability_approval, root)

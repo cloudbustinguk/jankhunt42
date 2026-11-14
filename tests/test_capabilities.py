@@ -301,70 +301,135 @@ class CapabilityChanges(unittest.TestCase):
         return sorted((r["target"]["definition"], r["target"]["path"], r["definition_change"])
                       for r in report["capability_delta"]["requests"] if r["target"].get("definition"))
 
-    def test_agent_definitions_are_locked(self):
-        """4.18.0: an added or edited instruction file, skill file, command, subagent or agent settings file is a
-        change IT approves; an untouched one is not, and test data is left out."""
-        self.write("AGENTS.md", "Run the tests before committing.\n")
-        self.write(".claude/skills/report/SKILL.md", "---\nname: report\ndescription: weekly report\n---\nRun it.\n")
-        self.write(".claude/skills/report/scripts/build.py", "print('report')\n")
-        self.write(".claude/agents/reviewer.md", "---\nname: reviewer\n---\nReview.\n")
-        self.write("tests/fixtures/demo/CLAUDE.md", "fixture\n")
+    def lock(self, base_files, head_files):
+        """Commit base_files, then replace the tree with head_files (a missing file is deleted), and return the
+        definition requests of passport --base."""
+        def put(files):
+            for p in list(self.root.rglob("*")):
+                if p.is_file() and ".git" not in p.relative_to(self.root).parts:
+                    p.unlink()
+            for name, data in files.items():
+                path = self.root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data if isinstance(data, bytes) else data.encode())
+        put(base_files)
         base = self.commit()
-        self.write("AGENTS.md", "Run the tests before committing.\nAlso deploy when they pass.\n")
-        self.write(".claude/skills/report/scripts/build.py", "print('report and upload')\n")
-        self.write(".claude/commands/ship.md", "Ship it.\n")
-        self.write("tests/fixtures/demo/CLAUDE.md", "fixture, edited\n")
+        put(head_files)
         self.commit()
         r = self.passport(base)
-        self.assertEqual(self.definitions(r), [
-            ("command", ".claude/commands/ship.md", "added"),
-            ("instructions", "AGENTS.md", "changed"),
-            ("skill file", ".claude/skills/report/scripts/build.py", "changed")])
+        return self.definitions(r), r
+
+    def test_agent_definitions_are_locked(self):
+        """4.18.0: an added, edited or removed instruction file, skill file, command, subagent or agent settings
+        file is a change IT approves; an untouched one is not, and test data is left out."""
+        base = {"app.py": "value = 1\n", "AGENTS.md": "Run the tests before committing.\n",
+                ".claude/skills/report/SKILL.md": "---\nname: report\ndescription: weekly report\n---\nRun it.\n",
+                ".claude/skills/report/scripts/build.py": "print('report')\n",
+                ".claude/agents/reviewer.md": "---\nname: reviewer\n---\nReview.\n",
+                "tests/fixtures/demo/CLAUDE.md": "fixture\n"}
+        head = dict(base, **{"AGENTS.md": "Run the tests before committing.\nAlso deploy when they pass.\n",
+                              ".claude/skills/report/scripts/build.py": "print('report and upload')\n",
+                              ".claude/commands/ship.md": "Ship it.\n",
+                              "tests/fixtures/demo/CLAUDE.md": "fixture, edited\n"})
+        del head[".claude/agents/reviewer.md"]
+        got, r = self.lock(base, head)
+        self.assertEqual(got, [("command", ".claude/commands/ship.md", "added"),
+                               ("instructions", "AGENTS.md", "changed"),
+                               ("skill file", ".claude/skills/report/scripts/build.py", "changed"),
+                               ("subagent", ".claude/agents/reviewer.md", "removed")])
         self.assertEqual(self.cap_rule(r)["outcome"], "review")
         rows = [x for x in r["capability_delta"]["requests"] if x["target"].get("definition")]
         self.assertTrue(all(x["kind"] == "agent" and x["certainty"] == "supported" for x in rows))
+        self.assertTrue(all(set(x["target"]) == {"definition", "path"} for x in rows))     # no content digest
         lines = C.approver_lines(r["capability_delta"])
-        self.assertTrue(any("an agent definition was changed: instructions AGENTS.md (content " in l for l in lines), lines)
+        self.assertTrue(any("an agent definition was changed: instructions AGENTS.md." in l for l in lines), lines)
 
     def test_a_definition_change_can_be_approved(self):
         """Definitions are concrete requests, so a change to them alone is reviewable by an approval record."""
         import jh_capability_approval as A
-        self.write("AGENTS.md", "one\n")
-        base = self.commit()
-        self.write("AGENTS.md", "two\n")
-        self.commit()
-        delta = self.passport(base)["capability_delta"]
+        got, r = self.lock({"app.py": "value = 1\n", "AGENTS.md": "one\n"}, {"app.py": "value = 1\n", "AGENTS.md": "two\n"})
+        delta = r["capability_delta"]
         self.assertEqual(delta["counts"]["total"], 1)
         self.assertEqual(A.unreviewable(delta), [])
 
-    def test_a_secret_value_alone_does_not_change_a_definition(self):
+    def test_exact_content_is_compared_and_never_shown(self):
+        """Blockers 1 and 7: no redaction and no normalisation decide what changed (a value that looks like a
+        secret can be a command; a trailing space inside a string can change behaviour), and nothing derived from
+        the content appears in the report."""
         token = "ghp_" + "Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2Uv3Wx4"
-        self.write(".claude/settings.local.json", json.dumps(dict(env=dict(SERVICE_TOKEN=token))))
-        base = self.commit()
-        self.write(".claude/settings.local.json", json.dumps(dict(env=dict(SERVICE_TOKEN=token[:-4] + "Zz99"))))
-        self.commit()
-        r = self.passport(base)
-        self.assertEqual(self.definitions(r), [])
-        self.assertNotIn(token[:12], json.dumps(r))
+        skill = {".claude/skills/r/SKILL.md": "---\nname: r\n---\nRun scripts/run.py.\n"}
+        cases = {
+            "secret-shaped value": ('import os\nsecret = "printenv"\nos.system(secret)\n',
+                                    'import os\nsecret = "rm -rf ./output"\nos.system(secret)\n'),
+            "token rotated": ('TOKEN = "%s"\n' % token, 'TOKEN = "%s"\n' % (token[:-4] + "Zz99")),
+            "space in a string": ('status = """approved \n"""\n', 'status = """approved\n"""\n'),
+            "leading indentation": ("    pass\n", "pass\n"),
+        }
+        for name, (old, new) in cases.items():
+            with self.subTest(name):
+                got, r = self.lock(dict(skill, **{".claude/skills/r/scripts/run.py": old}),
+                                   dict(skill, **{".claude/skills/r/scripts/run.py": new}))
+                self.assertEqual(got, [("skill file", ".claude/skills/r/scripts/run.py", "changed")])
+                self.assertNotIn(token[:12], json.dumps(r))
+
+    def test_root_skills_and_skipped_files_are_locked(self):
+        """Blockers 2 and 3: a SKILL.md at the root makes every file beside it part of the skill, and files the
+        scanner skips (build folders, binary files, a NUL byte) are compared from the Git tree."""
+        root = {"SKILL.md": "---\nname: tool\n---\nRun scripts/run.py.\n", "scripts/run.py": "print('one')\n"}
+        got, _ = self.lock(root, dict(root, **{"scripts/run.py": "print('two')\n"}))
+        self.assertEqual(got, [("skill file", "scripts/run.py", "changed")])
+        skill = {".claude/skills/r/SKILL.md": "---\nname: r\n---\nRun it.\n"}
+        for name, old, new in ((".claude/skills/r/build/run.py", "print('one')\n", "print('two')\n"),
+                               (".claude/skills/r/data.bin", b"hello\0one", b"hello\0two"),
+                               (".claude/skills/r/run.js", '// \0 comment\nconsole.log("review");\n',
+                                '// \0 comment\nconsole.log("deploy");\n')):
+            with self.subTest(name):
+                got, _ = self.lock(dict(skill, **{name: old}), dict(skill, **{name: new}))
+                self.assertEqual(got, [("skill file", name, "changed")])
+
+    def test_a_name_inside_an_agent_folder_is_not_test_data(self):
+        """Blocker 4: only the folders above an agent definition can make it test data."""
+        for name, kind in ((".claude/skills/test/SKILL.md", "skill"), (".claude/commands/test.md", "command"),
+                           (".claude/commands/test/run.md", "command"), (".github/agents/tests/r.agent.md", "subagent"),
+                           ("tests/AGENTS.md", None), ("tests/fixtures/x/.claude/skills/s/SKILL.md", None),
+                           (".claude/skills/r/tests/fixture.py", None)):
+            with self.subTest(name):
+                base = {name: "---\nname: test\n---\nReview.\n", ".claude/skills/r/SKILL.md": "---\nname: r\n---\n"}
+                got, _ = self.lock(base, dict(base, **{name: "---\nname: test\n---\nReview. Deploy afterward.\n"}))
+                self.assertEqual(got, [(kind, name, "changed")] if kind else [])
+
+    def test_more_agent_locations(self):
+        """Blocker 5: locations agents document (Claude rules, Copilot agent profiles, OpenCode agents, commands
+        and configuration, AGENTS.override.md)."""
+        for name, kind in (("AGENTS.override.md", "instructions"), (".claude/rules/review.md", "instructions"),
+                           (".github/agents/reviewer.agent.md", "subagent"), (".opencode/agents/reviewer.md", "subagent"),
+                           (".opencode/commands/deploy.md", "command"), ("opencode.json", "agent settings"),
+                           ("opencode.jsonc", "agent settings")):
+            with self.subTest(name):
+                got, _ = self.lock({name: "Review changes.\n"}, {name: "Deploy changes.\n"})
+                self.assertEqual(got, [(kind, name, "changed")])
+
+    def test_long_paths_keep_their_identity(self):
+        """Blocker 6: the full path is the identity, not a display label cut at 300 characters."""
+        prefix = "a" * 180 + "/" + "b" * 140
+        base = {prefix + "/alpha/AGENTS.md": "Review only.\n", prefix + "/beta/AGENTS.md": "Deploy changes.\n"}
+        head = {prefix + "/alpha/AGENTS.md": "Deploy changes.\n", prefix + "/beta/AGENTS.md": "Review only.\n"}
+        got, r = self.lock(base, head)
+        self.assertEqual(len(got), 2)
+        ids = [x["id"] for x in r["capability_delta"]["requests"] if x["target"].get("definition")]
+        self.assertEqual(len(set(ids)), 2)
 
     def test_unchanged_definitions_need_nothing(self):
-        self.write("CLAUDE.md", "Keep it simple.\n")
-        self.write(".claude/settings.json", json.dumps(dict(permissions=dict(allow=["Read"]))))
-        base = self.commit()
-        self.write("CLAUDE.md", "Keep it simple.   \r\n")      # trailing spaces and line ends do not count
-        self.write("app.py", "value = 2\n")
-        self.commit()
-        r = self.passport(base)
-        self.assertEqual(self.definitions(r), [])
+        files = {"CLAUDE.md": "Keep it simple.\n", ".claude/settings.json": json.dumps(dict(permissions=dict(allow=["Read"])))}
+        got, r = self.lock(dict(files, **{"app.py": "value = 1\n"}), dict(files, **{"app.py": "value = 2\n"}))
+        self.assertEqual(got, [])
         self.assertEqual(self.cap_rule(r)["outcome"], "pass")
 
     def test_settings_and_skill_controls_are_in_the_comparison(self):
-        base = self.commit()
-        self.write(".claude/settings.json", json.dumps(dict(permissions=dict(allow=["Bash(curl:*)"]))))
-        self.write(".claude/skills/ops/SKILL.md", "---\nname: ops\nallowed-tools: Bash\n---\nOperate.\n")
-        self.commit()
-        r = self.passport(base)
-        self.assertEqual([d[:2] for d in self.definitions(r)],
+        got, r = self.lock({"app.py": "value = 1\n"}, {
+            "app.py": "value = 1\n", ".claude/settings.json": json.dumps(dict(permissions=dict(allow=["Bash(curl:*)"]))),
+            ".claude/skills/ops/SKILL.md": "---\nname: ops\nallowed-tools: Bash\n---\nOperate.\n"})
+        self.assertEqual([d[:2] for d in got],
                          [("agent settings", ".claude/settings.json"), ("skill", ".claude/skills/ops/SKILL.md")])
         controls = {x["target"].get("control") for x in r["capability_delta"]["requests"] if x["kind"] == "agent"}
         self.assertIn("JH712", controls)

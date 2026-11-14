@@ -11,14 +11,23 @@ settings. A change to any of them now needs approving like new access, so an app
 
 ### Added
 
-- **The definition lock: `passport --base REF` lists every added or changed agent definition** as a concrete
-  `agent` request (`load`) that IT approves: instruction files (`AGENTS.md`, `CLAUDE.md`, rules and Copilot
-  instructions), each skill's `SKILL.md` and every other file in its folder, Claude Code commands and subagents,
-  and agent settings (`.claude/settings.json`, `.codex/config.toml`, `.cursor/cli.json`, `.gemini/settings.json`,
-  managed settings). A definition is identified by its path and its content after secrets are removed: an edit is
-  *changed*, a new file *added*, and a changed credential value alone, line endings or trailing spaces are nothing.
-  Test data is left out. They count towards `P-CAP-001`, and an approval record can approve them; the record is
-  bound to the head, so a later edit needs approving again. See `references/change-review.md`.
+- **The definition lock: `passport --base REF` lists every agent definition a change adds, edits or removes** as a
+  concrete `agent` request (`load`) that IT approves: instruction files (`AGENTS.md`, `AGENTS.override.md`,
+  `CLAUDE.md`, rules and Copilot instructions, Claude Code `.claude/rules/`), each skill's `SKILL.md` and every
+  other file in its folder (a root `SKILL.md` makes the whole repository the skill), Claude Code, Gemini and
+  OpenCode commands and subagents, GitHub Copilot agent profiles, and agent settings (`.claude/settings.json`,
+  `.codex/config.toml`, `.cursor/cli.json`, `.gemini/settings.json`, `opencode.json(c)`, managed settings).
+  - The list is read from both commits' Git trees, so binary files and folders the scanner skips are covered,
+    and files are compared by their exact content (Git's object id): nothing is redacted or normalised, so a
+    rotated credential or a trailing space counts. No content or digest of it appears in the report: only the
+    kind, the full path's display form and `added`, `changed` or `removed`.
+  - Test data is left out only when the folders above a definition are a test tree, or inside a skill's own
+    tests; a skill or command named `test` is locked like any other.
+  - They count towards `P-CAP-001`, and an approval record can approve them; the record is bound to the head, so
+    a later edit needs approving again. See `references/change-review.md`.
+- Audited before release by Codex (gpt-6-astra): seven ways round the first design (redaction and whitespace
+  normalisation hid code changes, root skills, skipped and binary files, test-named definitions, missing
+  locations, truncated paths as identity), all fixed here with a test and a mutant each.
 - `JH712` (a skill that pre-approves any shell command) and `JH713` (an API key in an agent sandbox template) are
   agent controls in the `--base` comparison, like `JH701`-`JH711`.
 
