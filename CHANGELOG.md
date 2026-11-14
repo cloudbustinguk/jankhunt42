@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.18.0] — unreleased
+## [4.18.0] — 2026-11-14
 
 An agent follows what its repository tells it: instruction files, skills and their scripts, commands, subagents and
 settings. A change to any of them now needs approving like new access, so an approved app cannot drift.
