@@ -4,6 +4,20 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.18.2] — unreleased
+
+### Fixed
+
+- `passport --base` includes previously missed agent-definition locations: Claude Code output styles
+  (`.claude/output-styles/*.md`) and saved workflows (`.claude/workflows/*.js`), Gemini subagents
+  (`.gemini/agents/*.md`), Codex agents (`.codex/agents/*.toml`) and command rules (`.codex/rules/*.rules`),
+  Cline rules (`.cline/rules/*.md`, `*.markdown`, `*.txt`), and Kiro agents (`.kiro/agents/*.md`, `*.json`).
+  Added, changed and removed definitions need review under `P-CAP-001`, including in nested projects and root
+  skills. The new locations follow the vendors' file formats and direct-child discovery; Gemini's underscore
+  templates, backup files and unsupported extensions do not create requests by those locations alone.
+- A Cline skill named `test` is recognised as a live skill; fixture trees above agent folders and a skill's own
+  tests remain excluded. No new options, rules, report fields or exit codes.
+
 ## [4.18.1] — 2026-11-16
 
 ### Fixed
