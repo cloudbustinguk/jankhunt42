@@ -54,6 +54,23 @@ request IT approves:
   `.cursor/cli.json`, `.gemini/settings.json`, `opencode.json` and `opencode.jsonc`, and Claude Code managed
   settings.
 
+The following additional locations are covered from 4.18.1. These patterns name files directly inside each
+directory, including a nested project's directory (for example `packages/api/.claude/workflows/review.js`):
+
+| Tool | Location | Definition kind | Vendor reference |
+|---|---|---|---|
+| Claude Code | `.claude/output-styles/*.md` | instructions | [Output styles](https://code.claude.com/docs/en/output-styles#create-a-custom-output-style) |
+| Claude Code | `.claude/workflows/*.js` | command | [Saved workflows](https://code.claude.com/docs/en/workflows#save-the-workflow-for-reuse) |
+| Gemini CLI | `.gemini/agents/*.md`, except names starting with `_` | subagent | [Subagents](https://geminicli.com/docs/core/subagents/#agent-definition-files), [loader](https://github.com/google-gemini/gemini-cli/blob/4ed06ed0ddc523a6d356a4ad35ddfea331041888/packages/core/src/agents/agentLoader.ts) |
+| Codex | `.codex/agents/*.toml` | subagent | [Custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agents) |
+| Codex | `.codex/rules/*.rules` | agent settings | [Command rules](https://learn.chatgpt.com/docs/agent-configuration/rules#create-a-rules-file) |
+| Cline | `.cline/rules/*.md`, `*.markdown`, `*.txt` | instructions | [Rules](https://docs.cline.bot/customization/cline-rules), [supported files](https://github.com/cline/cline/blob/72b3d7140553a733242126e51a7c2e87efe75c64/apps/vscode/src/core/context/instructions/user-instructions/cline-rules.ts) |
+| Kiro | `.kiro/agents/*.md`, `*.json` | subagent | [Custom agents](https://kiro.dev/docs/custom-agents/creating/) |
+
+These additions use the listed path spelling and extensions (Cline extensions are case-insensitive). Backup files
+and unsupported extensions are not definitions by those locations alone; a file can still belong to a skill or be another recognised instruction
+file. This is an inventory of committed definitions, not a claim that a definition was selected or executed.
+
 The list comes straight from the two commits' Git trees, and each file is compared by its exact content (Git's
 own object id), with nothing redacted or normalised: a value that looks like a secret can be a command, and a
 space inside a string can change what a script does. So a rotated credential, line endings or trailing spaces

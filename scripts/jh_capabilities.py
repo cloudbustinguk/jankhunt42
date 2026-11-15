@@ -38,9 +38,20 @@ DEFINITION_DIRS = (("command", ("/.claude/commands/", "/.gemini/commands/", "/.o
                                 "/.opencode/commands/")),
                    ("subagent", ("/.claude/agents/", "/.opencode/agent/", "/.opencode/agents/", "/.github/agents/")),
                    ("instructions", ("/.claude/rules/",)))
+# Additional vendor discovery locations, with the formats they actually load. These are files directly in the
+# named directory; a lookalike extension or directory is not an agent definition. See change-review.md for sources.
+DEFINITION_FILES = (
+    ("instructions", re.compile(r"/\.claude/output-styles/[^/]+\.md\Z")),
+    ("command", re.compile(r"/\.claude/workflows/[^/]+\.js\Z")),
+    ("subagent", re.compile(r"/\.gemini/agents/(?!_)[^/]+\.md\Z")),
+    ("subagent", re.compile(r"/\.codex/agents/[^/]+\.toml\Z")),
+    ("agent settings", re.compile(r"/\.codex/rules/[^/]+\.rules\Z")),
+    ("instructions", re.compile(r"/\.cline/rules/[^/]+\.(?i:md|markdown|txt)\Z")),
+    ("subagent", re.compile(r"/\.kiro/agents/[^/]+\.(?:md|json)\Z")),
+)
 EXTRA_INSTRUCTIONS = ("agents.override.md",)
 # Where an agent's own folder starts: what lies above it decides whether the whole thing is test data.
-_ANCHORS = re.compile(r"(?:^|/)(?:\.claude|\.codex|\.cursor|\.gemini|\.github|\.opencode|\.windsurf|\.clinerules|"
+_ANCHORS = re.compile(r"(?:^|/)(?:\.claude|\.codex|\.cursor|\.gemini|\.github|\.opencode|\.windsurf|\.clinerules|\.cline|"
                       r"\.kiro|\.roo|\.amazonq|\.continue|\.agents|managed-settings\.d)(?:/|$)", re.I)
 
 
@@ -88,6 +99,9 @@ def _location_kind(rel, low, base):
     """The kind of definition a path is by where it lives, or None."""
     for kind, frags in DEFINITION_DIRS:
         if any(f in low for f in frags) and base.endswith(".md"):
+            return kind
+    for kind, pattern in DEFINITION_FILES:
+        if pattern.search("/" + rel.replace(os.sep, "/")):
             return kind
     if any(low.endswith("/" + f) for f in DEFINITION_SETTINGS) or "/managed-settings.d/" in low:
         return "agent settings"

@@ -434,6 +434,103 @@ class CapabilityChanges(unittest.TestCase):
         ids = [x["id"] for x in r["capability_delta"]["requests"] if x["target"].get("definition")]
         self.assertEqual(len(set(ids)), 2)
 
+    def location_files(self):
+        """Synthetic definitions in the vendor-documented formats, not the research harness's Markdown stand-ins."""
+        md = "---\nname: test\ndescription: Review changes\n---\nReview changes.\n"
+        return {
+            ".claude/output-styles/test.md": ("instructions", md),
+            ".claude/workflows/test.js": ("command", "export const meta = {name: 'test'};\n// Review changes.\n"),
+            ".gemini/agents/test.md": ("subagent", md),
+            ".codex/agents/test.toml": ("subagent", 'name = "test"\ndescription = "Review changes"\n'
+                                     'developer_instructions = "Review changes."\n'),
+            ".codex/rules/test.rules": ("agent settings", 'prefix_rule(pattern = ["git", "status"], decision = "prompt")\n'),
+            ".cline/rules/test.md": ("instructions", "Review changes.\n"),
+            ".cline/rules/test.markdown": ("instructions", "Review changes.\n"),
+            ".cline/rules/test.txt": ("instructions", "Review changes.\n"),
+            ".cline/rules/uppercase.TXT": ("instructions", "Review changes.\n"),
+            ".kiro/agents/test.md": ("subagent", md),
+            ".kiro/agents/test.json": ("subagent", '{"name":"test","prompt":"Review changes."}\n'),
+        }
+
+    def test_vendor_definition_locations_need_review(self):
+        """4.18.1: added, changed and removed definitions count with or without an enclosing root skill."""
+        for root_skill in (False, True):
+            with self.subTest(root_skill=root_skill):
+                support = {"app.py": "value = 1\n"}
+                if root_skill:
+                    support["SKILL.md"] = "---\nname: root\n---\nReview changes.\n"
+                files = self.location_files()
+                base = dict(support, **{p: data for p, (_, data) in files.items()})
+                changed = dict(support, **{p: data + "\n" for p, (_, data) in files.items()})
+                for before, after, change in ((support, base, "added"), (base, changed, "changed"),
+                                               (base, support, "removed")):
+                    with self.subTest(change=change):
+                        got, report = self.lock(before, after)
+                        self.assertEqual(got, sorted((kind, p, change) for p, (kind, _) in files.items()))
+                        self.assertEqual(self.cap_rule(report)["outcome"], "review")
+                got, report = self.lock(base, base)
+                self.assertEqual(got, [])
+                self.assertEqual(self.cap_rule(report)["outcome"], "pass")
+
+    def test_vendor_definition_fixture_boundaries(self):
+        """A nested project's live definitions are kept; fixture trees above them stay excluded, including in a skill."""
+        files = self.location_files()
+        for root_skill in (False, True):
+            with self.subTest(root_skill=root_skill):
+                support = {"app.py": "value = 1\n"}
+                if root_skill:
+                    support["SKILL.md"] = "---\nname: root\n---\nReview changes.\n"
+                base, head, expected = dict(support), dict(support), []
+                for prefix in ("packages/service/", "tests/fixtures/project/"):
+                    for path, (kind, data) in files.items():
+                        base[prefix + path], head[prefix + path] = data, data + "\n"
+                        if prefix == "packages/service/":
+                            expected.append((kind, prefix + path, "changed"))
+                got, report = self.lock(base, head)
+                self.assertEqual(got, sorted(expected))
+                self.assertEqual(self.cap_rule(report)["outcome"], "review")
+
+    def test_vendor_definition_lookalikes_are_not_definitions(self):
+        """Wrong extensions and similarly named folders do not manufacture agent requests outside a skill."""
+        paths = (".claude/output-styles/review.txt", ".claude/output-styles/review.md.bak",
+                 ".claude/output-styles-backup/review.md", ".claude/workflows/review.md",
+                 ".claude/workflows/review.js.bak", ".claude/workflows-backup/review.js",
+                 ".gemini/agents/review.toml", ".gemini/agents-backup/review.md",
+                 ".gemini/agents/_disabled.md", ".gemini/agents/review.MD", ".gemini/agents/nested/review.md",
+                 ".codex/agents/review.md", ".codex/agents/review.toml.bak", ".codex/agents-backup/review.toml",
+                 ".codex/rules/review.md", ".codex/rules/review.rules.bak", ".codex/rules-backup/review.rules",
+                 ".cline/rules/review.json", ".cline/rules-backup/review.md",
+                 ".cline/rules/nested/review.md",
+                 ".kiro/agents/review.toml", ".kiro/agents/review.json.bak", ".kiro/agents-backup/review.json",
+                 ".claude/output-styles/review.md\n", ".claude/workflows/review.js\n",
+                 ".gemini/agents/review.md\n", ".codex/agents/review.toml\n",
+                 ".codex/rules/review.rules\n", ".cline/rules/review.txt\n", ".kiro/agents/review.json\n")
+        base = {p: "Review changes.\n" for p in paths}
+        head = {p: "Deploy changes.\n" for p in paths}
+        got, report = self.lock(base, head)
+        self.assertEqual(got, [])
+        self.assertEqual(self.cap_rule(report)["outcome"], "pass")
+
+    def test_new_tool_anchor_preserves_skill_files(self):
+        """A Cline skill named test is live, but its own fixture scripts remain test data."""
+        skill = ".cline/skills/test/"
+        base = {skill + "SKILL.md": "---\nname: test\n---\nReview changes.\n",
+                skill + "run.py": "value = 1\n", skill + "tests/fixture.py": "value = 1\n"}
+        head = {p: data + "\n" for p, data in base.items()}
+        got, _ = self.lock(base, head)
+        self.assertEqual(got, [("skill", skill + "SKILL.md", "changed"),
+                               ("skill file", skill + "run.py", "changed")])
+
+    def test_unsupported_definition_formats_can_still_be_skill_files(self):
+        """Vendor discovery exclusions do not remove a file from an enclosing skill's exact-content lock."""
+        paths = (".gemini/agents/_helper.md", ".kiro/agents/legacy.md.bak", ".codex/agents/review.md")
+        base = {"SKILL.md": "---\nname: root\n---\nReview changes.\n"}
+        base.update({p: "Review changes.\n" for p in paths})
+        head = dict(base, **{p: "Deploy changes.\n" for p in paths})
+        got, report = self.lock(base, head)
+        self.assertEqual(got, sorted(("skill file", p, "changed") for p in paths))
+        self.assertEqual(self.cap_rule(report)["outcome"], "review")
+
     def test_unchanged_definitions_need_nothing(self):
         files = {"CLAUDE.md": "Keep it simple.\n", ".claude/settings.json": json.dumps(dict(permissions=dict(allow=["Read"])))}
         got, r = self.lock(dict(files, **{"app.py": "value = 1\n"}), dict(files, **{"app.py": "value = 2\n"}))
