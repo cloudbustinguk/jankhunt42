@@ -1383,7 +1383,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
-                            sas = azure_sas(line, m.start(), sf.raw[idx] if idx < len(sf.raw) else "", pats) \
+                            sas = azure_sas(line, m.start(), sf.lang, sf.raw[max(0, idx - 200):idx - 1]) \
                                 if sf.lang in _SAS_DATA_LANGS else None
                             if sas:
                                 severity, confidence, message = sas
@@ -1618,20 +1618,32 @@ _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 
 # Data files, where a string cannot be built from pieces: in code, a URL can always be extended by concatenation, a
 # method call, adjacent literals or a later +=, which only data-flow analysis could rule out, so it stays critical.
-_SAS_DATA_LANGS = {"yaml", "json", "toml", "ini", "xml", "env", "dotenv"}
+_SAS_DATA_LANGS = {"yaml", "json"}
+# the link is the whole value: `key: URL` or `- URL` in YAML (quoted or not, then only a comment), `"key": "URL"` or an
+# array element in JSON; anything else on the line (a command, an expression, a call) could change it
+_SAS_VALUE_BEFORE = {"yaml": re.compile(r"^\s*(?:-\s+)?(?:[\w.-]+\s*:\s+)?([\"']?)$"),
+                     "json": re.compile(r'^\s*[{\[]?\s*(?:"[^"\\]*"\s*:\s*)?(")$')}
+_SAS_VALUE_AFTER = {"yaml": r"^{q}\s*(?:#.*)?$", "json": r"^{q}\s*,?\s*[}\]]?\s*,?\s*$"}
+
+
+def _yaml_block_scalar(before: Sequence[str], line: str) -> bool:
+    """Whether a YAML line is the content of a block scalar (`run: |`, `script: >-`): text, often code, not a value."""
+    indent = len(line) - len(line.lstrip())
+    for prev in reversed(before):
+        if not prev.strip() or prev.lstrip().startswith("#"):
+            continue
+        if len(prev) - len(prev.lstrip()) < indent:
+            return bool(re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*\s*(?:#.*)?$", prev))
+    return False
 _AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
                                  r"(?:windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)(?::443)?$")
-# a string carried on by concatenation (+, PHP ., VB &, SQL ||, Lua ..): the permissions seen may not be all of them
-_CONTINUED = re.compile(r"^\s*(?:\+|\.(?!\w)|&(?![\w#])|\|\||\.\.)")
 
-
-def azure_sas(line: str, pos: int, next_line: str = "", patterns: Sequence["re.Pattern[str]"] = ()) \
-        -> Optional[Tuple[str, str, str]]:
+def azure_sas(line: str, pos: int, lang: str = "", before: Sequence[str] = ()) -> Optional[Tuple[str, str, str]]:
     """(severity, confidence, message) for an Azure Storage shared access signature whose own parameters show it
     only reads, or None to keep the finding critical. A read-only link to one file is a download link (how
     installers and packages are distributed), not a key to the storage account. Conservative: any doubt (another
     credential on the line, a string continued by concatenation, a query that is not the signature's own, a host
-    that is not Azure Storage) keeps it critical."""
+    that is not Azure Storage, a link that is not the whole value of a YAML or JSON key) keeps it critical."""
     start = line.rfind("?", 0, pos + 1)
     if start < 0 or re.search(r"[\s\"'`<>]", line[start:pos]):
         return None                                  # the signature is not in this URL's own query
@@ -1641,19 +1653,12 @@ def azure_sas(line: str, pos: int, next_line: str = "", patterns: Sequence["re.P
         return None                                  # Azure's permission semantics apply only to Azure Storage
     end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
     url_end = start + 1 + end.start()
+    shape = _SAS_VALUE_BEFORE.get(lang)
+    value = shape.match(line[:url_start]) if shape else None
+    if not value or not re.match(_SAS_VALUE_AFTER[lang].replace("{q}", re.escape(value.group(1))), line[url_end:]) or \
+            (lang == "yaml" and _yaml_block_scalar(before, line)):
+        return None                                  # not the whole value of a key or list item: it may be code
     query = line[start + 1:url_end]
-    rest = line[url_end:]
-    closing = rest[:1] if rest[:1] in "\"'`" else ""
-    after = rest[len(closing):]
-    opener = line[url_start - 1] if url_start and line[url_start - 1] in "\"'" else ""
-    if line.rstrip().endswith("\\") or (opener and opener not in line[url_end:]):
-        return None                                  # the string goes on to the next line (a YAML escaped line break)
-    if _CONTINUED.match(after) or (not after.strip() and _CONTINUED.match(next_line)) or \
-            (closing and not after.strip() and line.count(closing) % 2):
-        return None                                  # concatenated or continued: the permissions may go on
-    for other in patterns:                           # another credential on the line keeps the line critical
-        if any(not (url_start <= o.start() and o.end() <= url_end + 1) for o in other.finditer(line)):
-            return None
     params: Dict[str, str] = {}
     # read the query as the server would: HTML entities (&amp;) first, then percent-encoding in names and values
     for part in html.unescape(query).split("&"):
