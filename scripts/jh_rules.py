@@ -1383,7 +1383,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
-                            sas = azure_sas(line, m.start(), sf.raw[idx] if idx < len(sf.raw) else "", pats)
+                            sas = azure_sas(line, m.start(), sf.raw[idx] if idx < len(sf.raw) else "", pats) \
+                                if sf.lang in _SAS_DATA_LANGS else None
                             if sas:
                                 severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
@@ -1615,6 +1616,9 @@ _SAS_SCOPE = {"c": "container", "s": "file share", "d": "directory"}
 _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 
 
+# Data files, where a string cannot be built from pieces: in code, a URL can always be extended by concatenation, a
+# method call, adjacent literals or a later +=, which only data-flow analysis could rule out, so it stays critical.
+_SAS_DATA_LANGS = {"yaml", "json", "toml", "ini", "xml", "env", "dotenv"}
 _AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
                                  r"(?:windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)(?::443)?$")
 # a string carried on by concatenation (+, PHP ., VB &, SQL ||, Lua ..): the permissions seen may not be all of them

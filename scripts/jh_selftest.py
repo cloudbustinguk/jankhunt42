@@ -994,6 +994,7 @@ MUTANTS = [
     ('M625-sas-concatenation-ignored', 'a link continued by string concatenation is judged from its first part', 'jh_rules.py', '    if _CONTINUED.match(after) or (not after.strip() and _CONTINUED.match(next_line)) or \\', '    if False or \\', 'test_sas.py'),
     ('M626-sas-other-credential-ignored', 'another credential on the same line does not keep the line critical', 'jh_rules.py', '        if any(not (url_start <= o.start() and o.end() <= url_end + 1) for o in other.finditer(line)):', '        if False:', 'test_sas.py'),
     ('M627-sas-encoding-ignored', 'percent-encoded or HTML-escaped parameter names are read literally', 'jh_rules.py', '        key, value = urllib.parse.unquote(key).lower(), urllib.parse.unquote(value)', '        key, value = key.lower(), value', 'test_sas.py'),
+    ('M628-sas-code-downgraded', 'a SAS link in code (where it can be extended) is downgraded like one in a data file', 'jh_rules.py', '                                if sf.lang in _SAS_DATA_LANGS else None', '                                if True else None', 'test_sas.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

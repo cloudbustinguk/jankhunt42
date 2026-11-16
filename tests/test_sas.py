@@ -23,8 +23,12 @@ CASES = {
     # (file, text, expected severity, words the message must hold)
     "winget": ("Vendor.App.installer.yaml", "PackageIdentifier: Vendor.App\nInstallers:\n- Architecture: x64\n"
                "  InstallerUrl: %s\n" % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "until 2030-01-01"),
+    # in code a URL can be extended (concatenation, .concat, adjacent literals, +=): it stays critical
     "script": ("VSInstall.ps1", '$url = "%s"\nInvoke-WebRequest $url -OutFile vs.exe\n' % link("vs.exe", EXP, "sr=b", "sp=r"),
-               "minor", "download this one file"),
+               "critical", "credential-like"),
+    "json-config": ("p.json", '{"installerUrl": "%s"}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
+    "python-adjacent": ("q.py", 'uri = ("%s&sp=r" "w")\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
+    "js-concat-method": ("r.js", 'const uri = "%s&sp=r".concat("w");\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
     "no-expiry": ("a.yaml", "url: %s\n" % link("app.exe", "sr=b", "sp=r"), "minor", "no expiry"),
     "container": ("b.yaml", "url: %s\n" % link("", EXP, "sr=c", "sp=rl"), "major", "read and list every file in the container"),
     "account-read": ("c.yaml", "url: %s\n" % link("", "ss=bf", "srt=o", "sp=r", EXP), "major", "Blob, Files"),
