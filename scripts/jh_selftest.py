@@ -991,10 +991,9 @@ MUTANTS = [
     ('M622-sas-writes-read-only', 'a SAS that can write is treated as read-only', 'jh_rules.py', '    if not perms or not perms <= _SAS_READ:', '    if not perms:', 'test_sas.py'),
     ('M623-sas-account-as-container', 'an account-wide SAS is described as one storage location', 'jh_rules.py', '    if "ss" in params or "srt" in params:            # an account SAS', '    if False:            # an account SAS', 'test_sas.py'),
     ('M624-sas-any-host', "Azure's permission semantics are applied to any host with sv and sig", 'jh_rules.py', '    if not host or not _AZURE_STORAGE_HOST.match(host.group(1)):', '    if not host:', 'test_sas.py'),
-    ('M625-sas-unterminated-ignored', 'a SAS string that goes on to the next line is judged from its first line', 'jh_rules.py', '    if line.rstrip().endswith("\\\\") or (opener and opener not in line[url_end:]):', '    if False:', 'test_sas.py'),
-    ('M626-sas-other-credential-ignored', 'another credential on the same line does not keep the line critical', 'jh_rules.py', '        if any(not (url_start <= o.start() and o.end() <= url_end + 1) for o in other.finditer(line)):', '        if False:', 'test_sas.py'),
     ('M627-sas-encoding-ignored', 'percent-encoded or HTML-escaped parameter names are read literally', 'jh_rules.py', '        key, value = urllib.parse.unquote(key).lower(), urllib.parse.unquote(value)', '        key, value = key.lower(), value', 'test_sas.py'),
-    ('M628-sas-code-downgraded', 'a SAS link in code (where it can be extended) is downgraded like one in a data file', 'jh_rules.py', '                                if sf.lang in _SAS_DATA_LANGS else None', '                                if True else None', 'test_sas.py'),
+    ('M629-sas-block-scalar-ignored', 'a SAS link inside a YAML block scalar (a run: | script) counts as a value', 'jh_rules.py', '            (lang == "yaml" and _yaml_block_scalar(before, line)):', '            False:', 'test_sas.py'),
+    ('M630-sas-whole-value-ignored', 'a SAS link that is part of a longer value (a command) counts as the whole value', 'jh_rules.py', '    if not value or not re.match(_SAS_VALUE_AFTER[lang].replace("{q}", re.escape(value.group(1))), line[url_end:]) or \\', '    if not value or \\', 'test_sas.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

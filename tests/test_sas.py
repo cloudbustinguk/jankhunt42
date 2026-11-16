@@ -28,6 +28,14 @@ CASES = {
                "critical", "credential-like"),
     "yaml-escaped-newline": ("s.yaml", 'url: "%s&sp=r\\\n  w"\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
     "yaml-split-params": ("u.yaml", 'url: "%s&sr=b\\\n  &sp=w"\n' % link("app.exe", EXP, "sp=r"), "critical", "credential-like"),
+    "yaml-run-block": (".github/workflows/w.yaml", "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                       "      - shell: python\n        run: |\n          uri = (\"%s&sp=r\" \"w\")\n" % link("app.exe", EXP, "sr=b"),
+                       "critical", "credential-like"),
+    "yaml-command": ("v.yaml", 'run: curl -o app.exe "%s"\n' % link("app.exe", EXP, "sr=b", "sp=r"), "critical", "credential-like"),
+    "json-code-string": ("w.json", '{"script": "x = \\"%s\\""}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "critical", "credential-like"),
+    "yaml-block-text": ("y.yaml", "script: |\n  cat > config.yaml <<EOF\n  url: %s\n  EOF\n" % link("app.exe", EXP, "sr=b", "sp=r"),
+                        "critical", "credential-like"),
+    "yaml-list-item": ("x.yaml", "urls:\n  - %s\n" % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
     "json-config": ("p.json", '{"installerUrl": "%s"}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
     "python-adjacent": ("q.py", 'uri = ("%s&sp=r" "w")\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
     "js-concat-method": ("r.js", 'const uri = "%s&sp=r".concat("w");\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
@@ -61,7 +69,7 @@ class Sas(unittest.TestCase):
     def setUpClass(cls):
         cls.root = tempfile.mkdtemp(prefix="jh-sas-")
         for name, (rel, text, _, _) in CASES.items():
-            os.makedirs(os.path.join(cls.root, name))
+            os.makedirs(os.path.dirname(os.path.join(cls.root, name, rel)), exist_ok=True)
             with open(os.path.join(cls.root, name, rel), "w") as fh:
                 fh.write(text)
         out = run_cli("scan", cls.root, "--json", "--no-progress", "--min-severity", "info", "--rule", "JH101")
