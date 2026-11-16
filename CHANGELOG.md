@@ -15,11 +15,15 @@ semantic versioning.
   WinGet repository). A link that reads or lists a whole container, share or directory, or an account SAS that only
   reads, is major. A link that writes, deletes, creates, tags or changes permissions, or whose permissions come from
   a stored access policy it does not state, stays critical. The signature is never shown.
+  - Only in data files (YAML, JSON, TOML, XML, INI, `.env`), where a string cannot be built from pieces: in code a
+    URL can always be extended (concatenation, `.concat()`, adjacent literals, a later `+=`), so a SAS link in a script
+    stays critical; if it is a reviewed download link, suppress it inline with a reason
+    (`# jankhunt42: ignore JH101 read-only download link`).
   - Only when there is no doubt: the host is Azure Storage (`*.blob|file|dfs|queue|table.core.windows.net` and the
     government and China clouds), the signature is in that URL's own query, the query is read as the server reads it
     (HTML entities and percent-encoding decoded, a parameter given twice keeps it critical), the string is not
     continued by concatenation on the same or the next line, and no other credential is on the same line. Audited
-    by Codex, whose first review found four ways round the first version; all fixed here with tests.
+    by Codex, whose reviews found ways round the first two versions; all fixed here with tests.
 
 ## [4.18.0] — 2026-11-14
 
