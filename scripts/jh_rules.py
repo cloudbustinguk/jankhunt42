@@ -1380,6 +1380,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 message = ("A database password in a connection string for a database on this machine "
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
+                        if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
+                            sas = azure_sas(line, m.start())
+                            if sas:
+                                severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
                             host = _DSN_HOST_RE.match(line, m.end())
                             if m.group(0).endswith("unix(") or (host and _local_db_host(host.group(1))):
@@ -1600,6 +1604,55 @@ _PRIVILEGED_JWT_ROLES = {"service_role", "supabase_admin"}
 
 # Pattern rules whose matches in test code are usually test data.
 _TEST_DATA_MINOR = {"JH104", "JH111", "JH115", "JH122", "JH702"}
+
+# Azure Storage SAS permissions that only read (read, list, find by tag); any other letter writes, deletes, creates,
+# tags, moves, executes or changes permissions, and keeps the link a critical secret.
+_SAS_READ = set("rlf")
+_SAS_ONE_FILE = {"b", "bs", "bv", "f"}             # one blob, its snapshot or version, or one file in a share
+_SAS_SCOPE = {"c": "container", "s": "file share", "d": "directory"}
+_SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
+
+
+def azure_sas(line: str, pos: int) -> Optional[Tuple[str, str, str]]:
+    """(severity, confidence, message) for an Azure Storage shared access signature whose own parameters show it
+    only reads, or None to keep the finding critical. A read-only link to one file is a download link (how
+    installers and packages are distributed), not a key to the storage account."""
+    start = line.rfind("?", 0, pos + 1)
+    if start < 0:
+        return None
+    end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
+    query = line[start + 1:start + 1 + end.start()]
+    params: Dict[str, str] = {}
+    for part in query.split("&"):
+        key, _, value = part.partition("=")
+        params.setdefault(key.lower(), value)
+    if "sv" not in params or "sig" not in params:
+        return None                                  # not an Azure SAS (or signed some other way)
+    perms = set(params.get("sp", ""))
+    if not perms or not perms <= _SAS_READ:
+        return None                                  # no stated permissions (a stored policy may grant more), or writes
+    expiry = params.get("se", "").replace("%3A", ":").replace("%3a", ":")
+    until = ("until %s" % expiry[:10]) if re.match(r"\d{4}-\d{2}-\d{2}", expiry) else \
+        "with no expiry in the link itself (a stored access policy may set one)"
+    reads = "read and list" if "l" in perms else "read"
+    if "ss" in params or "srt" in params:            # an account SAS: every container the services hold
+        return ("major", "high", "An Azure Storage account shared access signature (SAS) that can %s everything in the "
+                "account's %s services, %s: anyone who can read the repository can %s it all while the link is "
+                "valid. It writes nothing, but it is far wider than a download link needs: issue a SAS for the one "
+                "file instead, or rotate the storage account key to revoke this one." % (
+                    reads, ", ".join(_SAS_SERVICES.get(c, c) for c in sorted(params.get("ss", ""))) or "storage",
+                    until, reads))
+    scope = params.get("sr", "")
+    if scope in _SAS_ONE_FILE and perms <= {"r"}:
+        return ("minor", "high", "An Azure Storage shared access signature (SAS) that only lets someone download this "
+                "one file, %s: a download link, not a key to the storage account. Anyone who can read the repository "
+                "can download the file while the link is valid, which matters only if the file itself is "
+                "confidential (a licensed installer, internal data). To revoke it, rotate the storage account key "
+                "or the stored access policy that signed it." % until)
+    return ("major", "high", "An Azure Storage shared access signature (SAS) that lets anyone who can read the "
+            "repository %s every file in the %s, %s. It writes nothing, but it opens far more than a download link "
+            "needs: issue a SAS for the one file instead (sr=b), or rotate the storage account key to revoke this one."
+            % (reads, _SAS_SCOPE.get(scope, "storage location it names"), until))
 # Installers published by the tool's own vendor, over TLS (JH111 major, not critical).
 _OFFICIAL_INSTALLERS = ("sh.rustup.rs", "astral.sh", "get.docker.com", "deb.nodesource.com", "rpm.nodesource.com",
                         "ollama.com", "ollama.ai", "claude.ai", "bun.sh", "deno.land", "get.pnpm.io",
