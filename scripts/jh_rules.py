@@ -1383,7 +1383,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
-                            sas = azure_sas(line, m.start()) if sf.lang == "yaml" and _winget_installer(sf) else None
+                            sas = azure_sas(line, m.start()) \
+                                if sf.lang == "yaml" and _winget_installer_url(sf, idx) else None
                             if sas:
                                 severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
@@ -1618,22 +1619,72 @@ _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 # Only one place is judged: a WinGet installer manifest's InstallerUrl, a fixed schema where the value is a URL and
 # nothing runs (the case that was reported). Everywhere else (scripts, code, other YAML and JSON, comments) a URL can
 # be extended or sit next to another secret, so a SAS link stays critical there.
-# InstallerUrl where the WinGet schema puts it: at the top level, or directly inside an Installers item
-_SAS_VALUE_BEFORE = re.compile(r"^(?:|  |- )InstallerUrl\s*:\s+([\"']?)$")
 _WINGET_KEYS = ("PackageIdentifier", "PackageVersion", "ManifestVersion")
-# anything that lets a YAML line be something other than a plain value: a block scalar, a tag, an anchor or alias,
-# a quoted string that goes on to the next line, or a second document
-_YAML_NOT_PLAIN = re.compile(r"(?m)(?:^\s*-|:)[ \t]+[|>!&*]|(?:^\s*-|:)[ \t]+\"[^\"\n]*$|(?:^\s*-|:)[ \t]+'[^'\n]*$|"
-                             r"^(?:---|\.\.\.)[ \t]*$")
+# one complete entry per line: "Key: value", "Key:", "- Key: value", "- Key:" or "- value", with an optional comment
+_PLAIN_LINE = re.compile(r"^( *)(- )?(?:([A-Za-z][A-Za-z0-9]*):(?: +(.*?))?|(?<=- )(.+?))(?: +#.*)?$")
+_PLAIN_START = re.compile(r"""[^\s\-?:,\[\]{}#&*!|>'"%@`]""")
 
 
-def _winget_installer(sf: SourceFile) -> bool:
-    """A plain WinGet installer manifest: its required top-level keys, ManifestType installer, and none of the YAML
-    features that could make a line something other than a plain value."""
-    text = sf.text
-    return all(re.search(r"(?m)^%s:[ \t]*\S" % k, text) for k in _WINGET_KEYS) and \
-        re.search(r"(?m)^ManifestType:[ \t]*['\"]?installer['\"]?[ \t]*$", text) is not None and \
-        not _YAML_NOT_PLAIN.search(text)
+def _plain_scalar(value: str) -> bool:
+    """A value that YAML can only read as itself, on this line: a plain word (no comment, mapping or flow syntax in
+    it), a complete single-quoted string, or a complete double-quoted string with no escapes."""
+    if value.startswith("'"):
+        return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
+    if value.startswith('"'):
+        return re.fullmatch(r'"[^"\\]*"', value) is not None
+    return _PLAIN_START.match(value) is not None and " #" not in value and ": " not in value and \
+        not value.endswith(":") and "\t" not in value
+
+
+def _plain_yaml(raw: Sequence[str]) -> Optional[List[Tuple[int, int, bool, str, str]]]:
+    """Read a YAML file only if every line is one complete entry: no block or multi-line scalars, tags, anchors,
+    aliases, flow collections, escapes, directives or extra documents. A line is indented further only to open the
+    block of a key with no value, or to continue a list item; anything else would be a value spilling onto the next
+    line. Returns (line number, indent, list item, key, value) for each entry, or None."""
+    rows: List[Tuple[int, int, bool, str, str]] = []
+    for n, text in enumerate(raw, 1):
+        text = text.rstrip("\r\n").rstrip(" ")
+        if n == 1:
+            text = text.lstrip("\ufeff")
+        if not text.strip() or text.lstrip(" ").startswith("#"):
+            continue
+        m = _PLAIN_LINE.match(text)
+        if not m:
+            return None
+        indent, dash, key, value = len(m.group(1)), bool(m.group(2)), m.group(3) or "", m.group(4) or m.group(5) or ""
+        if value and not _plain_scalar(value):
+            return None
+        if rows and indent > rows[-1][1]:
+            _, last_indent, last_dash, last_key, last_value = rows[-1]
+            opens_block = bool(last_key) and not last_value                  # "Key:" or "- Key:"
+            next_item_key = last_dash and bool(last_key) and indent == last_indent + 2 and not dash
+            if not (opens_block or next_item_key):
+                return None                       # a value continuing onto this line
+        rows.append((n, indent, dash, key, value))
+    return rows
+
+
+def _winget_installer_url(sf: SourceFile, line_no: int) -> bool:
+    """True when line_no is the InstallerUrl value of a plain WinGet installer manifest: every line one complete entry,
+    the required top-level keys, ManifestType installer, and the line at the top level or directly inside an item of
+    the top-level Installers list."""
+    rows = _plain_yaml(sf.raw)
+    if rows is None:
+        return False
+    top = {key: value for _, indent, dash, key, value in rows if indent == 0 and not dash and key}
+    if not all(top.get(k) for k in _WINGET_KEYS) or top.get("ManifestType", "").strip("'\"") != "installer":
+        return False
+    parent = ""
+    for n, indent, dash, key, value in rows:
+        if indent == 0 and not dash:
+            parent = key
+        if n == line_no:
+            if key != "InstallerUrl" or not value:
+                return False
+            if indent == 0 and not dash:
+                return True                       # a top-level InstallerUrl applies to every installer
+            return parent == "Installers" and ((indent == 0 and dash) or (indent == 2 and not dash))
+    return False
 
 
 _AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
@@ -1654,7 +1705,7 @@ def azure_sas(line: str, pos: int) -> Optional[Tuple[str, str, str]]:
         return None                                  # Azure's permission semantics apply only to Azure Storage
     end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
     url_end = start + 1 + end.start()
-    value = _SAS_VALUE_BEFORE.match(line[:url_start])
+    value = re.match(r"^ *(?:- )?InstallerUrl: +([\"']?)$", line[:url_start])
     if not value or line[url_end:].strip() != value.group(1):
         return None                                  # not the whole InstallerUrl value (no comment after it either)
     query = line[start + 1:url_end]

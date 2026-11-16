@@ -11,9 +11,10 @@ semantic versioning.
 - **A read-only Azure Storage download link in a WinGet installer manifest is no longer a critical leaked
   credential** (`JH101`). Enterprise WinGet repositories point `InstallerUrl` at an Azure Storage shared access
   signature (SAS) that only lets someone download the installer; all 16 leads in a real repository were these. In a
-  plain WinGet installer manifest (its required keys `PackageIdentifier`, `PackageVersion`, `ManifestVersion` and
-  `ManifestType: installer`, and no block scalars, tags, anchors, multi-line quoted strings or extra documents), when
-  the link is the whole `InstallerUrl` value where the schema puts it, `JH101` now reads the link's own parameters:
+  plain WinGet installer manifest (every line one complete entry, so nothing can be a value spilling across lines;
+  the required top-level keys `PackageIdentifier`, `PackageVersion`, `ManifestVersion` and `ManifestType: installer`),
+  when the link is the whole `InstallerUrl` value at the top level or in an item of the top-level `Installers` list,
+  `JH101` now reads the link's own parameters:
   - read-only, one file (`sp=r`, `sr=b`): **minor**, with the expiry in the message (anyone who can read the
     repository can download the file until then; rotate the storage key to revoke it);
   - read or list a whole container, share or directory, or a read-only account SAS: **major**;
@@ -23,7 +24,7 @@ semantic versioning.
 - Everywhere else (scripts, code, other YAML and JSON) a SAS link stays critical, because a URL there can be extended
   or sit next to another secret. If one is a reviewed download link, suppress it inline with a reason
   (`# jankhunt42: ignore JH101 read-only download link`). The signature is never shown.
-- Audited by Codex over five rounds; each round's bypasses (a second secret on the line, concatenation in code,
+- Audited by Codex over six rounds; each round's bypasses (a second secret on the line, concatenation in code,
   code inside YAML, encoded or HTML-escaped parameters, comments, block scalars, tags, anchors, files merely named like
   a manifest, non-Azure hosts) are tests.
 

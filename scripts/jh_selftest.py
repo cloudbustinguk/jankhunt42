@@ -992,9 +992,11 @@ MUTANTS = [
     ('M623-sas-account-as-container', 'an account-wide SAS is described as one storage location', 'jh_rules.py', '    if "ss" in params or "srt" in params:            # an account SAS', '    if False:            # an account SAS', 'test_sas.py'),
     ('M624-sas-any-host', "Azure's permission semantics are applied to any host with sv and sig", 'jh_rules.py', '    if not host or not _AZURE_STORAGE_HOST.match(host.group(1)):', '    if not host:', 'test_sas.py'),
     ('M627-sas-encoding-ignored', 'percent-encoded or HTML-escaped parameter names are read literally', 'jh_rules.py', '        key, value = urllib.parse.unquote(key).lower(), urllib.parse.unquote(value)', '        key, value = key.lower(), value', 'test_sas.py'),
-    ('M629-sas-not-plain-ignored', 'a manifest with block scalars, tags, anchors or multi-line strings is treated as plain', 'jh_rules.py', '        not _YAML_NOT_PLAIN.search(text)', '        True', 'test_sas.py'),
+    ('M629-sas-escapes-accepted', 'a value with escapes, tags, anchors, flow syntax or an open quote counts as a plain one-line value', 'jh_rules.py', '        if value and not _plain_scalar(value):', '        if False:', 'test_sas.py'),
     ('M630-sas-whole-value-ignored', 'a SAS link followed by more text (a comment holding a token) counts as the whole value', 'jh_rules.py', '    if not value or line[url_end:].strip() != value.group(1):', '    if not value:', 'test_sas.py'),
-    ('M631-sas-any-installer-name', 'any YAML file with ManifestType installer counts as a WinGet manifest without its required keys', 'jh_rules.py', '    return all(re.search(r"(?m)^%s:[ \\t]*\\S" % k, text) for k in _WINGET_KEYS) and \\', '    return True and \\', 'test_sas.py'),
+    ('M631-sas-any-installer-name', 'a YAML file without the required WinGet top-level keys counts as an installer manifest', 'jh_rules.py', '    if not all(top.get(k) for k in _WINGET_KEYS) or top.get("ManifestType", "").strip("\'\\"") != "installer":', '    if False:', 'test_sas.py'),
+    ('M632-sas-continuation-accepted', 'a line indented under a key that already has a value is read as a new entry, not that value continuing', 'jh_rules.py', '            if not (opens_block or next_item_key):', '            if False:', 'test_sas.py'),
+    ('M633-sas-any-parent', 'InstallerUrl under any top-level key counts, not only the Installers list', 'jh_rules.py', '            return parent == "Installers" and ((indent == 0 and dash) or (indent == 2 and not dash))', '            return True', 'test_sas.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
