@@ -987,6 +987,9 @@ MUTANTS = [
     ('M608-dl-content-ignored', 'only the file mode, not its content, is compared', 'jh_capabilities.py', '        entries[rel[len(prefix):]] = mode + ":" + oid', '        entries[rel[len(prefix):]] = mode', 'test_capabilities.py'),
     ('M609-dl-skill-name-as-parent', "a standalone skill's own folder name counts as a folder above it", 'jh_capabilities.py', '        above = skill[:anchor.start()] if anchor else os.path.dirname(skill)', '        above = skill[:anchor.start()] if anchor else skill', 'test_capabilities.py'),
     ('M610-dl-root-skill-swallows-agent-folders', "inside a root skill, an agent folder named test is taken for the skill's test data", 'jh_capabilities.py', '        if inner:       # an agent', '        if False:       # an agent', 'test_capabilities.py'),
+    ('M611-sas-downgrade-off', 'every Azure SAS link stays a critical secret, even a read-only download link', 'jh_rules.py', '                            if sas:\n                                severity, confidence, message = sas', '                            if False:\n                                severity, confidence, message = sas', 'test_sas.py'),
+    ('M612-sas-writes-read-only', 'a SAS that can write is treated as read-only', 'jh_rules.py', '    if not perms or not perms <= _SAS_READ:', '    if not perms:', 'test_sas.py'),
+    ('M613-sas-account-as-container', 'an account-wide SAS is described as one storage location', 'jh_rules.py', '    if "ss" in params or "srt" in params:            # an account SAS', '    if False:            # an account SAS', 'test_sas.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

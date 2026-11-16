@@ -4,6 +4,18 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.18.1] — unreleased
+
+### Fixed
+
+- **`JH101` judges an Azure Storage shared access signature (SAS) by what it grants**, reading the link's own `sp`,
+  `sr`, `ss`/`srt` and `se` parameters, instead of reporting every `sig=` as a critical leaked credential. A WinGet
+  `InstallerUrl` or an install script that downloads one file with a read-only link (`sp=r`, `sr=b`) is a download
+  link, not a key to the storage account: minor, with the expiry in the message (reported from a real enterprise
+  WinGet repository). A link that reads or lists a whole container, share or directory, or an account SAS that only
+  reads, is major. A link that writes, deletes, creates, tags or changes permissions, or whose permissions come from
+  a stored access policy it does not state, stays critical. The signature is never shown.
+
 ## [4.18.0] — 2026-11-14
 
 An agent follows what its repository tells it: instruction files, skills and their scripts, commands, subagents and
