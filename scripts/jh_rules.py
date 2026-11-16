@@ -1645,6 +1645,9 @@ def azure_sas(line: str, pos: int, next_line: str = "", patterns: Sequence["re.P
     rest = line[url_end:]
     closing = rest[:1] if rest[:1] in "\"'`" else ""
     after = rest[len(closing):]
+    opener = line[url_start - 1] if url_start and line[url_start - 1] in "\"'" else ""
+    if line.rstrip().endswith("\\") or (opener and opener not in line[url_end:]):
+        return None                                  # the string goes on to the next line (a YAML escaped line break)
     if _CONTINUED.match(after) or (not after.strip() and _CONTINUED.match(next_line)) or \
             (closing and not after.strip() and line.count(closing) % 2):
         return None                                  # concatenated or continued: the permissions may go on

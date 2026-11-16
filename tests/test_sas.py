@@ -26,6 +26,8 @@ CASES = {
     # in code a URL can be extended (concatenation, .concat, adjacent literals, +=): it stays critical
     "script": ("VSInstall.ps1", '$url = "%s"\nInvoke-WebRequest $url -OutFile vs.exe\n' % link("vs.exe", EXP, "sr=b", "sp=r"),
                "critical", "credential-like"),
+    "yaml-escaped-newline": ("s.yaml", 'url: "%s&sp=r\\\n  w"\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
+    "yaml-split-params": ("u.yaml", 'url: "%s&sr=b\\\n  &sp=w"\n' % link("app.exe", EXP, "sp=r"), "critical", "credential-like"),
     "json-config": ("p.json", '{"installerUrl": "%s"}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
     "python-adjacent": ("q.py", 'uri = ("%s&sp=r" "w")\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
     "js-concat-method": ("r.js", 'const uri = "%s&sp=r".concat("w");\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
