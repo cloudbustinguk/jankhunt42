@@ -54,9 +54,9 @@ request IT approves:
   `.cursor/cli.json`, `.gemini/settings.json`, `opencode.json` and `opencode.jsonc`, and Claude Code managed
   settings.
 
-The following additional locations are covered from 4.18.2. These patterns name files directly inside each
-directory, including a nested project's directory (for example `packages/api/.claude/workflows/review.js`). Folder names match in any case; extensions follow each
-vendor's loader:
+The following additional locations are covered from 4.18.2. These patterns name files directly inside each directory,
+including a nested project's directory (for example `packages/api/.claude/workflows/review.js`). Folder names match in
+any case; extensions follow each vendor's loader:
 
 | Tool | Location | Definition kind | Vendor reference |
 |---|---|---|---|
