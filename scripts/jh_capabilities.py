@@ -40,14 +40,16 @@ DEFINITION_DIRS = (("command", ("/.claude/commands/", "/.gemini/commands/", "/.o
                    ("instructions", ("/.claude/rules/",)))
 # Additional vendor discovery locations, with the formats they actually load. These are files directly in the
 # named directory; a lookalike extension or directory is not an agent definition. See change-review.md for sources.
+# Folder names match in any case, as on macOS and Windows and as DEFINITION_DIRS does; each extension follows
+# the vendor's own loader.
 DEFINITION_FILES = (
-    ("instructions", re.compile(r"/\.claude/output-styles/[^/]+\.md\Z")),
-    ("command", re.compile(r"/\.claude/workflows/[^/]+\.js\Z")),
-    ("subagent", re.compile(r"/\.gemini/agents/(?!_)[^/]+\.md\Z")),
-    ("subagent", re.compile(r"/\.codex/agents/[^/]+\.toml\Z")),
-    ("agent settings", re.compile(r"/\.codex/rules/[^/]+\.rules\Z")),
-    ("instructions", re.compile(r"/\.cline/rules/[^/]+\.(?i:md|markdown|txt)\Z")),
-    ("subagent", re.compile(r"/\.kiro/agents/[^/]+\.(?:md|json)\Z")),
+    ("instructions", re.compile(r"/\.(?i:claude/output-styles)/[^/]+\.md\Z")),
+    ("command", re.compile(r"/\.(?i:claude/workflows)/[^/]+\.js\Z")),
+    ("subagent", re.compile(r"/\.(?i:gemini/agents)/(?!_)[^/]+\.md\Z")),
+    ("subagent", re.compile(r"/\.(?i:codex/agents)/[^/]+\.toml\Z")),
+    ("agent settings", re.compile(r"/\.(?i:codex/rules)/[^/]+\.rules\Z")),
+    ("instructions", re.compile(r"/\.(?i:cline/rules)/[^/]+\.(?i:md|markdown|txt)\Z")),
+    ("subagent", re.compile(r"/\.(?i:kiro/agents)/[^/]+\.(?:md|json)\Z")),
 )
 EXTRA_INSTRUCTIONS = ("agents.override.md",)
 # Where an agent's own folder starts: what lies above it decides whether the whole thing is test data.

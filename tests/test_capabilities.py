@@ -490,6 +490,17 @@ class CapabilityChanges(unittest.TestCase):
                 self.assertEqual(got, sorted(expected))
                 self.assertEqual(self.cap_rule(report)["outcome"], "review")
 
+    def test_vendor_definition_folders_in_any_case(self):
+        """On macOS and Windows .Claude/Output-Styles is the folder the agent reads: its definitions need review too."""
+        md = "---\nname: test\ndescription: Review changes\n---\nReview changes.\n"
+        files = {".Claude/Output-Styles/test.md": "instructions", ".GEMINI/Agents/test.md": "subagent",
+                 ".Codex/Rules/test.rules": "agent settings", ".Kiro/AGENTS/test.json": "subagent"}
+        base = {"app.py": "value = 1\n"}
+        head = dict(base, **{p: md for p in files})
+        got, report = self.lock(base, head)
+        self.assertEqual(got, sorted((kind, p, "added") for p, kind in files.items()))
+        self.assertEqual(self.cap_rule(report)["outcome"], "review")
+
     def test_vendor_definition_lookalikes_are_not_definitions(self):
         """Wrong extensions and similarly named folders do not manufacture agent requests outside a skill."""
         paths = (".claude/output-styles/review.txt", ".claude/output-styles/review.md.bak",
