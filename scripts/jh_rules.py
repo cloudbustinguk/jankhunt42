@@ -8,6 +8,8 @@ import re
 import sys
 import warnings
 from dataclasses import dataclass, field
+import html
+import urllib.parse
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (
@@ -1381,7 +1383,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
-                            sas = azure_sas(line, m.start())
+                            sas = azure_sas(line, m.start(), sf.raw[idx] if idx < len(sf.raw) else "", pats)
                             if sas:
                                 severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
@@ -1613,19 +1615,46 @@ _SAS_SCOPE = {"c": "container", "s": "file share", "d": "directory"}
 _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 
 
-def azure_sas(line: str, pos: int) -> Optional[Tuple[str, str, str]]:
+_AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
+                                 r"(?:windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)(?::443)?$")
+# a string carried on by concatenation (+, PHP ., VB &, SQL ||, Lua ..): the permissions seen may not be all of them
+_CONTINUED = re.compile(r"^\s*(?:\+|\.(?!\w)|&(?![\w#])|\|\||\.\.)")
+
+
+def azure_sas(line: str, pos: int, next_line: str = "", patterns: Sequence["re.Pattern[str]"] = ()) \
+        -> Optional[Tuple[str, str, str]]:
     """(severity, confidence, message) for an Azure Storage shared access signature whose own parameters show it
     only reads, or None to keep the finding critical. A read-only link to one file is a download link (how
-    installers and packages are distributed), not a key to the storage account."""
+    installers and packages are distributed), not a key to the storage account. Conservative: any doubt (another
+    credential on the line, a string continued by concatenation, a query that is not the signature's own, a host
+    that is not Azure Storage) keeps it critical."""
     start = line.rfind("?", 0, pos + 1)
-    if start < 0:
-        return None
+    if start < 0 or re.search(r"[\s\"'`<>]", line[start:pos]):
+        return None                                  # the signature is not in this URL's own query
+    url_start = max(line.rfind(c, 0, start) for c in " \t\"'`(<=") + 1
+    host = re.match(r"(?i)https?://([^/?#\s\"'`]+)", line[url_start:start + 1])
+    if not host or not _AZURE_STORAGE_HOST.match(host.group(1)):
+        return None                                  # Azure's permission semantics apply only to Azure Storage
     end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
-    query = line[start + 1:start + 1 + end.start()]
+    url_end = start + 1 + end.start()
+    query = line[start + 1:url_end]
+    rest = line[url_end:]
+    closing = rest[:1] if rest[:1] in "\"'`" else ""
+    after = rest[len(closing):]
+    if _CONTINUED.match(after) or (not after.strip() and _CONTINUED.match(next_line)) or \
+            (closing and not after.strip() and line.count(closing) % 2):
+        return None                                  # concatenated or continued: the permissions may go on
+    for other in patterns:                           # another credential on the line keeps the line critical
+        if any(not (url_start <= o.start() and o.end() <= url_end + 1) for o in other.finditer(line)):
+            return None
     params: Dict[str, str] = {}
-    for part in query.split("&"):
+    # read the query as the server would: HTML entities (&amp;) first, then percent-encoding in names and values
+    for part in html.unescape(query).split("&"):
         key, _, value = part.partition("=")
-        params.setdefault(key.lower(), value)
+        key, value = urllib.parse.unquote(key).lower(), urllib.parse.unquote(value)
+        if key in params:
+            return None                              # a parameter given twice: which one Azure reads is not ours to guess
+        params[key] = value
     if "sv" not in params or "sig" not in params:
         return None                                  # not an Azure SAS (or signed some other way)
     perms = set(params.get("sp", ""))
