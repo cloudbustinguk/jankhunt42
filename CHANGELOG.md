@@ -11,19 +11,21 @@ semantic versioning.
 - **A read-only Azure Storage download link in a WinGet installer manifest is no longer a critical leaked
   credential** (`JH101`). Enterprise WinGet repositories point `InstallerUrl` at an Azure Storage shared access
   signature (SAS) that only lets someone download the installer; all 16 leads in a real repository were these. In a
-  WinGet installer manifest (`*.installer.yaml`, or `ManifestType: installer`), when the link is the whole
-  `InstallerUrl` value, `JH101` now reads the link's own parameters:
+  plain WinGet installer manifest (its required keys `PackageIdentifier`, `PackageVersion`, `ManifestVersion` and
+  `ManifestType: installer`, and no block scalars, tags, anchors, multi-line quoted strings or extra documents), when
+  the link is the whole `InstallerUrl` value where the schema puts it, `JH101` now reads the link's own parameters:
   - read-only, one file (`sp=r`, `sr=b`): **minor**, with the expiry in the message (anyone who can read the
     repository can download the file until then; rotate the storage key to revoke it);
   - read or list a whole container, share or directory, or a read-only account SAS: **major**;
   - any other permission (write, delete, create, tag, permissions), permissions kept in a stored policy, a host that
     is not Azure Storage, a repeated or encoded parameter that changes the meaning, anything else on the line (a
-    comment), or a line inside a YAML block scalar: **critical**, as before.
+    comment): **critical**, as before.
 - Everywhere else (scripts, code, other YAML and JSON) a SAS link stays critical, because a URL there can be extended
   or sit next to another secret. If one is a reviewed download link, suppress it inline with a reason
   (`# jankhunt42: ignore JH101 read-only download link`). The signature is never shown.
-- Audited by Codex over four rounds; each round's bypasses (a second secret on the line, concatenation in code,
-  code inside YAML, encoded or HTML-escaped parameters, comments, nested block scalars, non-Azure hosts) are tests.
+- Audited by Codex over five rounds; each round's bypasses (a second secret on the line, concatenation in code,
+  code inside YAML, encoded or HTML-escaped parameters, comments, block scalars, tags, anchors, files merely named like
+  a manifest, non-Azure hosts) are tests.
 
 ## [4.18.0] — 2026-11-14
 
