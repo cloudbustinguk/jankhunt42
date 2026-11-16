@@ -992,8 +992,9 @@ MUTANTS = [
     ('M623-sas-account-as-container', 'an account-wide SAS is described as one storage location', 'jh_rules.py', '    if "ss" in params or "srt" in params:            # an account SAS', '    if False:            # an account SAS', 'test_sas.py'),
     ('M624-sas-any-host', "Azure's permission semantics are applied to any host with sv and sig", 'jh_rules.py', '    if not host or not _AZURE_STORAGE_HOST.match(host.group(1)):', '    if not host:', 'test_sas.py'),
     ('M627-sas-encoding-ignored', 'percent-encoded or HTML-escaped parameter names are read literally', 'jh_rules.py', '        key, value = urllib.parse.unquote(key).lower(), urllib.parse.unquote(value)', '        key, value = key.lower(), value', 'test_sas.py'),
-    ('M629-sas-block-scalar-ignored', 'a SAS link inside a YAML block scalar (a run: | script) counts as a value', 'jh_rules.py', '            (lang == "yaml" and _yaml_block_scalar(before, line)):', '            False:', 'test_sas.py'),
-    ('M630-sas-whole-value-ignored', 'a SAS link that is part of a longer value (a command) counts as the whole value', 'jh_rules.py', '    if not value or not re.match(_SAS_VALUE_AFTER[lang].replace("{q}", re.escape(value.group(1))), line[url_end:]) or \\', '    if not value or \\', 'test_sas.py'),
+    ('M629-sas-block-scalar-ignored', 'a SAS link inside a YAML block scalar (at any depth) counts as a value', 'jh_rules.py', '            if re.search(r"(?:^\\s*-|:)\\s*[|>][-+0-9]*\\s*(?:#.*)?$", prev):\n                return True', '            if re.search(r"(?:^\\s*-|:)\\s*[|>][-+0-9]*\\s*(?:#.*)?$", prev):\n                return False', 'test_sas.py'),
+    ('M630-sas-whole-value-ignored', 'a SAS link followed by more text (a comment holding a token) counts as the whole value', 'jh_rules.py', '    if not value or line[url_end:].strip() != value.group(1) or _yaml_block_scalar(before, line):', '    if not value or _yaml_block_scalar(before, line):', 'test_sas.py'),
+    ('M631-sas-any-yaml', 'a SAS link in any YAML file is judged like a WinGet InstallerUrl', 'jh_rules.py', '                                if sf.lang == "yaml" and _winget_installer(sf) else None', '                                if sf.lang == "yaml" else None', 'test_sas.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

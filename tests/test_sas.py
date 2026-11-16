@@ -19,48 +19,38 @@ def link(path, *params):
     return "%s/%s?%s" % (BASE, path, "&".join(("sv=2022-11-02",) + params + (SIG,)))
 
 
+def winget(url, extra=""):
+    return ("PackageIdentifier: Vendor.App\nPackageVersion: 1.0\nInstallers:\n- Architecture: x64\n"
+            "  InstallerUrl: %s%s\nManifestType: installer\nManifestVersion: 1.6.0\n" % (url, extra))
+
+
+RO = link("app.exe", EXP, "sr=b", "sp=r")
 CASES = {
     # (file, text, expected severity, words the message must hold)
-    "winget": ("Vendor.App.installer.yaml", "PackageIdentifier: Vendor.App\nInstallers:\n- Architecture: x64\n"
-               "  InstallerUrl: %s\n" % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "until 2030-01-01"),
-    # in code a URL can be extended (concatenation, .concat, adjacent literals, +=): it stays critical
-    "script": ("VSInstall.ps1", '$url = "%s"\nInvoke-WebRequest $url -OutFile vs.exe\n' % link("vs.exe", EXP, "sr=b", "sp=r"),
-               "critical", "credential-like"),
-    "yaml-escaped-newline": ("s.yaml", 'url: "%s&sp=r\\\n  w"\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
-    "yaml-split-params": ("u.yaml", 'url: "%s&sr=b\\\n  &sp=w"\n' % link("app.exe", EXP, "sp=r"), "critical", "credential-like"),
+    "winget": ("Vendor.App.installer.yaml", winget(RO), "minor", "until 2030-01-01"),
+    "winget-quoted": ("q.installer.yaml", winget('"%s"' % RO), "minor", "download this one file"),
+    "no-expiry": ("a.installer.yaml", winget(link("app.exe", "sr=b", "sp=r")), "minor", "no expiry"),
+    "container": ("b.installer.yaml", winget(link("", EXP, "sr=c", "sp=rl")), "major", "read and list every file in the container"),
+    "account-read": ("c.installer.yaml", winget(link("", "ss=bf", "srt=o", "sp=r", EXP)), "major", "Blob, Files"),
+    "writes": ("d.installer.yaml", winget(link("app.exe", EXP, "sr=b", "sp=rw")), "critical", "credential-like"),
+    "account-full": ("e.installer.yaml", winget(link("", "ss=b", "srt=sco", "sp=rwdlac", EXP)), "critical", "credential-like"),
+    "stored-policy": ("f.installer.yaml", winget(link("app.exe", "si=policy1", "sr=b")), "critical", "credential-like"),
+    "not-azure": ("l.installer.yaml", winget("https://api.acme-tools.net/admin?sv=2022-11-02&sp=r&sr=b&%s&%s" % (EXP, SIG)),
+                  "critical", "credential-like"),
+    "encoded-write": ("m.installer.yaml", winget(link("app.exe", EXP, "sr=b", "sp=r", "%73p=rw")), "critical", "credential-like"),
+    "encoded-account": ("n.installer.yaml", winget(link("app.exe", EXP, "sp=r", "sr=b", "%73s=b", "%73rt=sco")), "major", "account"),
+    # Codex's audits: any doubt keeps it critical
+    "comment-token": ("o.installer.yaml", winget(RO, " # https://api.acme-tools.net/run?token=" + "Zq4Xw9Lr2Tb7Nm3Kc8Vf6Hj1Pd5Sg0Ya2"),
+                      "critical", "credential-like"),
+    "block-scalar": ("p.installer.yaml", "ManifestType: installer\nReleaseNotes: |\n  steps:\n    InstallerUrl: %s\n" % RO,
+                     "critical", "credential-like"),
+    "not-winget-yaml": ("r.yaml", "url: %s\n" % RO, "critical", "credential-like"),
+    "installerurl-elsewhere": ("deploy/config.yaml", "InstallerUrl: %s\n" % RO, "critical", "credential-like"),
+    "json": ("s.json", '{"installerUrl": "%s"}\n' % RO, "critical", "credential-like"),
+    "script": ("VSInstall.ps1", '$url = "%s"\nInvoke-WebRequest $url -OutFile vs.exe\n' % RO, "critical", "credential-like"),
     "yaml-run-block": (".github/workflows/w.yaml", "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
                        "      - shell: python\n        run: |\n          uri = (\"%s&sp=r\" \"w\")\n" % link("app.exe", EXP, "sr=b"),
                        "critical", "credential-like"),
-    "yaml-command": ("v.yaml", 'run: curl -o app.exe "%s"\n' % link("app.exe", EXP, "sr=b", "sp=r"), "critical", "credential-like"),
-    "json-code-string": ("w.json", '{"script": "x = \\"%s\\""}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "critical", "credential-like"),
-    "yaml-block-text": ("y.yaml", "script: |\n  cat > config.yaml <<EOF\n  url: %s\n  EOF\n" % link("app.exe", EXP, "sr=b", "sp=r"),
-                        "critical", "credential-like"),
-    "yaml-list-item": ("x.yaml", "urls:\n  - %s\n" % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
-    "json-config": ("p.json", '{"installerUrl": "%s"}\n' % link("app.exe", EXP, "sr=b", "sp=r"), "minor", "download this one file"),
-    "python-adjacent": ("q.py", 'uri = ("%s&sp=r" "w")\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
-    "js-concat-method": ("r.js", 'const uri = "%s&sp=r".concat("w");\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
-    "no-expiry": ("a.yaml", "url: %s\n" % link("app.exe", "sr=b", "sp=r"), "minor", "no expiry"),
-    "container": ("b.yaml", "url: %s\n" % link("", EXP, "sr=c", "sp=rl"), "major", "read and list every file in the container"),
-    "account-read": ("c.yaml", "url: %s\n" % link("", "ss=bf", "srt=o", "sp=r", EXP), "major", "Blob, Files"),
-    "writes": ("d.yaml", "url: %s\n" % link("app.exe", EXP, "sr=b", "sp=rw"), "critical", "credential-like"),
-    "account-full": ("e.yaml", "url: %s\n" % link("", "ss=b", "srt=sco", "sp=rwdlac", EXP), "critical", "credential-like"),
-    "stored-policy": ("f.yaml", "url: %s\n" % link("app.exe", "si=policy1", "sr=b"), "critical", "credential-like"),
-    # Codex's audit of the first version: any doubt keeps it critical
-    "same-line-write": ("g.json", '{"download": "%s", "upload": "%s"}\n' % (
-        link("app.exe", EXP, "sr=b", "sp=r"), link("up.exe", EXP, "sr=b", "sp=rw")), "critical", "credential-like"),
-    "same-line-token": ("h.json", '{"download": "%s", "token": "%s"}\n' % (
-        link("app.exe", EXP, "sr=b", "sp=r"), "ghp_" + "Zq4Xw9Lr2Tb7Nm3Kc8Vf6Hj1Pd5Sg0Ya2Ue7Wo3"), "critical", "credential-like"),
-    "concatenated": ("i.js", 'const uri = "%s&sp=r" + "w";\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
-    "continued": ("j.js", 'const uri = "%s"\n  + "w";\n' % (link("app.exe", EXP, "sr=b") + "&sp=r"), "critical", "credential-like"),
-    "other-query": ("k.js", 'const cfg = {ref: "https://pkgs.blob.core.windows.net/a.exe?sv=2022-11-02&sp=r&sr=b&sig=x", '
-                    'conn: "BlobEndpoint=https://pkgs.blob.core.windows.net/;SharedAccessSignature=sv=2022-11-02&sp=rw&sr=c'
-                    '&se=2030-01-01&%s"};\n' % SIG, "critical", "credential-like"),
-    "not-azure": ("l.yaml", "url: https://api.acme-tools.net/admin?sv=2022-11-02&sp=r&sr=b&%s&%s\n" % (EXP, SIG),
-                  "critical", "credential-like"),
-    "encoded-write": ("m.yaml", "url: %s\n" % link("app.exe", EXP, "sr=b", "sp=r", "%73p=rw"), "critical", "credential-like"),
-    "encoded-account": ("n.yaml", "url: %s\n" % link("app.exe", EXP, "sp=r", "sr=b", "%73s=b", "%73rt=sco"), "major", "account"),
-    "html-escaped": ("o.yaml", 'url: "%s"\n' % link("app.exe", EXP, "sr=b", "sp=r").replace("&", "&amp;").replace(
-        "&amp;" + SIG, "&" + SIG), "minor", "download this one file"),
 }
 
 
