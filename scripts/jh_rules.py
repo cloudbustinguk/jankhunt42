@@ -1384,7 +1384,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
                             sas = azure_sas(line, m.start(), sf.lang, sf.raw[max(0, idx - 200):idx - 1]) \
-                                if sf.lang in _SAS_DATA_LANGS else None
+                                if sf.lang == "yaml" and _winget_installer(sf) else None
                             if sas:
                                 severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
@@ -1616,25 +1616,35 @@ _SAS_SCOPE = {"c": "container", "s": "file share", "d": "directory"}
 _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 
 
-# Data files, where a string cannot be built from pieces: in code, a URL can always be extended by concatenation, a
-# method call, adjacent literals or a later +=, which only data-flow analysis could rule out, so it stays critical.
-_SAS_DATA_LANGS = {"yaml", "json"}
-# the link is the whole value: `key: URL` or `- URL` in YAML (quoted or not, then only a comment), `"key": "URL"` or an
-# array element in JSON; anything else on the line (a command, an expression, a call) could change it
-_SAS_VALUE_BEFORE = {"yaml": re.compile(r"^\s*(?:-\s+)?(?:[\w.-]+\s*:\s+)?([\"']?)$"),
-                     "json": re.compile(r'^\s*[{\[]?\s*(?:"[^"\\]*"\s*:\s*)?(")$')}
-_SAS_VALUE_AFTER = {"yaml": r"^{q}\s*(?:#.*)?$", "json": r"^{q}\s*,?\s*[}\]]?\s*,?\s*$"}
+# Only one place is judged: a WinGet installer manifest's InstallerUrl, a fixed schema where the value is a URL and
+# nothing runs (the case that was reported). Everywhere else (scripts, code, other YAML and JSON, comments) a URL can
+# be extended or sit next to another secret, so a SAS link stays critical there.
+_SAS_VALUE_BEFORE = re.compile(r"^\s*(?:-\s+)?InstallerUrl\s*:\s+([\"']?)$")
+
+
+def _winget_installer(sf: SourceFile) -> bool:
+    low = sf.rel.lower()
+    return low.endswith((".installer.yaml", ".installer.yml")) or \
+        re.search(r"(?m)^ManifestType:\s*['\"]?installer['\"]?\s*$", sf.text) is not None
 
 
 def _yaml_block_scalar(before: Sequence[str], line: str) -> bool:
-    """Whether a YAML line is the content of a block scalar (`run: |`, `script: >-`): text, often code, not a value."""
-    indent = len(line) - len(line.lstrip())
+    """Whether a YAML line is inside a block scalar (`Notes: |`, `run: >-`) at any depth: every less-indented line
+    above it, up to the top level, is checked for a block indicator."""
+    threshold = len(line) - len(line.lstrip())
     for prev in reversed(before):
         if not prev.strip() or prev.lstrip().startswith("#"):
             continue
-        if len(prev) - len(prev.lstrip()) < indent:
-            return bool(re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*\s*(?:#.*)?$", prev))
+        indent = len(prev) - len(prev.lstrip())
+        if indent < threshold:
+            if re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*\s*(?:#.*)?$", prev):
+                return True
+            threshold = indent
+            if indent == 0:
+                break
     return False
+
+
 _AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
                                  r"(?:windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)(?::443)?$")
 
@@ -1653,11 +1663,9 @@ def azure_sas(line: str, pos: int, lang: str = "", before: Sequence[str] = ()) -
         return None                                  # Azure's permission semantics apply only to Azure Storage
     end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
     url_end = start + 1 + end.start()
-    shape = _SAS_VALUE_BEFORE.get(lang)
-    value = shape.match(line[:url_start]) if shape else None
-    if not value or not re.match(_SAS_VALUE_AFTER[lang].replace("{q}", re.escape(value.group(1))), line[url_end:]) or \
-            (lang == "yaml" and _yaml_block_scalar(before, line)):
-        return None                                  # not the whole value of a key or list item: it may be code
+    value = _SAS_VALUE_BEFORE.match(line[:url_start])
+    if not value or line[url_end:].strip() != value.group(1) or _yaml_block_scalar(before, line):
+        return None                                  # not the whole InstallerUrl value (no comment after it either)
     query = line[start + 1:url_end]
     params: Dict[str, str] = {}
     # read the query as the server would: HTML entities (&amp;) first, then percent-encoding in names and values
