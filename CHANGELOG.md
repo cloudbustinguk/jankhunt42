@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.18.1] — unreleased
+## [4.18.1] — 2026-11-16
 
 ### Fixed
 
