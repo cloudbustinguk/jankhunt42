@@ -15,6 +15,8 @@ semantic versioning.
   Added, changed and removed definitions need review under `P-CAP-001`, including in nested projects and root
   skills. The new locations follow the vendors' file formats and direct-child discovery; Gemini's underscore
   templates, backup files and unsupported extensions do not create requests by those locations alone.
+  Folder names match in any case (on macOS and Windows `.Claude/Output-Styles` is the folder the agent reads), as
+  the existing definition folders already did; extensions follow each vendor's loader.
 - A Cline skill named `test` is recognised as a live skill; fixture trees above agent folders and a skill's own
   tests remain excluded. No new options, rules, report fields or exit codes.
 
