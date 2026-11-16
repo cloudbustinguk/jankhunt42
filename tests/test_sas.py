@@ -47,6 +47,11 @@ CASES = {
     "block-at-installer-indent": ("u.installer.yaml", "PackageIdentifier: Vendor.App\nPackageVersion: 1.0\n"
                                   "ManifestVersion: 1.6.0\nManifestType: installer\nReleaseNotes: |\n  InstallerUrl: %s\n" % RO,
                                   "critical", "credential-like"),
+    "codex-yaml-workflow": ('.github/workflows/probe.yaml', 'name: SAS fixture\non: workflow_dispatch\njobs:\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: python\n        run: "InstallerUrl = \\"url\\"; metadata = \'\'\'\nPackageIdentifier: Vendor.App\nPackageVersion: 1.0\nManifestVersion: 1.6.0\nManifestType: installer\n\'\'\'; uri = {\n  InstallerUrl: \'https://pkgs.blob.core.windows.net/install/app.exe?sv=2022-11-02&sr=b&sig=Qz7Av8Bw9Cx0Dy1Ez2Fa3Gb4Hc5Id6Je7Kf8Lg9Mh0Ni%3D&sp=r\'\n  }[InstallerUrl] + \'w\'; from urllib.parse import urlsplit, parse_qs; print(parse_qs(urlsplit(uri).query)[\'sp\'])"\n', "critical", "credential-like"),
+    "codex-yaml-escaped-quote": ('download.installer.yaml', 'PackageIdentifier: Vendor.App\nPackageVersion: 1.0\nManifestVersion: 1.6.0\nManifestType: installer\nrun: "InstallerUrl = \\"url\\"; uri = {\n  InstallerUrl: \'https://pkgs.blob.core.windows.net/install/app.exe?sv=2022-11-02&sr=b&sig=Qz7Av8Bw9Cx0Dy1Ez2Fa3Gb4Hc5Id6Je7Kf8Lg9Mh0Ni%3D&sp=r\'\n  }[InstallerUrl] + \'w\'; from urllib.parse import urlsplit, parse_qs; print(parse_qs(urlsplit(uri).query)[\'sp\'])"\n', "critical", "credential-like"),
+    "codex-yaml-doubled-quote": ('download.installer.yaml', 'PackageIdentifier: Vendor.App\nPackageVersion: 1.0\nManifestVersion: 1.6.0\nManifestType: installer\nrun: \'InstallerUrl = \'\'url\'\'; uri = {\n  InstallerUrl: "https://pkgs.blob.core.windows.net/install/app.exe?sv=2022-11-02&sr=b&sig=Qz7Av8Bw9Cx0Dy1Ez2Fa3Gb4Hc5Id6Je7Kf8Lg9Mh0Ni%3D&sp=r"\n  }[InstallerUrl] + "w"; from urllib.parse import urlsplit, parse_qs; print(parse_qs(urlsplit(uri).query)["sp"])\'\n', "critical", "credential-like"),
+    "under-another-key": ("o.installer.yaml", winget("https://x.example").replace(
+        "ManifestType: installer", "Other:\n  InstallerUrl: %s\nManifestType: installer" % RO), "critical", "credential-like"),
     "not-a-manifest": ("t.installer.yaml", "ManifestType: installer\nInstallerUrl: %s\n" % RO, "critical", "credential-like"),
     "codex-yaml-tagged-block": (".github/workflows/yaml-tagged-block.installer.yaml", 'name: SAS fixture\non: workflow_dispatch\njobs:\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: python\n        run: !!str |\n          InstallerUrl = "url"\n          uri = {\n            InstallerUrl: "https://pkgs.blob.core.windows.net/install/app.exe?sv=2022-11-02&sr=b&sig=Qz7Av8Bw9Cx0Dy1Ez2Fa3Gb4Hc5Id6Je7Kf8Lg9Mh0Ni%3D&sp=r"\n          }[InstallerUrl] + "w"\n          from urllib.parse import urlsplit, parse_qs\n          print(parse_qs(urlsplit(uri).query)["sp"])\n', "critical", "credential-like"),
     "codex-yaml-anchored-block": (".github/workflows/yaml-anchored-block.installer.yaml", 'name: SAS fixture\non: workflow_dispatch\njobs:\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n      - shell: python\n        run: &script |\n          InstallerUrl = "url"\n          uri = {\n            InstallerUrl: "https://pkgs.blob.core.windows.net/install/app.exe?sv=2022-11-02&sr=b&sig=Qz7Av8Bw9Cx0Dy1Ez2Fa3Gb4Hc5Id6Je7Kf8Lg9Mh0Ni%3D&sp=r"\n          }[InstallerUrl] + "w"\n          from urllib.parse import urlsplit, parse_qs\n          print(parse_qs(urlsplit(uri).query)["sp"])\n', "critical", "credential-like"),
@@ -64,6 +69,14 @@ CASES = {
 
 
 class Sas(unittest.TestCase):
+
+    def test_only_one_complete_entry_per_line(self):
+        from jh_rules import _plain_yaml
+        self.assertIsNotNone(_plain_yaml(winget(RO).splitlines(True)))
+        for text in ("a: value\n  - x\n", "a: x\n b: y\n", "- abc\n  B: x\n", 'a: "x\\"y"\n', 'a: "x\n  y"\n',
+                     "a: 'it''s\n  more'\n", "a: |\n  b\n", "a: !!str x\n", "a: &x y\n", "a: [x]\n", "a:b\n", "---\na: b\n"):
+            self.assertIsNone(_plain_yaml(text.splitlines(True)), text)
+
     @classmethod
     def setUpClass(cls):
         cls.root = tempfile.mkdtemp(prefix="jh-sas-")
