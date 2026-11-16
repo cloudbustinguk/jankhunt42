@@ -31,6 +31,22 @@ CASES = {
     "writes": ("d.yaml", "url: %s\n" % link("app.exe", EXP, "sr=b", "sp=rw"), "critical", "credential-like"),
     "account-full": ("e.yaml", "url: %s\n" % link("", "ss=b", "srt=sco", "sp=rwdlac", EXP), "critical", "credential-like"),
     "stored-policy": ("f.yaml", "url: %s\n" % link("app.exe", "si=policy1", "sr=b"), "critical", "credential-like"),
+    # Codex's audit of the first version: any doubt keeps it critical
+    "same-line-write": ("g.json", '{"download": "%s", "upload": "%s"}\n' % (
+        link("app.exe", EXP, "sr=b", "sp=r"), link("up.exe", EXP, "sr=b", "sp=rw")), "critical", "credential-like"),
+    "same-line-token": ("h.json", '{"download": "%s", "token": "%s"}\n' % (
+        link("app.exe", EXP, "sr=b", "sp=r"), "ghp_" + "Zq4Xw9Lr2Tb7Nm3Kc8Vf6Hj1Pd5Sg0Ya2Ue7Wo3"), "critical", "credential-like"),
+    "concatenated": ("i.js", 'const uri = "%s&sp=r" + "w";\n' % link("app.exe", EXP, "sr=b"), "critical", "credential-like"),
+    "continued": ("j.js", 'const uri = "%s"\n  + "w";\n' % (link("app.exe", EXP, "sr=b") + "&sp=r"), "critical", "credential-like"),
+    "other-query": ("k.js", 'const cfg = {ref: "https://pkgs.blob.core.windows.net/a.exe?sv=2022-11-02&sp=r&sr=b&sig=x", '
+                    'conn: "BlobEndpoint=https://pkgs.blob.core.windows.net/;SharedAccessSignature=sv=2022-11-02&sp=rw&sr=c'
+                    '&se=2030-01-01&%s"};\n' % SIG, "critical", "credential-like"),
+    "not-azure": ("l.yaml", "url: https://api.acme-tools.net/admin?sv=2022-11-02&sp=r&sr=b&%s&%s\n" % (EXP, SIG),
+                  "critical", "credential-like"),
+    "encoded-write": ("m.yaml", "url: %s\n" % link("app.exe", EXP, "sr=b", "sp=r", "%73p=rw"), "critical", "credential-like"),
+    "encoded-account": ("n.yaml", "url: %s\n" % link("app.exe", EXP, "sp=r", "sr=b", "%73s=b", "%73rt=sco"), "major", "account"),
+    "html-escaped": ("o.yaml", 'url: "%s"\n' % link("app.exe", EXP, "sr=b", "sp=r").replace("&", "&amp;").replace(
+        "&amp;" + SIG, "&" + SIG), "minor", "download this one file"),
 }
 
 
