@@ -1383,8 +1383,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                            "or in a local container (%s): usually a development default. Keep it to "
                                            "local work, and make sure it is used nowhere else." % cut(host.group(1), 40))
                         if re.match(r"(?i)[?&](?:sig|signature)=", m.group(0)):
-                            sas = azure_sas(line, m.start(), sf.lang, sf.raw[max(0, idx - 200):idx - 1]) \
-                                if sf.lang == "yaml" and _winget_installer(sf) else None
+                            sas = azure_sas(line, m.start()) if sf.lang == "yaml" and _winget_installer(sf) else None
                             if sas:
                                 severity, confidence, message = sas
                         if pat.pattern.endswith(("@(?:tcp|unix)\\(", "{6,}@")):
@@ -1619,36 +1618,28 @@ _SAS_SERVICES = {"b": "Blob", "f": "Files", "q": "Queue", "t": "Table"}
 # Only one place is judged: a WinGet installer manifest's InstallerUrl, a fixed schema where the value is a URL and
 # nothing runs (the case that was reported). Everywhere else (scripts, code, other YAML and JSON, comments) a URL can
 # be extended or sit next to another secret, so a SAS link stays critical there.
-_SAS_VALUE_BEFORE = re.compile(r"^\s*(?:-\s+)?InstallerUrl\s*:\s+([\"']?)$")
+# InstallerUrl where the WinGet schema puts it: at the top level, or directly inside an Installers item
+_SAS_VALUE_BEFORE = re.compile(r"^(?:|  |- )InstallerUrl\s*:\s+([\"']?)$")
+_WINGET_KEYS = ("PackageIdentifier", "PackageVersion", "ManifestVersion")
+# anything that lets a YAML line be something other than a plain value: a block scalar, a tag, an anchor or alias,
+# a quoted string that goes on to the next line, or a second document
+_YAML_NOT_PLAIN = re.compile(r"(?m)(?:^\s*-|:)[ \t]+[|>!&*]|(?:^\s*-|:)[ \t]+\"[^\"\n]*$|(?:^\s*-|:)[ \t]+'[^'\n]*$|"
+                             r"^(?:---|\.\.\.)[ \t]*$")
 
 
 def _winget_installer(sf: SourceFile) -> bool:
-    low = sf.rel.lower()
-    return low.endswith((".installer.yaml", ".installer.yml")) or \
-        re.search(r"(?m)^ManifestType:\s*['\"]?installer['\"]?\s*$", sf.text) is not None
-
-
-def _yaml_block_scalar(before: Sequence[str], line: str) -> bool:
-    """Whether a YAML line is inside a block scalar (`Notes: |`, `run: >-`) at any depth: every less-indented line
-    above it, up to the top level, is checked for a block indicator."""
-    threshold = len(line) - len(line.lstrip())
-    for prev in reversed(before):
-        if not prev.strip() or prev.lstrip().startswith("#"):
-            continue
-        indent = len(prev) - len(prev.lstrip())
-        if indent < threshold:
-            if re.search(r"(?:^\s*-|:)\s*[|>][-+0-9]*\s*(?:#.*)?$", prev):
-                return True
-            threshold = indent
-            if indent == 0:
-                break
-    return False
+    """A plain WinGet installer manifest: its required top-level keys, ManifestType installer, and none of the YAML
+    features that could make a line something other than a plain value."""
+    text = sf.text
+    return all(re.search(r"(?m)^%s:[ \t]*\S" % k, text) for k in _WINGET_KEYS) and \
+        re.search(r"(?m)^ManifestType:[ \t]*['\"]?installer['\"]?[ \t]*$", text) is not None and \
+        not _YAML_NOT_PLAIN.search(text)
 
 
 _AZURE_STORAGE_HOST = re.compile(r"(?i)^[a-z0-9]{3,24}\.(?:blob|file|dfs|queue|table)\.core\."
                                  r"(?:windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)(?::443)?$")
 
-def azure_sas(line: str, pos: int, lang: str = "", before: Sequence[str] = ()) -> Optional[Tuple[str, str, str]]:
+def azure_sas(line: str, pos: int) -> Optional[Tuple[str, str, str]]:
     """(severity, confidence, message) for an Azure Storage shared access signature whose own parameters show it
     only reads, or None to keep the finding critical. A read-only link to one file is a download link (how
     installers and packages are distributed), not a key to the storage account. Conservative: any doubt (another
@@ -1664,7 +1655,7 @@ def azure_sas(line: str, pos: int, lang: str = "", before: Sequence[str] = ()) -
     end = re.search(r"[\s\"'<>#`)]|$", line[start + 1:])
     url_end = start + 1 + end.start()
     value = _SAS_VALUE_BEFORE.match(line[:url_start])
-    if not value or line[url_end:].strip() != value.group(1) or _yaml_block_scalar(before, line):
+    if not value or line[url_end:].strip() != value.group(1):
         return None                                  # not the whole InstallerUrl value (no comment after it either)
     query = line[start + 1:url_end]
     params: Dict[str, str] = {}
