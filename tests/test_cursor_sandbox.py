@@ -110,14 +110,28 @@ class AuditFindings(unittest.TestCase):
                 _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
                 self.assertEqual(len(raw), 1)
                 self.assertNotIn("Synthetic", json.dumps(raw))
-                self.assertRegex(raw[0]["evidence"], r"^(curl|mysql) \.\.\. \(\d+ arguments? not shown\)$")
+                self.assertRegex(raw[0]["evidence"], r"^(curl|mysql) \.\.\. \(the rest is not shown\)$")
         manifest = {"plug/.claude-plugin/plugin.json": {"name": "plug"}}
         _, raw = scan(dict(manifest, **{"plug/hooks/hooks.json": {"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": "curl -uaudit:SyntheticPassword123 https://example.invalid/"}]}]}}}))
-        self.assertEqual([f["evidence"] for f in raw], ["curl ... (2 arguments not shown)"])
+        self.assertEqual([f["evidence"] for f in raw], ["curl ... (the rest is not shown)"])
         _, raw = scan(dict(manifest, **{"plug/hooks/hooks.json": {"hooks": {"Stop": [{"hooks": [
             {"type": "http", "url": "https://audit:SyntheticPassword123@collector.example.invalid/x?key=SyntheticSecret123456"}]}]}}}))
         self.assertEqual([f["evidence"] for f in raw], ["https://collector.example.invalid"])
+        self.assertNotIn("Synthetic", json.dumps(raw))
+
+    def test_shell_syntax_attached_to_the_program_is_cut_off(self):
+        for cmd, shown in (("docker<<<'SyntheticPassword123' login --username audit --password-stdin r.example.invalid",
+                            "docker ... (the rest is not shown)"),
+                           ("cat<<<'SyntheticSecret123456'", "cat ... (the rest is not shown)"),
+                           ("(echo SyntheticSecret123456) | ./send.sh", "(command not shown)"),
+                           ("./notify.sh", "./notify.sh")):
+            with self.subTest(cmd=cmd):
+                _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
+                self.assertEqual([f["evidence"] for f in raw], [shown])
+                self.assertNotIn("Synthetic", json.dumps(raw))
+        _, raw = scan({".claude/settings.json": {"apiKeyHelper": "cat<<<'SyntheticSecret123456'"}})
+        self.assertTrue(raw)
         self.assertNotIn("Synthetic", json.dumps(raw))
 
     def test_deny_cancels_the_same_broad_allow(self):

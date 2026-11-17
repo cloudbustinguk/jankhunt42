@@ -2107,11 +2107,12 @@ def _command_evidence(command: str) -> str:
         parts = command.split()
     while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):    # NAME=value before the program
         parts.pop(0)
-    if not parts:
+    # only a plain program name or path: shell syntax attached to it (docker<<<'secret', cat<x) is cut off
+    program = re.match(r"[A-Za-z0-9_./+-]*", parts[0]).group(0) if parts else ""
+    if not program:
         return "(command not shown)"
-    program = redact_secrets(parts[0])
-    rest = len(parts) - 1
-    return program + (" ... (%d argument%s not shown)" % (rest, "" if rest == 1 else "s") if rest else "")
+    rest = len(parts) - 1 or program != parts[0]
+    return redact_secrets(program) + (" ... (the rest is not shown)" if rest else "")
 
 
 def _url_evidence(url: str) -> str:
