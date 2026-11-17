@@ -824,7 +824,7 @@ MUTANTS = [
     ('M460-html-prompt-dropped', 'the HTML report has no combined prompt', 'jh_html.py', '        _render_prompt(findings),\n        _render_footer(),', '        _render_footer(),', 'test_fix_prompts.py'),
     ('M461-owasp-never-returned', 'no rule carries its OWASP risks', 'jh_frameworks.py', '    return list(OWASP_RULES.get(rule_id, ()))', '    return []', 'test_fix_prompts.py'),
     ('M462-owasp-counts-unordered', 'passport OWASP counts are not in list order', 'jh_frameworks.py', '                  for rid in sorted(counts, key=order.index)],', '                  for rid in counts],', 'test_fix_prompts.py'),
-    ('M463-passport-owasp-empty', 'the passport counts no OWASP risks', 'jh_passport.py', '            "owasp": jh_frameworks.owasp_counts(findings),', '            "owasp": jh_frameworks.owasp_counts(()),', 'test_fix_prompts.py'),
+    ('M463-passport-owasp-empty', 'the passport counts no OWASP risks', 'jh_passport.py', '            "owasp": jh_frameworks.owasp_counts(findings, decision["reasons"]),', '            "owasp": jh_frameworks.owasp_counts(()),', 'test_fix_prompts.py'),
     ('M464-passport-owasp-line-dropped', 'the passport does not show its OWASP line', 'jh_passport.py', '             ] + _owasp_line(a.get("owasp")) + [', '             ] + [', 'test_fix_prompts.py'),
     ('M465-tty-prompt-hint-dropped', 'the terminal report does not mention --prompt', 'jh_render.py', '    out.append("  " + color.grey("fix with your coding agent: ") + color.cyan("jankhunt42 scan . --prompt"))\n', '', 'test_fix_prompts.py'),
     ('M466-skill-entry-guard-off', 'any agent instruction file with allowed-tools is judged as a skill', 'jh_checks.py', '    if not is_skill_entry(sf.rel):\n        return []\n    noun', '    if False:\n        return []\n    noun', 'test_skills.py'),
@@ -1007,6 +1007,9 @@ MUTANTS = [
     ('M641-class-low-any-tier', "the exposure band's low end counts inferred and unknown drivers", 'jh_graph.py', '    level = max((EXPOSURE_RANK[d["level"]] for d in drivers if d["tier"] in ("verified", "supported")), default=1)', '    level = max((EXPOSURE_RANK[d["level"]] for d in drivers if True), default=1)', 'test_bands.py'),
     ('M642-passport-band-clause-dropped', 'the passport never states a wide band', 'jh_passport.py', '    if not band or len(band) != 2 or band[0] == band[1]:', '    if True:', 'test_bands.py'),
     ('M643-brief-score-band-dropped', 'the citizen brief never says the score rests on less certain leads', 'jh_passport.py', '    if jband and jband[0] != jband[1]:', '    if False:', 'test_bands.py'),
+    ('M644-owasp-decision-risks-ignored', "the passport's own rules never reach the OWASP crosswalk", 'jh_frameworks.py', '        for rid in OWASP_PASSPORT_RULES.get(r.get("rule", ""), ()):', '        for rid in ():', 'test_owasp_crosswalk.py'),
+    ('M645-owasp-passing-rules-counted', 'a passport rule that passed is still listed as a governance risk', 'jh_frameworks.py', '        if r.get("outcome") in (None, "pass"):', '        if r.get("outcome") is None:', 'test_owasp_crosswalk.py'),
+    ('M646-owasp-governance-line-dropped', 'the passport markdown never shows the governance risks', 'jh_passport.py', '    if gov:\n        out.append("- Governance risks', '    if False:\n        out.append("- Governance risks', 'test_owasp_crosswalk.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

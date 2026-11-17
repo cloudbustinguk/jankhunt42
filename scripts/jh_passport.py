@@ -850,7 +850,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "assessment": {
             "jank": jank,
             "findings": findings_counts,
-            "owasp": jh_frameworks.owasp_counts(findings),
+            "owasp": jh_frameworks.owasp_counts(findings, decision["reasons"]),
             "exposure": {"class": exposure, "model": G.EXPOSURE_MODEL,
                          "note": "qualitative exposure from the connectivity map; separate from the Jank Score",
                          "class_band": exposure_band, "band_basis": G.BAND_BASIS},
@@ -1081,11 +1081,14 @@ def redact(report: Dict[str, Any]) -> Dict[str, Any]:
 def _owasp_line(owasp: Optional[Dict[str, Any]]) -> List[str]:
     """Findings by OWASP risk, most common first: orientation for approvers who work from those lists."""
     risks = sorted((owasp or {}).get("risks") or [], key=lambda r: -r["findings"])
-    if not risks:
-        return []
     shown = ", ".join("%s %s (%d)" % (r["id"], r["title"], r["findings"]) for r in risks[:6])
-    return ["- Risks by OWASP category: %s%s (orientation, not compliance)" % (
-        shown, "; %d more in JSON" % (len(risks) - 6) if len(risks) > 6 else "")]
+    out = ["- Risks by OWASP category: %s%s (orientation, not compliance)" % (
+        shown, "; %d more in JSON" % (len(risks) - 6) if len(risks) > 6 else "")] if risks else []
+    gov = (owasp or {}).get("decision_risks") or []
+    if gov:
+        out.append("- Governance risks by OWASP category: %s (from the passport rules; orientation, not compliance)"
+                   % ", ".join("%s %s (%s)" % (r["id"], r["title"], ", ".join(r["rules"])) for r in gov))
+    return out
 
 
 def markdown(p: Dict[str, Any]) -> str:
