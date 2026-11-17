@@ -217,12 +217,21 @@ class OwaspTable(unittest.TestCase):
 
     def test_the_reference_table_matches(self):
         import jh_frameworks as F
-        rows = dict(re.findall(r"(?m)^\| ((?:CD-SEC-\d\d|ASI\d\d)) [^|]+\| ([^|]+) \|$", read("references/ai-governance.md")))
+        found = re.findall(r"(?m)^\| ((?:CD-SEC-\d\d|ASI\d\d)) [^|]+\| ([^|]+) \|$", read("references/ai-governance.md"))
+        rows, passport = {}, {}
+        for rid, cell in found:                      # the scanner table first, then the passport-rule table
+            (rows if rid not in rows else passport)[rid] = cell
         self.assertEqual(set(rows), set(F.OWASP_RISKS))
         for rid, cell in rows.items():
             with self.subTest(risk=rid):
                 self.assertEqual(set(re.findall(r"JH\d+", cell)),
                                  {r for r, risks in F.OWASP_RULES.items() if rid in risks})
+        mapped = {rid for risks in F.OWASP_PASSPORT_RULES.values() for rid in risks}
+        self.assertEqual(set(passport), mapped)
+        for rid, cell in passport.items():
+            with self.subTest(passport_risk=rid):
+                self.assertEqual(set(re.findall(r"P-[A-Z]+-\d+", cell)),
+                                 {r for r, risks in F.OWASP_PASSPORT_RULES.items() if rid in risks})
 
 
 if __name__ == "__main__":
