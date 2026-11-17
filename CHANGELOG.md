@@ -8,12 +8,6 @@ semantic versioning.
 
 ### Added
 
-- **Uncertainty bands.** The Jank Score reports `band: [low, high]`: the low end leaves out low-confidence findings
-  (weak signals). The exposure class reports `class_band`: the low end counts only verified or supported drivers. A
-  wide band says part of the number rests on weaker evidence; a point says it does not. Shown in the scorecard, the
-  map and the passport for reviewers. The citizen brief gives no band numbers: when a band is wide it says the
-  problems still count until a person checks them, and that inferred reach should be treated as real until someone
-  confirms it. Reporting only: no score, grade, class or decision changes.
 - **Governance risks on the OWASP Citizen Development Top 10.** The passport's own rules now map to the OWASP risks
   they are instances of, so the passport names risks no scanner finding can show: CD-SEC-09 Asset Management
   Failures (no owner, no custodian, unclassified data) and CD-SEC-01 Blind Trust (no independent review, no tests).
@@ -24,6 +18,14 @@ semantic versioning.
   (`JH709`); `.cursor/hooks.json` and a plugin's `hooks/hooks.json` hooks that run commands or send events to a URL
   for everyone who opens the repository or installs the plugin (`JH704`). A hook written into a workspace is how a
   2026 sandbox escape in Cursor ran commands on the host.
+
+### Fixed
+
+- Hook and helper evidence (`JH704`, including Claude Code project hooks) masks credentials written as command-line
+  arguments: flag values such as `--token` or `--user name:password`, authorization headers, `user:password@` in
+  URLs and secret-named `NAME=value` assignments.
+- The "sensitive data and an external destination" exposure driver states the weaker of its two ends' evidence, not
+  only the data source's.
 
 ## [4.18.2] — 2026-11-17
 

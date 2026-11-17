@@ -411,13 +411,6 @@ def top_problems(findings: Sequence[Any], limit: int = 3) -> List[Dict[str, Any]
     return picked
 
 
-def _band_clause(band: Any, words: str) -> str:
-    """'; band 46-69 (high-confidence findings alone score 46)' when the band is wider than a point, else ''."""
-    if not band or len(band) != 2 or band[0] == band[1]:
-        return ""
-    return "; band %s-%s (%s %s)" % (band[0], band[1], words, band[0])
-
-
 def plain_brief(p: Dict[str, Any]) -> List[str]:
     """The decision in plain language, for the person who built the software
     and the custodian who answers for it."""
@@ -449,13 +442,6 @@ def plain_brief(p: Dict[str, Any]) -> List[str]:
                           " with %s" % ", ".join(sv["credentials"]) if sv.get("credentials") else "",
                           ", reaching %s" % ", ".join(sv["reaches"]) if sv.get("reaches") else "")
             for sv in servers[:5])))
-    eband = p["assessment"]["exposure"].get("class_band")
-    if eband and eband[0] != eband[1]:
-        lines.append("Part of what it can reach was inferred from its code rather than seen in its configuration: "
-                     "treat that reach as real until someone confirms it.")
-    jband = (p["assessment"].get("jank") or {}).get("band")
-    if jband and jband[0] != jband[1]:
-        lines.append("Some of the problems found rest on weak signals: each one still counts until a person checks it.")
     lines.append("Custodian: %s." % (", ".join(gov["custodians"]) if gov["custodians"] else "not named"))
     return lines
 
@@ -740,8 +726,6 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
                          "inline pragmas%s" % (suppressed, "; the citizen profile does not honour them"
                                                if eff["profile"] == "citizen" else ""))
     exposure = map_report["assessment"]["exposure"]["class"] if map_report else "Unknown"
-    exposure_band = list(map_report["assessment"]["exposure"].get("class_band") or [exposure, exposure]) \
-        if map_report else ["Unknown", "Unknown"]
     if map_report:
         warns.extend(map_report.get("warnings", []))
     agent = agent_tooling(map_report)
@@ -851,8 +835,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
             "findings": findings_counts,
             "owasp": jh_frameworks.owasp_counts(findings, decision["reasons"]),
             "exposure": {"class": exposure, "model": G.EXPOSURE_MODEL,
-                         "note": "qualitative exposure from the connectivity map; separate from the Jank Score",
-                         "class_band": exposure_band, "band_basis": G.BAND_BASIS},
+                         "note": "qualitative exposure from the connectivity map; separate from the Jank Score"},
             "decision": {
                 "result": decision["result"],
                 "reasons": decision["reasons"],
@@ -1096,10 +1079,8 @@ def markdown(p: Dict[str, Any]) -> str:
     cov = p["coverage"]
     lines = ["# Software passport: %s" % p["subject"]["name"], "",
              "- Release assessment: **%s** (%s; %s)" % (d["result"], d["mode"], d["note"]),
-             "- Technical Jank Score: **%s/100** grade %s (%s)%s" % (a["jank"].get("score"), a["jank"].get("grade"), a["jank"].get("policy"),
-                                                                    _band_clause(a["jank"].get("band"), "without low-confidence findings it scores")),
-             "- Exposure: **%s** (%s)%s" % (a["exposure"]["class"], a["exposure"]["note"],
-                                           _band_clause(a["exposure"].get("class_band"), "verified or supported evidence alone gives")),
+             "- Technical Jank Score: **%s/100** grade %s (%s)" % (a["jank"].get("score"), a["jank"].get("grade"), a["jank"].get("policy")),
+             "- Exposure: **%s** (%s)" % (a["exposure"]["class"], a["exposure"]["note"]),
              ] + _owasp_line(a.get("owasp")) + [
              "- Evidence coverage: %d of %d areas observed, declared, or inferred" % (cov["evidence_areas_present"], cov["evidence_areas_total"]),
              "- Lifecycle: %s; acceptance: %s" % (p["lifecycle"]["state"], p["lifecycle"]["acceptance"]["state"]),
