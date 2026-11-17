@@ -19,9 +19,10 @@ Each finding is labelled from the flagged line and the code around it:
 | `NOISE` | the claim is true but not actionable here: test data, a deliberately vulnerable example, a protocol that requires it, best-effort cleanup |
 | `UNSURE` | the context is not enough to decide |
 
-- **Precision** is `TP / (TP + FP)`, with a 95% Wilson interval.
-- **Actionable** is `TP / all`, NOISE included. It is closer to what a reader
-  experiences.
+- **Precision** is $`\mathrm{TP} / (\mathrm{TP} + \mathrm{FP})`$, with a 95%
+  Wilson interval.
+- **Actionable** is $`\mathrm{TP} / \text{all}`$, NOISE included. It is closer
+  to what a reader experiences.
 - NOISE is reported separately and never folded into the false-positive rate.
   A NOISE label that a later review overturns to FP counts as a leak.
 

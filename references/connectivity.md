@@ -40,9 +40,9 @@ from the trust of its source:
 | `refuted` | An operator inventory explicitly refutes the edge | excluded from reachability |
 
 Paths take the evidence tier of their **weakest** edge: `verified` (3,
-provider-verified only) > `supported` (2, observed or declared) > `inferred` (1)
-> `unknown` (0). "Known" reach in the terminal view means verified; everything
-else is potential.
+provider-verified only) > `supported` (2, observed or declared) >
+`inferred` (1) > `unknown` (0). "Known" reach in the terminal view means
+verified; everything else is potential.
 
 `provider-verified` can only come from `--inventory PATH` where `PATH` is
 outside the scanned repository. A repository-controlled inventory, or one
@@ -129,10 +129,11 @@ separate axis from the numeric Jank Score and from the passport decision.
 
 Every condition is upward-closed, so adding authority, sensitivity,
 criticality, evidence strength, or reach can never lower the class (tested
-exhaustively). The breadth indicator `1 + 0.5·(1 − e^(−(n−1)/4))` over distinct
-trust domains is shown for context only; it saturates at 1.5 and never blocks
-or lowers anything. These are explainable heuristics, not calibrated
-probabilities of compromise.
+exhaustively). The breadth indicator
+$`1 + 0.5 \cdot \left(1 - e^{-(n-1)/4}\right)`$ over distinct trust domains is
+shown for context only; it saturates at 1.5 and never blocks or lowers
+anything. These are explainable heuristics, not calibrated probabilities of
+compromise.
 
 ## Credential blast radius
 
