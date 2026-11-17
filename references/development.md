@@ -39,7 +39,7 @@ Missing optional tools are reported as `skip`, never as a pass. A perfect self-s
 ```text
 SKILL.md                 routing doctrine for agents (three questions, permission gates)
 references/              scoring, review, connectivity (map), passport (passport, exposure, policy), change-review,
-                         citizen, ai-governance, n8n, network-ceiling, sandbox, rulesets, examples, development
+                         citizen, ai-governance, n8n, network-ceiling, sandbox, rulesets, examples, soak, development
 templates/               review-receipt, map, passport and approval JSON Schemas; CI gate; sandbox images
 scripts/jankhunt42       CLI entry point
 scripts/jh_core.py       types, discovery, sanitizer, safe_text      scripts/jh_rules.py, jh_checks.py, jh_dotnet.py  scanner rules
