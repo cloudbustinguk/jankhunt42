@@ -213,21 +213,44 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
 }
 
 
+# The passport's own rules: governance risks no scanner finding can show (an owner, a custodian, a review, a
+# classification). CD-SEC-09 Asset Management Failures is reached only from here.
+OWASP_PASSPORT_RULES: Dict[str, Tuple[str, ...]] = {
+    "P-CAP-001": ("CD-SEC-03", "ASI03"), "P-OWN-001": ("CD-SEC-09",), "P-CUS-001": ("CD-SEC-09",),
+    "P-DAT-001": _DATA, "P-DAT-002": ("CD-SEC-03",), "P-DAT-003": ("CD-SEC-09",), "P-SEC-001": _DATA,
+    "P-AGT-001": ("CD-SEC-06", "CD-SEC-07", "ASI02", "ASI04"), "P-AGT-002": ("CD-SEC-04", "CD-SEC-07", "ASI01", "ASI02"),
+    "P-AI-001": _DATA, "P-OPS-001": ("CD-SEC-01",), "P-EVD-001": _COMPONENTS, "P-CHG-001": ("CD-SEC-01",),
+    "P-SUP-001": ("CD-SEC-06", "ASI04"), "P-RUN-001": ("CD-SEC-04", "CD-SEC-06"), "P-RUN-002": _COMPONENTS,
+    "P-RUN-003": ("CD-SEC-04", "ASI02"), "P-ENV-001": _CONFIG,
+}
+
+
 def owasp(rule_id: str) -> List[str]:
     """The OWASP risk IDs a rule's findings are an instance of; [] for a rule with no clear fit."""
     return list(OWASP_RULES.get(rule_id, ()))
 
 
-def owasp_counts(findings: Iterable[Any]) -> Dict[str, Any]:
-    """Findings per OWASP risk, in list order, for the passport's orientation line."""
+def owasp_counts(findings: Iterable[Any], reasons: Iterable[Dict[str, Any]] = ()) -> Dict[str, Any]:
+    """Findings per OWASP risk, in list order, for the passport's orientation line; with the decision's reasons,
+    also the governance risks the passport's own rules found (`decision_risks`)."""
     counts: Dict[str, int] = {}
     for f in findings:
         for rid in owasp(getattr(f, "rule", None) or (f.get("rule") if isinstance(f, dict) else "")):
             counts[rid] = counts.get(rid, 0) + 1
     order = list(OWASP_RISKS)
+    by_risk: Dict[str, List[str]] = {}
+    for r in reasons:
+        if r.get("outcome") in (None, "pass"):
+            continue
+        for rid in OWASP_PASSPORT_RULES.get(r.get("rule", ""), ()):
+            by_risk.setdefault(rid, [])
+            if r["rule"] not in by_risk[rid]:
+                by_risk[rid].append(r["rule"])
     return {
         "note": "orientation only: the OWASP risk each finding is an instance of; not a compliance assessment",
         "lists": {"citizen_development": OWASP_CD, "agentic": OWASP_ASI},
         "risks": [{"id": rid, "title": OWASP_RISKS[rid], "findings": counts[rid]}
                   for rid in sorted(counts, key=order.index)],
+        "decision_risks": [{"id": rid, "title": OWASP_RISKS[rid], "rules": sorted(by_risk[rid])}
+                           for rid in sorted(by_risk, key=order.index)],
     }
