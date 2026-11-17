@@ -401,6 +401,7 @@ If a finding is wrong, confirm it in context, then suppress it with a reason or 
 | [`references/scoring.md`](references/scoring.md) | Jank Score 3.0 formula, weights, and limits |
 | [`references/impact-model.md`](references/impact-model.md) | the impact maths: evidence tiers, the exposure class, the Agents Rule of Two, and the planned `jankhunt.impact.v2` |
 | [`references/precision.md`](references/precision.md) | How often a finding is worth a look: labelled samples, method, limits |
+| [`references/soak.md`](references/soak.md) | Mass testing on vibe-coded repositories: what was collected, scanned and checked |
 | [`references/review.md`](references/review.md) | Diff review protocol, receipts, baselines |
 | [`references/n8n.md`](references/n8n.md) | n8n workflows: what they reach, credentials by name, the JH156-JH159 checks, comparing versions |
 | [`references/powerplatform.md`](references/powerplatform.md) | Power Automate flows in solution exports and flow packages: open HTTP triggers, secrets in run history, consumer connectors, personal data to AI |
