@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [4.18.2] — 2026-11-16
+## [4.18.2] — 2026-11-17
 
 ### Fixed
 
@@ -40,7 +40,7 @@ semantic versioning.
 - Everywhere else (scripts, code, other YAML and JSON) a SAS link stays critical, because a URL there can be extended
   or sit next to another secret. If one is a reviewed download link, suppress it inline with a reason
   (`# jankhunt42: ignore JH101 read-only download link`). The signature is never shown.
-- Audited by Codex over six rounds; each round's bypasses (a second secret on the line, concatenation in code,
+- Independently audited over six rounds; each round's bypasses (a second secret on the line, concatenation in code,
   code inside YAML, encoded or HTML-escaped parameters, comments, block scalars, tags, anchors, files merely named like
   a manifest, non-Azure hosts) are tests.
 
@@ -464,12 +464,12 @@ so scripts that used them need changing; it stays in the 4.x line by choice.
 Measured on public Power Platform samples (PnP Power Automate and Power Apps samples, Microsoft's CoE Starter Kit
 and PowerApps-Samples): a literal Azure AD client secret in a sample flow (in its zip and its unpacked copy), a
 contact's full name sent to a GPT prompt through AI Builder, and CoE Graph calls that send a client secret without
-Secure inputs. On a held-out corpus of 40 flows written by a local model (20 problems, 20 lookalikes), 4.4.3 finds
+Secure inputs. On a held-out synthetic corpus of 40 flows (20 problems, 20 lookalikes), 4.4.3 finds
 none and 4.5.0 finds all 20 with no false positives; the corpus followed a format brief, so it does not test unknown
 export variants. On 101 labelled Power Fx snippets, JH101 finds 39 of 56 credentials (4.4.3: 19) and flags 1 of 45
 safe snippets. On 252 real repositories, 4.5.0 adds 6 findings (3 critical: a SAS signature in test code and a
 function secret in two front-end files; 3 minor test fixtures) and drops 1 (a Supabase anon key in a SQL migration,
-public by design). Codex audited the reader twice; every finding was fixed before release.
+public by design). The reader was independently audited twice; every finding was fixed before release.
 
 ## [4.4.3] — 2026-11-03
 
@@ -609,13 +609,13 @@ already have 5 findings for the same rule.
 - `JH135` no longer flags sign-in and sign-up routes mounted under a prefix
   (`/api/auth/login`, `/api/users/register`), or handlers that reject callers
   themselves (`Results.Unauthorized()`, such as a webhook signature check).
-  Measured on 69 claimed-safe snippets from a local model: 6 flagged by 4.4.1,
+  Measured on 69 synthetic claimed-safe snippets: 6 flagged by 4.4.1,
   2 now; findings on both earlier .NET corpora are unchanged.
 - `JH135` honours `[Authorize]` and `[AllowAnonymous]` written on a minimal API
   handler lambda (`app.MapPut("/x", [Authorize] async (...) => ...)`).
 - `JH141` recognizes prefixed personal fields (`UserEmail`, `CustomerPhoneNumber`)
   and a payload built in a variable just before the AI call.
-- On a third, held-out .NET corpus of 10 apps written by a local model, 4.4.1
+- On a third, held-out synthetic .NET corpus of 10 apps, 4.4.1
   missed 4 of 12 labelled problems and 4.4.2 misses 2. One of those two labels is
   wrong (`System.Text.Json` `Deserialize<object>` creates no types named in the
   payload); the other, a hardcoded C# password in a local variable, is open.
@@ -789,12 +789,13 @@ Mutants M161 to M195.
 
 ## [4.0.1] — 2026-10-27
 
-What the citizen-developer trials found. A local model wrote eight small
-apps the way an AI agent writes them for someone who is not a software
-engineer (.NET 10 APIs, Python 3.12, Node/TypeScript APIs, Vite/React
-UIs), with an answer key. 4.0.0 caught 9 of their 17 planted problems
-and raised no real false alarm on 17 decoys. This release closes five of
-the misses and makes the citizen brief say what is wrong.
+What the citizen-developer trials found. Eight small synthetic apps,
+written the way an AI agent writes them for someone who is not a
+software engineer (.NET 10 APIs, Python 3.12, Node/TypeScript APIs,
+Vite/React UIs), came with an answer key. 4.0.0 caught 9 of their 17
+planted problems and raised no real false alarm on 17 decoys. This
+release closes five of the misses and makes the citizen brief say what
+is wrong.
 
 ### Added
 
