@@ -130,6 +130,10 @@ class AuditFindings(unittest.TestCase):
                 _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
                 self.assertEqual([f["evidence"] for f in raw], [shown])
                 self.assertNotIn("Synthetic", json.dumps(raw))
+        _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [
+            {"command": "PASSWORD=$'prefix\\' SyntheticPassword123' ./send.sh"}]}}})
+        self.assertEqual([f["evidence"] for f in raw], ["(command not shown)"])
+        self.assertNotIn("Synthetic", json.dumps(raw))
         _, raw = scan({".claude/settings.json": {"apiKeyHelper": "cat<<<'SyntheticSecret123456'"}})
         self.assertTrue(raw)
         self.assertNotIn("Synthetic", json.dumps(raw))
