@@ -21,9 +21,10 @@ semantic versioning.
 
 ### Fixed
 
-- Hook and helper evidence (`JH704`, including Claude Code project hooks) masks credentials written as command-line
-  arguments: flag values such as `--token` or `--user name:password`, authorization headers, `user:password@` in
-  URLs and secret-named `NAME=value` assignments.
+- Hook and helper evidence (`JH704`, including Claude Code project hooks) no longer shows a command's arguments,
+  where credentials hide in too many shapes to mask reliably (`--token x`, `-uuser:pass`, `-H"Key: x"`,
+  `NAME=x cmd`): it shows the program and how many arguments were left out, and a hook URL as its scheme and host
+  only. The finding's line points at the full command.
 - The "sensitive data and an external destination" exposure driver states the weaker of its two ends' evidence, not
   only the data source's.
 

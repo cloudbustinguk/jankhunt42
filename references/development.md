@@ -99,8 +99,8 @@ There is no circular dependency between scoring, the graph and the passport: the
 - 4.6.0 pares jankhunt42 down to its core (citizen-built software: what's broken, what it can reach, whether it can ship, the sandbox). Removed: the commands `supply-chain`, `triage` and `doctor`; the options `scan --cve/--calibrate/--since`, `map --drift/--what-if/--mermaid/--csv`, `passport --verify/--online`, the supply-chain options of `review`, and the hidden `detonate`/`--detonation` names; 17 rules (`JH202`, `JH203`, `JH205`-`JH207`, `JH301`-`JH305`, `JH307`, `JH308`, `JH315`, `JH413`, `JH503`, `JH601`, `JH901`); the scan JSON keys `calibration`, `summary.cve` and `summary.cve_packages`; review's `supply_chain`. Jank Score 3.0 drops the maintainability dimension (security 0.45, reliability 0.35, tests 0.20), and `JH306` moves to reliability. `agent-fuzz` still works but is no longer listed. Every removed command name exits 2 with a pointer. The compatibility suite still compares against 1.1.0, with exactly these removals taken out.
 - 4.19.0 adds no rule, option or exit code. Additive field: the passport's `assessment.owasp.decision_risks`.
   `JH704`, `JH709` and `JH710` read `.cursor/hooks.json`, `.cursor/sandbox.json` and a Claude Code plugin's
-  `hooks/hooks.json`, so repositories with them may get new findings; hook evidence masks command-line
-  credentials.
+  `hooks/hooks.json`, so repositories with them may get new findings. Hook and helper evidence shows the program
+  only (no arguments) and a hook URL's scheme and host only.
 - 4.18.2 adds no rule, option, field or exit code. The definition lock covers additional vendor-documented
   locations and formats for Claude Code, Gemini CLI, Codex, Cline and Kiro (see `change-review.md`). Changes to
   those committed definitions now require review under `P-CAP-001`.
