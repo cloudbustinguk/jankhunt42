@@ -152,6 +152,14 @@ AGENT_CONTEXT_DIRS = (".cursor/rules/", ".windsurf/rules/", ".clinerules/", ".ki
                       ".gemini/commands/", ".github/instructions/", ".github/prompts/", ".github/chatmodes/",
                       ".opencode/agent/", ".opencode/command/")
 # Settings files that change what an agent or editor may do without asking.
+# Claude Code's hook events (code.claude.com/docs/en/hooks, 2026-11-17): a hooks file without one is not Claude's
+CLAUDE_HOOK_EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification",
+                      "UserPromptSubmit", "UserPromptExpansion", "MessageDisplay", "Stop", "StopFailure",
+                      "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PreModelSwitch",
+                      "PostModelSwitch", "SessionStart", "SessionEnd", "Setup", "PermissionRequest",
+                      "PermissionDenied", "TeammateIdle", "TaskCreated", "TaskCompleted", "ConfigChange",
+                      "CwdChanged", "DirectoryAdded", "FileChanged", "WorktreeCreate", "WorktreeRemove",
+                      "InstructionsLoaded", "Elicitation", "ElicitationResult")
 AGENT_CONFIG_FILES = (".vscode/settings.json", ".vscode/tasks.json", ".claude/settings.json",
                       ".claude/settings.local.json", ".codex/config.toml", ".gemini/settings.json",
                       ".zed/settings.json", ".cursor/cli.json", "managed-settings.json", ".cursor/hooks.json",
@@ -288,8 +296,9 @@ def detect_kinds(rel: str, text: str, lang: str) -> Tuple[str, ...]:
     if any(_ends_with_path(posix, f) for f in AGENT_CONFIG_FILES) or base == ".devcontainer.json" \
             or (base.endswith(".json") and "/managed-settings.d/" in "/" + posix.lower()) \
             or (base == "devcontainer.json" and "/.devcontainer/" in "/" + posix.lower()) \
-            or (("/" + posix.lower()).endswith("/hooks/hooks.json") and '"hooks"' in text):
-        kinds.add("agent_config")       # the last: a Claude Code plugin's hooks/hooks.json
+            or (("/" + posix.lower()).endswith("/hooks/hooks.json") and '"hooks"' in text
+                and re.search(r'"(?:%s)"\s*:' % "|".join(CLAUDE_HOOK_EVENTS), text)):
+        kinds.add("agent_config")       # the last: a Claude Code plugin's hooks/hooks.json, by its event names
     if is_mcp_config(rel, text):
         kinds.add("mcp_config")
     if lang in ("yaml", "json") and _looks_like_sandbox_policy(text):

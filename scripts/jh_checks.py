@@ -18,7 +18,7 @@ try:                                    # Python 3.11+: Codex's own reading of c
     import tomllib
 except ImportError:                     # 3.9 and 3.10 keep the line reader alone
     tomllib = None
-from jh_core import Finding, Rule, SourceFile, SEV_RANK, is_test_path, make_finding, redact_secrets, run_git, trim
+from jh_core import CLAUDE_HOOK_EVENTS, Finding, Rule, SourceFile, SEV_RANK, is_test_path, make_finding, redact_secrets, run_git, trim
 
 CHECKS: Dict[str, object] = {}
 
@@ -2095,6 +2095,27 @@ _REROUTE_ENV = {"ANTHROPIC_BASE_URL": "major", "ANTHROPIC_BEDROCK_BASE_URL": "ma
 _HELPER_KEYS = ("apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper")
 
 
+# credentials written on a command line: flag values, auth headers, user:password@ in URLs, NAME=value secrets
+_CMD_SECRETS = (
+    (re.compile(r"(?i)((?:^|\s)--?(?:user|u|password|passwd|pass|p|token|api[-_]?key|apikey|secret|auth|"
+                r"access[-_]?key|client[-_]?secret|key)(?:\s+|=))(\"[^\"]*\"|'[^']*'|\S+)"), r"\1<redacted>"),
+    (re.compile(r"(?i)((?:-H|--header)(?:\s+|=)[\"']?(?:authorization|proxy-authorization|cookie|x-api-key|api-key|"
+                r"x-auth-token)\s*:\s*)[^\"']+"), r"\1<redacted>"),
+    (re.compile(r"(?i)(://)[^/\s:@]+:[^/\s@]+@"), r"\1<redacted>@"),
+    (re.compile(r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|AUTH)[A-Z0-9_]*)=(\S+)"),
+     r"\1=<redacted>"),
+)
+
+
+def _redact_command(command: str) -> str:
+    """A hook or helper command for evidence: the general redactor, then credentials written as CLI arguments."""
+    out = redact_secrets(command)
+    for pattern, repl in _CMD_SECRETS:
+        out = pattern.sub(repl, out)
+    return out
+
+
+_ALL_HOSTS = {"*", "*.*", "**", "0.0.0.0/0", "::/0"}
 # a read-write path that opens far more than the project: the home folder, the root, a parent of the project
 _WIDE_PATH = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|/|/home(?:/[^/]+)?|/Users(?:/[^/]+)?|/root|[A-Za-z]:\\?|\.\.(?:/\.\.)*)/?$")
 
@@ -2107,14 +2128,22 @@ def _cursor_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
         return []
     out: List[Finding] = []
     net = data.get("networkPolicy") if isinstance(data.get("networkPolicy"), dict) else {}
-    if net.get("default") == "allow":
+    allow = [str(a).strip() for a in net.get("allow") or [] if isinstance(net.get("allow"), list)]
+    deny = {str(d).strip() for d in net.get("deny") or [] if isinstance(net.get("deny"), list)}
+    # deny always wins in Cursor: a deny of every host (or of both all-address CIDRs) closes the network
+    closed = bool(deny & {"*", "*.*", "**"}) or {"0.0.0.0/0", "::/0"} <= deny
+    if closed:
+        pass
+    elif net.get("default") == "allow":
         out.append(make_finding(rule, sf, _line_matching(sf, r'"default"'), message=(
             "The Cursor sandbox lets the agent's commands reach any address (networkPolicy default allow), so a "
             "prompt injection can send what the agent reads anywhere.")))
-    elif any(str(a).strip() in ("*", "*.*", "**") for a in net.get("allow") or [] if isinstance(net.get("allow"), list)):
+    elif any(a in _ALL_HOSTS for a in allow):
         out.append(make_finding(rule, sf, _line_matching(sf, r'"allow"'), message=(
-            "The Cursor sandbox's network allow list includes every host ('*').")))
-    paths = data.get("additionalReadwritePaths")
+            "The Cursor sandbox's network allow list includes every host (%s)." % _shown(
+                next(a for a in allow if a in _ALL_HOSTS), 20))))
+    # extra read-write paths apply only to a workspace_readwrite sandbox (the default type)
+    paths = data.get("additionalReadwritePaths") if data.get("type", "workspace_readwrite") == "workspace_readwrite" else None
     for path in paths if isinstance(paths, list) else []:
         if isinstance(path, str) and _WIDE_PATH.match(path.strip()):
             out.append(make_finding(rule, sf, _line_matching(sf, re.escape(path)), message=(
@@ -2134,25 +2163,33 @@ def _cursor_hooks(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Find
             out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % event)), severity="minor", message=(
                 "A Cursor project hook runs %d command(s) on %s for everyone who opens this repository in Cursor; "
                 "Cursor's cloud agents run them too." % (len(commands), _shown(event, 40))),
-                evidence=trim(redact_secrets(commands[0]), 160)))
+                evidence=trim(_redact_command(commands[0]), 160)))
     return out
 
 
 def _plugin_hooks(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
-    """JH704 for a Claude Code plugin's hooks/hooks.json (the same format as settings hooks)."""
+    """JH704 for a Claude Code plugin's hooks/hooks.json (the same format as settings hooks). Only Claude Code's own
+    hook events count. A plugin needs no manifest, so a missing .claude-plugin/plugin.json does not rule one out:
+    with a manifest beside it the finding is stated plainly, without one it is conditional and less confident."""
     out: List[Finding] = []
+    root = os.path.dirname(os.path.dirname(sf.abspath)) if sf.abspath else ""
+    confirmed = bool(root) and os.path.isfile(os.path.join(root, ".claude-plugin", "plugin.json"))
+    who = "for everyone who installs the plugin" if confirmed else "if this folder is installed as a Claude Code plugin"
+    confidence = "high" if confirmed else "medium"
     for event, actions in sorted(_hook_actions(data.get("hooks")).items()):
+        if event not in CLAUDE_HOOK_EVENTS:
+            continue
         line_no = _line_matching(sf, re.escape('"%s"' % event))
         urls = [v for k, v in actions if k == "url"]
         if urls:
-            out.append(make_finding(rule, sf, line_no, severity="major", message=(
-                "A plugin hook sends %s events (tool inputs and outputs) to a remote URL for everyone who installs "
-                "the plugin." % _shown(event, 40)), evidence=trim(redact_secrets(urls[0]), 160)))
+            out.append(make_finding(rule, sf, line_no, severity="major", confidence=confidence, message=(
+                "A plugin hook sends %s events (tool inputs and outputs) to a remote URL %s." % (_shown(event, 40), who)),
+                evidence=trim(_redact_command(urls[0]), 160)))
         commands = [v for k, v in actions if k == "command"]
         if commands:
-            out.append(make_finding(rule, sf, line_no, severity="minor", message=(
-                "A plugin hook runs %d shell command(s) on %s for everyone who installs the plugin."
-                % (len(commands), _shown(event, 40))), evidence=trim(redact_secrets(commands[0]), 160)))
+            out.append(make_finding(rule, sf, line_no, severity="minor", confidence=confidence, message=(
+                "A plugin hook runs %d shell command(s) on %s %s." % (len(commands), _shown(event, 40), who)),
+                evidence=trim(_redact_command(commands[0]), 160)))
     return out
 
 
@@ -2364,19 +2401,19 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
         if urls:
             out.append(make_finding(rule, sf, line_no, severity="major", message=(
                 "A project hook sends %s events (tool inputs and outputs) to a remote URL for everyone who trusts "
-                "this repository." % event), evidence=trim(redact_secrets(urls[0]), 160)))
+                "this repository." % event), evidence=trim(_redact_command(urls[0]), 160)))
         commands = [v for k, v in actions if k == "command"]
         if commands:
             out.append(make_finding(rule, sf, line_no, severity="minor", message=(
                 "A project hook runs %d shell command(s) on %s for everyone who trusts this repository."
-                % (len(commands), event)), evidence=trim(redact_secrets(commands[0]), 160)))
+                % (len(commands), event)), evidence=trim(_redact_command(commands[0]), 160)))
     for key in _HELPER_KEYS + ("statusLine",):
         value = data.get(key)
         command = value.get("command") if isinstance(value, dict) else value
         if isinstance(command, str) and command.strip():
             out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % key)), severity="minor",
                                     message="'%s' runs a shell command from committed project settings." % key,
-                                    evidence=trim(redact_secrets(command), 160)))
+                                    evidence=trim(_redact_command(command), 160)))
     env = data.get("env") if isinstance(data.get("env"), dict) else {}
     for key, severity in sorted(_REROUTE_ENV.items()):
         value = env.get(key)
