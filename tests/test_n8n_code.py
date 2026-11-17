@@ -198,7 +198,9 @@ class EmbeddedCode(unittest.TestCase):
                     markdown=M.markdown(r), html=jh_explorer.render_map(r),
                     tty=jh_views.map_tty(r, color=False, columns=160))
         digest = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-        self.assertEqual(digest, '0a4ff9c643a96edcb3d6ae1b927317955881bb735d087d624377cdfb09fd112e')
+        # 4.19.0: re-pinned after the additive exposure band fields (class_band, band_basis, exposure_band); a diff
+        # against 4.18.1 showed those fields and the scan_id hash as the only changes.
+        self.assertEqual(digest, 'fb8ba121a1f8a9a6feaa340ee5d3f1421dc49ff7d595d11958ac465175fc4106')
 
 
 
