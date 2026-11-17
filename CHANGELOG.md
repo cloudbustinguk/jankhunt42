@@ -4,6 +4,26 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.19.0] — unreleased
+
+### Added
+
+- **Uncertainty bands.** The Jank Score reports `band: [low, high]`: the low end counts only high-confidence
+  findings. The exposure class reports `class_band`: the low end counts only verified or supported drivers. A wide
+  band says the number rests on less certain evidence; a point says it does not. Shown in the scorecard, the map,
+  the passport and, when wide, one plain sentence in the citizen brief. Reporting only: no score, grade, class or
+  decision changes.
+- **Governance risks on the OWASP Citizen Development Top 10.** The passport's own rules now map to the OWASP risks
+  they are instances of, so the passport names risks no scanner finding can show: CD-SEC-09 Asset Management
+  Failures (no owner, no custodian, unclassified data) and CD-SEC-01 Blind Trust (no independent review, no tests).
+  `assessment.owasp.decision_risks` and a markdown line; every one of the ten risks is now reachable from some rule.
+  Orientation, not compliance.
+- **Cursor's sandbox and hooks, and Claude Code plugin hooks.** `.cursor/sandbox.json` with the sandbox turned off
+  (`JH710`), network open to every address or read-write paths reaching the home folder, the root or a parent folder
+  (`JH709`); `.cursor/hooks.json` and a plugin's `hooks/hooks.json` hooks that run commands or send events to a URL
+  for everyone who opens the repository or installs the plugin (`JH704`). A hook written into a workspace is how a
+  2026 sandbox escape in Cursor ran commands on the host.
+
 ## [4.18.2] — 2026-11-17
 
 ### Fixed
