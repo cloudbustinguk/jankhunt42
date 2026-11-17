@@ -46,6 +46,15 @@ where it takes effect ([settings reference](https://code.claude.com/docs/en/sett
 | `.claude/settings.local.json` (committed by mistake or on purpose) | the same, plus `skipDangerousModePermissionPrompt` |
 | `managed-settings.json`, `managed-settings.d/*.json` (an administrator's policy, when you scan the repository that holds it) | every key, including `sandbox.filesystem.disabled`, `sandbox.allowNestedUserNamespaces`, `sandbox.allowAppleEvents`, `sandbox.credentials.allowPlaintextInject` and `defaultMode: bypassPermissions` |
 
+Cursor and Claude Code plugins (4.19.0, from [Cursor's sandbox reference](https://cursor.com/docs/reference/sandbox)
+and [hooks reference](https://cursor.com/docs/agent/hooks)):
+
+| File | What counts |
+|---|---|
+| `.cursor/sandbox.json` | `type: "insecure_none"` turns the sandbox off (`JH710`); `networkPolicy.default: "allow"` or an allow entry of `*` lets commands reach any address, and `additionalReadwritePaths` reaching the home folder, the root or a parent folder (`JH709`) |
+| `.cursor/hooks.json` | every hook with a command runs for everyone who opens the repository in Cursor, and Cursor's cloud agents run a repository's hooks too (`JH704`, minor) |
+| `hooks/hooks.json` holding a `"hooks"` key (a Claude Code plugin) | command hooks (`JH704`, minor) and hooks that send events to a URL (`JH704`, major) for everyone who installs the plugin |
+
 Not reported from a repository's own files, because Claude Code ignores them there: `sandbox.network.strictAllowlist`,
 `sandbox.network.tlsTerminate`, `autoMode`, `skipAutoPermissionPrompt`, and the managed-only keys above. A subagent
 file's `permissionMode: bypassPermissions` is not reported either: a subagent runs in that mode only when the main

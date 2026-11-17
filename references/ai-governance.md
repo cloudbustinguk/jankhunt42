@@ -134,6 +134,24 @@ clear fit carries no risk. Five reliability rules are in that position:
 | ASI09 Human-Agent Trust Exploitation | none |
 | ASI10 Rogue Agents | none |
 
+From 4.19.0 the passport's own rules carry the same orientation, so the passport names governance risks no
+scanner finding can show (`assessment.owasp.decision_risks`, and a "Governance risks by OWASP category" line).
+Only rules that did not pass are listed. `P-COV-001`, `P-JNK-001` and `P-EXP-001` summarise other evidence and
+carry no risk of their own.
+
+| OWASP risk | Passport rules |
+|---|---|
+| CD-SEC-01 Blind Trust | `P-CHG-001`, `P-OPS-001` |
+| CD-SEC-03 Authorization Misuse | `P-CAP-001`, `P-DAT-002` |
+| CD-SEC-04 Sensitive Data Leakage and Handling Failures | `P-AGT-002`, `P-AI-001`, `P-DAT-001`, `P-RUN-001`, `P-RUN-003`, `P-SEC-001` |
+| CD-SEC-06 Vulnerable and Untrusted Components | `P-AGT-001`, `P-EVD-001`, `P-RUN-001`, `P-RUN-002`, `P-SUP-001` |
+| CD-SEC-07 Security Misconfiguration | `P-AGT-001`, `P-AGT-002`, `P-ENV-001` |
+| CD-SEC-09 Asset Management Failures | `P-CUS-001`, `P-DAT-003`, `P-OWN-001` |
+| ASI01 Agent Goal Hijack | `P-AGT-002` |
+| ASI02 Tool Misuse and Exploitation | `P-AGT-001`, `P-AGT-002`, `P-RUN-003` |
+| ASI03 Identity and Privilege Abuse | `P-CAP-001` |
+| ASI04 Agentic Supply Chain Vulnerabilities | `P-AGT-001`, `P-SUP-001` |
+
 The test suite checks this table against the rules.
 
 ## Limits
