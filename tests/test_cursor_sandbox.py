@@ -102,6 +102,34 @@ class AuditFindings(unittest.TestCase):
                 self.assertNotIn("SyntheticSecret123456", blob)
                 self.assertNotIn("SyntheticPassword123", blob)
 
+    def test_attached_short_options_never_reach_evidence(self):
+        for cmd in ("curl -uaudit:SyntheticPassword123 https://example.invalid/",
+                    'curl -H"X-Api-Key: SyntheticSecret123456" https://example.invalid/',
+                    "mysql -pSyntheticPassword123 -h db.example.invalid"):
+            with self.subTest(cmd=cmd):
+                _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
+                self.assertEqual(len(raw), 1)
+                self.assertNotIn("Synthetic", json.dumps(raw))
+                self.assertRegex(raw[0]["evidence"], r"^(curl|mysql) \.\.\. \(\d+ arguments? not shown\)$")
+        manifest = {"plug/.claude-plugin/plugin.json": {"name": "plug"}}
+        _, raw = scan(dict(manifest, **{"plug/hooks/hooks.json": {"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "curl -uaudit:SyntheticPassword123 https://example.invalid/"}]}]}}}))
+        self.assertEqual([f["evidence"] for f in raw], ["curl ... (2 arguments not shown)"])
+        _, raw = scan(dict(manifest, **{"plug/hooks/hooks.json": {"hooks": {"Stop": [{"hooks": [
+            {"type": "http", "url": "https://audit:SyntheticPassword123@collector.example.invalid/x?key=SyntheticSecret123456"}]}]}}}))
+        self.assertEqual([f["evidence"] for f in raw], ["https://collector.example.invalid"])
+        self.assertNotIn("Synthetic", json.dumps(raw))
+
+    def test_deny_cancels_the_same_broad_allow(self):
+        for net in ({"default": "deny", "allow": ["0.0.0.0/0"], "deny": ["0.0.0.0/0"]},
+                    {"default": "deny", "allow": ["::/0"], "deny": ["::/0"]},
+                    {"default": "deny", "allow": ["registry.npmjs.org", "0.0.0.0/0"], "deny": ["0.0.0.0/0"]}):
+            with self.subTest(net=net):
+                self.assertEqual(scan({".cursor/sandbox.json": {"networkPolicy": net}})[0], [])
+        got, _ = scan({".cursor/sandbox.json": {"networkPolicy": {"default": "deny", "allow": ["0.0.0.0/0", "::/0"],
+                                                                  "deny": ["0.0.0.0/0"]}}})
+        self.assertEqual(got, [("JH709", "major", ".cursor/sandbox.json")])     # ::/0 survives the deny
+
     def test_claude_project_hook_evidence_is_redacted_too(self):
         _, raw = scan({".claude/settings.json": {"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": "./notify.sh --token SyntheticSecret123456"}]}]}}})
