@@ -785,18 +785,6 @@ def _crit_top(node: Dict[str, Any]) -> bool:
     return node.get("criticality") == "critical" or node.get("sensitivity") == "restricted"
 
 
-BAND_BASIS = ("the low end counts only drivers with verified or supported evidence and the high end (the class) "
-              "counts them all, so a wide band means the class rests on inferred or unknown reach; ordinal, "
-              "not a probability")
-
-
-def class_low(drivers: Sequence[Dict[str, Any]]) -> str:
-    """The exposure class from verified and supported drivers alone: the low end of the band. Only max over a
-    subset of the drivers, so it never exceeds the class and never falls when evidence gets stronger."""
-    level = max((EXPOSURE_RANK[d["level"]] for d in drivers if d["tier"] in ("verified", "supported")), default=1)
-    return EXPOSURE_CLASSES[level]
-
-
 def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
                        edges_by_id: Dict[str, Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
     """Return (class, drivers) for one principal's blast radius.
@@ -954,17 +942,12 @@ def assess(graph: Dict[str, Any], files_inspected: int, max_depth: int = DEFAULT
     radii: Dict[str, Any] = {}
     per: Dict[str, Any] = {}
     overall = "Low"
-    overall_lo = "Low"
     truncated = False
     all_domains: Set[str] = set()
     for p in principals:
         br = blast_radius(nodes, edges, p, max_depth)
         cls, drivers = classify_principal(nodes, br, edges_by_id)
         br["exposure"] = cls
-        lo = class_low(drivers)
-        br["exposure_band"] = [lo, cls]
-        if EXPOSURE_RANK[lo] > EXPOSURE_RANK[overall_lo]:
-            overall_lo = lo
         br["drivers"] = drivers[:25]
         radii[p] = br
         truncated = truncated or br["truncated"]
@@ -973,7 +956,7 @@ def assess(graph: Dict[str, Any], files_inspected: int, max_depth: int = DEFAULT
         if EXPOSURE_RANK[cls] > EXPOSURE_RANK[overall]:
             overall = cls
     if files_inspected <= 0:
-        overall = overall_lo = "Unknown"
+        overall = "Unknown"
     tiers: Dict[str, int] = {name: 0 for name in TIER_NAMES.values()}
     for e in edges:
         tiers[TIER_NAMES[max(0, VER_RANK.get(e["verification"], 0))]] += 0 if e["verification"] == "refuted" else 1
@@ -982,8 +965,6 @@ def assess(graph: Dict[str, Any], files_inspected: int, max_depth: int = DEFAULT
         "model": EXPOSURE_MODEL,
         "exposure": {
             "class": overall,
-            "class_band": [overall_lo, overall],
-            "band_basis": BAND_BASIS,
             "per_principal": per,
             "basis": ("qualitative rules over static evidence; a path is a possibility, "
                       "not proof of access or exploitability"),

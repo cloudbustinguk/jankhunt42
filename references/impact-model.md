@@ -49,13 +49,6 @@ Every condition is upward-closed, so the class is monotone: adding authority, se
 reach never lowers it (tested exhaustively). The breadth indicator `1 + 0.5·(1 − e^(−(n−1)/4))` over distinct trust
 domains is shown for context only and never changes the class.
 
-### The exposure band (4.19.0)
-
-`assessment.exposure.class_band` is `[low, high]`: the high end is the class, the low end the class from drivers
-with verified or supported evidence alone. Only max over a subset of the drivers, so it is ordinal like the class,
-never exceeds it, and never falls when evidence gets stronger. A wide band says the class rests on inferred or
-unknown reach. Each principal's blast radius carries its own `exposure_band`.
-
 ## The Agents Rule of Two (released in 4.16.0)
 
 Simon Willison's "lethal trifecta" (June 2025) and Meta's "Agents Rule of Two" (October 2025) describe one danger:

@@ -144,13 +144,14 @@ class AuditFindings(unittest.TestCase):
         self.assertEqual([(f["confidence"], "for everyone who installs the plugin" in f["message"]) for f in real],
                          [("high", True)])
 
-    def test_egress_band_needs_both_ends_supported(self):
+    def test_egress_driver_evidence_is_its_weaker_end(self):
         import _util  # noqa: F401
         import jh_graph as G
         graph = json.loads('{"nodes": [{"id": "app", "kind": "application", "display_label": "app", "trust_domain": "internal", "environment": "unknown", "sensitivity": "unknown", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}, {"id": "db", "kind": "database", "display_label": "db", "trust_domain": "internal", "environment": "unknown", "sensitivity": "confidential", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}, {"id": "external", "kind": "external", "display_label": "external", "trust_domain": "external", "environment": "unknown", "sensitivity": "unknown", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}], "edges": [{"id": "read", "source": "app", "target": "db", "kind": "reads", "capability": "read", "identity_ref": null, "verification": "observed", "confidence": "medium", "source_trust": "repository", "evidence_refs": [], "assumptions": [], "trust_boundary": {"domain": null, "environment": null}}, {"id": "send", "source": "app", "target": "external", "kind": "calls", "capability": "read", "identity_ref": null, "verification": "inferred", "confidence": "medium", "source_trust": "repository", "evidence_refs": [], "assumptions": [], "trust_boundary": {"domain": null, "environment": null}}]}')
-        exp = G.assess(graph, 1)["exposure"]
-        self.assertEqual(exp["class"], "High")
-        self.assertEqual(exp["class_band"], ["Moderate", "High"])
+        a = G.assess(graph, 1)
+        self.assertEqual(a["exposure"]["class"], "High")
+        egress = [d for br in a["blast_radius"].values() for d in br["drivers"] if d["rule"] == "X-HIGH-EGRESS"]
+        self.assertEqual([d["tier"] for d in egress], ["inferred"])      # the destination is only inferred
 
 
 if __name__ == "__main__":

@@ -179,21 +179,7 @@ The policy is separate from CI:
 `jankhunt42 scan --score --fail-policy` exits `1` on `fail`. This is an **advisory** gate.
 Use `jankhunt42 scan --fail-on SEV` when you need a simple, explainable CI threshold.
 
-### 2.7 Uncertainty band (4.19.0)
-
-Every score also reports a band, `band: [low, high]`. The high end is the score. The low end is the score without
-its low-confidence findings: the weak signals (a value that only looks like a secret, a call that only might be
-dynamic). Medium confidence is the ordinary confidence of a lead, so it stays in. A band that collapses to a point
-says the score rests on ordinary or strong evidence; a wide band says part of it rests on weak signals, so check
-those first. Every finding still counts: the score is the high end. (Measured on 600 corpus repositories scoring 16
-or more: a low end over high-confidence findings alone fell to 0 for 4% of them and misled; this definition did so
-for one.) The band follows the
-lesson of FAIR (state risk with its uncertainty) without its arithmetic: it is not a confidence interval and not
-calibrated, and it never changes the score, the grade or the policy. Each dimension carries its own band. The
-exposure class has a matching band (see `impact-model.md`). The citizen brief states no band numbers: it says only
-that some problems rest on weak signals and still count until a person checks them.
-
-### 2.8 New-code view ("Clean as You Code")
+### 2.7 New-code view ("Clean as You Code")
 
 `review --base REF` scores only the findings on lines changed since `REF`, with
 the number of changed lines as the denominator and the same 250-line floor.
