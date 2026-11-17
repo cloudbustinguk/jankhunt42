@@ -1019,6 +1019,7 @@ MUTANTS = [
     ('M660-plugin-always-confirmed', 'a hooks file without a plugin manifest is stated as a confirmed plugin', 'jh_checks.py', '    confirmed = bool(root) and os.path.isfile(os.path.join(root, ".claude-plugin", "plugin.json"))', '    confirmed = True', 'test_cursor_sandbox.py'),
     ('M654-hook-arguments-shown', "hook and helper evidence shows the command's arguments, where credentials hide", 'jh_checks.py', '    program = re.match(r"[A-Za-z0-9_./+-]*", parts[0]).group(0) if parts else ""', '    program = parts[0] if parts else ""', 'test_cursor_sandbox.py'),
     ('M661-cursor-deny-cancel-ignored', 'an all-host allow entry that deny cancels is still reported', 'jh_checks.py', '    broad = [a for a in allow if a in _ALL_HOSTS and a not in deny]      # deny wins, even for the same pattern', '    broad = [a for a in allow if a in _ALL_HOSTS]', 'test_cursor_sandbox.py'),
+    ('M662-unparseable-command-guessed', 'a command whose quoting cannot be parsed is split on spaces and shown', 'jh_checks.py', '        return "(command not shown)"\n    while parts', '        parts = command.split()\n    while parts', 'test_cursor_sandbox.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

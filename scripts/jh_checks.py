@@ -2103,8 +2103,8 @@ def _command_evidence(command: str) -> str:
     none are shown; the finding's line points at the full command."""
     try:
         parts = shlex.split(command)
-    except ValueError:
-        parts = command.split()
+    except ValueError:                       # quoting we cannot parse (bash's $'..\'..'): never guess at the words
+        return "(command not shown)"
     while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):    # NAME=value before the program
         parts.pop(0)
     # only a plain program name or path: shell syntax attached to it (docker<<<'secret', cat<x) is cut off
