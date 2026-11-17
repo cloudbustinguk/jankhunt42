@@ -1010,6 +1010,12 @@ MUTANTS = [
     ('M644-owasp-decision-risks-ignored', "the passport's own rules never reach the OWASP crosswalk", 'jh_frameworks.py', '        for rid in OWASP_PASSPORT_RULES.get(r.get("rule", ""), ()):', '        for rid in ():', 'test_owasp_crosswalk.py'),
     ('M645-owasp-passing-rules-counted', 'a passport rule that passed is still listed as a governance risk', 'jh_frameworks.py', '        if r.get("outcome") in (None, "pass"):', '        if r.get("outcome") is None:', 'test_owasp_crosswalk.py'),
     ('M646-owasp-governance-line-dropped', 'the passport markdown never shows the governance risks', 'jh_passport.py', '    if gov:\n        out.append("- Governance risks', '    if False:\n        out.append("- Governance risks', 'test_owasp_crosswalk.py'),
+    ('M647-cursor-sandbox-off-missed', "Cursor's insecure_none sandbox type is not reported", 'jh_checks.py', '        if isinstance(data, dict) and data.get("type") == "insecure_none":', '        if False:', 'test_cursor_sandbox.py'),
+    ('M648-cursor-network-open-missed', 'a Cursor sandbox that allows all network traffic by default is not reported', 'jh_checks.py', '    if net.get("default") == "allow":', '    if False:', 'test_cursor_sandbox.py'),
+    ('M649-cursor-wide-path-missed', 'a Cursor read-write path to the home folder or root is not reported', 'jh_checks.py', '        if isinstance(path, str) and _WIDE_PATH.match(path.strip()):', '        if False:', 'test_cursor_sandbox.py'),
+    ('M650-cursor-hooks-missed', 'Cursor project hooks are not reported', 'jh_checks.py', '        return _cursor_hooks(sf, rule, data)', '        return []', 'test_cursor_sandbox.py'),
+    ('M651-plugin-hooks-not-config', "a Claude Code plugin's hooks/hooks.json is not read as agent config", 'jh_core.py', '            or (("/" + posix.lower()).endswith("/hooks/hooks.json") and \'"hooks"\' in text):', '            or False:', 'test_cursor_sandbox.py'),
+    ('M652-cursor-files-not-config', "Cursor's sandbox.json and hooks.json are not agent config files", 'jh_core.py', '"managed-settings.json", ".cursor/hooks.json",\n                      ".cursor/sandbox.json")', '"managed-settings.json")', 'test_cursor_sandbox.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

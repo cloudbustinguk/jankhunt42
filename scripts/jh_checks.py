@@ -1956,6 +1956,8 @@ def sandbox_template_credential(sf: SourceFile, rule: Rule) -> List[Finding]:
 @check("agent_sandbox_scope")
 def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
     posix = "/" + sf.rel.lower()
+    if posix.endswith("/.cursor/sandbox.json"):
+        return _cursor_sandbox(sf, rule)
     if posix.endswith(".codex/config.toml"):
         return _codex_sandbox(sf, rule)
     if claude_scope(sf.rel):
@@ -1994,6 +1996,13 @@ def agent_sandbox_scope(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 @check("agent_sandbox_enforcement")
 def agent_sandbox_enforcement(sf: SourceFile, rule: Rule) -> List[Finding]:
+    if ("/" + sf.rel.lower()).endswith("/.cursor/sandbox.json"):
+        data = _settings(sf)
+        if isinstance(data, dict) and data.get("type") == "insecure_none":
+            return [make_finding(rule, sf, _line_matching(sf, r'"type"'), message=(
+                "The Cursor sandbox is turned off for this project (type insecure_none): the agent's commands run "
+                "with the full access of whoever opens it."))]
+        return []
     if "substrate" in sf.kinds:
         return _substrate_enforcement(sf, rule)
     if claude_scope(sf.rel):
@@ -2084,6 +2093,67 @@ _REROUTE_ENV = {"ANTHROPIC_BASE_URL": "major", "ANTHROPIC_BEDROCK_BASE_URL": "ma
                 "GOOGLE_GEMINI_BASE_URL": "major", "NODE_OPTIONS": "major", "HTTPS_PROXY": "minor",
                 "HTTP_PROXY": "minor", "ALL_PROXY": "minor", "NODE_EXTRA_CA_CERTS": "minor"}
 _HELPER_KEYS = ("apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper")
+
+
+# a read-write path that opens far more than the project: the home folder, the root, a parent of the project
+_WIDE_PATH = re.compile(r"^(?:~|\$HOME|\$\{HOME\}|/|/home(?:/[^/]+)?|/Users(?:/[^/]+)?|/root|[A-Za-z]:\\?|\.\.(?:/\.\.)*)/?$")
+
+
+def _cursor_sandbox(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH709 for .cursor/sandbox.json: network allowed by default or to any host, or read-write paths that open the
+    home folder, the root or a parent of the project."""
+    data = _settings(sf)
+    if not isinstance(data, dict):
+        return []
+    out: List[Finding] = []
+    net = data.get("networkPolicy") if isinstance(data.get("networkPolicy"), dict) else {}
+    if net.get("default") == "allow":
+        out.append(make_finding(rule, sf, _line_matching(sf, r'"default"'), message=(
+            "The Cursor sandbox lets the agent's commands reach any address (networkPolicy default allow), so a "
+            "prompt injection can send what the agent reads anywhere.")))
+    elif any(str(a).strip() in ("*", "*.*", "**") for a in net.get("allow") or [] if isinstance(net.get("allow"), list)):
+        out.append(make_finding(rule, sf, _line_matching(sf, r'"allow"'), message=(
+            "The Cursor sandbox's network allow list includes every host ('*').")))
+    paths = data.get("additionalReadwritePaths")
+    for path in paths if isinstance(paths, list) else []:
+        if isinstance(path, str) and _WIDE_PATH.match(path.strip()):
+            out.append(make_finding(rule, sf, _line_matching(sf, re.escape(path)), message=(
+                "The Cursor sandbox lets the agent read and write %s, far beyond the project." % _shown(path, 40))))
+            break
+    return out
+
+
+def _cursor_hooks(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
+    """JH704 for .cursor/hooks.json: {"version": 1, "hooks": {event: [{"command": ...}]}}."""
+    out: List[Finding] = []
+    hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
+    for event, entries in sorted(hooks.items()):
+        commands = [e["command"] for e in entries if isinstance(e, dict) and isinstance(e.get("command"), str)
+                    and e["command"].strip()] if isinstance(entries, list) else []
+        if commands:
+            out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % event)), severity="minor", message=(
+                "A Cursor project hook runs %d command(s) on %s for everyone who opens this repository in Cursor; "
+                "Cursor's cloud agents run them too." % (len(commands), _shown(event, 40))),
+                evidence=trim(redact_secrets(commands[0]), 160)))
+    return out
+
+
+def _plugin_hooks(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
+    """JH704 for a Claude Code plugin's hooks/hooks.json (the same format as settings hooks)."""
+    out: List[Finding] = []
+    for event, actions in sorted(_hook_actions(data.get("hooks")).items()):
+        line_no = _line_matching(sf, re.escape('"%s"' % event))
+        urls = [v for k, v in actions if k == "url"]
+        if urls:
+            out.append(make_finding(rule, sf, line_no, severity="major", message=(
+                "A plugin hook sends %s events (tool inputs and outputs) to a remote URL for everyone who installs "
+                "the plugin." % _shown(event, 40)), evidence=trim(redact_secrets(urls[0]), 160)))
+        commands = [v for k, v in actions if k == "command"]
+        if commands:
+            out.append(make_finding(rule, sf, line_no, severity="minor", message=(
+                "A plugin hook runs %d shell command(s) on %s for everyone who installs the plugin."
+                % (len(commands), _shown(event, 40))), evidence=trim(redact_secrets(commands[0]), 160)))
+    return out
 
 
 def _hook_actions(hooks: Any) -> Dict[str, List[Tuple[str, str]]]:
@@ -2279,6 +2349,10 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
                     "malicious repositories use this to run code on open." % _shown(task.get("label", "?"), 40)),
                     evidence=trim(redact_secrets(command), 160)))
         return out
+    if posix.endswith("/.cursor/hooks.json"):
+        return _cursor_hooks(sf, rule, data)
+    if posix.endswith("/hooks/hooks.json"):
+        return _plugin_hooks(sf, rule, data)
     scope = claude_scope(sf.rel)
     # managed settings are an administrator's own hooks, helpers and gateway: by design, not a repository's doing
     if scope == "managed" or (not scope and not posix.endswith("/.gemini/settings.json")):
