@@ -126,9 +126,10 @@ class DimensionScore:
     counted: int
     worst: str
     top_rules: List[Tuple[str, int]] = field(default_factory=list)
+    band_low: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "score": self.score,
             "grade": self.grade,
             "points": round(self.points, 2),
@@ -138,6 +139,13 @@ class DimensionScore:
             "worst_severity": self.worst,
             "top_rules": [{"rule": rid, "count": count} for rid, count in self.top_rules],
         }
+        if self.band_low is not None:
+            out["band"] = [self.band_low, self.score]
+        return out
+
+
+BAND_BASIS = ("the low end counts only high-confidence findings and the high end (the score) counts them all, so a "
+              "wide band means the score rests on less certain leads; it is not a confidence interval")
 
 
 @dataclass
@@ -154,9 +162,10 @@ class ScoreReport:
     loc: int
     counted: int
     new_code: Optional[Dict[str, Any]] = None
+    band: Optional[Tuple[int, int]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "version": self.version,
             "score": self.score,
             "grade": self.grade,
@@ -183,6 +192,10 @@ class ScoreReport:
                 "critical/high-confidence major in security/reliability; else pass"
             ),
         }
+        if self.band is not None:
+            out["band"] = list(self.band)
+            out["band_basis"] = BAND_BASIS
+        return out
 
 
 def _dimension(items: Sequence[Finding], loc: int, key: str) -> DimensionScore:
@@ -240,7 +253,9 @@ def _policy(findings: Sequence[Finding], dims: Dict[str, DimensionScore], overal
     return "pass"
 
 
-def compute(findings: Sequence[Finding], loc: int) -> ScoreReport:
+def compute(findings: Sequence[Finding], loc: int, band: bool = True) -> ScoreReport:
+    """The Jank Score. With band, also the score over high-confidence findings only (the band's low end): an
+    uncertainty statement in the spirit of FAIR, never a change to the score itself."""
     items = list(findings)
     loc = max(0, int(loc or 0))
     dims = {key: _dimension([f for f in items if dimension_for(f) == key], loc, key)
@@ -250,7 +265,12 @@ def compute(findings: Sequence[Finding], loc: int) -> ScoreReport:
     worst = dims[worst_key].score
     overall = int(round(0.7 * worst + 0.3 * weighted))
     overall = max(0, min(100, overall))
+    sure = compute([f for f in items if f.confidence == "high"], loc, band=False) if band else None
+    if sure is not None:
+        for key in DIMENSIONS:
+            dims[key].band_low = min(sure.dimensions[key].score, dims[key].score)
     return ScoreReport(
+        band=(min(sure.score, overall), overall) if sure is not None else None,
         version=SCORE_VERSION,
         score=overall,
         grade=grade_for(overall),
@@ -270,6 +290,10 @@ def scorecard_markdown(report: ScoreReport, heading: str = "## Jank score") -> s
     out.append("**%d/100 · %s · %s** · policy **%s**"
                % (report.score, report.grade, report.label, report.policy))
     out.append("")
+    if report.band and report.band[0] != report.band[1]:
+        out.append("Band **%d–%d**: high-confidence findings alone score %d; the rest rests on less certain leads."
+                   % (report.band[0], report.band[1], report.band[0]))
+        out.append("")
     out.append("_Score %s: severity × confidence × exposure, density per KLOC, "
                "severity floors, and a weakest-dimension anchor._" % report.version)
     out.append("")
@@ -326,6 +350,9 @@ def scorecard_tty(report: ScoreReport, color: Any, width: int) -> List[str]:
             d.label, dbar, d.score, color.grade(d.grade),
             color.grey("%d finding%s" % (d.findings, "" if d.findings == 1 else "s")),
         ))
+    if report.band and report.band[0] != report.band[1]:
+        out.append("  " + color.grey("band %d-%d: high-confidence findings alone score %d"
+                                     % (report.band[0], report.band[1], report.band[0])))
     if report.new_code:
         nc = report.new_code
         if nc.get("warning"):
