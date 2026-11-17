@@ -30,8 +30,8 @@ Each answer keeps its own evidence model:
 ## Quick start
 
 ```sh
-git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.config/opencode/skills/jankhunt42
-alias jankhunt42="python3 ~/.config/opencode/skills/jankhunt42/scripts/jankhunt42"
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/jankhunt42
+alias jankhunt42="python3 ~/jankhunt42/scripts/jankhunt42"
 
 cd your-repo
 jankhunt42 scan .                  # what's broken?
@@ -40,12 +40,82 @@ jankhunt42 passport .              # can we responsibly ship it?
 jankhunt42 map . --html > map.html # the blast radius explorer, offline
 ```
 
+Any folder works. Add the alias to your shell profile to keep it.
+
 Output adapts to where it goes:
 
 - **Interactive terminals** get the rich views, in the same colours as the HTML views. Colour is exact with `COLORTERM=truecolor`, and a light palette is used when `COLORFGBG` reports a light background.
 - **Pipes** get clean Markdown. `NO_COLOR` or `TERM=dumb` turns colour off.
 - **`--json`** gives versioned machine output.
 - **`--html`** gives one self-contained, offline file.
+
+### Install as a skill for your agent
+
+To let your coding agent use jankhunt42 too, clone it into the folder the agent loads skills from instead of `~/jankhunt42`:
+
+<details>
+<summary>Claude Code</summary>
+
+```sh
+# For you, in every project:
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.claude/skills/jankhunt42
+# Or for one repository only, from its root:
+git clone https://github.com/cloudbustinguk/jankhunt42.git .claude/skills/jankhunt42
+```
+
+</details>
+
+<details>
+<summary>Codex CLI</summary>
+
+```sh
+# For you, in every project:
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.agents/skills/jankhunt42
+# Or for one repository only, from its root:
+git clone https://github.com/cloudbustinguk/jankhunt42.git .agents/skills/jankhunt42
+```
+
+</details>
+
+<details>
+<summary>Cursor</summary>
+
+```sh
+# For you, in every project:
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.cursor/skills/jankhunt42
+# Or for one repository only, from its root:
+git clone https://github.com/cloudbustinguk/jankhunt42.git .cursor/skills/jankhunt42
+```
+
+</details>
+
+<details>
+<summary>OpenCode</summary>
+
+```sh
+# For you, in every project:
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.config/opencode/skills/jankhunt42
+# Or for one repository only, from its root:
+git clone https://github.com/cloudbustinguk/jankhunt42.git .opencode/skills/jankhunt42
+```
+
+</details>
+
+<details>
+<summary>Another agent</summary>
+
+Codex CLI, Cursor and OpenCode all read `.agents/skills/`, and other agents that support Agent Skills may too. Check your agent's documentation.
+
+```sh
+# For you, in every project:
+git clone https://github.com/cloudbustinguk/jankhunt42.git ~/.agents/skills/jankhunt42
+# Or for one repository only, from its root:
+git clone https://github.com/cloudbustinguk/jankhunt42.git .agents/skills/jankhunt42
+```
+
+</details>
+
+Point the alias at the same folder, for example `alias jankhunt42="python3 ~/.agents/skills/jankhunt42/scripts/jankhunt42"`, then ask your agent in your own words: "is my app safe to share?" Every folder each agent reads is listed under [Install as an agent skill](#install-as-an-agent-skill).
 
 ## Citizen developers and AI agents
 
@@ -236,9 +306,11 @@ jankhunt42 is one `SKILL.md` directory. Put it where your tool already looks for
 | Tool | Project scope | User scope |
 | --- | --- | --- |
 | Claude Code | `.claude/skills/jankhunt42/` | `~/.claude/skills/jankhunt42/` |
-| Cursor | `.cursor/skills/jankhunt42/` | — |
-| Codex CLI | `.codex/skills/jankhunt42/` (also reads `.agents/skills/`) | `~/.codex/skills/jankhunt42/` |
-| OpenCode | `.opencode/skills/jankhunt42/` (also reads `.claude/skills/`, `.agents/skills/`) | `~/.config/opencode/skills/jankhunt42/` |
+| Codex CLI | `.agents/skills/jankhunt42/` | `~/.agents/skills/jankhunt42/` |
+| Cursor | `.cursor/skills/jankhunt42/` (also reads `.agents/skills/`, `.claude/skills/`) | `~/.cursor/skills/jankhunt42/` |
+| OpenCode | `.opencode/skills/jankhunt42/` (also reads `.agents/skills/`, `.claude/skills/`) | `~/.config/opencode/skills/jankhunt42/` |
+
+`.agents/skills/` is shared: Codex CLI, Cursor and OpenCode all read it, in a project and in your home folder, so one copy there serves all three.
 
 The skill routes requests to the matching command and reference:
 
@@ -270,6 +342,8 @@ permissions:
 jobs:
   assure:
     runs-on: ubuntu-latest
+    env:
+      JANKHUNT42: .agents/skills/jankhunt42/scripts/jankhunt42   # wherever this repository keeps its copy
     steps:
       - uses: actions/checkout@v7   # pin to a SHA in production
         with:
@@ -278,12 +352,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 scan . --sarif > jankhunt42.sarif
+      - run: python3 "$JANKHUNT42" scan . --sarif > jankhunt42.sarif
       - name: What changed in what it can reach
         if: github.event_name == 'pull_request'
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 map . --base "${{ github.event.pull_request.base.sha }}" --md >> "$GITHUB_STEP_SUMMARY"
+        run: python3 "$JANKHUNT42" map . --base "${{ github.event.pull_request.base.sha }}" --md >> "$GITHUB_STEP_SUMMARY"
       - name: Passport (enforced; add --profile citizen for software built by non-engineers)
-        run: python3 .opencode/skills/jankhunt42/scripts/jankhunt42 passport . --json --fail-on block > passport.json
+        run: python3 "$JANKHUNT42" passport . --json --fail-on block > passport.json
       - uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
