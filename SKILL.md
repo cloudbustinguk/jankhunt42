@@ -139,8 +139,9 @@ Details: `references/sandbox.md`.
 
 ## The CLI
 
+`SKILL_DIR` is the folder that holds this `SKILL.md`, wherever the agent loaded it from (for example `~/.claude/skills/jankhunt42` or `.agents/skills/jankhunt42`).
+
 ```sh
-SKILL_DIR=~/.config/opencode/skills/jankhunt42
 python3 "$SKILL_DIR/scripts/jankhunt42" --version
 python3 "$SKILL_DIR/scripts/jankhunt42" --help
 ```
