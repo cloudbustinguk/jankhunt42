@@ -27,6 +27,7 @@ def scan(files):
         shutil.rmtree(root)
 
 
+TOKEN = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"   # synthetic, built at run time
 SAFE = {"type": "workspace_readwrite", "networkPolicy": {"default": "deny", "allow": ["registry.npmjs.org", "pypi.org"]},
         "additionalReadwritePaths": ["./build", "/tmp/cache", "~/.npm"]}
 
@@ -60,11 +61,11 @@ class CursorSandbox(unittest.TestCase):
 class Hooks(unittest.TestCase):
     def test_cursor_project_hooks(self):
         got, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {
-            "stop": [{"command": "./hooks/report.sh --token ghp_abcdefghijklmnopqrstuvwxyz0123456789"}],
+            "stop": [{"command": "./hooks/report.sh --token " + TOKEN}],
             "afterFileEdit": [{"command": "./hooks/format.sh"}, {"command": "./hooks/lint.sh"}]}}})
         self.assertEqual(sorted(got), [("JH704", "minor", ".cursor/hooks.json")] * 2)
         self.assertTrue(any("2 command(s) on afterFileEdit" in f["message"] for f in raw))
-        self.assertTrue(all("ghp_abcdefghijklmnopqrstuvwxyz0123456789" not in json.dumps(f) for f in raw))
+        self.assertTrue(all(TOKEN not in json.dumps(f) for f in raw))
 
     def test_cursor_hooks_without_commands_are_quiet(self):
         for data in ({"version": 1, "hooks": {}}, {"version": 1, "hooks": {"stop": []}}, {"version": 1}):
