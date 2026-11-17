@@ -23,8 +23,9 @@ semantic versioning.
 
 - Hook and helper evidence (`JH704`, including Claude Code project hooks) no longer shows a command's arguments,
   where credentials hide in too many shapes to mask reliably (`--token x`, `-uuser:pass`, `-H"Key: x"`,
-  `NAME=x cmd`): it shows the program and how many arguments were left out, and a hook URL as its scheme and host
-  only. The finding's line points at the full command.
+  `NAME=x cmd`, `$(...)`): it shows the program name only when the command starts with a plain one, and otherwise
+  says the command is not shown; a hook URL shows as its scheme and host only. The finding's line points at the full
+  command.
 - The "sensitive data and an external destination" exposure driver states the weaker of its two ends' evidence, not
   only the data source's.
 

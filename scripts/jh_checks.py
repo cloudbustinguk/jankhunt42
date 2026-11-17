@@ -7,7 +7,6 @@ from bisect import bisect_right
 import ipaddress
 import os
 import re
-import shlex
 import subprocess
 import unicodedata
 import urllib.parse
@@ -2101,18 +2100,12 @@ def _command_evidence(command: str) -> str:
     """Evidence for a hook or helper command: the program only, never its arguments. Credentials hide in arguments
     in too many shapes (--token x, -ux:y, -H"Key: y", NAME=y before the program) for a list of flags to catch, so
     none are shown; the finding's line points at the full command."""
-    try:
-        parts = shlex.split(command)
-    except ValueError:                       # quoting we cannot parse (bash's $'..\'..'): never guess at the words
+    # no shell parsing at all: only a command that STARTS with a plain program name shows that name; anything else
+    # (NAME=value, $(...), redirections, quotes, subshells) is shell syntax we will not guess at
+    m = re.match(r"\s*([A-Za-z0-9_./+-]+)(?=\s|$)", command)
+    if not m:
         return "(command not shown)"
-    while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):    # NAME=value before the program
-        parts.pop(0)
-    # only a plain program name or path: shell syntax attached to it (docker<<<'secret', cat<x) is cut off
-    program = re.match(r"[A-Za-z0-9_./+-]*", parts[0]).group(0) if parts else ""
-    if not program:
-        return "(command not shown)"
-    rest = len(parts) - 1 or program != parts[0]
-    return redact_secrets(program) + (" ... (the rest is not shown)" if rest else "")
+    return redact_secrets(m.group(1)) + (" ... (the rest is not shown)" if command[m.end():].strip() else "")
 
 
 def _url_evidence(url: str) -> str:

@@ -122,8 +122,8 @@ class AuditFindings(unittest.TestCase):
 
     def test_shell_syntax_attached_to_the_program_is_cut_off(self):
         for cmd, shown in (("docker<<<'SyntheticPassword123' login --username audit --password-stdin r.example.invalid",
-                            "docker ... (the rest is not shown)"),
-                           ("cat<<<'SyntheticSecret123456'", "cat ... (the rest is not shown)"),
+                            "(command not shown)"),
+                           ("cat<<<'SyntheticSecret123456'", "(command not shown)"),
                            ("(echo SyntheticSecret123456) | ./send.sh", "(command not shown)"),
                            ("./notify.sh", "./notify.sh")):
             with self.subTest(cmd=cmd):
@@ -134,6 +134,11 @@ class AuditFindings(unittest.TestCase):
             {"command": "PASSWORD=$'prefix\\' SyntheticPassword123' ./send.sh"}]}}})
         self.assertEqual([f["evidence"] for f in raw], ["(command not shown)"])
         self.assertNotIn("Synthetic", json.dumps(raw))
+        for cmd in ("PASSWORD=$(printf SyntheticPassword123) ./send.sh", "API_TOKEN=SyntheticSecret123456 ./run.sh",
+                    "env PASSWORD=SyntheticPassword123 ./run.sh"):
+            with self.subTest(cmd=cmd):
+                _, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
+                self.assertNotIn("Synthetic", json.dumps(raw))
         _, raw = scan({".claude/settings.json": {"apiKeyHelper": "cat<<<'SyntheticSecret123456'"}})
         self.assertTrue(raw)
         self.assertNotIn("Synthetic", json.dumps(raw))
