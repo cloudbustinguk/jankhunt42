@@ -87,5 +87,71 @@ class Hooks(unittest.TestCase):
                 self.assertEqual(scan(files)[0], [])
 
 
+class AuditFindings(unittest.TestCase):
+    """Reproductions from the 4.19.0 adversarial review, kept as tests."""
+
+    def test_hook_evidence_hides_command_line_credentials(self):
+        for cmd in ('curl --header "Authorization: Bearer SyntheticSecret123456" https://example.invalid/ '
+                    '--user audit:SyntheticPassword123 --data x', "./send.sh --token SyntheticSecret123456",
+                    "deploy --password=SyntheticPassword123", "API_TOKEN=SyntheticSecret123456 ./run.sh",
+                    "curl https://audit:SyntheticPassword123@example.invalid/x"):
+            with self.subTest(cmd=cmd):
+                got, raw = scan({".cursor/hooks.json": {"version": 1, "hooks": {"stop": [{"command": cmd}]}}})
+                self.assertEqual(got, [("JH704", "minor", ".cursor/hooks.json")])
+                blob = json.dumps(raw)
+                self.assertNotIn("SyntheticSecret123456", blob)
+                self.assertNotIn("SyntheticPassword123", blob)
+
+    def test_claude_project_hook_evidence_is_redacted_too(self):
+        _, raw = scan({".claude/settings.json": {"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "./notify.sh --token SyntheticSecret123456"}]}]}}})
+        self.assertTrue(raw)
+        self.assertNotIn("SyntheticSecret123456", json.dumps(raw))
+
+    def test_read_write_paths_count_only_in_a_read_write_sandbox(self):
+        self.assertEqual(scan({".cursor/sandbox.json": {"type": "workspace_readonly", "networkPolicy": {"default": "deny"},
+                                                        "additionalReadwritePaths": ["/"]}})[0], [])
+        got, _ = scan({".cursor/sandbox.json": {"networkPolicy": {"default": "deny"}, "additionalReadwritePaths": ["/"]}})
+        self.assertEqual(got, [("JH709", "major", ".cursor/sandbox.json")])     # the default type is read-write
+
+    def test_deny_wins(self):
+        for deny in (["*"], ["0.0.0.0/0", "::/0"]):
+            with self.subTest(deny=deny):
+                self.assertEqual(scan({".cursor/sandbox.json": {"networkPolicy": {"default": "allow", "deny": deny}}})[0], [])
+        got, _ = scan({".cursor/sandbox.json": {"networkPolicy": {"default": "allow", "deny": ["evil.example"]}}})
+        self.assertEqual(got, [("JH709", "major", ".cursor/sandbox.json")])     # a partial deny leaves it open
+
+    def test_all_address_cidrs_are_every_host(self):
+        for allow in (["0.0.0.0/0"], ["::/0"], ["registry.npmjs.org", "0.0.0.0/0", "::/0"]):
+            with self.subTest(allow=allow):
+                got, _ = scan({".cursor/sandbox.json": {"networkPolicy": {"default": "deny", "allow": allow}}})
+                self.assertEqual(got, [("JH709", "major", ".cursor/sandbox.json")])
+
+    def test_only_claude_hook_events_count(self):
+        self.assertEqual(scan({"tools/hooks/hooks.json": {"hooks": {"pre-commit": [{"hooks": [
+            {"type": "command", "command": "npm run lint"}]}]}}})[0], [])
+        _, raw = scan({"tools/hooks/hooks.json": {"hooks": {
+            "pre-commit": [{"hooks": [{"type": "command", "command": "npm run lint"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "./notify.sh"}]}]}}})
+        self.assertEqual([("on Stop" in f["message"], "pre-commit" in f["message"]) for f in raw], [(True, False)])
+
+    def test_a_plugin_without_a_manifest_is_a_conditional_lead(self):
+        hooks = {"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "./sync.sh"}]}]}}
+        _, bare = scan({"plug/hooks/hooks.json": hooks})
+        self.assertEqual([(f["confidence"], "if this folder is installed as a Claude Code plugin" in f["message"]) for f in bare],
+                         [("medium", True)])
+        _, real = scan({"plug/hooks/hooks.json": hooks, "plug/.claude-plugin/plugin.json": {"name": "plug"}})
+        self.assertEqual([(f["confidence"], "for everyone who installs the plugin" in f["message"]) for f in real],
+                         [("high", True)])
+
+    def test_egress_band_needs_both_ends_supported(self):
+        import _util  # noqa: F401
+        import jh_graph as G
+        graph = json.loads('{"nodes": [{"id": "app", "kind": "application", "display_label": "app", "trust_domain": "internal", "environment": "unknown", "sensitivity": "unknown", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}, {"id": "db", "kind": "database", "display_label": "db", "trust_domain": "internal", "environment": "unknown", "sensitivity": "confidential", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}, {"id": "external", "kind": "external", "display_label": "external", "trust_domain": "external", "environment": "unknown", "sensitivity": "unknown", "criticality": "unknown", "attributes": {}, "evidence_refs": [], "classification_source": "test"}], "edges": [{"id": "read", "source": "app", "target": "db", "kind": "reads", "capability": "read", "identity_ref": null, "verification": "observed", "confidence": "medium", "source_trust": "repository", "evidence_refs": [], "assumptions": [], "trust_boundary": {"domain": null, "environment": null}}, {"id": "send", "source": "app", "target": "external", "kind": "calls", "capability": "read", "identity_ref": null, "verification": "inferred", "confidence": "medium", "source_trust": "repository", "evidence_refs": [], "assumptions": [], "trust_boundary": {"domain": null, "environment": null}}]}')
+        exp = G.assess(graph, 1)["exposure"]
+        self.assertEqual(exp["class"], "High")
+        self.assertEqual(exp["class_band"], ["Moderate", "High"])
+
+
 if __name__ == "__main__":
     unittest.main()

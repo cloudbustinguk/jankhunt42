@@ -846,9 +846,11 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
             bump(2, "X-MOD-REACH", nid, info, "confidentiality",
                  "possible read or data-transfer reach to a non-local system")
     if sensitive_c and external_c:
-        s_id = sorted(sensitive_c)[0]
-        x_id = sorted(external_c)[0]
-        bump(3, "X-HIGH-EGRESS", s_id, sensitive_c[s_id], "confidentiality",
+        # the driver needs both ends, so its evidence is the weaker of the two; report the best-evidenced pair
+        s_id = max(sorted(sensitive_c), key=lambda n: sensitive_c[n]["tier"])
+        x_id = max(sorted(external_c), key=lambda n: external_c[n]["tier"])
+        both = dict(sensitive_c[s_id], tier=min(sensitive_c[s_id]["tier"], external_c[x_id]["tier"]))
+        bump(3, "X-HIGH-EGRESS", s_id, both, "confidentiality",
              "sensitive source and external destination are reachable from the same principal "
              "(possible egress path; no data-flow evidence implied)")
         drivers[-1]["external"] = x_id
