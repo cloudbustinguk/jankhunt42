@@ -1017,7 +1017,7 @@ MUTANTS = [
     ('M658-cursor-cidr-missed', 'an all-address CIDR in a Cursor allow list is not reported', 'jh_checks.py', '_ALL_HOSTS = {"*", "*.*", "**", "0.0.0.0/0", "::/0"}', '_ALL_HOSTS = {"*", "*.*", "**"}', 'test_cursor_sandbox.py'),
     ('M659-plugin-any-event', "a hooks file's non-Claude events (pre-commit) are reported as plugin hooks", 'jh_checks.py', '        if event not in CLAUDE_HOOK_EVENTS:', '        if False:', 'test_cursor_sandbox.py'),
     ('M660-plugin-always-confirmed', 'a hooks file without a plugin manifest is stated as a confirmed plugin', 'jh_checks.py', '    confirmed = bool(root) and os.path.isfile(os.path.join(root, ".claude-plugin", "plugin.json"))', '    confirmed = True', 'test_cursor_sandbox.py'),
-    ('M654-hook-arguments-shown', "hook and helper evidence shows the command's arguments, where credentials hide", 'jh_checks.py', '    return program + (" ... (%d argument%s not shown)" % (rest, "" if rest == 1 else "s") if rest else "")', '    return redact_secrets(command)', 'test_cursor_sandbox.py'),
+    ('M654-hook-arguments-shown', "hook and helper evidence shows the command's arguments, where credentials hide", 'jh_checks.py', '    program = re.match(r"[A-Za-z0-9_./+-]*", parts[0]).group(0) if parts else ""', '    program = parts[0] if parts else ""', 'test_cursor_sandbox.py'),
     ('M661-cursor-deny-cancel-ignored', 'an all-host allow entry that deny cancels is still reported', 'jh_checks.py', '    broad = [a for a in allow if a in _ALL_HOSTS and a not in deny]      # deny wins, even for the same pattern', '    broad = [a for a in allow if a in _ALL_HOSTS]', 'test_cursor_sandbox.py'),
 ]
 
