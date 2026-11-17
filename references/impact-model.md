@@ -22,11 +22,15 @@ impact rule here is built from those operations alone.
 
 Every edge in the connectivity map carries an evidence tier:
 
-    verified (3) > supported (2) > inferred (1) > unknown (0)
+```math
+\text{verified}\ (3) > \text{supported}\ (2) > \text{inferred}\ (1) > \text{unknown}\ (0)
+```
 
 A path is as strong as its weakest edge, and a principal reaches an asset as strongly as its best path:
 
-    reach(p, a) = max over paths π from p to a of ( min over edges e in π of tier(e) )
+```math
+\operatorname{reach}(p, a) = \max_{\text{paths } \pi \text{ from } p \text{ to } a} \Bigl( \min_{\text{edges } e \text{ in } \pi} \operatorname{tier}(e) \Bigr)
+```
 
 This is the max-min composition of possibility theory. It needs no probabilities, gives the same answer under any
 relabelling of the tiers that keeps their order, and adding an edge or strengthening one can only raise a reach.
@@ -36,7 +40,9 @@ relabelling of the tiers that keeps their order, and adding an edge or strengthe
 Each principal (a workload, a workflow, an identity, an agent) gets the highest class whose condition holds; the
 application gets the highest class over its principals:
 
-    class(app) = max over principals p of class(p)
+```math
+\operatorname{class}(\text{app}) = \max_{\text{principals } p} \operatorname{class}(p)
+```
 
 | Class | Condition (any of) |
 |---|---|
@@ -46,8 +52,8 @@ application gets the highest class over its principals:
 | Low | only local assets reached, or nothing reached with coverage |
 
 Every condition is upward-closed, so the class is monotone: adding authority, sensitivity, criticality, evidence or
-reach never lowers it (tested exhaustively). The breadth indicator `1 + 0.5·(1 − e^(−(n−1)/4))` over distinct trust
-domains is shown for context only and never changes the class.
+reach never lowers it (tested exhaustively). The breadth indicator $`1 + 0.5 \cdot \left(1 - e^{-(n-1)/4}\right)`$
+over distinct trust domains is shown for context only and never changes the class.
 
 ## The Agents Rule of Two (released in 4.16.0)
 
@@ -69,14 +75,20 @@ private repository into a public pull request.
 settings beside it, or an n8n AI Agent node with its triggers and tools). Each part of the agent (a server, a tool, a
 trigger, a built-in tool such as WebFetch) contributes to each property on a three-step scale:
 
-    none < possible < yes
+```math
+\text{none} < \text{possible} < \text{yes}
+```
 
 "possible" marks what the configuration cannot show, such as which repositories a GitHub token reaches. Then, per
 agent:
 
-    holds(k)  = max over parts of part[k]                for k in A, B, C
-    all three = min(holds(A), holds(B), holds(C)) > none
-    certain   = min(holds(A), holds(B), holds(C)) = yes
+```math
+\begin{aligned}
+\operatorname{holds}(k) &= \max_{\text{parts}} \mathrm{part}[k] && \text{for } k \in \{A, B, C\}
+\\ \text{all three} &= \min\bigl(\operatorname{holds}(A), \operatorname{holds}(B), \operatorname{holds}(C)\bigr) > \text{none}
+\\ \text{certain} &= \min\bigl(\operatorname{holds}(A), \operatorname{holds}(B), \operatorname{holds}(C)\bigr) = \text{yes}
+\end{aligned}
+```
 
 Supervision is judged where the harm happens, at [C]: the agent is **unsupervised** when some part that gives [C]
 runs without a person approving it (bypass mode, a broad allow entry, an acting tool in autoApprove or alwaysAllow,
@@ -125,9 +137,13 @@ Toxic combinations, each the minimum of its ingredients' tiers:
 | K3 trifecta, unsupervised | untrusted input, sensitive reach, a way out, unsupervised | Critical |
 | K4 trifecta, supervised | untrusted input, sensitive reach, a way out | High |
 
-    sat_k(p)  = min over the ingredients of k of tier(ingredient, p)
-    level(p)  = max( class_v1(p), max { level(k) : sat_k(p) > unknown } )
-    level(app) = max over principals p of level(p)
+```math
+\begin{aligned}
+\operatorname{sat}_k(p) &= \min_{\text{ingredients of } k} \operatorname{tier}(\text{ingredient}, p)
+\\ \operatorname{level}(p) &= \max\Bigl( \operatorname{class}_{\mathrm{v1}}(p),\ \max\{\, \operatorname{level}(k) : \operatorname{sat}_k(p) > \text{unknown} \,\} \Bigr)
+\\ \operatorname{level}(\text{app}) &= \max_{\text{principals } p} \operatorname{level}(p)
+\end{aligned}
+```
 
 Each driver of a level (a v1 condition or a combination) reports its own weakest tier, so a Critical that rests on an
 unknown ingredient says so; the level's evidence is its best-supported driver. Properties:
@@ -135,8 +151,8 @@ unknown ingredient says so; the level's evidence is its best-supported driver. P
 - **Monotone:** every ingredient is upward-closed (entry is a ladder, so refining it needs counter-evidence) and only
   max and min combine them.
 - **Ordinal:** only comparisons, max and min; any order-preserving relabelling of tiers gives the same result.
-- **Conservative extension:** `level ≥ class_v1` for every principal, by construction (v1's conditions are kept as
-  drivers).
+- **Conservative extension:** $`\operatorname{level} \ge \operatorname{class}_{\mathrm{v1}}`$ for every principal, by
+  construction (v1's conditions are kept as drivers).
 
 **Remediation levers (planned after impact.v2).** To bring the level down, remove one ingredient from every top-level
 combination instance: a minimum hitting set, with adding an approval as a lever alongside removing an ingredient, and
