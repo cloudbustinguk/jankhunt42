@@ -24,22 +24,26 @@ def drv(level, tier):
 
 
 class ScoreBand(unittest.TestCase):
-    def test_low_end_counts_only_high_confidence(self):
-        r = S.compute([f("critical", "medium")], 10000)
-        self.assertEqual(r.band, (0, r.score))
-        self.assertGreater(r.score, 0)
-        self.assertEqual(r.to_dict()["band"], [0, r.score])
-        self.assertIn("high-confidence", r.to_dict()["band_basis"])
+    def test_low_end_leaves_out_only_low_confidence(self):
+        # a small codebase, so density (not one finding's severity floor) sets the score
+        weak = S.compute([f("major", "high"), f("critical", "low", rule="JH112")], 250)
+        sure = S.compute([f("major", "high")], 250, band=False)
+        self.assertEqual(weak.band, (sure.score, weak.score))
+        self.assertLess(weak.band[0], weak.band[1])
+        self.assertEqual(weak.to_dict()["band"], [sure.score, weak.score])
+        self.assertIn("low-confidence", weak.to_dict()["band_basis"])
 
-    def test_a_sure_score_is_a_point(self):
-        r = S.compute([f("critical", "high"), f("minor", "high", "tests", "JH501")], 2000)
-        self.assertEqual(r.band, (r.score, r.score))
-        for d in r.dimensions.values():
-            self.assertEqual(d.to_dict()["band"], [d.score, d.score])
+    def test_medium_confidence_leads_stay_in_the_low_end(self):
+        # medium is the ordinary confidence of a lead; a band that dropped it fell to 0 on 4% of real repositories
+        for items in ([f("critical", "medium")], [f("major", "medium"), f("major", "high", rule="JH104")]):
+            with self.subTest(n=len(items)):
+                r = S.compute(items, 10000)
+                self.assertEqual(r.band, (r.score, r.score))
+                self.assertGreater(r.score, 0)
 
     def test_the_band_never_changes_the_score(self):
         cases = ([], [f("major", "low")], [f("critical", "medium"), f("blocker", "high", "reliability", "JH201")],
-                 [f("minor", "medium", "tests", "JH501")] * 30)
+                 [f("minor", "medium", "tests", "JH501")] * 30, [f("critical", "low"), f("minor", "high")])
         for items in cases:
             with self.subTest(n=len(items)):
                 a, b = S.compute(items, 3000), S.compute(items, 3000, band=False)
@@ -48,10 +52,11 @@ class ScoreBand(unittest.TestCase):
                 self.assertLessEqual(a.band[0], a.band[1])
                 self.assertEqual(a.band[1], a.score)
 
-    def test_markdown_and_terminal_show_a_wide_band_only(self):
-        wide = S.scorecard_markdown(S.compute([f("critical", "medium")], 10000))
-        point = S.scorecard_markdown(S.compute([f("critical", "high")], 10000))
+    def test_markdown_shows_a_wide_band_only(self):
+        wide = S.scorecard_markdown(S.compute([f("critical", "low")], 10000))
+        point = S.scorecard_markdown(S.compute([f("critical", "medium")], 10000))
         self.assertIn("Band **0–", wide)
+        self.assertIn("still count", wide)
         self.assertNotIn("Band **", point)
 
 
@@ -84,20 +89,33 @@ class ExposureBand(unittest.TestCase):
 
 
 class PassportBand(unittest.TestCase):
-    def test_passport_states_a_wide_score_band(self):
+    APP = ("import random, subprocess\n"
+           "def reset_token():\n    token = str(random.random())\n    return token\n"
+           "def run(cmd):\n    subprocess.call(cmd, shell=True)\n")
+
+    def test_passport_states_a_wide_score_band_for_reviewers(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "app.py"), "w") as fh:
-                fh.write("import requests, subprocess\n"
-                         "def sync(order_id):\n    requests.post('https://api.example.com/v1/orders', json={})\n"
-                         "def run(cmd):\n    subprocess.call(cmd, shell=True)\n")
+                fh.write(self.APP)
             md = subprocess.run([sys.executable, "-I", "-B", JH, "passport", d, "--md"], capture_output=True,
                                 text=True, timeout=120).stdout
-            self.assertRegex(md, r"Technical Jank Score: \*\*\d+/100\*\* grade \w \(\w+\); band 0-\d+ "
-                                 r"\(high-confidence findings alone score 0\)")
+            self.assertRegex(md, r"Technical Jank Score: \*\*\d+/100\*\* grade \w \(\w+\); band \d+-\d+ "
+                                 r"\(without low-confidence findings it scores \d+\)")
+
+    def test_citizen_brief_never_reassures_with_numbers(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "app.py"), "w") as fh:
+                fh.write(self.APP)
             js = json.loads(subprocess.run([sys.executable, "-I", "-B", JH, "passport", d, "--profile", "citizen",
                                             "--json"], capture_output=True, text=True, timeout=120).stdout)
-            self.assertEqual(js["assessment"]["jank"]["band"][0], 0)
-            self.assertTrue(any("less certain leads" in line for line in js["governance"]["brief"]))
+            lo, hi = js["assessment"]["jank"]["band"]
+            self.assertLess(lo, hi)
+            line = [l for l in js["governance"]["brief"] if "weak signals" in l]
+            self.assertEqual(len(line), 1)
+            self.assertIn("still counts until a person checks it", line[0])
+            self.assertNotRegex(line[0], r"\d")
+            for l in js["governance"]["brief"]:
+                self.assertNotRegex(l, r"(?i)puts it at (Low|Moderate|High)|certain ones alone")
 
 
 if __name__ == "__main__":

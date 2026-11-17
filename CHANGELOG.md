@@ -8,11 +8,12 @@ semantic versioning.
 
 ### Added
 
-- **Uncertainty bands.** The Jank Score reports `band: [low, high]`: the low end counts only high-confidence
-  findings. The exposure class reports `class_band`: the low end counts only verified or supported drivers. A wide
-  band says the number rests on less certain evidence; a point says it does not. Shown in the scorecard, the map,
-  the passport and, when wide, one plain sentence in the citizen brief. Reporting only: no score, grade, class or
-  decision changes.
+- **Uncertainty bands.** The Jank Score reports `band: [low, high]`: the low end leaves out low-confidence findings
+  (weak signals). The exposure class reports `class_band`: the low end counts only verified or supported drivers. A
+  wide band says part of the number rests on weaker evidence; a point says it does not. Shown in the scorecard, the
+  map and the passport for reviewers. The citizen brief gives no band numbers: when a band is wide it says the
+  problems still count until a person checks them, and that inferred reach should be treated as real until someone
+  confirms it. Reporting only: no score, grade, class or decision changes.
 - **Governance risks on the OWASP Citizen Development Top 10.** The passport's own rules now map to the OWASP risks
   they are instances of, so the passport names risks no scanner finding can show: CD-SEC-09 Asset Management
   Failures (no owner, no custodian, unclassified data) and CD-SEC-01 Blind Trust (no independent review, no tests).

@@ -451,12 +451,11 @@ def plain_brief(p: Dict[str, Any]) -> List[str]:
             for sv in servers[:5])))
     eband = p["assessment"]["exposure"].get("class_band")
     if eband and eband[0] != eband[1]:
-        lines.append("How exposed it looks rests partly on connections jankhunt42 inferred rather than saw: what it "
-                     "saw for certain puts it at %s, not %s." % (eband[0], eband[1]))
+        lines.append("Part of what it can reach was inferred from its code rather than seen in its configuration: "
+                     "treat that reach as real until someone confirms it.")
     jband = (p["assessment"].get("jank") or {}).get("band")
     if jband and jband[0] != jband[1]:
-        lines.append("Some of the problems are less certain leads: the certain ones alone give a Jank Score of %s, "
-                     "not %s." % (jband[0], jband[1]))
+        lines.append("Some of the problems found rest on weak signals: each one still counts until a person checks it.")
     lines.append("Custodian: %s." % (", ".join(gov["custodians"]) if gov["custodians"] else "not named"))
     return lines
 
@@ -1098,7 +1097,7 @@ def markdown(p: Dict[str, Any]) -> str:
     lines = ["# Software passport: %s" % p["subject"]["name"], "",
              "- Release assessment: **%s** (%s; %s)" % (d["result"], d["mode"], d["note"]),
              "- Technical Jank Score: **%s/100** grade %s (%s)%s" % (a["jank"].get("score"), a["jank"].get("grade"), a["jank"].get("policy"),
-                                                                    _band_clause(a["jank"].get("band"), "high-confidence findings alone score")),
+                                                                    _band_clause(a["jank"].get("band"), "without low-confidence findings it scores")),
              "- Exposure: **%s** (%s)%s" % (a["exposure"]["class"], a["exposure"]["note"],
                                            _band_clause(a["exposure"].get("class_band"), "verified or supported evidence alone gives")),
              ] + _owasp_line(a.get("owasp")) + [

@@ -144,8 +144,9 @@ class DimensionScore:
         return out
 
 
-BAND_BASIS = ("the low end counts only high-confidence findings and the high end (the score) counts them all, so a "
-              "wide band means the score rests on less certain leads; it is not a confidence interval")
+BAND_BASIS = ("the low end leaves out low-confidence findings (weak signals) and the high end (the score) counts every "
+              "finding, so a wide band means part of the score rests on weak signals; it is not a confidence interval, "
+              "and every finding still counts")
 
 
 @dataclass
@@ -254,8 +255,9 @@ def _policy(findings: Sequence[Finding], dims: Dict[str, DimensionScore], overal
 
 
 def compute(findings: Sequence[Finding], loc: int, band: bool = True) -> ScoreReport:
-    """The Jank Score. With band, also the score over high-confidence findings only (the band's low end): an
-    uncertainty statement in the spirit of FAIR, never a change to the score itself."""
+    """The Jank Score. With band, also the score without low-confidence findings (the band's low end): an
+    uncertainty statement in the spirit of FAIR, never a change to the score itself. Medium confidence is the
+    ordinary confidence of a lead, so it stays in the low end; only weak signals are left out."""
     items = list(findings)
     loc = max(0, int(loc or 0))
     dims = {key: _dimension([f for f in items if dimension_for(f) == key], loc, key)
@@ -265,7 +267,7 @@ def compute(findings: Sequence[Finding], loc: int, band: bool = True) -> ScoreRe
     worst = dims[worst_key].score
     overall = int(round(0.7 * worst + 0.3 * weighted))
     overall = max(0, min(100, overall))
-    sure = compute([f for f in items if f.confidence == "high"], loc, band=False) if band else None
+    sure = compute([f for f in items if f.confidence != "low"], loc, band=False) if band else None
     if sure is not None:
         for key in DIMENSIONS:
             dims[key].band_low = min(sure.dimensions[key].score, dims[key].score)
@@ -291,7 +293,7 @@ def scorecard_markdown(report: ScoreReport, heading: str = "## Jank score") -> s
                % (report.score, report.grade, report.label, report.policy))
     out.append("")
     if report.band and report.band[0] != report.band[1]:
-        out.append("Band **%d–%d**: high-confidence findings alone score %d; the rest rests on less certain leads."
+        out.append("Band **%d–%d**: without its low-confidence findings it scores %d; those weak signals still count."
                    % (report.band[0], report.band[1], report.band[0]))
         out.append("")
     out.append("_Score %s: severity × confidence × exposure, density per KLOC, "
@@ -351,7 +353,7 @@ def scorecard_tty(report: ScoreReport, color: Any, width: int) -> List[str]:
             color.grey("%d finding%s" % (d.findings, "" if d.findings == 1 else "s")),
         ))
     if report.band and report.band[0] != report.band[1]:
-        out.append("  " + color.grey("band %d-%d: high-confidence findings alone score %d"
+        out.append("  " + color.grey("band %d-%d: without low-confidence findings it scores %d"
                                      % (report.band[0], report.band[1], report.band[0])))
     if report.new_code:
         nc = report.new_code
