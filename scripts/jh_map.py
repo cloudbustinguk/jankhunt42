@@ -22,6 +22,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ import jh_egress
 import jh_graph as G
 import jh_n8n
 import jh_n8n_code
+import jh_rule2
 import jh_yaml
 from jh_core import (TOOL, VERSION, run_git, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
@@ -231,6 +233,8 @@ class Ctx:
         # NAME -> distinct string values assigned anywhere in Python code
         self.str_vars: Dict[str, Set[str]] = {}
         self.parse_failures: List[Dict[str, str]] = []
+        # every collected file by its posix path, for adapters that read a neighbour (an agent's settings)
+        self.texts: Dict[str, str] = {}
         self.templates: List[str] = []
         self.by_adapter: Dict[str, int] = {}
         self.inspected: List[str] = []
@@ -2027,6 +2031,21 @@ def apply_inventory(g: G.Graph, inv: Dict[str, Any], trusted: bool, warnings: Li
 # AI agent tooling (MCP server definitions)
 # ---------------------------------------------------------------------------
 
+def rule_of_two_summary(verdict: Dict[str, Any]) -> Dict[str, Any]:
+    """What a map node records of an agent's Rule of Two verdict (jh_rule2): value-free names of its parts."""
+    return {"verdict": verdict["verdict"], "certain": bool(verdict.get("certain")),
+            "untrusted_input": G.sanitize_text(jh_rule2.sources(verdict, "A", 5), 300),
+            "sensitive_data": G.sanitize_text(jh_rule2.sources(verdict, "B", 5), 300),
+            "acts": G.sanitize_text(jh_rule2.sources(verdict, "C", 5), 300),
+            "unapproved": [G.sanitize_text("%s (%s)" % (p["source"], p["why"]), 160)
+                           for p in verdict.get("acting", []) if not p["supervised"]][:5]}
+
+
+def _project_reader(ctx: Ctx, rel: str) -> jh_rule2.Reader:
+    project = jh_rule2.project_of(rel.replace(os.sep, "/"), "/")
+    return lambda r: ctx.texts.get(posixpath.normpath(posixpath.join(project, r)) if project else r)
+
+
 def adapt_mcp(ctx: Ctx, item: Item) -> None:
     """What an AI agent session in this repository is wired to: one agent
     principal per config file, an edge to every MCP server it would start,
@@ -2042,6 +2061,9 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
     agent = g.add_node("workload", ["ai-agent", item.rel], "AI agent (%s, %s)" % (client, os.path.basename(item.rel)),
                        trust_domain="local", attributes={"platform": "ai-agent", "client": client,
                                                          "config": item.rel}, evidence=ev)
+    verdict = jh_rule2.mcp_agent(item.rel, item.text, read=_project_reader(ctx, item.rel))
+    if verdict and verdict["verdict"] != "none":
+        g.nodes[agent]["attributes"]["rule_of_two"] = rule_of_two_summary(verdict)
     for s in servers:
         snippet = lines[s.line - 1] if 0 < s.line <= len(lines) else s.name
         sev = g.add_evidence(item.rel, s.line, "mcp:server", snippet, "declared",
@@ -2189,6 +2211,13 @@ def adapt_n8n(ctx: Ctx, item: Item) -> None:
         for source, target in flow['links']:
             g.add_edge(node_ids[source], node_ids[target], 'depends-on', 'none', 'declared', 'high', evidence=wev,
                        assumptions=['Workflow connection transfers no authority'])
+        # jankhunt.impact.v2 ingredients: who can start each node, and AI agents' Rule of Two verdicts
+        for rid, entry in jh_n8n.entry_levels(flow).items():
+            if node_ids.get(rid):
+                g.nodes[node_ids[rid]]['attributes']['entry'] = dict(entry, verification='declared')
+        for verdict in jh_rule2.flow_agents(flow):
+            if node_ids.get(verdict['raw']['id']) and verdict['verdict'] != 'none':
+                g.nodes[node_ids[verdict['raw']['id']]]['attributes']['rule_of_two'] = rule_of_two_summary(verdict)
 
 
 def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:
@@ -2315,6 +2344,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
     unsupported = 0
     tests = 0
     _collect_str_vars(ctx, items)
+    ctx.texts = {i.rel.replace(os.sep, "/"): i.text for i in items}
     for item in sorted(items, key=lambda i: i.rel):
         kind, docs = _classify_file(item.rel, item.text)
         if kind.startswith("yaml-error:"):
