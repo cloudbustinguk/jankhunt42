@@ -903,7 +903,8 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
                       sanitize_text(str(u), 160) for u in r2.get("unapproved", [])[:3])}])
         else:
             combo(3, "K4-TRIFECTA-SUPERVISED", br["principal"], t, "confidentiality",
-                  "an AI agent with untrusted input, sensitive data and a way to act; every acting step asks a person",
+                  "an AI agent that reads text anyone can write, reaches private data and can act; a person approving "
+                  "each action is all that stands between a prompt injection and the data",
                   [], parts)
     drivers.sort(key=lambda d: (-EXPOSURE_RANK[d["level"]], d["rule"], d["node"]))
     return EXPOSURE_CLASSES[level], drivers

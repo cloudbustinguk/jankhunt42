@@ -2528,7 +2528,8 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
             held += " Possible rather than certain: %s." % "; ".join(doubt)
         if v["verdict"] == "K3":
             unapproved = ["%s (%s)" % (p["source"], p["why"]) for p in v["acting"]]
-            message = ("%s holds all three parts of the Agents Rule of Two, and nothing approves its actions: %s. %s"
+            message = ("%s can read text anyone can write, reach private data and act on it (all three parts of the "
+                       "Agents Rule of Two), and nothing approves its actions: %s. %s"
                        % (who, "; ".join(unapproved[:3]), held))
             severity, confidence = ("critical", "high") if v["certain"] else ("major", "medium")
             if all(p.get("bypass_only") for p in v["acting"]):
@@ -2538,9 +2539,9 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
                             "Code versions ignore that mode in project files, older versions honour it.")
         else:
             unapproved = []
-            message = ("%s holds all three parts of the Agents Rule of Two; every tool that acts asks a person "
-                       "first, so those approvals are all that stands between a prompt injection and the data. %s"
-                       % (who, held))
+            message = ("%s can read text anyone can write, reach private data and act on it (all three parts of the "
+                       "Agents Rule of Two); every tool that acts asks a person first, so a person approving each action "
+                       "is all that stands between a prompt injection and the data. %s" % (who, held))
             # approvals in place, and the three resting partly on a 'possible': for information only
             severity, confidence = ("minor" if v["certain"] else "info"), "medium"
         out.append(make_finding(rule, sf, line, severity=severity, confidence=confidence,

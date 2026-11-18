@@ -68,10 +68,15 @@ semantic versioning.
   repository with no owner whose class rises to High or Critical moves from pass to review in the standard profile
   too.
 - `JH714`: an open n8n trigger followed by a step that seems to check a header now counts as untrusted input, and
-  the finding says so ("a later step seems to check a header, which the export cannot confirm"): the export cannot
+  the finding says so ("a later step may look like a check on who sent it; the export cannot show that it turns anyone
+  away"): the export cannot
   show that the step turns anyone away. Before, such an agent was not reported at all.
 - The n8n rules that follow an open trigger's data, and the Rule of Two, follow a disabled node's first output only,
   as n8n does, and a disabled AI node feeds none of its tools.
+- Agent wording leads with the risk: the Agents Rule of Two finding, its passport line (`P-AGT-002`) and the K4
+  exposure driver now say what the agent can do (read text anyone can write, reach private data and act on it), and
+  for a supervised agent that a person approving each action is all that stands between a prompt injection and the
+  data, instead of ending on "every acting step asks a person".
 - The terminal no longer shows an empty scan in green: "no findings" is shown as a caution with its limit on the same
   line ("not proof of correctness"), as the Markdown output already said.
 - The Agents Rule of Two reads an agent's settings files from the files collected for the map as well as from disk,
