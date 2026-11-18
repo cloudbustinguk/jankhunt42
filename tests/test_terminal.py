@@ -192,5 +192,21 @@ class LargeGraphs(unittest.TestCase):
         self.assertLess(len(jh_map.markdown(rep).split("\n")), 80)
 
 
+class EmptyScanNeverReassures(unittest.TestCase):
+    """An empty scan is not a green light: no green, and the limit stated on the same line."""
+
+    def test_no_green_and_the_limit_on_the_line(self):
+        import types
+        import jh_render
+        out = jh_render.scan_tty(types.SimpleNamespace(findings=[], files=3, loc=120), {"target": "demo"})
+        colors = jh_render.Colors(True)
+        green = colors.green("\x00").split("\x00")[0]
+        lines = [l for l in out.split("\n") if "no findings" in ANSI.sub("", l) or "no jank" in ANSI.sub("", l)]
+        self.assertEqual(len(lines), 2, out)
+        for line in lines:
+            self.assertNotIn(green, line)
+            self.assertIn("not proof of correctness", ANSI.sub("", line))
+
+
 if __name__ == "__main__":
     unittest.main()

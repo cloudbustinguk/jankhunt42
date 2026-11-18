@@ -429,7 +429,7 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
     if sev_bits:
         out.append("  " + "   ".join(sev_bits))
     else:
-        out.append("  " + color.green("no findings — suspiciously clean"))
+        out.append("  " + color.yellow("no findings from the built-in rules — not proof of correctness"))
     if meta.get("config"):
         out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
     for warning in (meta.get("archive_warnings") or [])[:5]:
@@ -554,7 +554,7 @@ def scan_tty(result, meta: Dict[str, object], max_findings: int = 300) -> str:
                + color.grey(" findings  ·  worst first"))
     out.append("")
     if not findings:
-        out.append("  " + color.green("✦ no jank detected by the built-in rules"))
+        out.append("  " + color.yellow("✦ no jank detected by the built-in rules — not proof of correctness"))
         out.append("  " + color.grey("Absence of evidence is not evidence of absence: "
                                       "run the compiler, tests, linters, and sanitizers."))
         return "\n".join(out)

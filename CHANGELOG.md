@@ -26,6 +26,8 @@ semantic versioning.
   `P-AGT-002` alone treats as review at most. In every profile `P-OWN-001` asks for an owner from High up, so a
   repository with no owner whose class rises to High or Critical moves from pass to review in the standard profile
   too.
+- The terminal no longer shows an empty scan in green: "no findings" is shown as a caution with its limit on the same
+  line ("not proof of correctness"), as the Markdown output already said.
 - The Agents Rule of Two reads an agent's settings files from the files collected for the map as well as from disk,
   so the map can judge agents in a Git snapshot too.
 
