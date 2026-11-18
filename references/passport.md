@@ -88,7 +88,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 | `P-OPS-001` | `require.tests` / `require.ci` and the area is not **observed** (a declaration is not enough) | pass unless required; then review |
 | `P-EVD-001` | `require.sbom`, `require.sbom_minimum` (no SBOM meets the NTIA minimum elements), `require.attestation`, or `require.verified_attestation` unmet | insufficient-evidence |
 | `P-JNK-001` | Jank Score policy `fail`, or any blocker-severity lead | review |
-| `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence) | review |
+| `P-EXP-001` | exposure above `max_exposure` (Unknown → insufficient-evidence); since 4.20.0 the class includes the K1-K4 combinations, so in the citizen profile (maximum Moderate) a certain K4 blocks here although `P-AGT-002` asks for review at most | review |
 | `P-CHG-001` | `require.change_control` and code can reach the default branch without an independent human review: no pull-request rule with an approval, or a GitHub App or deploy key that can bypass the rules (weaker gaps such as no last-push approval or no required checks: review) | pass unless required; then review (unknown → insufficient-evidence) |
 | `P-SUP-001` | `allowed_registries` is set and a declared or lockfile-recorded package source is outside it (a manager with no committed registry config: insufficient-evidence when `require.registry_pinning`) | pass unless registries are listed; then review |
 | `P-CAP-001` | `--base REF` and the change asks for new, expanded or unresolved access (see `references/change-review.md`); a matching operator record can cover concrete requests (same page) | pass without `--base`; otherwise review (hard floor) |

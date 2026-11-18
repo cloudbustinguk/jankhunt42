@@ -1,8 +1,8 @@
 # The impact model
 
 How jankhunt42 judges what software could hurt, and why it never turns that into a probability or a weighted sum.
-This page covers the model as released (evidence tiers, the exposure class, the Agents Rule of Two in 4.16.0) and the
-design adopted for the next releases (`jankhunt.impact.v2`), marked as planned.
+This page covers the model as released (evidence tiers, the exposure class with its v2 combinations in 4.20.0, the
+Agents Rule of Two in 4.16.0) and what is still planned.
 
 ## Three separate answers
 
@@ -115,27 +115,29 @@ What a part contributes comes from a table of servers and tools built from each 
 the table does not know counts for nothing and is named in the finding's `unknown_servers`. The table is the main
 limit on recall: on public repositories that commit MCP configurations, most servers are still outside it.
 
-## jankhunt.impact.v2 (adopted design, planned for 4.20.0)
+## jankhunt.exposure.v2 (released in 4.20.0)
 
-v2 extends the exposure class with the same conjunctive structure the Rule of Two uses, so that combinations raise
-the class, not only single conditions. Per principal it reads five ingredients, each as an evidence tier:
+v2 extends the exposure class with the same conjunctive structure the Rule of Two uses, so that a combination raises
+the class, not only a single condition. The map's model id is `jankhunt.exposure.v2`. Per principal it reads these
+ingredients, each with an evidence tier:
 
-| Ingredient | Meaning |
-|---|---|
-| entry | who can start it, as a ladder: schedule < internal < signed-in < anyone; lowered only by explicit counter-evidence (an authentication setting, an IP allowlist), never by missing evidence |
-| untrusted input | it reads text from outside |
-| reach | its existing reach over assets, with their sensitivity, criticality and environment |
-| way out | external communication, or a state change on a non-local asset |
-| unsupervised | no approval stands before the step that acts |
+| Ingredient | Meaning | Where it comes from in 4.20.0 |
+|---|---|---|
+| entry | who can start it, as a ladder: schedule < internal < signed-in < anyone | n8n triggers: an open webhook or form, a public chat with no authentication, and mail or Telegram triggers are *anyone*; authentication, an IP allowlist or a header check first is *signed-in*; a chat that is not public, editor and workflow triggers are *internal*; timers are *schedule*. Each node takes the most open trigger that reaches it along the workflow's connections. A principal no known trigger reaches has no entry: unknown is evidence neither way |
+| reach | its existing reach over assets, with their sensitivity, criticality and environment | the map, as in v1 |
+| untrusted input, sensitive data, a way to act, unsupervised | the Agents Rule of Two | `JH714`'s verdict for MCP agents and n8n AI Agent nodes, judged with the settings files the map collected |
+
+An n8n trigger is a declaration in the export, so entry rests on the *supported* tier; whether the workflow is active
+on a server is not known.
 
 Toxic combinations, each the minimum of its ingredients' tiers:
 
 | Combination | Ingredients | Level |
 |---|---|---|
-| K1 open destruction | entry = anyone, write/delete/admin over a production, critical, restricted or confidential asset | Critical |
-| K2 open sensitive read | entry = anyone, read of restricted or confidential data | High |
-| K3 trifecta, unsupervised | untrusted input, sensitive reach, a way out, unsupervised | Critical |
-| K4 trifecta, supervised | untrusted input, sensitive reach, a way out | High |
+| K1 open destruction | entry = anyone, and write, delete or admin over a production, high- or critical-criticality, confidential or restricted asset | Critical |
+| K2 open sensitive read | entry = anyone, and read of confidential or restricted data | High |
+| K3 trifecta, unsupervised | an agent's Rule of Two verdict K3 (supported when certain, inferred when part is possible) | Critical |
+| K4 trifecta, supervised | an agent's Rule of Two verdict K4, certain only (an uncertain K4 is information only) | High |
 
 ```math
 \begin{aligned}
@@ -145,19 +147,38 @@ Toxic combinations, each the minimum of its ingredients' tiers:
 \end{aligned}
 ```
 
-Each driver of a level (a v1 condition or a combination) reports its own weakest tier, so a Critical that rests on an
-unknown ingredient says so; the level's evidence is its best-supported driver. Properties:
+Each driver of a level (a v1 condition or a combination) reports its own weakest tier and its ingredients, so a
+Critical that rests on inferred evidence says so. Two principals never combine: open entry on one and sensitive
+authority on another is not K1. An asset whose sensitivity, criticality and environment are not known never
+satisfies K1 or K2: the v1 conditions already treat it as at least Moderate, and a combination is claimed only on
+evidence. Properties, each
+tested:
 
-- **Monotone:** every ingredient is upward-closed (entry is a ladder, so refining it needs counter-evidence) and only
-  max and min combine them.
+- **Monotone:** every ingredient is upward-closed (a more open entry, a stronger tier, more authority, more
+  sensitivity) and only max and min combine them. Entry is lowered only by counter-evidence in the export itself.
 - **Ordinal:** only comparisons, max and min; any order-preserving relabelling of tiers gives the same result.
 - **Conservative extension:** $`\operatorname{level} \ge \operatorname{class}_{\mathrm{v1}}`$ for every principal, by
-  construction (v1's conditions are kept as drivers).
+  construction (v1's conditions stay drivers).
 
-**Remediation levers (planned after impact.v2).** To bring the level down, remove one ingredient from every top-level
-combination instance: a minimum hitting set, with adding an approval as a lever alongside removing an ingredient, and
-a minimum edge cut where the ingredient is reach over several paths. Each lever shows the code behind it and the
-level that remains after it, so a change that clears one combination but leaves another is visible.
+**Policy.** The passport's `P-EXP-001` compares this class with `max_exposure`. The citizen profile's maximum is
+Moderate, so there a K1, K2, K3 or certain K4 blocks through `P-EXP-001`, including a K4, for which `P-AGT-002`
+alone asks for review at most. The standard profile sets no maximum, so `P-EXP-001` does not change its decisions.
+
+**Considered and not adopted.**
+
+- *A one-step uplift from AIVSS's agentic amplification factors.* For an agent that already holds the three parts,
+  the factors are almost always present: the way to act is the tool-control factor, an unsupervised step is the
+  autonomy factor, and every language-model agent has a natural-language interface. The uplift would turn every K4
+  into a Critical and erase the difference between supervised and unsupervised that the Rule of Two exists to make.
+- *A per-finding business-impact factor in the Jank Score.* The score is computed from findings and never sees the
+  map, so a finding cannot be tied to the data its code reaches without new plumbing; and on public repositories a
+  declared confidential or restricted asset is rare. The Jank Score and the exposure class stay separate answers.
+
+**Still planned.** Entry for other platforms (Power Automate HTTP triggers, Copilot Studio agents without
+authentication, anonymous web routes). Remediation levers: to bring the level down, remove one ingredient from every
+top-level combination instance (a minimum hitting set, with adding an approval as a lever alongside removing an
+ingredient, and a minimum edge cut where the ingredient is reach over several paths); each lever shows the code
+behind it and the level that remains after it.
 
 ## What this is not
 
