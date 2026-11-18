@@ -286,6 +286,85 @@ class Map(unittest.TestCase):
         self.assertNotIn("Fetch server 'web'", p.stdout)     # the agent's parts, as the ingredients name them
 
 
+DECOY = "// headers throw\nreturn $input.all();"
+
+
+def agent_flow(decoy, supervised=False, as_json=False):
+    """An open webhook feeding an AI Agent with a Postgres tool (sensitive data) and a Send Email tool (a way to act),
+    optionally behind a Code step that only seems to check a header, and optionally behind a human review node."""
+    nodes = [("t", "Hook", B + "webhook", {}, False), ("a", "Agent", L + "agent", {}, False),
+             ("d", "Orders", B + "postgresTool", {"operation": "executeQuery"}, False),
+             ("m", "Mail", B + "sendEmailTool", {}, False)]
+    links = [("t", "c"), ("c", "a")] if decoy else [("t", "a")]
+    if decoy:
+        nodes.append(("c", "Check", B + "code", {"jsCode": DECOY}, False))
+    ai = [("d", "a", "ai_tool"), ("m", "a", "ai_tool")]
+    if supervised:
+        nodes.append(("g", "Review", B + "slackHitlTool", {}, False))
+        ai = [("d", "g", "ai_tool"), ("m", "g", "ai_tool"), ("g", "a", "ai_tool")]
+    return flow(nodes, links, ai=ai)
+
+
+class HeaderDecoyOnAgents(unittest.TestCase):
+    """A step that seems to check a header never removes an agent's untrusted input: it makes it only possible."""
+
+    def verdict(self, f):
+        import jh_rule2
+        v = jh_rule2.flow_agents(f)[0]
+        return v["verdict"], bool(v["certain"])
+
+    def test_k3_and_k4_survive_the_decoy_as_uncertain(self):
+        self.assertEqual(self.verdict(agent_flow(False)), ("K3", True))
+        self.assertEqual(self.verdict(agent_flow(True)), ("K3", False))
+        self.assertEqual(self.verdict(agent_flow(False, supervised=True)), ("K4", True))
+        self.assertEqual(self.verdict(agent_flow(True, supervised=True)), ("K4", False))
+
+    def test_map_keeps_the_agent_critical_behind_the_decoy(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        nodes = [{"id": "t", "name": "Hook", "type": B + "webhook", "typeVersion": 2, "parameters": {},
+                  "position": [0, 0]},
+                 {"id": "c", "name": "Check", "type": B + "code", "typeVersion": 2, "parameters": {"jsCode": DECOY},
+                  "position": [100, 0]},
+                 {"id": "a", "name": "Agent", "type": L + "agent", "typeVersion": 1.7, "parameters": {},
+                  "position": [200, 0]},
+                 {"id": "d", "name": "Orders", "type": B + "postgresTool", "typeVersion": 2,
+                  "parameters": {"operation": "executeQuery"}, "position": [300, 100]},
+                 {"id": "m", "name": "Mail", "type": B + "sendEmailTool", "typeVersion": 2, "parameters": {},
+                  "position": [300, 200]}]
+        conns = {"Hook": {"main": [[{"node": "Check", "type": "main", "index": 0}]]},
+                 "Check": {"main": [[{"node": "Agent", "type": "main", "index": 0}]]},
+                 "Orders": {"ai_tool": [[{"node": "Agent", "type": "ai_tool", "index": 0}]]},
+                 "Mail": {"ai_tool": [[{"node": "Agent", "type": "ai_tool", "index": 0}]]}}
+        with open(os.path.join(root, "flow.json"), "w") as fh:
+            json.dump({"name": "Helpdesk", "nodes": nodes, "connections": conns}, fh)
+        p = run_cli("map", root, "--json")
+        self.assertIn(p.returncode, (0, 1), p.stderr)
+        a = json.loads(p.stdout)["assessment"]
+        k3 = [(dr["level"], dr["tier"]) for br in a["blast_radius"].values() for dr in br["drivers"]
+              if dr["rule"] == "K3-TRIFECTA"]
+        self.assertEqual(a["exposure"]["class"], "Critical")
+        self.assertIn(("Critical", "inferred"), k3)
+
+
+class DisabledBranches(unittest.TestCase):
+    def test_a_disabled_node_passes_data_on_from_its_first_output_only(self):
+        doc = {"name": "Flow", "nodes": [
+            {"id": "t", "name": "Hook", "type": B + "webhook", "typeVersion": 2, "parameters": {}, "position": [0, 0]},
+            {"id": "i", "name": "Route", "type": B + "if", "typeVersion": 2, "parameters": {}, "position": [100, 0],
+             "disabled": True},
+            {"id": "n", "name": "Nothing", "type": B + "noOp", "typeVersion": 1, "parameters": {}, "position": [200, 0]},
+            {"id": "w", "name": "Write", "type": B + "postgres", "typeVersion": 2.5,
+             "parameters": {"operation": "insert"}, "position": [200, 100]}],
+            "connections": {"Hook": {"main": [[{"node": "Route", "type": "main", "index": 0}]]},
+                            "Route": {"main": [[{"node": "Nothing", "type": "main", "index": 0}],
+                                               [{"node": "Write", "type": "main", "index": 0}]]}}}
+        got = {k: v["level"] for k, v in jh_n8n.entry_levels(jh_n8n.parse("flow.json", json.dumps(doc))[0]).items()}
+        self.assertEqual(got.get("n"), "anyone")         # the first output: what n8n passes on
+        self.assertNotIn("w", got)                       # the second output never runs while the node is disabled
+        self.assertNotIn("i", got)
+
+
 class KeepStrongest(unittest.TestCase):
     def test_order_independent_for_entry_and_rule_of_two(self):
         import jh_map

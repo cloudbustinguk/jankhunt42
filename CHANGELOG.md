@@ -26,6 +26,9 @@ semantic versioning.
   `P-AGT-002` alone treats as review at most. In every profile `P-OWN-001` asks for an owner from High up, so a
   repository with no owner whose class rises to High or Critical moves from pass to review in the standard profile
   too.
+- `JH714`: an open n8n trigger followed by a step that seems to check a header now counts as possible untrusted input
+  (the export cannot show that the step turns anyone away), so such an agent is reported as an uncertain Rule of Two
+  combination instead of not at all.
 - The terminal no longer shows an empty scan in green: "no findings" is shown as a caution with its limit on the same
   line ("not proof of correctness"), as the Markdown output already said.
 - The Agents Rule of Two reads an agent's settings files from the files collected for the map as well as from disk,

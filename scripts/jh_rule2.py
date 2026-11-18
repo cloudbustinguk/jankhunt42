@@ -416,7 +416,7 @@ def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
     import jh_n8n
     out = []
     raw = {n["raw"]["id"]: n["raw"] for n in flow["nodes"]}
-    fed = jh_n8n._fed(flow)
+    fed = jh_n8n._fed(flow, flag_guarded=True)
     ups: Dict[str, List[str]] = {}
     tools_of: Dict[str, List[str]] = {}
     for src, dst, channel in flow["edges"]:
@@ -429,9 +429,11 @@ def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
             continue
         parts = []
         if nid in fed:
-            kind, name = fed[nid]
-            parts.append({"source": "open %s trigger '%s'" % (kind, name), "node": name, "A": YES, "B": "",
-                          "C": "", "supervised": True, "why": "", "what": "anyone with the URL writes its input"})
+            kind, name, guarded = fed[nid]
+            # a later step that seems to check a header proves no rejection: the input stays, as only possible
+            parts.append({"source": "open %s trigger '%s'" % (kind, name), "node": name, "A": POSSIBLE if guarded else YES,
+                          "B": "", "C": "", "supervised": True, "why": "", "label": "guarded-trigger" if guarded else "",
+                          "what": "anyone with the URL writes its input"})
         seen, todo = set(), list(ups.get(nid, ()))
         while todo:
             cur = todo.pop()
@@ -471,7 +473,8 @@ DOUBTS = {"GitHub": "which repositories its token reaches, and whether they are 
           "Filesystem": "whether the folders it is given hold sensitive files",
           "Git": "whether the repository is private",
           "Claude Code shell": "which files and credentials a command can reach",
-          "Resend": "whether the account holds contacts"}
+          "Resend": "whether the account holds contacts",
+          "guarded-trigger": "a later step seems to check a header; the export cannot show that it turns anyone away"}
 _USER_TEXT = ("Supabase", "Neon", "Linear", "Atlassian", "Notion", "Sentry")
 
 

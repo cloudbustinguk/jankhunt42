@@ -220,13 +220,14 @@ def parse(path, text):
             raise ValueError('n8n duplicate workflow identity')
         seen_workflows.add(workflow_key)
         links, edges = [], []
+        main_outputs = {}           # {source id: {target id: [source output indexes]}} for main connections
         for source, outputs in root['connections'].items():
             if source not in names or not isinstance(outputs, dict):
                 raise ValueError('n8n connection source')
             for channel, groups in outputs.items():
                 if not isinstance(groups, list):
                     raise ValueError('n8n connection groups')
-                for group in groups:
+                for out_index, group in enumerate(groups):
                     if group is None:       # an output with nothing connected: n8n's own connection type allows null
                         continue
                     if not isinstance(group, list):
@@ -240,6 +241,10 @@ def parse(path, text):
                             raise ValueError('n8n connection target')
                         links.append((names[source], names[link['node']]))
                         edges.append((names[source], names[link['node']], channel))
+                        if channel == 'main':
+                            outs = main_outputs.setdefault(names[source], {}).setdefault(names[link['node']], [])
+                            if out_index not in outs:
+                                outs.append(out_index)
         context = dict(nodes=sorted([n['definition'] for n in nodes], key=lambda n: n['id']),
                        connections=_normalized(root['connections']), settings=_normalized(root.get('settings', {})),
                        active=root.get('active'), disabled=root.get('disabled'))
@@ -252,6 +257,7 @@ def parse(path, text):
         comparable = all(_normalized(n['raw']['parameters']) == n['raw']['parameters'] for n in nodes)
         comparable = comparable and _normalized(root.get('settings', {})) == root.get('settings', {})
         out.append(dict(key=workflow_key, name=root.get('name', 'workflow'), nodes=nodes, links=links, edges=edges,
+                        main_outputs=main_outputs,
                         active=root.get('active'), settings=root.get('settings', {}),
                         definition=json.dumps(context, sort_keys=True) if comparable else None))
     return out
@@ -515,11 +521,13 @@ def entry_levels(flow):
     main connections and from an AI node to the model, memory and tools plugged into it (as `_fed` does). A node no
     known trigger reaches gets nothing: an unknown entry is not evidence either way."""
     raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    outputs = flow.get('main_outputs') or {}
     nexts = {}
     for src, dst, channel in flow['edges']:
         if channel == 'main' or channel.startswith('ai_'):
             start, then = (src, dst) if channel == 'main' else (dst, src)   # an AI node starts what plugs into it
-            nexts.setdefault(start, []).append((then, channel == 'main'))
+            first = channel == 'main' and 0 in outputs.get(src, {}).get(dst, [0])
+            nexts.setdefault(start, []).append((then, channel == 'main', first))
     out = {}
     for nid in sorted(raw):
         found = _entry_of_trigger(flow, raw[nid])
@@ -536,8 +544,9 @@ def entry_levels(flow):
             have = out.get(cur)
             if not off and (have is None or ENTRY_RANK[level] > ENTRY_RANK[have['level']]):
                 out[cur] = {'level': level, 'trigger': sanitize_text(raw[nid]['name'], 60), 'why': why}
-            # a disabled node does not run: data passes through it, but it starts none of the tools plugged into it
-            todo.extend(then for then, main in nexts.get(cur, ()) if main or not off)
+            # a disabled node does not run: n8n passes its input on from the first output only, and it starts none of
+            # the tools plugged into it
+            todo.extend(then for then, main, first in nexts.get(cur, ()) if (first if off else True))
     return out
 
 
@@ -548,10 +557,11 @@ def _built_by_code(flow, node):
     return before[0]['name'] if before and all(n['type'] in _CODE_NODES for n in before) else None
 
 
-def _fed(flow):
+def _fed(flow, flag_guarded=False):
     """{node id: (kind, trigger name)} for every node an open trigger's data can reach: along main connections, and
     from an AI node to the model, memory and tools plugged into it. A trigger whose first step checks a header is not
-    open here."""
+    open here, unless flag_guarded: then it counts too and the value is (kind, trigger name, guarded), an unguarded
+    trigger winning where both reach a node."""
     raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
     nexts = {}
     for src, dst, channel in flow['edges']:
@@ -563,10 +573,14 @@ def _fed(flow):
     for nid in sorted(raw):
         kind = open_trigger(raw[nid])
         todo = [nid] if kind and not _guard(flow, raw[nid]) else []
+        guarded = False
+        if flag_guarded and kind and not todo:
+            todo, guarded = [nid], True
         while todo:
             cur = todo.pop()
-            if cur not in fed:
-                fed[cur] = (kind, raw[nid]['name'])
+            have = fed.get(cur)
+            if have is None or (flag_guarded and have[2] and not guarded):
+                fed[cur] = (kind, raw[nid]['name'], guarded) if flag_guarded else (kind, raw[nid]['name'])
                 todo.extend(nexts.get(cur, ()))
     return fed
 
