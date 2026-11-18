@@ -145,10 +145,13 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - hidden instructions in agent files;
   - agent skills and commands whose `allowed-tools` pre-approves any shell command;
   - untrusted issue and PR text fed to AI steps in CI.
-- **Mistakes AI-built apps make** (`JH131`-`JH134`, `JH154`, `JH155`):
+- **Mistakes AI-built apps make** (`JH131`-`JH134`, `JH154`, `JH155`, `JH160`-`JH163`):
   - secrets behind `NEXT_PUBLIC_`/`VITE_`-style prefixes;
   - `dangerouslyAllowBrowser` LLM clients;
-  - open Firebase rules, disabled row-level security, and public buckets;
+  - open Firebase rules (Realtime Database test mode included), disabled row-level security, and public buckets;
+  - safety defaults switched off in AI code: `torch.load` with `weights_only=False` (`JH106`) and LangChain's `allow_dangerous_*` options;
+  - Google Apps Script web apps anyone can call without signing in, and scripts that ask for every file in Google Drive;
+  - a LiteLLM proxy left on its default master key, and a GPUStack server before its 2.2.0 authentication fix (`JH434`);
   - Supabase migrations read together as one database: tables served to the API without row-level security, policies that trust `user_metadata`, and views that bypass row-level security or show `auth.users`;
   - invisible Unicode.
 - **ASP.NET Core checks** (`JH135`-`JH143`): data endpoints without visible authorization, credentialed open CORS, developer errors, public HTTP listeners, interpolated SQL, unsafe type deserialization, personal fields sent to AI clients, floating NuGet versions and build downloads. See [the .NET guide](references/dotnet.md). The sandbox restores and builds hash-pinned NuGet packages offline in a separate SDK image.

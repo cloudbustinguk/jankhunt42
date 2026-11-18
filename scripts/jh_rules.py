@@ -90,6 +90,23 @@ RULES: List[Rule] = [
           r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b",
           r"\bdop_v1_[a-f0-9]{64}\b",
           r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b",
+          # service tokens with a fixed shape, from each vendor's documentation or gitleaks' default rules: Sentry
+          # personal and organization tokens, CircleCI personal and project tokens, Doppler tokens, Shippo live
+          # keys, Brevo API keys and Postman API keys. Mailchimp's <32 hex>-us<n> has no prefix of its own and is
+          # masked in evidence (jh_core) but not reported.
+          r"\bsntryu_[a-f0-9]{64}\b",
+          r"\bsntrys_eyJ[A-Za-z0-9+/=]{20,}_[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/])",
+          r"\bCCIP(?:AT|RJ)_[1-9A-HJ-NP-Za-km-z]{16,24}_[0-9a-f]{40}\b",
+          r"\bdp\.(?:pt|ct|sa|scim|audit)\.[A-Za-z0-9]{40,44}\b",
+          r"\bdp\.st\.(?:[a-z0-9_-]{2,35}\.)?[A-Za-z0-9]{40,44}\b",
+          r"\bshippo_live_[a-fA-F0-9]{40}\b",
+          r"\bxkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}\b",
+          r"\bPMAK-[a-fA-F0-9]{24}-[a-fA-F0-9]{34}\b",
+          # a Telegram bot token as Telegram issues them today: the bot id, a colon, AA and 33 more characters (also
+          # after /bot in an API URL). Reported anywhere, with no Telegram name needed nearby; narrower than gitleaks'
+          # shape (5-16 digits, A and 34 characters, next to the word telegram), which jh_core masks but this does not
+          # report: without the AA or that context, the wider shape also matches 35-character runs that are not tokens.
+          r"(?:(?<=/bot)|(?<![\w:/.-]))\d{6,12}:AA[A-Za-z0-9_-]{33}(?![\w-])",
           r"https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}",
           r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
           # a database connection string (appsettings.json, web.config, a DSN in code) with its password inline
@@ -490,6 +507,36 @@ RULES: List[Rule] = [
       "Send only the fields the prompt needs, redact or pseudonymise personal data first (the Guardrails node can), and "
       "use an AI service approved for the data, or a local model.",
       confidence="medium", langs=("json",), check="n8n_ai_personal", tags=("n8n", "citizen", "ai")),
+    # AI apps, Google Apps Script and AI gateways (4.20.0)
+    R("JH160", "LangChain switch lets the model run code, send any request or load a pickle", "major", "security",
+      "A LangChain option that is off by default is turned on (allow_dangerous_code, allow_dangerous_requests or "
+      "allow_dangerous_deserialization). Text the model reads (a question, a document, a web page) can steer what "
+      "it runs or where it sends requests, and a saved index loaded this way runs any code written into it.",
+      "Leave the option off. If the feature needs it, run that tool in a sandbox with no secrets and a network "
+      "allow-list, and load saved indexes only from files this application wrote itself.",
+      confidence="medium", target="code", langs=PY, check="langchain_dangerous", tags=("ai",)),
+    R("JH161", "Apps Script web app open to anyone without signing in", "major", "security",
+      "The Apps Script manifest sets the web app's access to anyone, even without a Google sign-in (ANYONE_ANONYMOUS): "
+      "once it is deployed, anyone who has its URL can call doGet and doPost.",
+      "Deploy to DOMAIN, or ANYONE (signed-in Google users) if outsiders need it, and check what doGet and doPost "
+      "let a caller read, change or send.",
+      confidence="high", langs=("json",), files=("appsscript.json",), check="apps_script_manifest",
+      tags=("appsscript", "citizen")),
+    R("JH162", "Apps Script asks for every file in Google Drive", "minor", "security",
+      "The manifest requests the full Drive scope (https://www.googleapis.com/auth/drive): the script can see, edit "
+      "and delete every file in the Drive of the account it runs as, not only the files it works with.",
+      "Request drive.file (only files the script creates or is given), or a read-only or Sheets-only scope if that "
+      "is all it needs.",
+      confidence="medium", langs=("json",), files=("appsscript.json",), check="apps_script_manifest",
+      tags=("appsscript", "citizen")),
+    R("JH163", "LiteLLM proxy keeps the default master key", "critical", "security",
+      "The LiteLLM master key is set to sk-1234, the value in LiteLLM's own examples. The master key is the proxy's "
+      "administrator credential and signs its sessions, so anyone who can reach the proxy can act as its "
+      "administrator and use every model key it holds; on releases before 1.82.0 that also runs code on it.",
+      "Set a long random master key from a secret store or an environment variable that is not committed, rotate "
+      "the provider keys the proxy holds, and keep the proxy off public networks.",
+      confidence="medium", langs=("env", "yaml", "docker", "shell"), check="litellm_default_key",
+      tags=("ai",)),
     # --------------------------------------------------------------- reliability
     R("JH201", "Empty error handler", "major", "reliability",
       "The handler swallows the error and continues, hiding failures and corrupting state.",
@@ -667,6 +714,22 @@ RULES: List[Rule] = [
       "Updates are proposed the moment a release appears; most malicious releases are caught and pulled within days.",
       "Add cooldown: (for example default-days: 7) to each update entry so new releases age before they are proposed.",
       confidence="medium", check="dependabot_cooldown", kinds=("dependabot",)),
+    R("JH433", "GitHub Actions turns unsafe workflow commands back on", "major", "security",
+      "ACTIONS_ALLOW_UNSECURE_COMMANDS is true, which turns the old set-env and add-path workflow commands back on. "
+      "Any step that prints text it does not control (a pull request title, a downloaded file, a tool's output) "
+      "can then change environment variables and PATH for the later steps of the job (CVE-2020-15228).",
+      "Remove the variable, write to $GITHUB_ENV and $GITHUB_PATH instead, and update any action that still uses "
+      "set-env or add-path.",
+      confidence="high", langs=("yaml",), check="gh_unsecure_commands"),
+    R("JH434", "GPUStack image before the 2.2.0 authentication fix", "critical", "security",
+      "This deploys GPUStack before 2.2.0 (CVE-2026-102895, on CISA's Known Exploited Vulnerabilities list). Those "
+      "releases treat a request that seems to come from the same machine as the administrator, and a same-host "
+      "reverse proxy or a forged X-GPUStack-Real-IP header makes any request seem to: the caller can create "
+      "administrator API keys, read worker and cloud credentials, and run code on the GPU workers.",
+      "Move to GPUStack 2.2.0 or later and recreate the container. Until then set force_auth_localhost to true and "
+      "strip X-GPUStack-Real-IP at the proxy. If the server was reachable, rotate its API keys and the credentials "
+      "it holds.",
+      confidence="high", langs=("docker", "yaml", "shell"), check="gpustack_image"),
 
     # --------------------------------------------------------------------- tests
     R("JH501", "Skipped test", "info", "tests",
