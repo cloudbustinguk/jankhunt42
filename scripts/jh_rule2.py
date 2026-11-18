@@ -433,8 +433,9 @@ def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
         if nid in fed:
             kind, name, guarded = fed[nid]
             # a later step that seems to check a header proves no rejection: the input stays, and the finding says so
-            parts.append({"source": "open %s trigger '%s'%s" % (kind, name, " (a later step seems to check a header, "
-                                                                      "which the export cannot confirm)" if guarded else ""),
+            parts.append({"source": "open %s trigger '%s'%s" % (kind, name, " (a later step may look like a check on who "
+                                                                      "sent it; the export cannot show that it turns anyone "
+                                                                      "away)" if guarded else ""),
                           "node": name, "A": YES, "B": "", "C": "", "supervised": True, "why": "",
                           "what": "anyone with the URL writes its input"})
         seen, todo = set(), list(ups.get(nid, ()))

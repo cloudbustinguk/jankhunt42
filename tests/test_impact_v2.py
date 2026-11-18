@@ -320,7 +320,7 @@ class HeaderDecoyOnAgents(unittest.TestCase):
                 with self.subTest(supervised=supervised, decoy=decoy):
                     self.assertEqual(self.verdict(agent_flow(decoy, supervised)), (want, True))
         said = jh_rule2.sources(jh_rule2.flow_agents(agent_flow(True))[0], "A")
-        self.assertIn("seems to check a header", said)
+        self.assertIn("the export cannot show that it turns anyone away", said)
 
     def run_map(self, supervised):
         root = tempfile.mkdtemp()

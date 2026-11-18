@@ -501,8 +501,9 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     elif r2:
         cap = acts["P-AGT-002"] if ACTION_RANK[acts["P-AGT-002"]] < ACTION_RANK["review"] else "review"
         add("P-AGT-002", _outcome_for(cap),
-            "%d agent(s) hold untrusted input, sensitive data and a way to act; every acting step asks a person "
-            "first: %s" % (len(r2), shown), ["finding:%s:%s:%s" % (r["rule"], r["path"], r["line"]) for r in r2])
+            "%d agent(s) can read text anyone can write, reach private data and act on it; every acting step asks a "
+            "person first, and that approval is all that stands between a prompt injection and the data: %s"
+            % (len(r2), shown), ["finding:%s:%s:%s" % (r["rule"], r["path"], r["line"]) for r in r2])
     else:
         add("P-AGT-002", "pass", "no agent holds untrusted input, sensitive data and a way to act together")
     # P-AI-001: co-reachability, not a data flow; it asks for the provider's
