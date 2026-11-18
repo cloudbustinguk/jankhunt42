@@ -71,7 +71,7 @@ Sample A found the rules that misfired in 2.6.1: `JH102`, `JH103`, `JH108`,
 - **Interval width.** 48 majors give a wide interval.
 - **Clustering.** Findings cluster by repository: one repository can supply
   many findings, so the intervals understate the real uncertainty.
-- **Agent labels.** They are consistent, but they are one reviewer's
+- **AI labels.** They are consistent, but they are one reviewer's
   judgement. Each label carries a one-line reason, so a human can audit it.
 - **Population.** Public, mostly AI-assisted repositories are not your
   repository. Enterprise code with mature practices will see fewer findings
