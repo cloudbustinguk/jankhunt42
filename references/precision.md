@@ -26,13 +26,12 @@ Each finding is labelled from the flagged line and the code around it:
 - NOISE is reported separately and never folded into the false-positive rate.
   A NOISE label that a later review overturns to FP counts as a leak.
 
-**Who labels.** The labels are agent labels (the maintainer agent), not human
-judgement.
-- A second model labelled sample A as a cross-check. It agreed on 57% of
+**Who labels.** The labels come from a frontier AI model, not human judgement.
+- A second AI model labelled sample A as a cross-check. It agreed on 57% of
   items (Cohen's kappa 0.31), and its labels were rejected: it scored 13 of 22
   on a gold set fixed before its labels were seen, and it called most NOISE a
   true lead.
-- Disagreements were settled by the maintainer agent.
+- Disagreements were settled by the first model.
 
 **Two samples, two purposes:**
 - **A — stratified by rule (96 findings, 34 rules).** For finding rules that
