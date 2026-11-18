@@ -478,6 +478,66 @@ def _guard(flow, trigger):
     return starts[0]['name'] if starts and all(checks(n) for n in starts) else None
 
 
+# Who can start a workflow, least to most open (jankhunt.impact.v2's entry ladder).
+ENTRY_LEVELS = ('schedule', 'internal', 'signed-in', 'anyone')
+ENTRY_RANK = {level: i for i, level in enumerate(ENTRY_LEVELS)}
+_SCHEDULE_TRIGGERS = {'scheduleTrigger', 'cron', 'interval'}
+_INTERNAL_TRIGGERS = {'executeWorkflowTrigger', 'errorTrigger', 'manualTrigger', 'n8nTrigger', 'workflowTrigger'}
+_MAIL_TRIGGERS = {'emailReadImap', 'gmailTrigger', 'microsoftOutlookTrigger', 'telegramTrigger'}
+
+
+def _entry_of_trigger(flow, node):
+    """(level, why) for an enabled trigger node, else None. Anyone: an open webhook, form or public chat (no
+    authentication, no IP allowlist, no header check first), or mail and Telegram triggers, whose messages anyone can
+    send. Signed-in: the same triggers with authentication, an allowlist or a header check. Internal: started by
+    n8n itself or an editor. Schedule: a timer."""
+    if node.get('disabled') is True:
+        return None
+    short = _short(node) or ''
+    if short in ('webhook', 'formTrigger', 'chatTrigger'):
+        if short == 'chatTrigger' and node['parameters'].get('public') is not True:
+            return 'internal', "the chat is the editor's only (not public)"
+        if open_trigger(node) and not _guard(flow, node):
+            return 'anyone', 'no authentication'
+        return 'signed-in', 'authentication, an IP allowlist or a header check'
+    if short in _MAIL_TRIGGERS:
+        return 'anyone', 'messages anyone can send'
+    if short in _SCHEDULE_TRIGGERS:
+        return 'schedule', 'a timer'
+    if short in _INTERNAL_TRIGGERS:
+        return 'internal', 'started by n8n or an editor'
+    return None
+
+
+def entry_levels(flow):
+    """{node id: {'level', 'trigger', 'why'}}: for every node, the most open trigger that can start it, followed along
+    main connections and from an AI node to the model, memory and tools plugged into it (as `_fed` does). A node no
+    known trigger reaches gets nothing: an unknown entry is not evidence either way."""
+    raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    nexts = {}
+    for src, dst, channel in flow['edges']:
+        if channel == 'main' or channel.startswith('ai_'):
+            start, then = (src, dst) if channel == 'main' else (dst, src)   # an AI node starts what plugs into it
+            nexts.setdefault(start, []).append(then)
+    out = {}
+    for nid in sorted(raw):
+        found = _entry_of_trigger(flow, raw[nid])
+        if not found:
+            continue
+        level, why = found
+        todo, seen = [nid], set()
+        while todo:
+            cur = todo.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            have = out.get(cur)
+            if have is None or ENTRY_RANK[level] > ENTRY_RANK[have['level']]:
+                out[cur] = {'level': level, 'trigger': sanitize_text(raw[nid]['name'], 60), 'why': why}
+            todo.extend(nexts.get(cur, ()))
+    return out
+
+
 def _built_by_code(flow, node):
     """The Code node that writes this node's input, when every connection into it comes from one, else None."""
     raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}

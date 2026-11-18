@@ -25,7 +25,7 @@ from collections import deque
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 MAP_SCHEMA = "jankhunt.map.v1"
-EXPOSURE_MODEL = "jankhunt.exposure.v1"
+EXPOSURE_MODEL = "jankhunt.exposure.v2"
 
 NODE_KINDS = ("application", "workload", "identity", "database", "api", "storage",
               "queue", "external", "unknown")
@@ -785,6 +785,9 @@ def _crit_top(node: Dict[str, Any]) -> bool:
     return node.get("criticality") == "critical" or node.get("sensitivity") == "restricted"
 
 
+ENTRY_TIER = {"declared": 2, "observed": 2, "provider-verified": 3, "inferred": 1}
+
+
 def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
                        edges_by_id: Dict[str, Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
     """Return (class, drivers) for one principal's blast radius.
@@ -793,6 +796,13 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
     criticality, and reach, so adding evidence or authority can never lower
     the class. Unknown sensitivity or capability is never treated as safe:
     it lands in Moderate, not Low.
+
+    jankhunt.exposure.v2 adds toxic combinations beside the v1 conditions,
+    each the minimum of its ingredients' tiers, firing above unknown:
+    K1 open destruction and K2 open sensitive read (anyone can start the
+    principal: its `entry` attribute), K3 and K4 the Agents Rule of Two (its
+    `rule_of_two` attribute, from jh_rule2). v1's conditions stay drivers, so
+    the class never falls below v1's.
     """
     drivers: List[Dict[str, Any]] = []
     level = 1
@@ -851,6 +861,50 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
                 and info["tier"] == 3 and (last.get("data_sensitivity") in ("confidential", "restricted")):
             bump(4, "X-CRIT-EGRESS", nid, info, "confidentiality",
                  "verified export of sensitive data to an external destination")
+    # jankhunt.exposure.v2: toxic combinations on this principal
+    attrs = nodes.get(br["principal"], {}).get("attributes") or {}
+
+    def combo(new_level: int, rule: str, nid: str, tier: int, impact: str, why: str, path: List[str],
+              ingredients: List[Dict[str, Any]]) -> None:
+        nonlocal level
+        drivers.append({"level": EXPOSURE_CLASSES[new_level], "rule": rule, "node": nid, "impact": impact,
+                        "tier": TIER_NAMES[tier], "path": list(path), "why": why, "ingredients": ingredients})
+        level = max(level, new_level)
+
+    entry = attrs.get("entry") if isinstance(attrs.get("entry"), dict) else {}
+    if entry.get("level") == "anyone":
+        e_tier = ENTRY_TIER.get(entry.get("verification", "inferred"), 1)
+        e_part = {"name": "entry", "value": "anyone", "tier": TIER_NAMES[e_tier],
+                  "via": sanitize_text(str(entry.get("trigger", "")), 60)}
+        for impact in ("integrity", "availability"):
+            for nid, info in imp[impact].items():
+                node = nodes[nid]
+                t = min(e_tier, info["tier"])
+                if node["kind"] != "identity" and t > 0 and (_crit_high(node) or _sens_high(node)):
+                    combo(4, "K1-OPEN-DESTRUCTION", nid, t, impact,
+                          "anyone can start it, and it can change or delete a production, critical or sensitive asset",
+                          info["path"], [e_part, {"name": "authority", "tier": TIER_NAMES[info["tier"]]}])
+        for nid, info in imp["confidentiality"].items():
+            node = nodes[nid]
+            t = min(e_tier, info["tier"])
+            if node["kind"] != "identity" and t > 0 and _sens_high(node):
+                combo(3, "K2-OPEN-READ", nid, t, "confidentiality",
+                      "anyone can start it, and it can read confidential or restricted data",
+                      info["path"], [e_part, {"name": "read", "tier": TIER_NAMES[info["tier"]]}])
+    r2 = attrs.get("rule_of_two") if isinstance(attrs.get("rule_of_two"), dict) else {}
+    if r2.get("verdict") == "K3" or (r2.get("verdict") == "K4" and r2.get("certain")):
+        t = 2 if r2.get("certain") else 1
+        parts = [{"name": k, "sources": sanitize_text(str(r2.get(k, "")), 200)}
+                 for k in ("untrusted_input", "sensitive_data", "acts")]
+        if r2["verdict"] == "K3":
+            combo(4, "K3-TRIFECTA", br["principal"], t, "confidentiality",
+                  "an AI agent with untrusted input, sensitive data and a way to act, with nothing approving the "
+                  "step that acts", [], parts + [{"name": "unsupervised", "sources": "; ".join(
+                      sanitize_text(str(u), 160) for u in r2.get("unapproved", [])[:3])}])
+        else:
+            combo(3, "K4-TRIFECTA-SUPERVISED", br["principal"], t, "confidentiality",
+                  "an AI agent with untrusted input, sensitive data and a way to act; every acting step asks a person",
+                  [], parts)
     drivers.sort(key=lambda d: (-EXPOSURE_RANK[d["level"]], d["rule"], d["node"]))
     return EXPOSURE_CLASSES[level], drivers
 

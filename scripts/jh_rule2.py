@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import jh_agent
 
@@ -166,24 +166,40 @@ def _approved(names: Sequence[str], server: str, bare: bool) -> Optional[str]:
     return None
 
 
-def _json(path: str, root: str) -> Any:
-    """A JSON(C) file inside root (symlinks resolved), else None."""
-    real, top = os.path.realpath(path), os.path.realpath(root)
-    if not (real.startswith(top.rstrip(os.sep) + os.sep) and os.path.isfile(real)):
+# Reads a file by its path relative to the agent's project folder; None when absent or unreadable.
+Reader = Callable[[str], Optional[str]]
+
+
+def fs_reader(project: str) -> Reader:
+    """A Reader over the disk: files inside the project folder only (symlinks resolved), at most 256 KiB."""
+    def read(rel: str) -> Optional[str]:
+        real, top = os.path.realpath(os.path.join(project, rel)), os.path.realpath(project)
+        if not (real.startswith(top.rstrip(os.sep) + os.sep) and os.path.isfile(real)):
+            return None
+        try:
+            with open(real, encoding="utf-8", errors="replace") as fh:
+                return fh.read(262144)
+        except OSError:
+            return None
+    return read
+
+
+def _doc(read: Optional[Reader], rel: str) -> Any:
+    text = read(rel) if read else None
+    if text is None:
         return None
     try:
-        with open(real, encoding="utf-8", errors="replace") as fh:
-            return jh_agent.loads_jsonc(fh.read(262144))
-    except (OSError, ValueError, RecursionError):
+        return jh_agent.loads_jsonc(text)
+    except (ValueError, RecursionError):
         return None
 
 
-def claude_settings(project: str) -> Dict[str, Any]:
+def claude_settings(read: Optional[Reader]) -> Dict[str, Any]:
     """Claude Code's project settings (.claude/settings.json, then settings.local.json): whether permissions are
     bypassed, what is pre-approved, which project servers are switched off, and the first file read."""
     out: Dict[str, Any] = {"bypass": False, "allow": [], "deny": [], "disabled": [], "file": "", "line": 1}
-    for name in ("settings.json", "settings.local.json") if project else ():
-        doc = _json(os.path.join(project, ".claude", name), project)
+    for name in ("settings.json", "settings.local.json"):
+        doc = _doc(read, ".claude/" + name)
         if not isinstance(doc, dict):
             continue
         out["file"] = out["file"] or ".claude/" + name
@@ -196,17 +212,17 @@ def claude_settings(project: str) -> Dict[str, Any]:
     return out
 
 
-def vscode_auto_approve(project: str) -> bool:
-    doc = _json(os.path.join(project, ".vscode", "settings.json"), project)
+def vscode_auto_approve(read: Optional[Reader]) -> bool:
+    doc = _doc(read, ".vscode/settings.json")
     return isinstance(doc, dict) and any(doc.get(k) is True for k in ("chat.tools.autoApprove",
                                                                      "chat.tools.global.autoApprove"))
 
 
-def cursor_cli(project: str) -> Dict[str, List[Tuple[str, str]]]:
+def cursor_cli(read: Optional[Reader]) -> Dict[str, List[Tuple[str, str]]]:
     """The Cursor CLI's project permissions (.cursor/cli.json): the (server, tool) pairs of its Mcp(server:tool)
     allow and deny entries; '*' stands for any."""
     out: Dict[str, List[Tuple[str, str]]] = {"allow": [], "deny": []}
-    doc = _json(os.path.join(project, ".cursor", "cli.json"), project) if project else None
+    doc = _doc(read, ".cursor/cli.json")
     perms = doc.get("permissions") if isinstance(doc, dict) and isinstance(doc.get("permissions"), dict) else {}
     for key in out:
         for entry in perms.get(key) if isinstance(perms.get(key), list) else []:
@@ -255,24 +271,30 @@ def assess(parts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
-def _project_of(abspath: str) -> str:
-    folder = os.path.dirname(abspath)
-    return os.path.dirname(folder) if os.path.basename(folder) in (".vscode", ".cursor", ".claude", ".roo",
-                                                                    ".kilocode", ".codex", ".gemini") else folder
+_CLIENT_DIRS = (".vscode", ".cursor", ".claude", ".roo", ".kilocode", ".codex", ".gemini")
 
 
-def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
-    """The agent an MCP client configuration file defines, with the Claude Code or VS Code settings beside it;
-    None when the file defines no enabled server."""
+def project_of(path: str, sep: str = os.sep) -> str:
+    """The project folder of an MCP configuration: its folder, or the parent of a client folder (.vscode/mcp.json)."""
+    folder = path.rsplit(sep, 1)[0] if sep in path else ""
+    return (folder.rsplit(sep, 1)[0] if sep in folder else "") if folder.rsplit(sep, 1)[-1] in _CLIENT_DIRS \
+        else folder
+
+
+def mcp_agent(rel: str, text: str, abspath: Optional[str] = None,
+              read: Optional[Reader] = None) -> Optional[Dict[str, Any]]:
+    """The agent an MCP client configuration file defines, with the Claude Code or VS Code settings beside it
+    (through `read`, or from the disk beside `abspath`); None when the file defines no enabled server."""
     try:
         servers = [s for s in jh_agent.mcp_servers(rel, text) if not s.disabled]
         raw = jh_agent.loads_jsonc(text) if not rel.lower().endswith(".toml") else {}
     except (ValueError, RecursionError):
         return None
     posix = rel.replace(os.sep, "/").lower()
-    project = _project_of(abspath)
-    claude = claude_settings(project if os.path.basename(posix) == ".mcp.json" else "")
-    cursor = cursor_cli(project if posix.endswith(".cursor/mcp.json") else "")
+    if read is None and abspath:
+        read = fs_reader(project_of(abspath) or os.sep)
+    claude = claude_settings(read if os.path.basename(posix) == ".mcp.json" else None)
+    cursor = cursor_cli(read if posix.endswith(".cursor/mcp.json") else None)
     # Claude Code applies deny rules even when permissions are bypassed
     servers = [s for s in servers if s.name not in claude["disabled"]
                and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])
@@ -285,7 +307,7 @@ def mcp_agent(rel: str, text: str, abspath: str) -> Optional[Dict[str, Any]]:
             if isinstance(raw.get(key), dict):
                 container = raw[key]
                 break
-    everything = claude["bypass"] or (posix.endswith(".vscode/mcp.json") and vscode_auto_approve(project)) \
+    everything = claude["bypass"] or (posix.endswith(".vscode/mcp.json") and vscode_auto_approve(read)) \
         or (posix.endswith(".toml") and re.search(r'(?m)^\s*approval_policy\s*=\s*"never"', text) is not None)
     parts, unknown = [], []
     for s in servers:
@@ -383,58 +405,63 @@ def n8n_tool(node: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
 
 
 def n8n_agents(sf: Any) -> List[Dict[str, Any]]:
-    """Every enabled LangChain AI Agent node in a workflow export, assessed. A tool that reaches the agent through
+    """Every enabled LangChain AI Agent node in a workflow export, assessed (see flow_agents)."""
+    import jh_n8n
+    return [v for flow in jh_n8n.flows(sf) for v in flow_agents(flow)]
+
+
+def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every enabled LangChain AI Agent node in one parsed workflow, assessed. A tool that reaches the agent through
     a human review node (n8n's <service>HitlTool) is supervised; any other tool runs as the model decides."""
     import jh_n8n
     out = []
-    for flow in jh_n8n.flows(sf):
-        raw = {n["raw"]["id"]: n["raw"] for n in flow["nodes"]}
-        fed = jh_n8n._fed(flow)
-        ups: Dict[str, List[str]] = {}
-        tools_of: Dict[str, List[str]] = {}
-        for src, dst, channel in flow["edges"]:
-            if channel == "main":
-                ups.setdefault(dst, []).append(src)
-            elif channel == "ai_tool":
-                tools_of.setdefault(dst, []).append(src)
-        for nid, node in sorted(raw.items()):
-            if node.get("type") != "@n8n/n8n-nodes-langchain.agent" or node.get("disabled") is True:
+    raw = {n["raw"]["id"]: n["raw"] for n in flow["nodes"]}
+    fed = jh_n8n._fed(flow)
+    ups: Dict[str, List[str]] = {}
+    tools_of: Dict[str, List[str]] = {}
+    for src, dst, channel in flow["edges"]:
+        if channel == "main":
+            ups.setdefault(dst, []).append(src)
+        elif channel == "ai_tool":
+            tools_of.setdefault(dst, []).append(src)
+    for nid, node in sorted(raw.items()):
+        if node.get("type") != "@n8n/n8n-nodes-langchain.agent" or node.get("disabled") is True:
+            continue
+        parts = []
+        if nid in fed:
+            kind, name = fed[nid]
+            parts.append({"source": "open %s trigger '%s'" % (kind, name), "node": name, "A": YES, "B": "",
+                          "C": "", "supervised": True, "why": "", "what": "anyone with the URL writes its input"})
+        seen, todo = set(), list(ups.get(nid, ()))
+        while todo:
+            cur = todo.pop()
+            if cur in seen or cur not in raw:
                 continue
-            parts = []
-            if nid in fed:
-                kind, name = fed[nid]
-                parts.append({"source": "open %s trigger '%s'" % (kind, name), "node": name, "A": YES, "B": "",
-                              "C": "", "supervised": True, "why": "", "what": "anyone with the URL writes its input"})
-            seen, todo = set(), list(ups.get(nid, ()))
-            while todo:
-                cur = todo.pop()
-                if cur in seen or cur not in raw:
+            seen.add(cur)
+            short = jh_n8n._short(raw[cur]) or ""
+            if short in _UNTRUSTED_TRIGGERS and raw[cur].get("disabled") is not True:
+                parts.append({"source": "%s trigger '%s'" % (_UNTRUSTED_TRIGGERS[short], raw[cur]["name"]),
+                              "node": raw[cur]["name"], "A": YES, "B": "", "C": "", "supervised": True,
+                              "why": "", "what": "messages anyone can send become its input"})
+            todo.extend(ups.get(cur, ()))
+        for src in sorted(set(tools_of.get(nid, ()))):
+            if src not in raw or raw[src].get("disabled") is True:
+                continue
+            gate = str(raw[src].get("type", "")).endswith("HitlTool")
+            for tid in (sorted(set(tools_of.get(src, ()))) if gate else [src]):
+                if tid not in raw or raw[tid].get("disabled") is True:
                     continue
-                seen.add(cur)
-                short = jh_n8n._short(raw[cur]) or ""
-                if short in _UNTRUSTED_TRIGGERS and raw[cur].get("disabled") is not True:
-                    parts.append({"source": "%s trigger '%s'" % (_UNTRUSTED_TRIGGERS[short], raw[cur]["name"]),
-                                  "node": raw[cur]["name"], "A": YES, "B": "", "C": "", "supervised": True,
-                                  "why": "", "what": "messages anyone can send become its input"})
-                todo.extend(ups.get(cur, ()))
-            for src in sorted(set(tools_of.get(nid, ()))):
-                if src not in raw or raw[src].get("disabled") is True:
+                cap = n8n_tool(raw[tid])
+                if cap is None:
                     continue
-                gate = str(raw[src].get("type", "")).endswith("HitlTool")
-                for tid in (sorted(set(tools_of.get(src, ()))) if gate else [src]):
-                    if tid not in raw or raw[tid].get("disabled") is True:
-                        continue
-                    cap = n8n_tool(raw[tid])
-                    if cap is None:
-                        continue
-                    label, a, b, c = cap
-                    parts.append({"source": "%s tool '%s'" % (label, raw[tid]["name"]), "label": "n8n " + label,
-                                  "node": raw[tid]["name"],
-                                  "A": a, "B": b, "C": c, "supervised": gate, "what": "",
-                                  "why": "" if gate else "n8n runs an agent's tools without asking"})
-            verdict = assess(parts)
-            verdict.update(agent=node["name"], unknown=[], raw=node)
-            out.append(verdict)
+                label, a, b, c = cap
+                parts.append({"source": "%s tool '%s'" % (label, raw[tid]["name"]), "label": "n8n " + label,
+                              "node": raw[tid]["name"],
+                              "A": a, "B": b, "C": c, "supervised": gate, "what": "",
+                              "why": "" if gate else "n8n runs an agent's tools without asking"})
+        verdict = assess(parts)
+        verdict.update(agent=node["name"], unknown=[], raw=node)
+        out.append(verdict)
     return out
 
 
