@@ -4,6 +4,28 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.20.0] — unreleased
+
+### Added
+
+- **Exposure v2: toxic combinations raise the exposure class** (`jankhunt.exposure.v2`). Beside the v1 conditions,
+  each principal can now reach a level through a combination on that one principal, as strong as its weakest
+  ingredient: `K1-OPEN-DESTRUCTION` (anyone can start it and it can change a production, critical or sensitive asset,
+  Critical), `K2-OPEN-READ` (anyone can start it and it can read confidential or restricted data, High),
+  `K3-TRIFECTA` and `K4-TRIFECTA-SUPERVISED` (an AI agent's Agents Rule of Two verdict, Critical and High). The map
+  records who can start each n8n node (`entry`: an open webhook, form or public chat and mail or Telegram triggers are
+  anyone; authentication, an IP allowlist or a header check first is signed-in) and each agent's Rule of Two verdict,
+  so `map` and `passport` show the same class. The class never falls below v1's and stays monotone; an asset whose
+  sensitivity, criticality and environment are not known never completes a combination.
+
+### Changed
+
+- In the citizen profile (`max_exposure` Moderate), `P-EXP-001` now blocks an agent with a certain supervised Rule of
+  Two combination (K4), which `P-AGT-002` alone treats as review at most. The standard profile sets no exposure
+  maximum, so its decisions do not change.
+- The Agents Rule of Two reads an agent's settings files from the files collected for the map as well as from disk,
+  so the map can judge agents in a Git snapshot too.
+
 ## [4.19.0] — 2026-11-17
 
 ### Added

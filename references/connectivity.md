@@ -127,9 +127,24 @@ separate axis from the numeric Jank Score and from the passport decision.
 | Low | only local assets reached, or nothing reached with coverage (`0 observed`, not "none possible") |
 | Unknown | no supported files were inspected |
 
-Every condition is upward-closed, so adding authority, sensitivity,
-criticality, evidence strength, or reach can never lower the class (tested
-exhaustively). The breadth indicator
+Since 4.20.0 the model is `jankhunt.exposure.v2`: toxic combinations on one
+principal raise the class beside those conditions, each as strong as its
+weakest ingredient and firing only above unknown (details in
+[impact-model.md](impact-model.md)):
+
+| Combination | When | Class |
+|---|---|---|
+| `K1-OPEN-DESTRUCTION` | anyone can start the principal (an open n8n webhook, form or public chat, or a mail or Telegram trigger) and it can write, delete or administer a production, high- or critical-criticality, confidential or restricted asset | Critical |
+| `K2-OPEN-READ` | anyone can start it and it can read confidential or restricted data | High |
+| `K3-TRIFECTA` | an AI agent (MCP configuration or n8n AI Agent node) holds untrusted input, sensitive data and a way to act, with nothing approving the step that acts (`JH714` K3) | Critical |
+| `K4-TRIFECTA-SUPERVISED` | the same with every acting step approved, when certain (`JH714` K4) | High |
+
+Each map node records what feeds these: `entry` (level, trigger, why) on n8n
+nodes, and `rule_of_two` (verdict, certainty, the parts behind each property)
+on agents. Every condition is upward-closed, so adding authority, sensitivity,
+criticality, evidence strength, reach, or a more open entry can never lower
+the class (tested exhaustively), and the class is never below v1's. The
+breadth indicator
 $`1 + 0.5 \cdot \left(1 - e^{-(n-1)/4}\right)`$ over distinct trust domains is
 shown for context only; it saturates at 1.5 and never blocks or lowers
 anything. These are explainable heuristics, not calibrated probabilities of
