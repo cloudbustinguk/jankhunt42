@@ -417,11 +417,13 @@ def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
     out = []
     raw = {n["raw"]["id"]: n["raw"] for n in flow["nodes"]}
     fed = jh_n8n._fed(flow, flag_guarded=True)
+    outputs = flow.get("main_outputs") or {}
     ups: Dict[str, List[str]] = {}
     tools_of: Dict[str, List[str]] = {}
     for src, dst, channel in flow["edges"]:
         if channel == "main":
-            ups.setdefault(dst, []).append(src)
+            if jh_n8n.passes(raw, outputs, src, dst):
+                ups.setdefault(dst, []).append(src)
         elif channel == "ai_tool":
             tools_of.setdefault(dst, []).append(src)
     for nid, node in sorted(raw.items()):
@@ -430,9 +432,10 @@ def flow_agents(flow: Dict[str, Any]) -> List[Dict[str, Any]]:
         parts = []
         if nid in fed:
             kind, name, guarded = fed[nid]
-            # a later step that seems to check a header proves no rejection: the input stays, as only possible
-            parts.append({"source": "open %s trigger '%s'" % (kind, name), "node": name, "A": POSSIBLE if guarded else YES,
-                          "B": "", "C": "", "supervised": True, "why": "", "label": "guarded-trigger" if guarded else "",
+            # a later step that seems to check a header proves no rejection: the input stays, and the finding says so
+            parts.append({"source": "open %s trigger '%s'%s" % (kind, name, " (a later step seems to check a header, "
+                                                                      "which the export cannot confirm)" if guarded else ""),
+                          "node": name, "A": YES, "B": "", "C": "", "supervised": True, "why": "",
                           "what": "anyone with the URL writes its input"})
         seen, todo = set(), list(ups.get(nid, ()))
         while todo:
@@ -473,8 +476,7 @@ DOUBTS = {"GitHub": "which repositories its token reaches, and whether they are 
           "Filesystem": "whether the folders it is given hold sensitive files",
           "Git": "whether the repository is private",
           "Claude Code shell": "which files and credentials a command can reach",
-          "Resend": "whether the account holds contacts",
-          "guarded-trigger": "a later step seems to check a header; the export cannot show that it turns anyone away"}
+          "Resend": "whether the account holds contacts"}
 _USER_TEXT = ("Supabase", "Neon", "Linear", "Atlassian", "Notion", "Sentry")
 
 
