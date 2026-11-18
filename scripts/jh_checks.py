@@ -1095,6 +1095,50 @@ _TF_PUBLIC_RES = (
 )
 
 
+_RTDB_TEST_MODE_RE = re.compile(r"""["']\.(read|write)["']\s*:\s*["']\s*now\s*<\s*(\d{10,16})\s*["']""")
+
+
+def _blank_json_comments(text: str) -> str:
+    """text with // and /* */ comments outside strings replaced by spaces (newlines kept), so offsets and line
+    numbers stay the same."""
+    out = list(text)
+    i, n, quote = 0, len(text), ""
+    while i < n:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif text.startswith("//", i):
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            for k in range(i, end):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = end
+            continue
+        i += 1
+    return "".join(out)
+
+
+def _epoch_ms_date(ms: str) -> str:
+    """A rule's millisecond timestamp as a UTC date, or the number itself when it is not a date."""
+    import datetime
+    try:
+        return datetime.datetime.fromtimestamp(int(ms) / 1000, tz=datetime.timezone.utc).strftime("%Y-%m-%d (UTC)")
+    except (OverflowError, OSError, ValueError):
+        return "the time %s in the rules" % ms
+
+
 @check("public_data_store")
 def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
     base = sf.basename.lower()
@@ -1123,7 +1167,20 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
             if m:
                 out.append(make_finding(rule, sf, i + 1, severity="major" if m.group(1) == "read" else None, message=(
                     "Realtime Database rules let anyone %s this path." % m.group(1))))
-        return out[:10]
+        # the rules the console writes for a database created in test mode: open to everyone until a date. Read over
+        # the whole file with // and /* */ comments blanked, so a rule spread over lines counts and a commented one
+        # does not; emulator and test copies are left out, as for Firestore and Storage rules.
+        if not (is_test_path(sf.rel) or ".test." in base or "emulator" in sf.rel.lower()):
+            text = _blank_json_comments(sf.text)
+            by_line: Dict[int, List[Tuple[str, str]]] = {}
+            for t in _RTDB_TEST_MODE_RE.finditer(text):
+                by_line.setdefault(text.count("\n", 0, t.start()) + 1, []).append((t.group(1), _epoch_ms_date(t.group(2))))
+            for line_no, opens in sorted(by_line.items()):       # one finding per line names every operation on it
+                out.append(make_finding(rule, sf, line_no, severity="major", message=(
+                    "Realtime Database test-mode rules let anyone %s this path, signed in or not, %s." % (
+                        " and ".join(op for op, _ in opens),
+                        " and ".join("until %s" % d for d in dict.fromkeys(d for _, d in opens))))))
+        return sorted(out, key=lambda f: f.line)[:10]
     if sf.lang == "sql":
         import jh_supabase
         text = "\n".join(sf.nocomment)
@@ -3017,6 +3074,85 @@ def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
             break
         if len(out) >= 5:
             break
+    if lang == "python":
+        out = (out + _torch_unsafe_load(sf, rule, {f.line for f in out}))[:5]     # the native deserializers first
+    return out
+
+
+_TORCH_LOAD_RE = re.compile(r"\btorch\.load\s*\(")
+# the line reader's fallback: the keyword set to the literal, ending at a comma or the closing parenthesis
+_WEIGHTS_ONLY_OFF_RE = re.compile(r"\bweights_only\s*=\s*False\s*(?=[,)])")
+
+
+def _python_tree(sf: SourceFile) -> Optional[ast.AST]:
+    """The file's syntax tree, or None when this Python cannot parse it (Python 2, a newer syntax, a template)."""
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return ast.parse(sf.text.lstrip("\ufeff"))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+
+
+def _constant_keyword(call: ast.Call, names: Sequence[str], value: bool) -> Optional[ast.keyword]:
+    """The call's own keyword argument named in names whose value is exactly the constant True or False; a nested
+    call's keywords, a variable or an expression (False or True) do not count."""
+    for kw in call.keywords:
+        if kw.arg in names and isinstance(kw.value, ast.Constant) and kw.value.value is value:
+            return kw
+    return None
+
+
+def _call_text(code: Sequence[str], i: int, open_col: int, max_lines: int = 8) -> str:
+    """The code of a call from its opening parenthesis (line i, column open_col) to the matching one, over at most
+    max_lines lines; strings and comments are already blanked in the code view."""
+    parts, depth = [], 0
+    for k in range(i, min(i + max_lines, len(code))):
+        seg = code[k][open_col:] if k == i else code[k]
+        for pos, ch in enumerate(seg):
+            depth += 1 if ch == "(" else -1 if ch == ")" else 0
+            if depth == 0:
+                parts.append(seg[:pos + 1])
+                return "\n".join(parts)
+        parts.append(seg)
+    return "\n".join(parts)
+
+
+def _torch_unsafe_load(sf: SourceFile, rule: Rule, taken: Set[int]) -> List[Finding]:
+    """JH106: torch.load(..., weights_only=False). PyTorch's default since 2.6 is the safe loader, which reads
+    tensors and plain values only; weights_only=False turns it off on purpose, and the checkpoint is unpickled.
+    Read from the syntax tree: each torch.load call's own weights_only keyword set to the constant False. A file
+    that does not parse is read line by line, at low confidence."""
+    if "weights_only" not in sf.text:
+        return []
+    hits: List[Tuple[int, int]] = []
+    tree = _python_tree(sf)
+    if tree is not None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "load" \
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "torch" \
+                    and _constant_keyword(node, ("weights_only",), False):
+                hits.append((node.lineno, node.col_offset + 1))
+    else:
+        for i, line in enumerate(sf.code):
+            for m in _TORCH_LOAD_RE.finditer(line):
+                if _WEIGHTS_ONLY_OFF_RE.search(_call_text(sf.code, i, m.end() - 1)):
+                    hits.append((i + 1, m.start() + 1))
+    test = "test" in sf.kinds or is_test_path(sf.rel)
+    out: List[Finding] = []
+    for line_no, col in sorted(set(hits)):
+        if line_no in taken or any(f.line == line_no for f in out):
+            continue
+        message = ("torch.load is called with weights_only=False, which turns PyTorch's safe loader off: the file is "
+                   "unpickled, so whoever made the checkpoint, or can change it, runs code here when it loads.")
+        if test:
+            message += " It is in test code, where it usually loads a file the test made itself."
+        confidence = "low" if test or tree is None else "medium"
+        out.append(make_finding(rule, sf, line_no, column=col, severity="minor" if test else "major",
+                                confidence=confidence, message=message))
+        if len(out) >= 5:
+            break
     return out
 
 
@@ -3167,6 +3303,284 @@ def dangerous_capability(sf: SourceFile, rule: Rule) -> List[Finding]:
         if section and (indent < section[0] or (indent == section[0] and not line.lstrip().startswith("- "))):
             section = None
         if section and section[1] == "add" and re.match(r"(?i)^\s*-\s*['\"]?(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)['\"]?\s*$", line):
+            out.append(make_finding(rule, sf, i + 1))
+        if len(out) >= 5:
+            break
+    return out
+
+
+# --------------------------------------------------------------------------- AI apps, Apps Script, AI gateways, CI
+
+# the line reader's fallback: the option set to the literal True, ending at a comma or the closing parenthesis
+_LANGCHAIN_FLAG_RE = re.compile(r"\ballow_dangerous_(code|requests|deserialization)\s*=\s*True\s*(?=[,)])")
+_LANGCHAIN_OPTIONS = ("allow_dangerous_code", "allow_dangerous_requests", "allow_dangerous_deserialization")
+_LANGCHAIN_WHAT = {
+    "code": ("allow_dangerous_code=True lets the model write Python that this program then runs. Text the model reads "
+             "(a question, a document, a table cell) can steer that code, and it runs with this program's files, keys "
+             "and network."),
+    "requests": ("allow_dangerous_requests=True lets the model send GET, POST, PUT, PATCH and DELETE requests to any "
+                 "address it chooses, internal services included. Text the model reads can choose the address and "
+                 "what is sent."),
+    "deserialization": ("allow_dangerous_deserialization=True loads a saved index with pickle: whoever can write or "
+                        "replace that file runs code here when it loads."),
+}
+
+
+@check("langchain_dangerous")
+def langchain_dangerous(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH160: a LangChain allow_dangerous_* option set to the constant True, read from the syntax tree (each call's
+    own keyword; a nested call, a variable or an expression does not count). A file that does not parse is read
+    line by line, at low confidence."""
+    if "allow_dangerous_" not in sf.text:
+        return []
+    hits: List[Tuple[int, int, str]] = []
+    tree = _python_tree(sf)
+    if tree is not None:
+        for node in ast.walk(tree):
+            kw = _constant_keyword(node, _LANGCHAIN_OPTIONS, True) if isinstance(node, ast.Call) else None
+            if kw:
+                hits.append((getattr(kw, "lineno", kw.value.lineno), getattr(kw, "col_offset", 0) + 1,
+                             kw.arg[len("allow_dangerous_"):]))
+    else:
+        for i, line in enumerate(sf.code):
+            for m in _LANGCHAIN_FLAG_RE.finditer(line):
+                hits.append((i + 1, m.start() + 1, m.group(1)))
+    test = "test" in sf.kinds or is_test_path(sf.rel)
+    out: List[Finding] = []
+    for line_no, col, what in sorted(set(hits)):
+        if any(f.line == line_no for f in out):
+            continue
+        message = _LANGCHAIN_WHAT[what] + (" It is in test code, where the input is usually the test's own."
+                                           if test else "")
+        out.append(make_finding(rule, sf, line_no, column=col, severity="minor" if test else None,
+                                confidence="low" if test or tree is None else None, message=message))
+        if len(out) >= 5:
+            break
+    return out
+
+
+_DRIVE_ALL = "https://www.googleapis.com/auth/drive"
+
+
+@check("apps_script_manifest")
+def apps_script_manifest(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH161: an Apps Script manifest (appsscript.json) whose web app takes anonymous requests (webapp.access
+    ANYONE_ANONYMOUS). JH162: one that requests the full Drive scope in oauthScopes."""
+    data = _settings(sf)
+    if data is None:
+        return []
+    if rule.id == "JH161":
+        web = data.get("webapp")
+        if not isinstance(web, dict) or web.get("access") != "ANYONE_ANONYMOUS":
+            return []
+        if web.get("executeAs") == "USER_DEPLOYING":
+            message = ("The manifest sets the web app's access to anyone, even without a Google sign-in "
+                       "(ANYONE_ANONYMOUS), and runs it as the account that deploys it (USER_DEPLOYING): once it is "
+                       "deployed, every caller uses that account's Gmail, Drive and Sheets access, as far as the "
+                       "script's scopes reach.")
+        else:
+            message = None
+        return [make_finding(rule, sf, _line_matching(sf, r'"access"\s*:\s*"ANYONE_ANONYMOUS"'), message=message)]
+    scopes = data.get("oauthScopes")
+    if isinstance(scopes, list) and any(isinstance(s, str) and s.strip() == _DRIVE_ALL for s in scopes):
+        return [make_finding(rule, sf, _line_matching(sf, r'"%s/?"' % re.escape(_DRIVE_ALL)))]
+    return []
+
+
+# ------------------------------------------------- YAML keys and values, as a YAML reader decodes them
+
+_YAML_KEY_RE = re.compile(r"""^(\s*)(-\s+)?("[^"]*"|'[^']*'|[^\s#'"\-][^:#]*?|-[^\s:#][^:#]*?)\s*:(?:\s+(.*?))?\s*$""")
+_BLOCK_SCALAR_RE = re.compile(r"[|>]([-+]?)[0-9]?([-+]?)")
+
+
+def _yaml_scalar(raw: str) -> str:
+    """A one-line YAML scalar as a reader decodes it: quotes removed (escapes in double quotes read), a plain
+    value cut at a comment."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        import json
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw[1:-1]
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1].replace("''", "'")
+    return re.split(r"\s+#", raw, 1)[0].strip()
+
+
+def _yaml_entries(sf: SourceFile) -> Iterator[Tuple[int, str, str, Optional[str], Optional[str]]]:
+    """(line, key, decoded value, parent key, sibling name) for each `key: value` line of a YAML file. A block
+    scalar (| or >, with its chomping indicator) is joined from the lines below it; the parent is the nearest less
+    indented key, and the sibling name is the `name:` of the same list item (Kubernetes env entries)."""
+    lines = sf.raw
+    stack: List[Tuple[int, str]] = []
+    item_name: Dict[int, str] = {}              # indent of a list item's keys -> its name: value
+    i = 0
+    while i < len(lines):
+        m = _YAML_KEY_RE.match(lines[i])
+        if not m or lines[i].lstrip().startswith("#"):
+            i += 1
+            continue
+        indent = len(m.group(1)) + (len(m.group(2)) if m.group(2) else 0)
+        key = m.group(3).strip()
+        if key[:1] in "\"'" and key[-1:] == key[:1]:
+            key = key[1:-1]
+        raw = m.group(4) or ""
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        parent = stack[-1][1] if stack else None
+        if m.group(2):
+            item_name.pop(indent, None)
+        line_no = i + 1
+        block = _BLOCK_SCALAR_RE.fullmatch(raw.strip())
+        if block:
+            body: List[str] = []
+            j = i + 1
+            while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > indent):
+                body.append(lines[j])
+                j += 1
+            width = min((len(l) - len(l.lstrip()) for l in body if l.strip()), default=0)
+            body = [l[width:] for l in body]
+            while body and not body[-1].strip():
+                body.pop()
+            text = (" ".join(l.strip() for l in body if l.strip()) if raw.strip().startswith(">")
+                    else "\n".join(body))
+            chomp = block.group(1) or block.group(2)
+            value = text if chomp == "-" else text + "\n"
+            i = j
+        else:
+            value = _yaml_scalar(raw)
+            i += 1
+        if key == "name":
+            item_name[indent] = value
+        stack.append((indent, key))
+        yield line_no, key, value, parent, item_name.get(indent)
+
+
+def _command_assignments(line: str) -> List[str]:
+    """NAME=value words that a shell, env file or Dockerfile ENV line assigns (after export, env, ENV or as the
+    first words of a command), with quotes read as the shell reads them."""
+    import shlex
+    try:
+        words = shlex.split(line, comments=True)
+    except ValueError:
+        return []
+    out = []
+    for k, word in enumerate(words):
+        if "=" in word and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", word) and \
+                all(w in ("export", "env", "ENV", "readonly", "declare", "-x") or "=" in w for w in words[:k]):
+            out.append(word)
+    if len(words) == 3 and words[0] == "ENV" and "=" not in words[1]:
+        out.append("%s=%s" % (words[1], words[2]))         # Dockerfile's older ENV NAME value
+    return out
+
+
+_LITELLM_DEFAULT = "sk-1234"
+_EXAMPLE_PATH_RE = re.compile(r"(?i)(?:^|/)(?:examples?|samples?|demos?|docs?|cookbooks?|tutorials?)/|"
+                              r"[._-](?:example|sample|template|dist)(?:\.[\w]+)?$")
+
+
+def _litellm_default_lines(sf: SourceFile) -> List[int]:
+    """Lines that set LiteLLM's master key to exactly sk-1234: master_key under general_settings in the proxy
+    config, or the LITELLM_MASTER_KEY variable (a Compose or Kubernetes environment entry, an env file, a shell
+    export, a Dockerfile ENV). Keys are case-sensitive and the whole decoded value must be the default."""
+    out: List[int] = []
+    if sf.lang == "yaml":
+        for line_no, key, value, parent, sibling in _yaml_entries(sf):
+            if value == _LITELLM_DEFAULT and ((key == "master_key" and parent == "general_settings")
+                                              or key == "LITELLM_MASTER_KEY"
+                                              or (key == "value" and sibling == "LITELLM_MASTER_KEY")):
+                out.append(line_no)
+        for i, line in enumerate(sf.raw):
+            item = re.match(r"""^\s*-\s+(.+?)\s*(?:#.*)?$""", line)
+            if item and _yaml_scalar(item.group(1)) == "LITELLM_MASTER_KEY=" + _LITELLM_DEFAULT:
+                out.append(i + 1)
+    else:
+        for i, line in enumerate(sf.raw):
+            if "LITELLM_MASTER_KEY" in line and "LITELLM_MASTER_KEY=" + _LITELLM_DEFAULT in _command_assignments(line):
+                out.append(i + 1)
+    return sorted(set(out))
+
+
+@check("litellm_default_key")
+def litellm_default_key(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH163: the LiteLLM master key set to sk-1234. In an example, a template or test data it is a note."""
+    if _LITELLM_DEFAULT not in sf.text:
+        return []
+    lines = _litellm_default_lines(sf)
+    if not lines:
+        return []
+    if "test" in sf.kinds or is_test_path(sf.rel) or _EXAMPLE_PATH_RE.search(sf.rel):
+        return [make_finding(rule, sf, lines[0], severity="minor", confidence="low", message=(
+            rule.message + " This file is an example, a template or test data; anything deployed from it as it is "
+                           "has this key."))]
+    return [make_finding(rule, sf, lines[0])]
+
+
+def _try_parse_true(value: str) -> bool:
+    """What the Actions runner's bool.TryParse reads as true: the word true in any case, white space around it
+    allowed; ${{ true }} becomes the string true before the runner reads it."""
+    value = value.strip()
+    return value.lower() == "true" or bool(re.fullmatch(r"(?i)\$\{\{\s*true\s*\}\}", value))
+
+
+_GITHUB_ENV_WRITE_RE = re.compile(
+    r"""ACTIONS_ALLOW_UNSECURE_COMMANDS=\s*(?i:true)(?=["']|\s*(?:>>|\|)|\s*$)[^\n]*?"""
+    r"""(?:>>|\|\s*(?:tee\s+-a|Out-File|Add-Content))[^\n]*?GITHUB_ENV|"""
+    r"""(?:Add-Content|Out-File|Set-Content)\b[^\n]*?GITHUB_ENV[^\n]*?ACTIONS_ALLOW_UNSECURE_COMMANDS=\s*(?i:true)["']""")
+
+
+@check("gh_unsecure_commands")
+def gh_unsecure_commands(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH433: ACTIONS_ALLOW_UNSECURE_COMMANDS set to a value the runner reads as true (bool.TryParse on the whole
+    value), as an entry of an env mapping (workflow, job, step, composite action) or written to $GITHUB_ENV. A line
+    that only prints or mentions it does not count."""
+    if "github_actions" not in sf.kinds and sf.basename.lower() not in ("action.yml", "action.yaml"):
+        return []
+    if "ACTIONS_ALLOW_UNSECURE_COMMANDS" not in sf.text:
+        return []
+    lines = {line_no for line_no, key, value, parent, _ in _yaml_entries(sf)
+             if key == "ACTIONS_ALLOW_UNSECURE_COMMANDS" and parent == "env" and _try_parse_true(value)}
+    lines |= {i + 1 for i, line in enumerate(sf.nocomment) if _GITHUB_ENV_WRITE_RE.search(line)}
+    return [make_finding(rule, sf, n) for n in sorted(lines)[:5]]
+
+
+# the server image only; a registry or mirror may come before it. Every release before 2.2 is affected; 2.2.0rcN and
+# v2.2-dev builds are not reported, because which of them carry the fix is not stated.
+_GPUSTACK_REF_RE = re.compile(r"^(?:[\w.-]+(?::\d+)?/)*gpustack/gpustack:v?(\d+)\.(\d+)(?![\d])")
+_IMAGE_FIELD_RE = re.compile(r"""^\s*(?:-\s+)?image\s*:\s*(.+?)\s*$""")
+_FROM_RE = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)", re.IGNORECASE)
+_CONTAINER_CMD_RE = re.compile(r"\b(?:docker|podman)\s+(?:container\s+|image\s+)?(?:run|pull|create)\b")
+
+
+def _gpustack_old(ref: str) -> bool:
+    m = _GPUSTACK_REF_RE.match(ref.strip())
+    return bool(m) and (int(m.group(1)), int(m.group(2))) < (2, 2)
+
+
+@check("gpustack_image")
+def gpustack_image(sf: SourceFile, rule: Rule) -> List[Finding]:
+    """JH434: a GPUStack server image before 2.2 (CVE-2026-102895, GHSA-gj9m-f8ph-pmhr: affected < 2.2.0) that is
+    deployed: a Compose or Kubernetes image field, a Dockerfile FROM, or the image of a docker or podman run, pull
+    or create command (continued lines included). Other strings that merely mention the image do not count."""
+    if "gpustack/gpustack:" not in sf.text:
+        return []
+    out: List[Finding] = []
+    command = False                                 # inside a docker run continued with a trailing backslash
+    for i, line in enumerate(sf.nocomment):
+        refs: List[str] = []
+        if sf.lang == "docker":
+            m = _FROM_RE.match(line)
+            refs += [m.group(1)] if m else []
+        if sf.lang == "yaml":
+            m = _IMAGE_FIELD_RE.match(line)
+            refs += [_yaml_scalar(m.group(1))] if m else []
+        start = _CONTAINER_CMD_RE.search(line)
+        if start or command:
+            rest = line[start.end():] if start else line
+            refs += [w.strip("\"'") for w in rest.split()]
+            command = line.rstrip().endswith("\\")
+        if any(_gpustack_old(r) for r in refs):
             out.append(make_finding(rule, sf, i + 1))
         if len(out) >= 5:
             break

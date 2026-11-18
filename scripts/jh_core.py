@@ -905,6 +905,15 @@ _TOKEN_RES = [
     re.compile(r"\bSG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{30,}\b"),
     re.compile(r"\bdop_v1_[a-f0-9]{64}\b"),
     re.compile(r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b"),
+    # Sentry, CircleCI, Doppler, Shippo, Brevo, Postman, Telegram and Mailchimp (JH101's formats, a little wider)
+    re.compile(r"\bsntry[usai]_[A-Za-z0-9+/=_]{40,}"),
+    re.compile(r"\bCCIP(?:AT|RJ)_[A-Za-z0-9]{12,}_[0-9a-f]{20,}"),
+    re.compile(r"\bdp\.(?:pt|ct|st|sa|said|scim|audit)\.[\w.-]{30,}"),
+    re.compile(r"\bshippo_(?:live|test)_[a-fA-F0-9]{30,}"),
+    re.compile(r"\bx(?:keysib|smtpsib)-[a-f0-9]{40,}-[A-Za-z0-9]{8,}"),
+    re.compile(r"\bPMAK-[a-fA-F0-9]{16,}-[a-fA-F0-9]{20,}"),
+    re.compile(r"(?:(?<=/bot)|(?<![\w:/.-]))\d{5,16}:A[A-Za-z0-9_-]{30,}"),     # any Telegram-shaped token
+    re.compile(r"(?<![\w-])[0-9a-f]{32}-us\d{1,2}\b"),
     re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"),
     # any JWT: a service-role key is a credential, and an anon key gains nothing from being shown
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),

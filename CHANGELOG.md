@@ -19,6 +19,47 @@ semantic versioning.
   so `map` and `passport` show the same class. The class never falls below v1's and stays monotone; an asset whose
   sensitivity, criticality and environment are not known never completes a combination.
 
+- **AI code that switches a safety default off.** `JH106` reports `torch.load(..., weights_only=False)`: PyTorch's
+  loader has read only tensors and plain values by default since 2.6, and `False` unpickles the checkpoint, so
+  whoever made the file, or can change it, runs code when it loads (major; minor in tests). `JH160` reports
+  LangChain's `allow_dangerous_code`, `allow_dangerous_requests` and `allow_dangerous_deserialization` set to
+  `True`: the model runs Python it writes, sends requests to any address it chooses, or a saved index is unpickled.
+  Both read Python's syntax tree: each call's own keyword set to the constant, not a nested call, a variable or an
+  expression. A file that does not parse is read line by line, at low confidence.
+- **Firebase Realtime Database test mode** (`JH134`): the rules the Firebase console writes for a database created
+  in test mode, `".read": "now < <milliseconds>"`, which let anyone read or write until that date (major; the
+  message gives the date and names every operation on the line). The rules are read over the whole file with `//`
+  and `/* */` comments left out, so a rule spread over lines counts and a commented one does not. Emulator and test
+  copies are left out, as for Firestore and Storage rules.
+- **Google Apps Script manifests** (`appsscript.json`): a web app whose access is set to anyone, even without a
+  Google sign-in (`JH161`, major; the message says when it runs as the account that deploys it), and the full Drive
+  scope, which can see, edit and delete every file in the Drive (`JH162`, minor). A manifest shows the
+  configuration, not that a deployment exists.
+- **LiteLLM's default master key** (`JH163`, critical): `master_key` under `general_settings` in the proxy config,
+  or the `LITELLM_MASTER_KEY` variable (a Compose or Kubernetes environment entry, an env file, a shell export, a
+  Dockerfile `ENV`), whose whole value is `sk-1234`, the value in LiteLLM's own examples. Keys are case-sensitive,
+  quoted and block values are read, and a longer value is not the default. The master key is the proxy's
+  administrator credential. In an example, a template or test data it is minor.
+- **`ACTIONS_ALLOW_UNSECURE_COMMANDS` set to true** in GitHub Actions (`JH433`, major): an entry of a workflow, job,
+  step or composite action `env` mapping, or a write to `$GITHUB_ENV`, whose whole value the runner reads as true
+  (`true` in any case with white space around it, a block scalar holding it, or `${{ true }}`). It turns the
+  `set-env` and `add-path` workflow commands back on, so any step that prints text it does not control can change
+  environment variables and `PATH` for the steps after it (CVE-2020-15228). A step that only prints the name does
+  not count.
+- **GPUStack before 2.2.0** (`JH434`, critical): a server image tag before 2.2 that is deployed (a Compose or
+  Kubernetes `image:`, a Dockerfile `FROM`, or the image of a `docker` or `podman` `run`, `pull` or `create`
+  command), for CVE-2026-102895, an authentication bypass on CISA's Known Exploited Vulnerabilities list. Other
+  strings that mention the image do not count. `2.2.0rc` and `v2.2-dev` builds are not reported, because which of
+  them carry the fix is not stated.
+- **Seven more token formats in `JH101`**, from each vendor's documentation or gitleaks' default rules, and masked
+  in every report like the others: Sentry (`sntryu_`, `sntrys_`), CircleCI (`CCIPAT_`, `CCIPRJ_`), Doppler
+  (`dp.pt.`, `dp.st.`, `dp.ct.`, `dp.sa.`, `dp.scim.`, `dp.audit.`), Shippo live keys, Brevo (`xkeysib-`), Postman
+  (`PMAK-`), and Telegram bot tokens as Telegram issues them today (`<bot id>:AA` and 33 characters, also inside an
+  `api.telegram.org/bot` URL), reported anywhere without a Telegram name nearby. That shape is narrower than
+  gitleaks' (5-16 digits, `A` and 34 characters, next to the word telegram); a value in the wider shape is masked
+  but not reported. Shippo test-mode keys are not reported, as Stripe's are not. Mailchimp keys
+  (`<32 hex>-us<n>`, no prefix of their own) are masked but not reported.
+
 ### Changed
 
 - Decisions can change where a combination raises the class. In the citizen profile (`max_exposure` Moderate),

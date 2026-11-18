@@ -191,6 +191,9 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
     "JH152": _CONFIG, "JH153": ("CD-SEC-04", "ASI01", "ASI02"),
     # n8n
     "JH156": _AUTHN, "JH157": ("CD-SEC-08", "ASI05"), "JH158": ("CD-SEC-08", "ASI02"), "JH159": _DATA,
+    # AI apps, Google Apps Script and AI gateways
+    "JH160": ("CD-SEC-08", "ASI02", "ASI05"), "JH161": ("CD-SEC-02", "CD-SEC-05"), "JH162": ("CD-SEC-03",),
+    "JH163": ("CD-SEC-05", "CD-SEC-07"),
     # errors that disappear
     "JH201": ("CD-SEC-10",), "JH217": ("CD-SEC-10",), "JH204": _CONFIG,
     # containers, Kubernetes, CI and dependencies
@@ -200,6 +203,7 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
     "JH419": _INJECTION, "JH420": ("CD-SEC-03",), "JH421": _COMPONENTS, "JH422": _COMPONENTS, "JH423": _COMPONENTS,
     "JH424": _COMPONENTS, "JH425": _CONFIG, "JH426": _COMPONENTS, "JH427": _DATA, "JH428": ("CD-SEC-03",),
     "JH429": _COMPONENTS, "JH430": _COMPONENTS, "JH431": _COMPONENTS, "JH432": ("CD-SEC-03", "ASI03"),
+    "JH433": _INJECTION, "JH434": _COMPONENTS,
     # tests that prove nothing: trusting what was generated without checking it
     "JH501": ("CD-SEC-01",), "JH502": ("CD-SEC-01",), "JH504": ("CD-SEC-01",), "JH505": ("CD-SEC-01",),
     # AI agents
