@@ -488,18 +488,19 @@ _MAIL_TRIGGERS = {'emailReadImap', 'gmailTrigger', 'microsoftOutlookTrigger', 't
 
 def _entry_of_trigger(flow, node):
     """(level, why) for an enabled trigger node, else None. Anyone: an open webhook, form or public chat (no
-    authentication, no IP allowlist, no header check first), or mail and Telegram triggers, whose messages anyone can
-    send. Signed-in: the same triggers with authentication, an allowlist or a header check. Internal: started by
-    n8n itself or an editor. Schedule: a timer."""
+    authentication, no IP allowlist), or mail and Telegram triggers, whose messages anyone can send. Signed-in: the
+    same triggers with authentication or an allowlist. Internal: started by n8n itself or an editor. Schedule: a timer.
+    Entry is lowered only by what the trigger itself declares: a later step that seems to check a header proves no
+    rejection, so it never lowers entry."""
     if node.get('disabled') is True:
         return None
     short = _short(node) or ''
     if short in ('webhook', 'formTrigger', 'chatTrigger'):
         if short == 'chatTrigger' and node['parameters'].get('public') is not True:
             return 'internal', "the chat is the editor's only (not public)"
-        if open_trigger(node) and not _guard(flow, node):
+        if open_trigger(node):
             return 'anyone', 'no authentication'
-        return 'signed-in', 'authentication, an IP allowlist or a header check'
+        return 'signed-in', 'authentication or an IP allowlist'
     if short in _MAIL_TRIGGERS:
         return 'anyone', 'messages anyone can send'
     if short in _SCHEDULE_TRIGGERS:
@@ -518,7 +519,7 @@ def entry_levels(flow):
     for src, dst, channel in flow['edges']:
         if channel == 'main' or channel.startswith('ai_'):
             start, then = (src, dst) if channel == 'main' else (dst, src)   # an AI node starts what plugs into it
-            nexts.setdefault(start, []).append(then)
+            nexts.setdefault(start, []).append((then, channel == 'main'))
     out = {}
     for nid in sorted(raw):
         found = _entry_of_trigger(flow, raw[nid])
@@ -528,13 +529,15 @@ def entry_levels(flow):
         todo, seen = [nid], set()
         while todo:
             cur = todo.pop()
-            if cur in seen:
+            if cur in seen or cur not in raw:
                 continue
             seen.add(cur)
+            off = raw[cur].get('disabled') is True
             have = out.get(cur)
-            if have is None or ENTRY_RANK[level] > ENTRY_RANK[have['level']]:
+            if not off and (have is None or ENTRY_RANK[level] > ENTRY_RANK[have['level']]):
                 out[cur] = {'level': level, 'trigger': sanitize_text(raw[nid]['name'], 60), 'why': why}
-            todo.extend(nexts.get(cur, ()))
+            # a disabled node does not run: data passes through it, but it starts none of the tools plugged into it
+            todo.extend(then for then, main in nexts.get(cur, ()) if main or not off)
     return out
 
 

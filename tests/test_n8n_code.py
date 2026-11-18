@@ -188,7 +188,7 @@ class EmbeddedCode(unittest.TestCase):
         frozen = patch.object(jh_explorer, 'VERSION', '3.6.1')
         frozen.start()
         self.addCleanup(frozen.stop)
-        # the exposure model id is frozen too: 4.17.0 renamed it (jankhunt.exposure.v2) without changing this output
+        # the exposure model id is frozen too: 4.20.0 renamed it (jankhunt.exposure.v2) without changing this output
         with patch.object(M, 'VERSION', '3.6.1'), patch.object(G, 'EXPOSURE_MODEL', 'jankhunt.exposure.v1'):
             r = M.build_report(M.Collected(items=items, considered=len(items)), '/nonexistent', 'invented-app',
                                'fixture', None, None, None, False, 'inventory.json')

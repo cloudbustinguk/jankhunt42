@@ -785,7 +785,7 @@ def _crit_top(node: Dict[str, Any]) -> bool:
     return node.get("criticality") == "critical" or node.get("sensitivity") == "restricted"
 
 
-ENTRY_TIER = {"declared": 2, "observed": 2, "provider-verified": 3, "inferred": 1}
+ENTRY_TIER = {"declared": 2, "observed": 2, "provider-verified": 3, "inferred": 1}   # unknown, refuted: 0
 
 
 def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
@@ -873,7 +873,7 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
 
     entry = attrs.get("entry") if isinstance(attrs.get("entry"), dict) else {}
     if entry.get("level") == "anyone":
-        e_tier = ENTRY_TIER.get(entry.get("verification", "inferred"), 1)
+        e_tier = ENTRY_TIER.get(entry.get("verification"), 0)
         e_part = {"name": "entry", "value": "anyone", "tier": TIER_NAMES[e_tier],
                   "via": sanitize_text(str(entry.get("trigger", "")), 60)}
         for impact in ("integrity", "availability"):
@@ -1200,6 +1200,13 @@ def pseudonymize(report: Dict[str, Any]) -> Dict[str, Any]:
     labels = {n["id"]: n["display_label"] for n in rep["graph"]["nodes"]}
     for r in (rep.get("assessment", {}).get("credential_blast_radius") or {}).get("identities", []):
         r["label"] = labels.get(r["identity"], r["identity"])
+    for br in (rep.get("assessment", {}).get("blast_radius") or {}).values():
+        for d in br.get("drivers", []) if isinstance(br, dict) else []:
+            for part in d.get("ingredients") or []:
+                # a combination's ingredients name triggers, servers and tools: topology, not for sharing
+                for key in ("via", "sources"):
+                    if key in part:
+                        part[key] = "withheld from the shareable copy"
     rep["scope"]["redaction"] = "share"
     rep["scope"]["root"] = "."
     rep["scope"]["name"] = "application"

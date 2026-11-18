@@ -75,7 +75,7 @@ and a strong area never offsets a weak one. Defaults below are for the
 | Rule | Triggers | Default outcome |
 |---|---|---|
 | `P-COV-001` (hard floor) | no files scanned; no supported files mapped; map coverage `partial`; analysis truncated | insufficient-evidence |
-| `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`) | review (insufficient-evidence when required) |
+| `P-OWN-001` | owner unknown and exposure ≥ High (or `require.owner`); since 4.20.0 the class includes the K1-K4 combinations | review (insufficient-evidence when required) |
 | `P-CUS-001` | `require.custodian` and no custodian named in the operator policy (a `passport.custodians` declaration is recorded but does not count) | pass unless required; then block |
 | `P-DAT-001` | `exports` of sensitive data to an external destination | review; **block** (hard floor) when provider-verified |
 | `P-DAT-002` | write/delete/admin, or unknown capability, over a production, high/critical, or restricted asset | review; configurable to block for provider-verified authority, and for static leads only with `static_leads: block` |

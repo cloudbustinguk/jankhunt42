@@ -1,4 +1,4 @@
-"""jankhunt.exposure.v2 (4.17.0): toxic combinations beside the v1 conditions. K1 open destruction and K2 open
+"""jankhunt.exposure.v2 (4.20.0): toxic combinations beside the v1 conditions. K1 open destruction and K2 open
 sensitive read (anyone can start the principal), K3 and K4 the Agents Rule of Two. Each is the minimum of its
 ingredients' tiers; v1's conditions stay drivers. Invented projects and hosts only."""
 import itertools
@@ -72,11 +72,28 @@ class EntryLadder(unittest.TestCase):
                          [("t", "w")])
                 self.assertEqual(self.levels(f), {"t": want, "w": want})
 
-    def test_header_check_first_is_not_anyone(self):
-        f = flow([("t", "T", B + "webhook", {}, False),
-                  ("c", "Check", B + "code", {"jsCode": "if ($json.headers['x-sig'] !== secret) throw new Error('no')"},
-                   False), ("w", "Write", B + "postgres", {"operation": "insert"}, False)], [("t", "c"), ("c", "w")])
-        self.assertEqual(self.levels(f)["w"], "signed-in")
+    def test_a_later_step_never_lowers_entry(self):
+        """Only the trigger's own declaration lowers entry: a step that seems to check a header proves no
+        rejection (a comment, a no-op, or a branch whose both outputs go on)."""
+        for code in ("if ($json.headers['x-sig'] !== secret) throw new Error('no')",
+                     "// headers throw\nreturn $input.all();"):
+            with self.subTest(code=code):
+                f = flow([("t", "T", B + "webhook", {}, False), ("c", "Check", B + "code", {"jsCode": code}, False),
+                          ("w", "Write", B + "postgres", {"operation": "insert"}, False)], [("t", "c"), ("c", "w")])
+                self.assertEqual(self.levels(f)["w"], "anyone")
+
+    def test_disabled_nodes_get_no_entry_but_pass_it_on(self):
+        f = flow([("t", "T", B + "webhook", {}, False), ("off", "Off", B + "postgres", {"operation": "insert"}, True),
+                  ("w", "Write", B + "postgres", {"operation": "insert"}, False)], [("t", "off"), ("off", "w")])
+        got = self.levels(f)
+        self.assertNotIn("off", got)                     # a disabled node does not run
+        self.assertEqual(got["w"], "anyone")             # n8n passes data through it
+
+    def test_a_disabled_agent_starts_no_tools(self):
+        f = flow([("t", "Chat", L + "chatTrigger", {"public": True}, False), ("a", "Agent", L + "agent", {}, True),
+                  ("d", "Orders", B + "postgresTool", {"operation": "executeQuery"}, False)],
+                 [("t", "a")], ai=[("d", "a", "ai_tool")])
+        self.assertEqual(self.levels(f), {"t": "anyone"})
 
     def test_most_open_trigger_wins_and_disabled_triggers_do_not_count(self):
         f = flow([("s", "Nightly", B + "scheduleTrigger", {}, False), ("t", "Open", B + "webhook", {}, False),
@@ -108,6 +125,15 @@ class Combinations(unittest.TestCase):
             with self.subTest(entry=entry):
                 r = assess([principal(entry), node("db", sensitivity="restricted")],
                            [edge("e", "p", "db", "writes", "write", "declared")])
+                self.assertEqual(r["exposure"]["class"], "High")
+                self.assertNotIn("K1-OPEN-DESTRUCTION", [d[1] for d in drivers(r)])
+
+    def test_entry_of_unknown_or_refuted_evidence_never_fires(self):
+        for verification in ("unknown", "refuted", None):
+            with self.subTest(verification=verification):
+                p = principal("anyone")
+                p["attributes"]["entry"]["verification"] = verification
+                r = assess([p, node("db", sensitivity="restricted")], [edge("e", "p", "db", "writes", "write", "declared")])
                 self.assertEqual(r["exposure"]["class"], "High")
                 self.assertNotIn("K1-OPEN-DESTRUCTION", [d[1] for d in drivers(r)])
 
@@ -236,6 +262,75 @@ class Map(unittest.TestCase):
         self.assertIn(p.returncode, (0, 1), p.stderr)
         rules = {r["rule"]: r for r in json.loads(p.stdout)["assessment"]["decision"]["rules"]}
         self.assertEqual(rules["P-EXP-001"]["outcome"], "block")
+
+    def test_standard_passport_asks_for_an_owner_at_high_exposure(self):
+        """The standard profile sets no exposure maximum, but P-OWN-001 asks for an owner from High up, so a
+        combination that raises the class can change a standard decision too (documented in the changelog)."""
+        p = run_cli("passport", self.root, "--json")
+        self.assertIn(p.returncode, (0, 1), p.stderr)
+        rules = {r["rule"]: r for r in json.loads(p.stdout)["assessment"]["decision"]["rules"]}
+        self.assertEqual(rules["P-OWN-001"]["outcome"], "review")
+
+    def test_shareable_map_withholds_combination_ingredients(self):
+        p = run_cli("map", self.root, "--json", "--redact")
+        self.assertIn(p.returncode, (0, 1), p.stderr)
+        d = json.loads(p.stdout)
+        parts = [i for br in d["assessment"]["blast_radius"].values() for dr in br["drivers"]
+                 for i in dr.get("ingredients") or []]
+        self.assertTrue(parts)
+        for i in parts:
+            for key in ("via", "sources"):
+                if key in i:
+                    self.assertEqual(i[key], "withheld from the shareable copy")
+        self.assertNotIn("Intake", p.stdout)                 # the trigger's name
+        self.assertNotIn("Fetch server 'web'", p.stdout)     # the agent's parts, as the ingredients name them
+
+
+class KeepStrongest(unittest.TestCase):
+    def test_order_independent_for_entry_and_rule_of_two(self):
+        import jh_map
+        cases = [("entry", jh_map._entry_rank, [{"level": lv} for lv in ("schedule", "internal", "signed-in", "anyone")]),
+                 ("rule_of_two", jh_map._rule_of_two_rank,
+                  [{"verdict": "K4", "certain": False}, {"verdict": "K4", "certain": True},
+                   {"verdict": "K3", "certain": False}, {"verdict": "K3", "certain": True}])]
+        for key, rank, weakest_first in cases:
+            for order in itertools.permutations(weakest_first):
+                with self.subTest(key=key, order=order):
+                    attrs = {}
+                    for value in order:
+                        jh_map.keep_strongest(attrs, key, value, rank)
+                    self.assertEqual(attrs[key], weakest_first[-1])
+
+
+class DuplicateExports(unittest.TestCase):
+    """Two exports of one workflow: the strongest evidence counts, whatever the file names."""
+
+    def export(self, link_from):
+        doc = json.loads(json.dumps(FLOW))
+        doc["id"] = "same-workflow"
+        doc["nodes"].append({"id": "3", "name": "Nightly", "type": B + "scheduleTrigger", "typeVersion": 1.2,
+                             "parameters": {}, "position": [0, 200]})
+        doc["connections"] = {link_from: {"main": [[{"node": "Write ledger", "type": "main", "index": 0}]]}}
+        return json.dumps(doc)
+
+    def run_map(self, names):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        files = {names[0]: self.export("Intake"), names[1]: self.export("Nightly"),
+                 ".jankhunt42.json": json.dumps({"passport": {"assets": [
+                     {"match": "postgresql", "sensitivity": "restricted", "criticality": "critical"}]}})}
+        for rel, text in files.items():
+            with open(os.path.join(root, rel), "w") as fh:
+                fh.write(text)
+        p = run_cli("map", root, "--json")
+        self.assertIn(p.returncode, (0, 1), p.stderr)
+        d = json.loads(p.stdout)
+        writer = next(n for n in d["graph"]["nodes"] if n["display_label"] == "Write ledger")
+        return d["assessment"]["exposure"]["class"], writer["attributes"]["entry"]["level"]
+
+    def test_file_order_does_not_decide(self):
+        self.assertEqual(self.run_map(("a.json", "z.json")), ("Critical", "anyone"))
+        self.assertEqual(self.run_map(("z.json", "a.json")), ("Critical", "anyone"))
 
 
 if __name__ == "__main__":
