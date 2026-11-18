@@ -2041,6 +2041,24 @@ def rule_of_two_summary(verdict: Dict[str, Any]) -> Dict[str, Any]:
                            for p in verdict.get("acting", []) if not p["supervised"]][:5]}
 
 
+def keep_strongest(attrs: Dict[str, Any], key: str, new: Dict[str, Any], rank: Any) -> None:
+    """Set attrs[key] to new only when it is stronger than what is there: the result never depends on the order in
+    which files declaring the same node are read."""
+    if rank(new) > rank(attrs.get(key)):
+        attrs[key] = new
+
+
+def _entry_rank(entry: Optional[Dict[str, Any]]) -> int:
+    return jh_n8n.ENTRY_RANK.get(entry.get("level"), -1) if isinstance(entry, dict) else -1
+
+
+def _rule_of_two_rank(summary: Optional[Dict[str, Any]]) -> int:
+    """Order of Rule of Two verdicts by the exposure they give: K3 (Critical) above K4 (High), certain above not."""
+    if not isinstance(summary, dict):
+        return 0
+    return {"K3": 3, "K4": 1}.get(summary.get("verdict"), 0) + (1 if summary.get("certain") else 0)
+
+
 def _project_reader(ctx: Ctx, rel: str) -> jh_rule2.Reader:
     project = jh_rule2.project_of(rel.replace(os.sep, "/"), "/")
     return lambda r: ctx.texts.get(posixpath.normpath(posixpath.join(project, r)) if project else r)
@@ -2212,12 +2230,15 @@ def adapt_n8n(ctx: Ctx, item: Item) -> None:
             g.add_edge(node_ids[source], node_ids[target], 'depends-on', 'none', 'declared', 'high', evidence=wev,
                        assumptions=['Workflow connection transfers no authority'])
         # jankhunt.impact.v2 ingredients: who can start each node, and AI agents' Rule of Two verdicts
+        # several exports can declare the same node: keep the strongest evidence, whatever the file order
         for rid, entry in jh_n8n.entry_levels(flow).items():
             if node_ids.get(rid):
-                g.nodes[node_ids[rid]]['attributes']['entry'] = dict(entry, verification='declared')
+                keep_strongest(g.nodes[node_ids[rid]]['attributes'], 'entry', dict(entry, verification='declared'),
+                               _entry_rank)
         for verdict in jh_rule2.flow_agents(flow):
             if node_ids.get(verdict['raw']['id']) and verdict['verdict'] != 'none':
-                g.nodes[node_ids[verdict['raw']['id']]]['attributes']['rule_of_two'] = rule_of_two_summary(verdict)
+                keep_strongest(g.nodes[node_ids[verdict['raw']['id']]]['attributes'], 'rule_of_two',
+                               rule_of_two_summary(verdict), _rule_of_two_rank)
 
 
 def _classify_file(rel: str, text: str) -> Tuple[str, Optional[List[Any]]]:

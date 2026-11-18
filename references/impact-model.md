@@ -123,7 +123,7 @@ ingredients, each with an evidence tier:
 
 | Ingredient | Meaning | Where it comes from in 4.20.0 |
 |---|---|---|
-| entry | who can start it, as a ladder: schedule < internal < signed-in < anyone | n8n triggers: an open webhook or form, a public chat with no authentication, and mail or Telegram triggers are *anyone*; authentication, an IP allowlist or a header check first is *signed-in*; a chat that is not public, editor and workflow triggers are *internal*; timers are *schedule*. Each node takes the most open trigger that reaches it along the workflow's connections. A principal no known trigger reaches has no entry: unknown is evidence neither way |
+| entry | who can start it, as a ladder: schedule < internal < signed-in < anyone | n8n triggers: an open webhook or form, a public chat with no authentication, and mail or Telegram triggers are *anyone*; authentication or an IP allowlist is *signed-in* (a step after the trigger never lowers it: seeming to check a header proves no rejection); a chat that is not public, editor and workflow triggers are *internal*; timers are *schedule*. Each node takes the most open trigger that reaches it along the workflow's connections; a disabled node passes data on but is not credited, and when several exports declare the same node the most open entry counts. A principal no known trigger reaches has no entry: unknown is evidence neither way |
 | reach | its existing reach over assets, with their sensitivity, criticality and environment | the map, as in v1 |
 | untrusted input, sensitive data, a way to act, unsupervised | the Agents Rule of Two | `JH714`'s verdict for MCP agents and n8n AI Agent nodes, judged with the settings files the map collected |
 
@@ -147,7 +147,7 @@ Toxic combinations, each the minimum of its ingredients' tiers:
 \end{aligned}
 ```
 
-Each driver of a level (a v1 condition or a combination) reports its own weakest tier and its ingredients, so a
+Each driver of a level reports its own weakest tier, and each combination also lists its ingredients, so a
 Critical that rests on inferred evidence says so. Two principals never combine: open entry on one and sensitive
 authority on another is not K1. An asset whose sensitivity, criticality and environment are not known never
 satisfies K1 or K2: the v1 conditions already treat it as at least Moderate, and a combination is claimed only on
@@ -162,7 +162,9 @@ tested:
 
 **Policy.** The passport's `P-EXP-001` compares this class with `max_exposure`. The citizen profile's maximum is
 Moderate, so there a K1, K2, K3 or certain K4 blocks through `P-EXP-001`, including a K4, for which `P-AGT-002`
-alone asks for review at most. The standard profile sets no maximum, so `P-EXP-001` does not change its decisions.
+alone asks for review at most. The standard profile sets no maximum, so `P-EXP-001` does not act there, but
+`P-OWN-001` asks for an owner from High up in every profile: a repository with no owner whose class a combination
+raises to High or Critical moves from pass to review.
 
 **Considered and not adopted.**
 
