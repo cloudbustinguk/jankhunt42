@@ -557,18 +557,26 @@ def _built_by_code(flow, node):
     return before[0]['name'] if before and all(n['type'] in _CODE_NODES for n in before) else None
 
 
+def passes(raw, outputs, src, dst):
+    """Whether data flows along a main connection: a disabled node does not run, and n8n passes its input on from its
+    first output only."""
+    return (raw.get(src) or {}).get('disabled') is not True or 0 in (outputs.get(src) or {}).get(dst, [0])
+
+
 def _fed(flow, flag_guarded=False):
     """{node id: (kind, trigger name)} for every node an open trigger's data can reach: along main connections, and
     from an AI node to the model, memory and tools plugged into it. A trigger whose first step checks a header is not
     open here, unless flag_guarded: then it counts too and the value is (kind, trigger name, guarded), an unguarded
     trigger winning where both reach a node."""
     raw = {n['raw']['id']: n['raw'] for n in flow['nodes']}
+    outputs = flow.get('main_outputs') or {}
     nexts = {}
     for src, dst, channel in flow['edges']:
         if channel == 'main':
-            nexts.setdefault(src, []).append(dst)
-        elif channel.startswith('ai_'):
-            nexts.setdefault(dst, []).append(src)
+            if passes(raw, outputs, src, dst):
+                nexts.setdefault(src, []).append(dst)
+        elif channel.startswith('ai_') and (raw.get(dst) or {}).get('disabled') is not True:
+            nexts.setdefault(dst, []).append(src)               # a disabled AI node starts none of its tools
     fed = {}
     for nid in sorted(raw):
         kind = open_trigger(raw[nid])
