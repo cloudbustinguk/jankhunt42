@@ -2607,21 +2607,6 @@ def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
         for s in _mcp(sf) if s.transport == "sse"][:10]
 
 
-@check("mcp_remote_no_auth")
-def mcp_remote_no_auth(sf: SourceFile, rule: Rule) -> List[Finding]:
-    out: List[Finding] = []
-    for s in _mcp(sf):
-        host = jh_agent.remote_host(s.url)
-        if not host or jh_agent.plaintext_remote(s.url) or jh_agent.credential_names(s) \
-                or jh_agent.credential_literals(s):
-            continue
-        out.append(make_finding(rule, sf, s.line, message=(
-            "MCP server '%s' is a remote server (%s) with no authentication configured, so unless a gateway or "
-            "the client adds credentials at run time it is reachable without them." % (s.name, host)),
-            extra={"server": s.name, "host": host}))
-    return out[:10]
-
-
 # --------------------------------------------------------------------------- AI agents in workflows
 
 _AI_ACTIONS = ("anthropics/claude-code-action", "anthropics/claude-code-base-action",

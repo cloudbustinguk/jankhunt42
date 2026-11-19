@@ -1,6 +1,5 @@
 """4.21.0: a pre-approved runner (awk, sed, make, an interpreter) is any command (JH703, JH712, the Cursor CLI and
-the Rule of Two); an MCP server on the deprecated SSE transport (JH715); a remote MCP server with no authentication
-configured (JH716). Invented projects and hosts only."""
+the Rule of Two); an MCP server on the deprecated SSE transport (JH715). Invented projects and hosts only."""
 import json
 import os
 import shutil
@@ -43,7 +42,7 @@ PROJECTS = {
     # the Cursor CLI
     "cursor/.cursor/cli.json": {"permissions": {"allow": ["Shell(make:*)"]}},
     "cursorargs/.cursor/cli.json": {"permissions": {"allow": ["Shell(make:test)"]}},
-    # JH715 / JH716
+    # JH715, and remote servers configured by URL alone
     "sse/.mcp.json": servers(events={"type": "sse", "url": "https://mcp.example.com/sse",
                                      "headers": {"Authorization": "Bearer ${MCP_TOKEN}"}}),
     "streamable/.mcp.json": servers(api={"type": "streamable-http", "url": "https://mcp.example.com/mcp",
@@ -110,18 +109,14 @@ class RunnersAndTransport(unittest.TestCase):
         for project in ("streamable", "noauth", "local", "plain", "stdio"):
             self.assertEqual(self.rules(project, "JH715"), [], project)
 
-    def test_remote_without_authentication(self):
-        got = self.rules("noauth", "JH716")
-        self.assertEqual([(f["severity"], f["extra"]["host"]) for f in got], [("minor", "mcp.example.org")])
-        # authenticated, local, stdio and plaintext servers are quiet (plaintext is JH707's, not reported twice)
-        for project in ("sse", "streamable", "tokenenv", "local", "plain", "stdio"):
-            self.assertEqual(self.rules(project, "JH716"), [], project)
-        self.assertEqual(len(self.rules("plain", "JH707")), 1)
-
-    def test_remote_host(self):
-        self.assertEqual(jh_agent.remote_host("https://user@MCP.Example.com:8443/mcp"), "mcp.example.com")
-        for url in ("http://localhost:1/x", "https://[::1]/x", "https://127.0.0.1/x", "stdio", ""):
-            self.assertEqual(jh_agent.remote_host(url), "", url)
+    def test_remote_server_by_url_alone_is_quiet(self):
+        # Under the MCP authorization specification the client signs in (OAuth) when it connects, and public
+        # documentation servers need no sign-in, so a remote https server configured by URL alone is the expected
+        # form. An offline scan cannot tell it from an open server; a rule that tried fired on 231 of 3,769
+        # corpus repositories, nearly all OAuth or public servers, and was not shipped.
+        for project in ("noauth", "tokenenv", "streamable", "local", "stdio"):
+            self.assertEqual(self.found.get(project, []), [], project)
+        self.assertEqual([f["rule"] for f in self.found.get("plain", [])], ["JH707"])
 
 
 class RunnerInTheRuleOfTwo(unittest.TestCase):
