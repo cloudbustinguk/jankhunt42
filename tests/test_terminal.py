@@ -208,5 +208,15 @@ class EmptyScanNeverReassures(unittest.TestCase):
             self.assertIn("not proof of correctness", ANSI.sub("", line))
 
 
+class OpsPlainLine(unittest.TestCase):
+    """The citizen line for P-OPS-001 must be true whether tests, CI or both are missing."""
+
+    def test_does_not_say_both_are_missing(self):
+        import jh_passport
+        line = jh_passport._PLAIN["P-OPS-001"]
+        self.assertNotIn("no automated tests or CI", line)
+        self.assertIn("or both", line)
+
+
 if __name__ == "__main__":
     unittest.main()
