@@ -417,7 +417,35 @@ def credential_names(server: McpServer) -> List[str]:
     return sorted(names)
 
 
+# Runners: commands that execute whatever program or script they are given, so a pre-approval naming only the
+# runner approves any command (shells, interpreters, package runners, and utilities such as awk, sed and make).
+RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "python", "python3", "node",
+            "deno", "bun", "ruby", "perl", "php", "env", "xargs", "sudo", "eval", "exec", "npx", "uvx",
+           "awk", "gawk", "mawk", "nawk", "sed", "gsed", "make", "gmake"}
+
+
+def broad_shell(entry: str) -> Optional[str]:
+    """What a pre-approved Bash entry lets the agent run, when that is any command; None when it is narrower."""
+    m = re.match(r"^Bash(?:\((.*)\))?$", entry)
+    if not m:
+        return None
+    spec = (m.group(1) or "").strip()
+    if spec in ("", "*", "**", ":*"):
+        return "any shell command"
+    wild = re.match(r"^([^\s:*]+)(?:\s+-[ce])?\s*(?::\*|\s\*|\*)$", spec)
+    if wild and wild.group(1).rsplit("/", 1)[-1].lower() in RUNNERS:
+        return "any command run through %s" % wild.group(1).rsplit("/", 1)[-1]
+    return None
+
+
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "host.docker.internal"}
+
+
+def remote_host(url: str) -> str:
+    """The host of an http(s) URL that is not local, or ''."""
+    m = re.match(r"(?i)^https?://(?:[^@/]*@)?(\[[^\]]+\]|[^/:?#]+)", url.strip())
+    host = m.group(1).lower() if m else ""
+    return host if host and host not in _LOCAL_HOSTS else ""
 
 
 def plaintext_remote(url: str) -> bool:

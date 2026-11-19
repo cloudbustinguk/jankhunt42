@@ -132,18 +132,18 @@ jankhunt42 passport . --base <ref> --md   # what new access, and which agent def
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
 
-- **Agent workspace checks** (`JH701`-`JH714`, `JH432`):
+- **Agent workspace checks** (`JH701`-`JH716`, `JH432`):
   - an agent that holds untrusted input, private data and a way to act with nothing approving the step that acts (the Agents Rule of Two, `JH714`: MCP configurations with their Claude Code or VS Code settings, and n8n AI Agent nodes);
-  - approval bypasses committed in VS Code, Claude Code, Codex, Zed, or Cursor CLI settings;
+  - approval bypasses committed in VS Code, Claude Code, Codex, Zed, or Cursor CLI settings, including a pre-approved runner such as `Bash(python:*)`, `Bash(awk:*)` or `Bash(make:*)`, which runs any command;
   - sandboxes that let agent commands reach any host, the Docker socket, or credential paths, or that hand their network decisions to another program (Codex, Claude Code, OpenShell, Agent Substrate), and dev containers that weaken isolation;
   - Claude Code managed settings that switch a protection off, and plugin marketplaces a project turns on for everyone;
   - Agent Substrate actor templates that put an API key inside the sandbox, and egress rules that pass a keyed API through where the gateway cannot inject the key;
   - CI that runs any pushed branch, an agent's included, with secrets or a write token;
   - commands that run on folder open, in dev containers, or in hooks;
   - agent CLIs started with bypass flags;
-  - unpinned or credential-holding MCP servers;
+  - unpinned or credential-holding MCP servers, servers on the deprecated SSE transport, and remote servers given no authentication;
   - hidden instructions in agent files;
-  - agent skills and commands whose `allowed-tools` pre-approves any shell command;
+  - agent skills and commands whose `allowed-tools` pre-approves any shell command, or a runner that runs any command;
   - untrusted issue and PR text fed to AI steps in CI.
 - **Mistakes AI-built apps make** (`JH131`-`JH134`, `JH154`, `JH155`, `JH160`-`JH163`):
   - secrets behind `NEXT_PUBLIC_`/`VITE_`-style prefixes;

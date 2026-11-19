@@ -528,12 +528,15 @@ def _cyclonedx_xml(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     return out, doc
 
 
-QUALITY_BASIS = ("NTIA minimum elements (2021); the CISA 2025 draft additions are reported separately and are "
-                 "not a requirement")
+QUALITY_BASIS = ("2026 CISA SBOM Minimum Elements (v2.1, which replace the 2021 NTIA minimum elements), counted from "
+                 "the file; the fields in not_counted are not checked")
+# Elements of the 2026 document that a presence count of the file cannot settle: a signature usually travels in a
+# separate file or envelope, and the parsed formats do not all carry the other three.
+NOT_COUNTED = ("SBOM author signature", "SBOM version", "SBOM tool version", "SBOM data format version")
 QUALITY_RANK = {"met": 3, "partial": 2, "not-met": 1, "none": 0}
 
 
-def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any]) -> Dict[str, Any]:
+def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any], fmt: str = "") -> Dict[str, Any]:
     """How completely one SBOM covers the minimum elements. Counting, not
     judgement: a field is present or it is not."""
     total = len(packages)
@@ -542,6 +545,7 @@ def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any]) -> Dic
         return sum(1 for p in packages if pred(p))
 
     comps = {"total": total,
+             "with_name": count(lambda p: _known(p.get("name"))),
              "with_version": count(lambda p: _known(p.get("version"))),
              "with_supplier": count(lambda p: _known(p.get("supplier"))),
              "with_identifier": count(lambda p: _known(p.get("purl")) or _known(p.get("cpe"))),
@@ -551,8 +555,9 @@ def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any]) -> Dic
                 "tool": bool(doc.get("tools")), "dependency_relationships": bool(doc.get("dependencies")),
                 "primary_component": bool(doc.get("primary")), "generation_context": bool(doc.get("context"))}
     missing: List[str] = []
-    for key, label in (("with_supplier", "supplier"), ("with_version", "version"),
-                       ("with_identifier", "a unique identifier (purl or CPE)")):
+    for key, label in (("with_supplier", "component producer"), ("with_name", "component name"),
+                       ("with_version", "version"), ("with_identifier", "a unique identifier (purl or CPE)"),
+                       ("with_hash", "component hash"), ("with_license", "license")):
         if comps[key] < total:
             missing.append("%s for %d of %d components" % (label, total - comps[key], total))
     if not document["dependency_relationships"]:
@@ -561,18 +566,15 @@ def sbom_quality(packages: Sequence[Dict[str, Any]], doc: Dict[str, Any]) -> Dic
         missing.append("author of the SBOM data")
     if not document["timestamp"]:
         missing.append("timestamp")
-    draft: List[str] = []
-    if comps["with_hash"] < total:
-        draft.append("component hash for %d of %d components" % (total - comps["with_hash"], total))
-    if comps["with_license"] < total:
-        draft.append("license for %d of %d components" % (total - comps["with_license"], total))
     if not document["tool"]:
-        draft.append("tool name")
+        missing.append("tool name")
     if not document["generation_context"]:
-        draft.append("generation context")
+        missing.append("generation context (SPDX 2 has no field for it)" if fmt in ("spdx-json", "spdx-tag-value")
+                       else "generation context")
     status = "not-met" if not total else ("met" if not missing else "partial")
-    return {"basis": QUALITY_BASIS, "minimum_elements": status, "missing": missing,
-            "cisa_2025_draft_missing": draft, "components": comps, "document": document}
+    # cisa_2025_draft_missing is kept, always empty, for readers of 4.20 output: those fields are now in missing
+    return {"basis": QUALITY_BASIS, "minimum_elements": status, "missing": missing, "not_counted": list(NOT_COUNTED),
+            "cisa_2025_draft_missing": [], "components": comps, "document": document}
 
 
 def _finalize_sbom(path: str, rel: str, fmt: str, data: Optional[Dict[str, Any]],
@@ -595,7 +597,7 @@ def _finalize_sbom(path: str, rel: str, fmt: str, data: Optional[Dict[str, Any]]
         "unique_components": len({(p.get("name"), p.get("version")) for p in packages}),
         "licenses": dict(sorted(licenses.items(), key=lambda kv: (-kv[1], kv[0]))[:12]),
         "packages": packages,
-        "quality": sbom_quality(packages, doc or {}),
+        "quality": sbom_quality(packages, doc or {}, fmt),
         "warnings": [],
     }
 
@@ -1270,7 +1272,7 @@ def summarize(report: Dict[str, Any]) -> Dict[str, Any]:
         reasons.append("no SBOM found")
     best = best_sbom_quality(sboms)
     if req.get("sbom_minimum") and best["minimum_elements"] != "met":
-        reasons.append("no SBOM meets the NTIA minimum elements (best: %s%s)" % (
+        reasons.append("no SBOM meets the 2026 SBOM minimum elements (best: %s%s)" % (
             best["minimum_elements"], "; missing " + ", ".join(best["missing"][:3]) if best["missing"] else ""))
     if req.get("attestation") and not attestations:
         reasons.append("no attestation found")
