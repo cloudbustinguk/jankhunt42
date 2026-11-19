@@ -788,6 +788,26 @@ def _crit_top(node: Dict[str, Any]) -> bool:
 ENTRY_TIER = {"declared": 2, "observed": 2, "provider-verified": 3, "inferred": 1}   # unknown, refuted: 0
 
 
+def _verified_prefix(adj: Dict[str, List[Tuple[str, str, int]]], source: str, target: str, avoid: str,
+                     max_hops: int) -> Optional[List[str]]:
+    """Shortest path of verified (tier 3) edges from `source` to `target` within `max_hops` that never visits
+    `avoid`, as edge ids, or None. Breadth-first over sorted adjacency, so the result is deterministic."""
+    if source == target:
+        return []
+    seen: Dict[str, List[str]] = {source: []}
+    q = deque([(source, 0)])
+    while q:
+        node, depth = q.popleft()
+        for tgt, eid, t in adj.get(node, ()):
+            if t < 3 or tgt in seen or tgt == avoid or depth >= max_hops:
+                continue
+            seen[tgt] = seen[node] + [eid]
+            if tgt == target:
+                return seen[tgt]
+            q.append((tgt, depth + 1))
+    return None
+
+
 def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
                        edges_by_id: Dict[str, Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
     """Return (class, drivers) for one principal's blast radius.
@@ -852,24 +872,34 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
              "sensitive source and external destination are reachable from the same principal "
              "(possible egress path; no data-flow evidence implied)")
         drivers[-1]["external"] = x_id
-    # Verified export of sensitive data to an external destination: some verified path ends in a verified
-    # export of confidential or restricted data. Any qualifying path counts, not only the one stored as the
-    # witness: adding an edge can change which path is stored, but never removes a qualifying one.
+    # Verified export of sensitive data to an external destination: some verified simple path ends in a
+    # verified export of confidential or restricted data. Any qualifying path counts, not only the one stored as
+    # the witness: adding an edge can change which path is stored, but never removes a qualifying one. A simple
+    # path ending at X has a prefix that avoids X, so the prefix is searched with X excluded; the stored path is
+    # used when it already avoids X, since it is then a shortest such prefix.
     conf = imp["confidentiality"]
     depth_cap = br.get("max_depth", DEFAULT_DEPTH)
+    principal = br["principal"]
+    conf_adj: Optional[Dict[str, List[Tuple[str, str, int]]]] = None
     egress: Dict[str, Tuple[int, str, List[str]]] = {}
     for eid in sorted(edges_by_id):
         e = edges_by_id[eid]
         nid, src = e.get("target"), e.get("source")
-        if e.get("kind") != "exports" or nid not in conf or nodes[nid]["trust_domain"] != "external" \
+        if e.get("kind") != "exports" or nid not in conf or nid == principal or src == nid \
+                or nodes[nid]["trust_domain"] != "external" \
                 or e.get("data_sensitivity") not in ("confidential", "restricted") \
-                or edge_tier(e, "confidentiality") != 3:
+                or edge_tier(e, "confidentiality") != 3 or depth_cap < 1:
             continue
-        if src == br["principal"]:
-            head: List[str] = []
-        elif src in conf and conf[src]["tier"] == 3 and conf[src]["depth"] < depth_cap:
+        if src == principal:
+            head: Optional[List[str]] = []
+        elif src in conf and conf[src]["tier"] == 3 and conf[src]["depth"] < depth_cap \
+                and nid not in {edges_by_id[x]["target"] for x in conf[src]["path"]}:
             head = list(conf[src]["path"])
         else:
+            if conf_adj is None:
+                conf_adj = _adjacency(edges_by_id.values(), "confidentiality")
+            head = _verified_prefix(conf_adj, principal, src, nid, depth_cap - 1)
+        if head is None:
             continue
         cand = (len(head) + 1, eid, head + [eid])
         if nid not in egress or cand[:2] < egress[nid][:2]:

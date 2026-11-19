@@ -295,10 +295,6 @@ class Pseudonymize(unittest.TestCase):
         self.assertNotIn(d, out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class VerifiedEgressAnyPath(unittest.TestCase):
     """X-CRIT-EGRESS holds when any verified path ends in a verified sensitive export, not only the stored witness."""
 
@@ -350,3 +346,82 @@ class VerifiedEgressAnyPath(unittest.TestCase):
                     continue
                 up = G.EXPOSURE_RANK[self.classify(chosen + [extra])[0]]
                 self.assertGreaterEqual(up, base, (chosen, extra))
+
+
+class VerifiedEgressSimplePaths(unittest.TestCase):
+    """The X-CRIT-EGRESS witness is a simple path; a walk through the destination does not count."""
+
+    NODES = (("p", "application", "local"), ("i", "identity", "local"), ("z", "application", "internal"),
+             ("x", "external", "external"), ("y", "external", "external"))
+    CANDIDATES = (("p", "x", "reads", "provider-verified", None),
+                  ("x", "i", "reads", "provider-verified", None),
+                  ("i", "x", "exports", "provider-verified", "confidential"),
+                  ("x", "x", "exports", "provider-verified", "confidential"),
+                  ("p", "z", "reads", "provider-verified", None),
+                  ("z", "i", "reads", "provider-verified", None),
+                  ("p", "i", "authenticates-as", "provider-verified", None),
+                  ("i", "y", "exports", "provider-verified", "restricted"),
+                  ("y", "x", "exports", "provider-verified", "confidential"),
+                  ("x", "y", "reads", "provider-verified", None),
+                  ("p", "y", "exports", "observed", "confidential"))
+
+    def graph(self, chosen):
+        g = G.Graph()
+        ids = {name: g.add_node(kind, [name], name, trust_domain=dom) for name, kind, dom in self.NODES}
+        for u, v, kind, ver, sens in chosen:
+            eid = g.add_edge(ids[u], ids[v], kind, "read", ver, "high", source_trust="operator")
+            if sens:
+                g.edges[eid]["data_sensitivity"] = sens
+        return g, ids
+
+    def egress(self, chosen, depth):
+        g, ids = self.graph(chosen)
+        br = G.blast_radius(g.nodes, g.edge_list(), ids["p"], max_depth=depth)
+        cls, drivers = G.classify_principal(g.nodes, br, g.edges)
+        return g, ids, cls, {d["node"]: d for d in drivers if d["rule"] == "X-CRIT-EGRESS"}
+
+    def oracle(self, g, ids, depth):
+        """Destinations reached by some simple verified path that ends in a verified sensitive export."""
+        out, edges = set(), list(g.edges.values())
+        def walk(node, seen, hops):
+            for e in edges:
+                if e["source"] != node or e["target"] in seen or G.edge_tier(e, "confidentiality") != 3:
+                    continue
+                if e["kind"] == "exports" and g.nodes[e["target"]]["trust_domain"] == "external" \
+                        and e.get("data_sensitivity") in ("confidential", "restricted"):
+                    out.add(e["target"])
+                if hops + 1 < depth:
+                    walk(e["target"], seen | {e["target"]}, hops + 1)
+        walk(ids["p"], {ids["p"]}, 0)
+        return out
+
+    def test_a_walk_through_the_destination_is_not_an_export(self):
+        _, _, cls, crit = self.egress(list(self.CANDIDATES[:3]), 3)  # P->X, X->I, I exports to X
+        self.assertEqual(crit, {})
+        self.assertEqual(cls, "Moderate")
+        _, _, cls, crit = self.egress([self.CANDIDATES[0], self.CANDIDATES[3]], 4)  # export loop at X
+        self.assertEqual(crit, {})
+
+    def test_a_simple_alternative_route_still_counts(self):
+        chosen = list(self.CANDIDATES[:3]) + [self.CANDIDATES[4], self.CANDIDATES[5]]  # P->Z->I->X exists
+        g, ids, cls, crit = self.egress(chosen, 3)
+        self.assertEqual(cls, "Critical")
+        path = crit[ids["x"]]["path"]
+        self.assertEqual([g.edges[e]["kind"] for e in path], ["reads", "reads", "exports"])
+        self.assertTrue(oracle.path_is_valid(g.edges, ids["p"], ids["x"], path, "confidentiality", 3, 3))
+
+    def test_agrees_with_simple_path_enumeration(self):
+        rng = random.Random(4202)
+        for _ in range(300):
+            chosen = [c for c in self.CANDIDATES if rng.random() < 0.5]
+            for depth in (1, 2, 3, 4):
+                g, ids, _, crit = self.egress(chosen, depth)
+                self.assertEqual(set(crit), self.oracle(g, ids, depth), (chosen, depth))
+                for nid, d in crit.items():
+                    self.assertTrue(oracle.path_is_valid(g.edges, ids["p"], nid, d["path"], "confidentiality", 3,
+                                                         depth), (chosen, depth, d["path"]))
+
+
+
+if __name__ == "__main__":
+    unittest.main()
