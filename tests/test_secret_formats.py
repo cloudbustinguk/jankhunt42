@@ -26,6 +26,8 @@ SHIPPO = "shippo_live_" + HEX64[:40]
 BREVO = "xkeysib-" + HEX64 + "-" + ALNUM[:16]
 POSTMAN = "PMAK-" + HEX64[:24] + "-" + HEX64[24:58]
 TELEGRAM = "7391845026" + ":" + "AA" + ALNUM[1:34]
+# Telegram's documentation example (32 characters after AA: a near miss), assembled at run time
+TELEGRAM_DOCS = "110201543" + ":" + "AA" + "HdqTcvCH1vGWJxfS" + "eofSAs0K5PALDsaw"
 MAILCHIMP = HEX64[:32] + "-" + "us14"
 
 PROJECT = {
@@ -60,7 +62,7 @@ NEAR = {
     "near/postman.env": "A=PMAK-%s-%s\nB=PMAT-%s-%s\n" % (HEX64[:23], HEX64[24:58], HEX64[:24], HEX64[24:58]),
     "near/telegram.py": ("A = \"7391845026:AA%s\"\nB = \"7391845026:BB%s\"\n"
                          "C = \"123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\"\n"
-                         "D = \"110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw\"\n" % (ALNUM[1:33], ALNUM[1:34])),
+                         "D = \"%s\"\n" % (ALNUM[1:33], ALNUM[1:34], TELEGRAM_DOCS)),
     "near/mailchimp.txt": ("bucket %s-us-east-1\nkey %s-us14\nrevision %s-useast\n" % (
         HEX64[:32], HEX64[:31], HEX64[:32])),
 }
