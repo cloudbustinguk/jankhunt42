@@ -788,12 +788,10 @@ def _crit_top(node: Dict[str, Any]) -> bool:
 ENTRY_TIER = {"declared": 2, "observed": 2, "provider-verified": 3, "inferred": 1}   # unknown, refuted: 0
 
 
-def _verified_prefix(adj: Dict[str, List[Tuple[str, str, int]]], source: str, target: str, avoid: str,
-                     max_hops: int) -> Optional[List[str]]:
-    """Shortest path of verified (tier 3) edges from `source` to `target` within `max_hops` that never visits
-    `avoid`, as edge ids, or None. Breadth-first over sorted adjacency, so the result is deterministic."""
-    if source == target:
-        return []
+def _verified_prefixes(adj: Dict[str, List[Tuple[str, str, int]]], source: str, avoid: str,
+                       max_hops: int) -> Dict[str, List[str]]:
+    """Shortest paths of verified (tier 3) edges from `source` within `max_hops` that never visit `avoid`, as
+    {node: edge ids}. Breadth-first over sorted adjacency, so the result is deterministic."""
     seen: Dict[str, List[str]] = {source: []}
     q = deque([(source, 0)])
     while q:
@@ -802,10 +800,8 @@ def _verified_prefix(adj: Dict[str, List[Tuple[str, str, int]]], source: str, ta
             if t < 3 or tgt in seen or tgt == avoid or depth >= max_hops:
                 continue
             seen[tgt] = seen[node] + [eid]
-            if tgt == target:
-                return seen[tgt]
             q.append((tgt, depth + 1))
-    return None
+    return seen
 
 
 def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
@@ -881,6 +877,7 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
     depth_cap = br.get("max_depth", DEFAULT_DEPTH)
     principal = br["principal"]
     conf_adj: Optional[Dict[str, List[Tuple[str, str, int]]]] = None
+    avoiding: Dict[str, Dict[str, List[str]]] = {}  # destination -> shortest verified prefixes that avoid it
     egress: Dict[str, Tuple[int, str, List[str]]] = {}
     for eid in sorted(edges_by_id):
         e = edges_by_id[eid]
@@ -892,13 +889,16 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
             continue
         if src == principal:
             head: Optional[List[str]] = []
-        elif src in conf and conf[src]["tier"] == 3 and conf[src]["depth"] < depth_cap \
-                and nid not in {edges_by_id[x]["target"] for x in conf[src]["path"]}:
+        elif src not in conf or conf[src]["tier"] != 3 or conf[src]["depth"] >= depth_cap:
+            continue  # no verified route to the source within the budget; excluding X cannot create one
+        elif nid not in {edges_by_id[x]["target"] for x in conf[src]["path"]}:
             head = list(conf[src]["path"])
         else:
             if conf_adj is None:
                 conf_adj = _adjacency(edges_by_id.values(), "confidentiality")
-            head = _verified_prefix(conf_adj, principal, src, nid, depth_cap - 1)
+            if nid not in avoiding:
+                avoiding[nid] = _verified_prefixes(conf_adj, principal, nid, depth_cap - 1)
+            head = avoiding[nid].get(src)
         if head is None:
             continue
         cand = (len(head) + 1, eid, head + [eid])
