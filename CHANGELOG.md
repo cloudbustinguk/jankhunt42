@@ -168,7 +168,7 @@ settings. A change to any of them now needs approving like new access, so an app
     tests; a skill or command named `test` is locked like any other.
   - They count towards `P-CAP-001`, and an approval record can approve them; the record is bound to the head, so
     a later edit needs approving again. See `references/change-review.md`.
-- Audited before release by Codex (gpt-6-astra): seven ways round the first design (redaction and whitespace
+- Adversarially reviewed before release by a frontier AI model: seven ways round the first design (redaction and whitespace
   normalisation hid code changes, root skills, skipped and binary files, test-named definitions, missing
   locations, truncated paths as identity), all fixed here with a test and a mutant each.
 - `JH712` (a skill that pre-approves any shell command) and `JH713` (an API key in an agent sandbox template) are
@@ -243,7 +243,7 @@ from.
 - Codex network keys outside `[features.network_proxy]` and `[permissions.<name>.network]`, which Codex does not read.
 - A Cursor `Shell(...)` entry with arguments (`Shell(python:--version)`), or one a `deny` entry covers.
 
-Audited before release by Codex (gpt-6-astra): eight findings, then eight more over four re-checks, all fixed here, each with a test.
+Adversarially reviewed before release by a frontier AI model: eight findings, then eight more over four re-checks, all fixed here, each with a test.
 
 ## [4.16.0] — 2026-11-07
 
@@ -614,7 +614,7 @@ release.
 - These values are masked in every report format, like the existing secret
   shapes.
 - JH135 (endpoint without authorization) no longer misses two kinds of
-  unprotected endpoint that 4.4.2 let through. Both were found by Codex:
+  unprotected endpoint that 4.4.2 let through. Both were found in review:
   - A handler that returns `Unauthorized`/`Forbid`/`Challenge` counts as
     authorization only when that check is about the caller (the user, a role or
     claim, a signature, a key or a token). A check that a record exists no
@@ -632,7 +632,7 @@ release.
   an `https_port` setting, or `ASPNETCORE_HTTPS_PORTS`/an HTTPS
   `ASPNETCORE_URLS` in a Dockerfile, compose file or manifest. Development
   settings and `launchSettings.json` do not count. The finding says why. Found
-  by Codex.
+  in review.
 - JH141 (personal data sent to an AI API) follows a payload's fields from where
   it is built to the AI call, in the same handler:
   - `payload.Email = req.Email` after construction is now found;
@@ -653,13 +653,12 @@ release.
   A field cleared under a condition or in a loop still counts as personal data:
   the check cannot prove every path clears it. An unknown helper
   (`Normalize(req.Email)`) is not taken as redaction, and a prompt built inside
-  a helper method is not followed. Codex wrote the 16 cases this is tested
-  against.
+  a helper method is not followed. It is tested against 16 review cases.
 - JH138 reads `Listen(System.Net.IPAddress.Any, ...)` written with its
   namespace.
 - NuGet `--fetch` accepts a signed package whose signature is listed anywhere
   in the zip's central directory, as NuGet does. The signature must still be
-  stored last. The hash matches NuGet's own on Codex's reference archive.
+  stored last. The hash matches NuGet's own on a reference archive.
 
 Measured on a held-out corpus of 40 files (20 planted credentials, 20
 lookalikes): 4.4.2 finds 7 credentials, and 4.4.3 finds all 20 with no false
@@ -695,9 +694,9 @@ already have 5 findings for the same rule.
   refuses only what would make restore read a different lock or loosen it
   (`TreatAsLocalProperty`, custom or computed `NuGetLockFilePath`, lock opt-out).
 - The sandbox's `dotnet restore` also sets `RestoreForceEvaluate=false`: a project
-  that set it could otherwise override locked mode (NuGet NU1512). Found by Codex.
+  that set it could otherwise override locked mode (NuGet NU1512). Found in review.
 - The sandbox's restore uses only the verified feed. Two ways around it, both
-  reproduced by Codex, are closed:
+  reproduced in review, are closed:
   - A repository `nuget.config` (or project property) naming a fallback package
     folder could supply altered package contents, which locked mode does not
     re-check.
@@ -854,7 +853,7 @@ Deeper into the sandbox, and a scan your team can make its own.
   hashes, into a wheelhouse for that run, under the same HTTPS, address
   and size rules as the npm fetch. Wheels come first; a source package is
   fetched only when no pinned wheel exists, and the receipt marks that its
-  build runs code. Designed and built by Codex (mutants M170 to M183).
+  build runs code (mutants M170 to M183).
 - **Python dependencies declared in `pyproject.toml`** install and load
   when there is no `requirements.txt` (modern projects often have none).
   Each requirement goes to pip as one quoted argument, and only when it
@@ -960,7 +959,7 @@ Mutants M146 to M158.
 ## [4.0.0] — 2026-10-27
 
 A smaller jankhunt42, and the first release audited whole before it was
-tagged: Codex's six findings are fixed inside it. The commands that did not
+tagged: the review's six findings are fixed inside it. The commands that did not
 serve the three questions
 are gone or folded in, so the main help now lists eight commands, and
 `SKILL.md` is under 200 lines. Alongside that: dependencies' install hooks
@@ -1001,8 +1000,7 @@ evidence.
   node's JavaScript now appear as calls of that node, with a JSON pointer
   and a code line. The code itself stays an "arbitrary behaviour" unknown,
   dynamic calls and Python stay unknown, and output for ordinary code is
-  byte-identical to before. Designed and built by Codex (proposal A12,
-  mutants M122 to M129).
+  byte-identical to before (proposal A12, mutants M122 to M129).
 - **Declared versus attempted.** With `passport --detonation`, every
   destination the sandbox run tried to reach (each DNS name, each
   address) is compared with what the repository declares: the hosts in
@@ -1067,7 +1065,7 @@ stopped.
 
 ### Security
 
-Fixes from Codex's audit of `passport --detonation`. The audit found no way
+Fixes from an adversarial review of `passport --detonation`. The review found no way
 for a run to relieve anything, so these concern which run counts:
 - **`--base` now binds a run to the commit itself.** The passport used to
   compare against a filtered copy of the commit that dropped executable
@@ -1083,7 +1081,7 @@ for a run to relieve anything, so these concern which run counts:
   (M115). Alert kinds outside the known set read "other", including in
   `P-RUN-001`'s message.
 
-Fixes from Codex's audit of the dependency caches (3.6.0):
+Fixes from an adversarial review of the dependency caches (3.6.0):
 - **The cache copy can't be steered.** It is one pass:
   - folders are opened from their parent's descriptor, never through a
     link (M116);
@@ -1151,7 +1149,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
     a filter is declared, and the schedule's units. Routes and cron text
     never appear.
 
-  Designed and built by Codex (proposal A11b, mutants M100 to M105), with
+  Proposal A11b (mutants M100 to M105), with
   every matched n8n parameter name checked against the upstream node
   descriptions.
 
@@ -1159,7 +1157,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
 
 - detonate: a missing exit status, or one cut short, now makes coverage
   partial. Before, a valid trace with no usable exit status still read as
-  complete. Found by Codex while verifying 3.4.1.
+  complete. Found while verifying 3.4.1.
 
 ### Documentation
 
@@ -1180,7 +1178,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
   - only if it is a regular file with one link;
   - within size bounds (M96).
 
-  Anything unusable makes coverage partial. Found by Codex.
+  Anything unusable makes coverage partial. Found in review.
 - **An empty or forged trace no longer counts as observation:** a step is
   traced only if its trace shows the step starting (M97).
 - **DNS lines must be host names (M98).** Every repository-derived message,
@@ -1193,7 +1191,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
     as VS Code does;
   - file-wide options and old-format files are coverage gaps.
 
-  Found by Codex.
+  Found in review.
 
 ## [3.4.0] — 2026-10-27
 
@@ -1216,8 +1214,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
   - A secret-shaped literal in a node's parameters is a JH101 lead that
     points at the parameter and never contains the value.
 
-  See `references/n8n.md`. Designed and built by Codex (proposal A11a,
-  mutants M83 to M90).
+  See `references/n8n.md`. Proposal A11a (mutants M83 to M90).
 
 ## [3.3.0] — 2026-10-27
 
@@ -1234,7 +1231,7 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
   - VS Code folder-open tasks, written as VS Code writes them: an argument
     is quoted only when it has an unquoted space, so `$VAR` and `$(...)`
     stay live as in the editor. Shell, environment and working-folder
-    options and unknown variables are coverage gaps. Thanks to Codex's
+    options and unknown variables are coverage gaps. Thanks to the review's
     quoting baseline (M95);
   - MCP stdio servers, started with one `initialize` request and stopped
     after 20 seconds.
@@ -1278,14 +1275,14 @@ Fixes from Codex's audit of the dependency caches (3.6.0):
   - The assurance is `declared-by-operator`, never "verified", and it never
     approves the application.
 
-  See `references/capability-approval.md`. Designed and built by the third
-  agent (Codex, proposal A10 v2); mutants M76 to M81.
+  See `references/capability-approval.md`. Proposal A10 v2; mutants M76 to
+  M81.
 
 ### Security
 
 - `passport --base`: a file in a language jankhunt42 has no connectivity
   reader for (a shell script, say) is compared whole. An edit far from its
-  first line no longer passes as unchanged. Found by Codex. Mutant M82.
+  first line no longer passes as unchanged. Found in review. Mutant M82.
 
 ## [3.1.2] — 2026-10-27
 
@@ -1337,17 +1334,16 @@ proposals before applying them.
     the text around its evidence, so moving code is still no change.
   - Anything else is reported as `definition-changed` and needs review.
   - Nothing compared is exported.
-  - Found by the third agent (Codex) the hour 3.1.0 shipped. New mutant
+  - Found in review the hour 3.1.0 shipped. New mutant
     M74.
 - **`passport --base --redact`: unchanged unknowns are redacted too.** The
   shareable copy redacted `unknowns` but not 3.1.0's `unchanged_unknowns`,
   so the name of an MCP server could survive. They now get the same
-  ID-and-detail-only projection. Also found by Codex. New mutant M75.
+  ID-and-detail-only projection. Also found in review. New mutant M75.
 
 ## [3.1.0] — 2026-10-26
 
-From the third agent's proposal A10, reviewed and adjusted by the
-maintainer.
+From proposal A10, reviewed and adjusted by the maintainer.
 
 ### Added
 
@@ -1457,7 +1453,7 @@ From mass-test batch b18.
 
 ## [2.9.2] — 2026-10-26
 
-From the third agent's proposal A7, verified by the maintainer.
+From proposal A7, verified by the maintainer.
 
 ### Changed
 
@@ -1490,7 +1486,7 @@ The maintainer narrowed the tester's proposal before applying it.
 
 ## [2.9.0] — 2026-10-26
 
-From the third agent's proposals A4 and A6, reviewed by the maintainer.
+From proposals A4 and A6.
 
 ### Added
 
@@ -1546,8 +1542,7 @@ probes and the test corpora (eight findings dropped, none added).
 
 ## [2.8.0] — 2026-10-26
 
-From the third agent's adversarial review (finding A2), revised by the
-maintainer.
+From an adversarial review (finding A2), revised by the maintainer.
 
 ### Changed
 
@@ -1595,7 +1590,7 @@ maintainer.
 
 ## [2.7.5] — 2026-10-26
 
-From mass-test batches b08 to b13 and the third agent's adversarial
+From mass-test batches b08 to b13 and an adversarial
 review. Each fix arrived as a tested proposal and was verified, and where
 needed corrected, by the maintainer.
 
@@ -1633,8 +1628,7 @@ needed corrected, by the maintainer.
 
 ## [2.7.4] — 2026-10-26
 
-From mass-test batch b08 and an adversarial review by a third agent (Codex
-CLI). Each change was verified, and where needed corrected, by the
+From mass-test batch b08 and an adversarial review. Each change was verified, and where needed corrected, by the
 maintainer.
 
 ### Security
