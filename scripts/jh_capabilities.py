@@ -498,7 +498,7 @@ def _label(target):
                  "JH707": "plaintext MCP transport", "JH708": "untrusted agent prompt input", "JH432": "agent CI with secrets",
                  "JH709": "broad sandbox access", "JH710": "unenforced sandbox", "JH711": "weakened container isolation",
                  "JH712": "skill pre-approving any shell command", "JH713": "API key in an agent sandbox template",
-                 "JH715": "deprecated MCP transport", "JH716": "unauthenticated remote MCP server"}.get(
+                 "JH715": "deprecated MCP transport"}.get(
                      target.get("control"), target.get("kind", "unresolved target"))
     if target.get("port"):
         label += ":%s" % target["port"]

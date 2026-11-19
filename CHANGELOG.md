@@ -11,10 +11,6 @@ semantic versioning.
 - `JH715` (minor, agent): an MCP server on the HTTP+SSE transport, which the 2026-07-28 MCP specification deprecates
   with a 12-month offramp. Its held-open stream is a wider surface than the stateless core, and support will end.
   `streamable-http` and plain `http` servers are not reported.
-- `JH716` (minor, agent, low confidence): a remote MCP server that the configuration gives no token, header or
-  credential. Credentials are often added at run time by a gateway or the client, so this is a lead to check, not a
-  finding to fix on sight. Local servers, servers on plaintext `http://` (already `JH707`) and stdio servers are not
-  reported.
 
 ### Changed
 

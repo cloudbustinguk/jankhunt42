@@ -209,7 +209,7 @@ OWASP_RULES: Dict[str, Tuple[str, ...]] = {
     # AI agents
     "JH701": ("CD-SEC-01", "ASI01"), "JH702": ("CD-SEC-07", "ASI02", "ASI05"), "JH703": ("CD-SEC-07", "ASI02", "ASI05"),
     "JH704": ("CD-SEC-07", "ASI05"), "JH705": ("CD-SEC-06", "ASI04"), "JH706": ("CD-SEC-04", "ASI03"),
-    "JH707": _AUTHN, "JH715": ("CD-SEC-07",), "JH716": _AUTHN, "JH708": ("CD-SEC-08", "ASI01"), "JH709": ("CD-SEC-07", "ASI02", "ASI05"),
+    "JH707": _AUTHN, "JH715": ("CD-SEC-07",), "JH708": ("CD-SEC-08", "ASI01"), "JH709": ("CD-SEC-07", "ASI02", "ASI05"),
     "JH710": ("CD-SEC-07", "ASI05"), "JH711": ("CD-SEC-07", "ASI05"),
     "JH712": ("CD-SEC-07", "ASI02", "ASI05"),
     "JH713": ("CD-SEC-04", "CD-SEC-07", "ASI03"),

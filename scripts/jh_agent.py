@@ -441,13 +441,6 @@ def broad_shell(entry: str) -> Optional[str]:
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "host.docker.internal"}
 
 
-def remote_host(url: str) -> str:
-    """The host of an http(s) URL that is not local, or ''."""
-    m = re.match(r"(?i)^https?://(?:[^@/]*@)?(\[[^\]]+\]|[^/:?#]+)", url.strip())
-    host = m.group(1).lower() if m else ""
-    return host if host and host not in _LOCAL_HOSTS else ""
-
-
 def plaintext_remote(url: str) -> bool:
     m = re.match(r"(?i)^http://(\[[^\]]+\]|[^/:?#]+)", url.strip())
     return bool(m) and m.group(1).lower() not in _LOCAL_HOSTS

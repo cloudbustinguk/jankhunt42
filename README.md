@@ -132,7 +132,7 @@ jankhunt42 passport . --base <ref> --md   # what new access, and which agent def
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
 ```
 
-- **Agent workspace checks** (`JH701`-`JH716`, `JH432`):
+- **Agent workspace checks** (`JH701`-`JH715`, `JH432`):
   - an agent that holds untrusted input, private data and a way to act with nothing approving the step that acts (the Agents Rule of Two, `JH714`: MCP configurations with their Claude Code or VS Code settings, and n8n AI Agent nodes);
   - approval bypasses committed in VS Code, Claude Code, Codex, Zed, or Cursor CLI settings, including a pre-approved runner such as `Bash(python:*)`, `Bash(awk:*)` or `Bash(make:*)`, which runs any command;
   - sandboxes that let agent commands reach any host, the Docker socket, or credential paths, or that hand their network decisions to another program (Codex, Claude Code, OpenShell, Agent Substrate), and dev containers that weaken isolation;
@@ -141,7 +141,7 @@ jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capabilit
   - CI that runs any pushed branch, an agent's included, with secrets or a write token;
   - commands that run on folder open, in dev containers, or in hooks;
   - agent CLIs started with bypass flags;
-  - unpinned or credential-holding MCP servers, servers on the deprecated SSE transport, and remote servers given no authentication;
+  - unpinned or credential-holding MCP servers, and servers on the deprecated SSE transport;
   - hidden instructions in agent files;
   - agent skills and commands whose `allowed-tools` pre-approves any shell command, or a runner that runs any command;
   - untrusted issue and PR text fed to AI steps in CI.

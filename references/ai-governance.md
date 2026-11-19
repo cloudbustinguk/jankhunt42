@@ -117,7 +117,7 @@ clear fit carries no risk. Five reliability rules are in that position:
 | CD-SEC-02 Account Impersonation | `JH150`, `JH161` |
 | CD-SEC-03 Authorization Misuse | `JH101`, `JH134`, `JH135`, `JH154`, `JH155`, `JH162`, `JH420`, `JH428`, `JH432` |
 | CD-SEC-04 Sensitive Data Leakage and Handling Failures | `JH101`, `JH132`, `JH133`, `JH134`, `JH141`, `JH145`, `JH146`, `JH147`, `JH149`, `JH153`, `JH155`, `JH159`, `JH401`, `JH415`, `JH427`, `JH706`, `JH713`, `JH714` |
-| CD-SEC-05 Authentication and Secure Communication Failures | `JH105`, `JH107`, `JH112`, `JH115`, `JH138`, `JH144`, `JH148`, `JH151`, `JH156`, `JH161`, `JH163`, `JH707`, `JH716` |
+| CD-SEC-05 Authentication and Secure Communication Failures | `JH105`, `JH107`, `JH112`, `JH115`, `JH138`, `JH144`, `JH148`, `JH151`, `JH156`, `JH161`, `JH163`, `JH707` |
 | CD-SEC-06 Vulnerable and Untrusted Components | `JH111`, `JH142`, `JH143`, `JH402`, `JH404`, `JH412`, `JH417`, `JH421`, `JH422`, `JH423`, `JH424`, `JH426`, `JH429`, `JH430`, `JH431`, `JH434`, `JH705` |
 | CD-SEC-07 Security Misconfiguration | `JH108`, `JH109`, `JH110`, `JH116`, `JH121`, `JH122`, `JH130`, `JH136`, `JH137`, `JH152`, `JH163`, `JH204`, `JH403`, `JH405`, `JH406`, `JH407`, `JH408`, `JH409`, `JH410`, `JH411`, `JH414`, `JH425`, `JH702`, `JH703`, `JH704`, `JH709`, `JH710`, `JH711`, `JH712`, `JH713`, `JH714`, `JH715` |
 | CD-SEC-08 Injection Handling Failures | `JH102`, `JH103`, `JH104`, `JH106`, `JH118`, `JH119`, `JH120`, `JH124`, `JH125`, `JH126`, `JH127`, `JH128`, `JH139`, `JH140`, `JH157`, `JH158`, `JH160`, `JH418`, `JH419`, `JH433`, `JH708` |

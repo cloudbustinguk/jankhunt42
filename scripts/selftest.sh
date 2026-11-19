@@ -729,7 +729,7 @@ assert len(d) == 117, len(d)
 ids = {r["id"] for r in d}
 assert "JH901" not in ids and "JH101" in ids, ids
 assert {"JH%d" % n for n in range(135, 148)} <= ids, ids
-assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711", "JH712", "JH713", "JH714", "JH715", "JH716"}, ids
+assert {r["id"] for r in d if r["category"] == "agent"} == {"JH70%d" % i for i in range(1, 10)} | {"JH710", "JH711", "JH712", "JH713", "JH714", "JH715"}, ids
 print("rules: %d" % len(d))
 PY
 
