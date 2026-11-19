@@ -1609,6 +1609,21 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
                     "Unrestricted shell access is pre-approved for every session that trusts this repository.",
                     start=_line_matching(sf, r'"allow"\s*:') - 1)
                 break
+        deny = {str(e).strip() for e in perms.get("deny") or [] if isinstance(e, str)} \
+            if isinstance(perms.get("deny"), list) else set()
+        # a runner grant is reported only when no unrestricted entry was, and no deny entry covers the shell
+        runner_entries = [] if (_SHELL_ALLOW_ALL & {str(e).strip() for e in allow if isinstance(e, str)}
+                                or _SHELL_ALLOW_ALL & deny) else allow
+        for entry in runner_entries:
+            what = broad_shell(entry.strip()) if isinstance(entry, str) else None
+            if what and what != "any shell command" and entry.strip() not in deny:
+                add(re.escape('"%s"' % entry), "major", (
+                    "%s is pre-approved (`%s`) for every session that %s, so a prompt injection in anything the "
+                    "agent reads can run a command with the developer's files and credentials." % (
+                        what[0].upper() + what[1:], redact_secrets(entry.strip()).replace("`", "'"),
+                        "these managed settings reach" if scope == "managed" else "trusts this repository")),
+                    start=_line_matching(sf, r'"allow"\s*:') - 1)
+                break
         if data.get("enableAllProjectMcpServers") is True:
             add(r'"enableAllProjectMcpServers"', "major", (
                 "Every MCP server in the project's .mcp.json starts without individual approval, including "
@@ -2374,22 +2389,8 @@ def _tool_list(value: str) -> List[str]:
 
 
 # a command that runs whatever text follows it
-_RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "python", "python3", "node",
-            "deno", "bun", "ruby", "perl", "php", "env", "xargs", "sudo", "eval", "exec", "npx", "uvx"}
-
-
-def broad_shell(entry: str) -> Optional[str]:
-    """What a pre-approved Bash entry lets the agent run, when that is any command; None when it is narrower."""
-    m = re.match(r"^Bash(?:\((.*)\))?$", entry)
-    if not m:
-        return None
-    spec = (m.group(1) or "").strip()
-    if spec in ("", "*", "**", ":*"):
-        return "any shell command"
-    wild = re.match(r"^([^\s:*]+)(?:\s+-[ce])?\s*(?::\*|\s\*|\*)$", spec)
-    if wild and wild.group(1).rsplit("/", 1)[-1].lower() in _RUNNERS:
-        return "any command run through %s" % wild.group(1).rsplit("/", 1)[-1]
-    return None
+_RUNNERS = jh_agent.RUNNERS
+broad_shell = jh_agent.broad_shell
 
 
 @check("skill_allowed_tools")
@@ -2595,6 +2596,30 @@ def mcp_plaintext(sf: SourceFile, rule: Rule) -> List[Finding]:
     return [make_finding(rule, sf, s.line, message="MCP server '%s' is reached over plaintext http://." % s.name,
                          extra={"server": s.name})
             for s in _mcp(sf) if jh_agent.plaintext_remote(s.url)][:10]
+
+
+@check("mcp_sse")
+def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
+    return [make_finding(rule, sf, s.line, message=(
+        "MCP server '%s' uses the deprecated SSE transport (HTTP+SSE), which the 2026-07-28 MCP specification "
+        "retires with a 12-month offramp; it keeps a held-open stream, a wider surface than the stateless "
+        "request/response core." % s.name), extra={"server": s.name})
+        for s in _mcp(sf) if s.transport == "sse"][:10]
+
+
+@check("mcp_remote_no_auth")
+def mcp_remote_no_auth(sf: SourceFile, rule: Rule) -> List[Finding]:
+    out: List[Finding] = []
+    for s in _mcp(sf):
+        host = jh_agent.remote_host(s.url)
+        if not host or jh_agent.plaintext_remote(s.url) or jh_agent.credential_names(s) \
+                or jh_agent.credential_literals(s):
+            continue
+        out.append(make_finding(rule, sf, s.line, message=(
+            "MCP server '%s' is a remote server (%s) with no authentication configured, so unless a gateway or "
+            "the client adds credentials at run time it is reachable without them." % (s.name, host)),
+            extra={"server": s.name, "host": host}))
+    return out[:10]
 
 
 # --------------------------------------------------------------------------- AI agents in workflows

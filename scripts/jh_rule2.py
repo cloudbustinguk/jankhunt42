@@ -335,6 +335,8 @@ def mcp_agent(rel: str, text: str, abspath: Optional[str] = None,
                       "bypass_only": claude["bypass"] and not explicit})
     if claude["file"]:
         fetch_allowed, bash_allowed = _webfetch_any(claude["allow"]), any(a in _BROAD_BASH for a in claude["allow"])
+        runner = next((jh_agent.broad_shell(a) for a in claude["allow"] if a not in claude["deny"]
+                       and (jh_agent.broad_shell(a) or "").startswith("any command run through")), None)
         if (claude["bypass"] or fetch_allowed) and "WebFetch" not in claude["deny"]:
             parts.append({"source": "Claude Code WebFetch", "file": claude["file"], "line": claude["line"],
                           "A": YES, "B": "", "C": YES, "what": "any web page, and a request to any address",
@@ -347,6 +349,12 @@ def mcp_agent(rel: str, text: str, abspath: Optional[str] = None,
                           "A": "", "B": POSSIBLE, "C": YES, "what": "any command, with the developer's files and "
                           "credentials", "supervised": False, "bypass_only": not bash_allowed,
                           "why": "any shell command is pre-approved" if bash_allowed else "permissions are bypassed"})
+        elif runner and not _BROAD_BASH & set(claude["deny"]):
+            parts.append({"source": "Claude Code shell", "label": "Claude Code shell", "file": claude["file"],
+                          "line": claude["line"],
+                          "A": "", "B": POSSIBLE, "C": YES, "what": "%s, with the developer's files and credentials"
+                          % runner, "supervised": False, "bypass_only": False,
+                          "why": "%s is pre-approved" % runner})
     out = assess(parts)
     out["unknown"] = unknown
     return out

@@ -150,10 +150,15 @@ def parse(name, text):
 
 
 class Formats(unittest.TestCase):
-    def test_spdx2_complete_meets_the_minimum(self):
+    def test_spdx2_complete_lacks_only_generation_context(self):
+        # 4.21.0: the 2026 CISA elements make generation context a minimum element, and SPDX 2 cannot state it
         q = parse("app.spdx.json", json.dumps(SPDX2_FULL))["quality"]
-        self.assertEqual((q["minimum_elements"], q["missing"]), ("met", []))
-        self.assertEqual(q["cisa_2025_draft_missing"], ["generation context"])   # SPDX 2 cannot state it
+        self.assertEqual((q["minimum_elements"], q["missing"]),
+                         ("partial", ["generation context (SPDX 2 has no field for it)"]))
+        self.assertEqual(q["cisa_2025_draft_missing"], [])                        # kept for 4.20 readers, now empty
+        self.assertEqual(q["not_counted"], ["SBOM author signature", "SBOM version", "SBOM tool version",
+                                            "SBOM data format version"])
+        self.assertTrue(q["basis"].startswith("2026 CISA SBOM Minimum Elements"))
         self.assertEqual(q["components"]["with_identifier"], 2)                   # purl or CPE
 
     def test_spdx2_gaps_are_named(self):
@@ -163,8 +168,9 @@ class Formats(unittest.TestCase):
         doc["creationInfo"]["creators"] = []
         q = parse("app.spdx.json", json.dumps(doc))["quality"]
         self.assertEqual(q["minimum_elements"], "partial")
-        self.assertEqual(q["missing"], ["supplier for 1 of 2 components", "dependency relationships",
-                                        "author of the SBOM data"])
+        self.assertEqual(q["missing"], ["component producer for 1 of 2 components", "dependency relationships",
+                                        "author of the SBOM data", "tool name",
+                                        "generation context (SPDX 2 has no field for it)"])
 
     def test_spdx3_jsonld_uses_the_301_property_names(self):
         sbom = parse("app.spdx3.json", json.dumps(SPDX3))
@@ -182,7 +188,8 @@ class Formats(unittest.TestCase):
         pkgs = {p["name"]: p for p in sbom["packages"]}
         self.assertEqual(pkgs["qs"]["supplier"], "")                              # group "web" is a namespace
         q = sbom["quality"]
-        self.assertEqual(q["missing"], ["supplier for 1 of 3 components"])
+        self.assertEqual(q["missing"], ["component producer for 1 of 3 components",
+                                        "component hash for 2 of 3 components", "license for 2 of 3 components"])
         self.assertEqual(q["document"], {"timestamp": True, "author": True, "tool": True,
                                          "dependency_relationships": True, "primary_component": True,
                                          "generation_context": True})
@@ -191,13 +198,14 @@ class Formats(unittest.TestCase):
         sbom = parse("bom.xml", CDX_XML)
         self.assertEqual([p["name"] for p in sbom["packages"]], ["app", "lib"])  # primary yes, tool component no
         self.assertEqual(sbom["packages"][1]["hashes"], ["SHA-256"])
-        self.assertEqual(sbom["quality"]["minimum_elements"], "met")
+        self.assertEqual((sbom["quality"]["minimum_elements"], sbom["quality"]["missing"]),
+                         ("partial", ["component hash for 1 of 2 components", "license for 1 of 2 components"]))
 
     def test_spdx_tag_value(self):
         sbom = parse("app.spdx", TAG_VALUE)
         pkg = sbom["packages"][0]
         self.assertEqual((pkg["purl"], pkg["hashes"]), ("pkg:pypi/app@1.0.0", ["SHA256"]))   # not the download URL
-        self.assertEqual(sbom["quality"]["minimum_elements"], "met")
+        self.assertEqual(sbom["quality"]["missing"], ["generation context (SPDX 2 has no field for it)"])
 
     def test_spdx2_noassertion_does_not_hide_a_declared_licence(self):
         doc = json.loads(json.dumps(SPDX2_FULL))
@@ -223,7 +231,7 @@ class Formats(unittest.TestCase):
     def test_github_dependency_graph_export_is_unwrapped(self):
         sbom = parse("sbom.json", json.dumps({"sbom": SPDX2_FULL}))
         self.assertEqual((sbom["format"], sbom["package_count"], sbom["quality"]["minimum_elements"]),
-                         ("spdx-json", 2, "met"))
+                         ("spdx-json", 2, "partial"))
 
     def test_syft_json(self):
         sbom = parse("app.syft.json", json.dumps(SYFT_JSON))
@@ -262,8 +270,10 @@ class Gates(unittest.TestCase):
         report = jh_supply.inspect(self.tmp, requirements=need, discover=True)
         self.assertEqual(report["gate"]["result"], "fail")
         self.assertEqual(report["summary"]["sbom_minimum_elements"], "partial")
-        self.assertIn("no SBOM meets the NTIA minimum elements", report["gate"]["reasons"][0])
-        self.write("app.spdx.json", SPDX2_FULL)
+        self.assertIn("no SBOM meets the 2026 SBOM minimum elements", report["gate"]["reasons"][0])
+        self.write("app.spdx.json", SPDX2_FULL)            # complete, but SPDX 2 cannot state generation context
+        self.assertEqual(jh_supply.inspect(self.tmp, requirements=need, discover=True)["gate"]["result"], "fail")
+        self.write("app.spdx3.json", SPDX3)
         met = jh_supply.inspect(self.tmp, requirements=need, discover=True)
         self.assertEqual(met["gate"]["result"], "pass", met["gate"])
 
@@ -280,7 +290,7 @@ class Gates(unittest.TestCase):
             shutil.rmtree(os.path.dirname(policy))
         self.assertEqual(p["provenance"]["sbom_minimum_elements"], "partial")
         evd = {r["rule"]: r for r in p["assessment"]["decision"]["reasons"]}.get("P-EVD-001")
-        self.assertIn("NTIA minimum elements", evd["message"])
+        self.assertIn("2026 SBOM minimum elements", evd["message"])
 
 
 if __name__ == "__main__":

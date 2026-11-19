@@ -4,6 +4,33 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- `JH715` (minor, agent): an MCP server on the HTTP+SSE transport, which the 2026-07-28 MCP specification deprecates
+  with a 12-month offramp. Its held-open stream is a wider surface than the stateless core, and support will end.
+  `streamable-http` and plain `http` servers are not reported.
+- `JH716` (minor, agent, low confidence): a remote MCP server that the configuration gives no token, header or
+  credential. Credentials are often added at run time by a gateway or the client, so this is a lead to check, not a
+  finding to fix on sight. Local servers, servers on plaintext `http://` (already `JH707`) and stdio servers are not
+  reported.
+
+### Changed
+
+- A pre-approved runner is any command. `JH703` now reports a Claude Code `allow` entry such as `Bash(python:*)`,
+  `Bash(awk:*)` or `Bash(make:*)`, and the Rule of Two (`JH714`) counts it as a way to act that runs without asking,
+  as it already counted an unrestricted `Bash`. The runner list now includes awk, sed and make (each can run any
+  command), so `JH712` (skills) and the Cursor CLI check also report them. A deny entry for the runner or for the
+  whole shell cancels the grant; a grant narrowed to one command, such as `Bash(make test)`, is not reported.
+- SBOM minimum elements now follow the 2026 CISA SBOM Minimum Elements (v2.1, 29 July 2026), which replace the 2021
+  NTIA minimum elements. Component hash, license, tool name and generation context were reported as "draft" and are
+  now required, component name is added, and supplier is reported as "component producer", the 2026 name. The new
+  field `not_counted` lists the four elements that counting fields in the file cannot settle (author signature, SBOM
+  version, tool version, data format version). `cisa_2025_draft_missing` is kept, always empty, for readers of
+  earlier output. SPDX 2 has no field for generation context, so an SPDX 2 SBOM, including GitHub's dependency-graph
+  export, no longer meets the minimum, and `require.sbom_minimum` fails for it; the reason names this.
+
 ## [4.20.1] — 2026-11-19
 
 Measured before release: 1,840 repositories (1,240 targeted, 600 base) scanned with 4.20.0 and 4.20.1 in
