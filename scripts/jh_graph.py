@@ -852,15 +852,31 @@ def classify_principal(nodes: Dict[str, Dict[str, Any]], br: Dict[str, Any],
              "sensitive source and external destination are reachable from the same principal "
              "(possible egress path; no data-flow evidence implied)")
         drivers[-1]["external"] = x_id
-    # Verified export of sensitive data to an external destination.
-    for nid, info in imp["confidentiality"].items():
-        if not info["path"]:
+    # Verified export of sensitive data to an external destination: some verified path ends in a verified
+    # export of confidential or restricted data. Any qualifying path counts, not only the one stored as the
+    # witness: adding an edge can change which path is stored, but never removes a qualifying one.
+    conf = imp["confidentiality"]
+    depth_cap = br.get("max_depth", DEFAULT_DEPTH)
+    egress: Dict[str, Tuple[int, str, List[str]]] = {}
+    for eid in sorted(edges_by_id):
+        e = edges_by_id[eid]
+        nid, src = e.get("target"), e.get("source")
+        if e.get("kind") != "exports" or nid not in conf or nodes[nid]["trust_domain"] != "external" \
+                or e.get("data_sensitivity") not in ("confidential", "restricted") \
+                or edge_tier(e, "confidentiality") != 3:
             continue
-        last = edges_by_id[info["path"][-1]]
-        if last["kind"] == "exports" and nodes[nid]["trust_domain"] == "external" \
-                and info["tier"] == 3 and (last.get("data_sensitivity") in ("confidential", "restricted")):
-            bump(4, "X-CRIT-EGRESS", nid, info, "confidentiality",
-                 "verified export of sensitive data to an external destination")
+        if src == br["principal"]:
+            head: List[str] = []
+        elif src in conf and conf[src]["tier"] == 3 and conf[src]["depth"] < depth_cap:
+            head = list(conf[src]["path"])
+        else:
+            continue
+        cand = (len(head) + 1, eid, head + [eid])
+        if nid not in egress or cand[:2] < egress[nid][:2]:
+            egress[nid] = cand
+    for nid in sorted(egress):
+        bump(4, "X-CRIT-EGRESS", nid, dict(conf[nid], tier=3, path=egress[nid][2]), "confidentiality",
+             "verified export of sensitive data to an external destination")
     # jankhunt.exposure.v2: toxic combinations on this principal
     attrs = nodes.get(br["principal"], {}).get("attributes") or {}
 

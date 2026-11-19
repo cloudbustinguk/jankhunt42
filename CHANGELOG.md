@@ -8,6 +8,11 @@ semantic versioning.
 
 ### Fixed
 
+- Map: a verified export of confidential or restricted data to an external destination (`X-CRIT-EGRESS`) is now
+  found on any verified path, not only on the one path the map shows. Before, adding a shorter verified read to the
+  same destination could change the path shown and lower the principal's class from Critical to Moderate, against
+  the rule that more evidence never lowers a class. Found in review.
+
 - The citizen brief's line for `P-OPS-001` no longer says there are no tests or CI when only one of them is missing:
   it now reads "Automated tests, CI or both were not found".
 

@@ -297,3 +297,56 @@ class Pseudonymize(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerifiedEgressAnyPath(unittest.TestCase):
+    """X-CRIT-EGRESS holds when any verified path ends in a verified sensitive export, not only the stored witness."""
+
+    NODES = (("p", "application", "local"), ("i", "identity", "local"), ("s", "database", "internal"),
+             ("x", "external", "external"), ("y", "external", "external"))
+    CANDIDATES = (("p", "i", "authenticates-as", "read", "provider-verified", None),
+                  ("i", "x", "exports", "read", "provider-verified", "confidential"),
+                  ("p", "x", "reads", "read", "provider-verified", None),
+                  ("p", "x", "exports", "read", "observed", "confidential"),
+                  ("s", "x", "exports", "read", "provider-verified", "restricted"),
+                  ("p", "s", "reads", "read", "provider-verified", None),
+                  ("i", "s", "reads", "read", "observed", None),
+                  ("p", "y", "calls", "write", "observed", None),
+                  ("i", "y", "exports", "read", "inferred", "confidential"),
+                  ("s", "y", "exports", "read", "provider-verified", "confidential"),
+                  ("x", "y", "exports", "read", "provider-verified", "restricted"))
+
+    def classify(self, chosen):
+        g = G.Graph()
+        ids = {}
+        for name, kind, domain in self.NODES:
+            extra = {"sensitivity": "confidential"} if kind == "database" else {}
+            ids[name] = g.add_node(kind, [name], name, trust_domain=domain, **extra)
+        for u, v, kind, cap, ver, sens in chosen:
+            eid = g.add_edge(ids[u], ids[v], kind, cap, ver, "high", source_trust="operator")
+            if sens:
+                g.edges[eid]["data_sensitivity"] = sens
+        br = G.blast_radius(g.nodes, g.edge_list(), ids["p"])
+        return G.classify_principal(g.nodes, br, g.edges)
+
+    def test_a_shorter_read_does_not_hide_the_export(self):
+        export = list(self.CANDIDATES[:2])
+        self.assertEqual(self.classify(export)[0], "Critical")
+        cls, drivers = self.classify(export + [self.CANDIDATES[2]])
+        self.assertEqual(cls, "Critical")
+        crit = [d for d in drivers if d["rule"] == "X-CRIT-EGRESS"]
+        self.assertEqual(len(crit), 1)
+        self.assertEqual(len(crit[0]["path"]), 2)  # the witness is the export path, not the shorter read
+        weak = [self.CANDIDATES[0], self.CANDIDATES[8]]  # an inferred export is possible egress, not verified
+        self.assertNotEqual(self.classify(weak)[0], "Critical")
+
+    def test_adding_any_edge_never_lowers_the_class(self):
+        rng = random.Random(4201)
+        for _ in range(250):
+            chosen = [c for c in self.CANDIDATES if rng.random() < 0.45]
+            base = G.EXPOSURE_RANK[self.classify(chosen)[0]]
+            for extra in self.CANDIDATES:
+                if extra in chosen:
+                    continue
+                up = G.EXPOSURE_RANK[self.classify(chosen + [extra])[0]]
+                self.assertGreaterEqual(up, base, (chosen, extra))
