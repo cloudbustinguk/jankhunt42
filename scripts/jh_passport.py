@@ -340,7 +340,7 @@ _PLAIN = {
     "P-AGT-002": "An AI agent here reads text anyone can write, reaches private data, and can act on it; a message "
                  "planted in what it reads could make it send or change that data.",
     "P-AI-001": "It may send sensitive data to an outside AI service; nobody has checked how that service handles it.",
-    "P-OPS-001": "There are no automated tests or CI to catch mistakes before they ship.",
+    "P-OPS-001": "Automated tests, CI or both were not found, so mistakes may not be caught before they ship.",
     "P-EVD-001": "Required build records are missing.",
     "P-JNK-001": "The code has serious quality or security problems.",
     "P-EXP-001": "It can reach more than this policy allows.",

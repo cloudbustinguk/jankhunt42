@@ -4,6 +4,13 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- The citizen brief's line for `P-OPS-001` no longer says there are no tests or CI when only one of them is missing:
+  it now reads "Automated tests, CI or both were not found".
+
 ## [4.20.0] — 2026-11-18
 
 ### Added
