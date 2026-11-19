@@ -1,8 +1,8 @@
 # Mass testing on vibe-coded repositories (the soak)
 
-jankhunt42 was tested on public repositories built with AI coding tools, in batches, with a reviewer checking a sample
-of each batch's findings by hand. This page states what was done and what it showed, as aggregate numbers. Repository
-names are never published.
+jankhunt42 was tested on public repositories built with AI coding tools, in batches, with frontier and local AI models
+checking a sample of each batch's findings; no person repeated the labels. This page states what was done and what it
+showed, as aggregate numbers. Repository names are never published.
 
 Three numbers are kept apart on purpose: how many repositories were **collected**, how many were **scanned**, and how
 many findings were **sampled and checked**. All three are useful; mixing them up is not.
@@ -15,10 +15,11 @@ many findings were **sampled and checked**. All three are useful; mixing them up
 - **Cloning.** Shallow clones only: no hooks, no submodules, no LFS, no credential prompts; nothing built or run.
 - **Scanning.** Each repository was scanned in a container with no network, a read-only root and read-only mounts,
   no capabilities and resource limits. The scanner was the jankhunt42 build current at the time (from a pre-2.7.0 build to 3.6.0).
-- **Checking.** For every batch a reviewer sampled findings and labelled each one: at first TP (the code does what the
-  rule claims and a person should look), FP (it does not), NOISE (true but not worth a person's time) or UNSURE; from
-  batch 19 on, simply whether the finding's claim is true, false or unsure. The labels are defined in
-  [precision.md](precision.md). False positives were fixed between batches, which is why the rate falls.
+- **Checking.** For every batch an AI model sampled findings and labelled each one, and a second model checked the
+  labels against the code: at first TP (the code does what the rule claims and a person should look), FP (it does
+  not), NOISE (true but not worth a person's time) or UNSURE; from batch 19 on, simply whether the finding's claim is
+  true, false or unsure. The labels are defined in [precision.md](precision.md). False positives were fixed between
+  batches, which is why the rate falls.
 
 ## What it showed
 
