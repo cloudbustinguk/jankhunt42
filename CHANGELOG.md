@@ -6,6 +6,11 @@ semantic versioning.
 
 ## [4.20.1] — 2026-11-19
 
+Measured before release: 1,840 repositories (1,240 targeted, 600 base) scanned with 4.20.0 and 4.20.1 in
+locked-down containers. No exposure class and no standard or citizen decision changed. The corrected verified-export
+condition did not fire in this corpus: it needs operator-verified evidence of an export, which a scan of a repository
+alone does not produce.
+
 ### Fixed
 
 - Map: a verified export of confidential or restricted data to an external destination (`X-CRIT-EGRESS`) is now
