@@ -6,6 +6,18 @@ semantic versioning.
 
 ## [4.21.0] — 2026-11-20
 
+Measured before release: 3,769 repositories (those with agent, MCP, skill or SBOM files, and a 600-repository
+base sample) scanned in the agent category with 4.20.1 and 4.21.0 in locked-down containers; the 970 whose agent
+findings changed, that hold an SBOM, or that are in the base sample also had map, passport and citizen passport
+compared. New findings: `JH703` 131 in 121 repositories (runners pre-approved in Claude Code settings: node,
+python, npx, sed, make, awk and others), `JH712` 11 in 7, `JH715` 18 in 9. The Rule of Two verdict became K3 in 12
+repositories (8 had none, 4 were K4), and the exposure class rose in 12 (11 Moderate to Critical, 1 High to
+Critical) and fell in none. The standard decision moved from pass to review in 45; no citizen decision changed, as
+every affected repository was already blocked, but `P-AGT-001` is now a reason in 77. One of 24 SBOMs moved from met
+to partial under the 2026 elements. The base sample did not change. A proposed rule for remote MCP servers with no
+credentials in their configuration was measured and not shipped: nearly all of its 1,286 findings were servers that
+sign the client in with OAuth when it connects, or public documentation servers.
+
 ### Added
 
 - `JH715` (minor, agent): an MCP server on the HTTP+SSE transport, which the 2026-07-28 MCP specification deprecates
