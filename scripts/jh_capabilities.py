@@ -28,7 +28,7 @@ MAX_REQUESTS = 20000
 MUTATING = ("write", "delete", "admin")
 # JH714 reads files beside the one it scans, which a snapshot does not provide; what it judges (the MCP servers
 # and the approval settings) is covered here as definitions and controls.
-AGENT_RULES = {"JH%d" % i for i in range(701, 714)} | {"JH432"}
+AGENT_RULES = {"JH%d" % i for i in range(701, 714)} | {"JH432", "JH715"}
 # Agent settings that change what an agent may do; an editor's own settings (.vscode, .zed) are left to the controls.
 DEFINITION_SETTINGS = (".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml",
                        ".cursor/cli.json", ".gemini/settings.json", "managed-settings.json", "opencode.json",

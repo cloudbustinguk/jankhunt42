@@ -235,6 +235,9 @@ def _line_of_name(lines: List[str], name: str) -> int:
     return 1
 
 
+_SSE_KINDS = {"sse", "http+sse", "sse+http", "legacy-sse", "http-sse"}
+
+
 def _server_from_spec(name: str, spec: Dict[str, Any], line: int) -> McpServer:
     command = spec.get("command")
     args = spec.get("args") if isinstance(spec.get("args"), list) else []
@@ -248,7 +251,8 @@ def _server_from_spec(name: str, spec: Dict[str, Any], line: int) -> McpServer:
                   env=_strs(spec.get("env") or spec.get("environment")),
                   url=url if isinstance(url, str) else "",
                   headers=_strs(spec.get("headers") or spec.get("http_headers")))
-    s.transport = ("sse" if "sse" in kind else "http") if s.url else ("stdio" if s.command else "unknown")
+    # only the documented SSE names are SSE; an unrecognised value is not evidence of the legacy transport
+    s.transport = ("sse" if kind in _SSE_KINDS else "http") if s.url else ("stdio" if s.command else "unknown")
     s.disabled = spec.get("disabled") is True or spec.get("enabled") is False
     return s
 

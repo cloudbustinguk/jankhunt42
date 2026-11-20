@@ -818,7 +818,7 @@ RULES: List[Rule] = [
       confidence="high", check="mcp_plaintext", kinds=("mcp_config",)),
     R("JH715", "MCP server on the deprecated SSE transport", "minor", "agent",
       "The 2026-07-28 MCP specification retires the HTTP+SSE transport with a 12-month offramp; its held-open stream is a wider surface than the stateless core, and support will end.",
-      "Set the server's transport to streamable-http; if the server only offers SSE, plan the switch before the offramp ends.",
+      "Move the server to the Streamable HTTP transport (in Claude Code and VS Code, \"type\": \"http\"; elsewhere the client's streamable HTTP setting); if the server only offers SSE, plan the switch before the offramp ends.",
       confidence="medium", check="mcp_sse", kinds=("mcp_config",)),
     R("JH708", "Untrusted input in AI agent prompt", "critical", "agent",
       "Text that anyone can write (issue, PR, or comment fields) reaches an AI agent step; instructions hidden in it can steer the agent and its token.",

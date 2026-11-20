@@ -394,7 +394,7 @@
     },
     "provenance": {
       "type": "object",
-      "description": "SBOM, attestation and JFrog evidence. sbom_minimum_elements (added in 2.4.0) is the best SBOM's coverage of the NTIA 2021 minimum elements; none when no SBOM was found.",
+      "description": "SBOM, attestation and JFrog evidence. sbom_minimum_elements (added in 2.4.0) is the best SBOM's coverage of the minimum elements: since 4.21.0 the 2026 CISA SBOM Minimum Elements counted from the file (the elements a file count cannot settle are listed in not_counted), before that the NTIA 2021 minimum elements; none when no SBOM was found.",
       "properties": {
         "sbom_minimum_elements": {
           "enum": [

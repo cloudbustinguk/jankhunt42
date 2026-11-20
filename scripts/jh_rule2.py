@@ -206,9 +206,10 @@ def claude_settings(read: Optional[Reader]) -> Dict[str, Any]:
         perms = doc.get("permissions") if isinstance(doc.get("permissions"), dict) else {}
         if perms.get("defaultMode") == "bypassPermissions":
             out["bypass"] = True
-        out["allow"] += [x for x in perms.get("allow") or [] if isinstance(x, str)]
-        out["deny"] += [x for x in perms.get("deny") or [] if isinstance(x, str)]
-        out["disabled"] += [x for x in doc.get("disabledMcpjsonServers") or [] if isinstance(x, str)]
+        # a settings editor can save a non-list here ("allow": true); read lists only, never iterate anything else
+        out["allow"] += [x for x in _as_str_list(perms.get("allow"))]
+        out["deny"] += [x for x in _as_str_list(perms.get("deny"))]
+        out["disabled"] += [x for x in _as_str_list(doc.get("disabledMcpjsonServers"))]
     return out
 
 
@@ -249,6 +250,10 @@ def _cursor_approved(cli: Dict[str, List[Tuple[str, str]]], server: str) -> Opti
 
 
 _BROAD_BASH = {"Bash", "Bash(*)", "Bash(:*)", "Bash(**)"}
+
+
+def _as_str_list(value: Any) -> List[str]:
+    return [x for x in value if isinstance(x, str)] if isinstance(value, list) else []
 
 
 def _webfetch_any(allow: Sequence[str]) -> bool:
