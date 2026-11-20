@@ -4,7 +4,7 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.21.1] — 2026-11-20
 
 Measured before release: the agent-category scan of the same 3,769 repositories as 4.21.0, with 4.21.0 and
 4.21.1 in locked-down containers. No finding was added or removed and no Rule of Two verdict changed; the evidence
