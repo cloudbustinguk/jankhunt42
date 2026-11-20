@@ -868,7 +868,8 @@ def load_source(path: Path, root: Path) -> Optional[SourceFile]:
 # wider than JH101's detection on purpose: prefixed names (AWS_SECRET_ACCESS_KEY) and quoted keys
 # ("db_password": ...) are redacted whatever the value looks like
 _SECRET_KEY_RE = re.compile(
-    r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|access[_-]?key|"
+    r"(?i)\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|passwd|password|pass[_-]?phrase|"
+    r"credentials?|pwd|access[_-]?key|"
     r"(?:admin|master|private|signing|encryption|hmac|webhook|subscription|licen[cs]e|jwt)[_-]?key)\b"
     r"['\"]?\s*[:=]\s*(?=['\"])"
 )
@@ -931,9 +932,9 @@ _SECRET_ARG_RE = re.compile(
 _QUERY_SECRET_RE = re.compile(r"(?i)(?<!alt=media)[?&](?:sig|signature|api_?key|apikey|access_?token|token|secret|"
                               r"password)=(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\.|[$<{%@])")
 # a header written out in one string ("Authorization: Bearer ..."): the credential after the scheme, bare
-_AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization:\s*(?:Bearer|Basic|Token)\s+(?=[\w.~+/=-]{8,}(?:[\s\"'`\\]|$))")
+_AUTH_HEADER_RE = re.compile(r"(?i)\bAuthorization:\s*(?:[A-Za-z][\w-]{1,20}\s+)?(?=[\w.~+/=-]{8,}(?:[\s\"'`\\]|$))")
 # a literal Authorization value ({Authorization: "Bearer ..."}), whole; not "Bearer " + token, not a placeholder
-_AUTH_VALUE_RE = re.compile(r"(?i)\bAuthorization[\"']?\s*\]?\s*[:=,]\s*(?=[\"'](?:Bearer|Basic|Token)\s+[\w.~+/=-]{8,}[\"'])")
+_AUTH_VALUE_RE = re.compile(r"(?i)\bAuthorization[\"']?\s*\]?\s*[:=,]\s*(?=[\"'](?:[A-Za-z][\w-]{1,20}\s+)?[^\s\"']{8,}[\"'])")
 # a DSN's password: Go's user:PASS@tcp(...) (the driver splits at the last @), or scheme://user:PASS@host
 _DSN_PASSWORD_RES = (re.compile(r"[\w.%+-]{1,64}:([^\s\"'`]+?)@(?:tcp|unix)\("),
                      re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^:@/\s\"']+:([^@/\s\"']+)@"))

@@ -94,7 +94,8 @@ def _license(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, list):
-        return ", ".join(x for x in (_license(v) for v in value) if x)
+        # each candidate is judged on its own: NOASSERTION and NONE state nothing, joined or not
+        return ", ".join(x for x in (_license(v) for v in value) if x and x.strip().upper() not in ("NOASSERTION", "NONE"))
     if isinstance(value, dict):
         for key in ("license", "licenseId", "id", "name", "expression"):
             if key in value:
@@ -613,6 +614,8 @@ def _syft_packages(data: Dict[str, Any]) -> List[Dict[str, Any]]:
         cpes = [c.get("cpe") if isinstance(c, dict) else c for c in _as_list(a.get("cpes"))]
         licenses = [l.get("spdxExpression") or l.get("value") if isinstance(l, dict) else l
                     for l in _as_list(a.get("licenses"))]
+        # a malformed value (a number, an object) is a gap, never a crash
+        licenses = [l for l in licenses if isinstance(l, str) and _known(l)]
         hashes = sorted({_scalar(d.get("algorithm")) for d in _as_list(meta.get("digests") or meta.get("digest"))
                          if isinstance(d, dict) and d.get("algorithm")} | ({"h1"} if meta.get("h1Digest") else set()))
         out.append({

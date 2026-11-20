@@ -1617,12 +1617,15 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
         for entry in runner_entries:
             what = broad_shell(entry.strip()) if isinstance(entry, str) else None
             if what and what != "any shell command" and entry.strip() not in deny:
-                add(re.escape('"%s"' % entry), "major", (
+                shown = redact_secrets(entry.strip()).replace("`", "'")
+                # structural evidence (the entry alone): a one-line settings file holds other keys on the same line
+                out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % entry),
+                                                                 _line_matching(sf, r'"allow"\s*:') - 1),
+                                        severity="major", evidence="permissions.allow: %s" % shown, message=(
                     "%s is pre-approved (`%s`) for every session that %s, so a prompt injection in anything the "
                     "agent reads can run a command with the developer's files and credentials." % (
-                        what[0].upper() + what[1:], redact_secrets(entry.strip()).replace("`", "'"),
-                        "these managed settings reach" if scope == "managed" else "trusts this repository")),
-                    start=_line_matching(sf, r'"allow"\s*:') - 1)
+                        what[0].upper() + what[1:], shown,
+                        "these managed settings reach" if scope == "managed" else "trusts this repository"))))
                 break
         if data.get("enableAllProjectMcpServers") is True:
             add(r'"enableAllProjectMcpServers"', "major", (
@@ -2603,7 +2606,7 @@ def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
     return [make_finding(rule, sf, s.line, message=(
         "MCP server '%s' uses the deprecated SSE transport (HTTP+SSE), which the 2026-07-28 MCP specification "
         "retires with a 12-month offramp; it keeps a held-open stream, a wider surface than the stateless "
-        "request/response core." % s.name), extra={"server": s.name})
+        "request/response core." % s.name), evidence="%s: transport sse" % s.name, extra={"server": s.name})
         for s in _mcp(sf) if s.transport == "sse"][:10]
 
 

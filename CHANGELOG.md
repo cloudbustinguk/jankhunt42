@@ -4,6 +4,25 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Evidence never carries a credential that shares the finding's line. In a one-line or minified settings or MCP file,
+  4.21.0's `JH715` and runner `JH703` findings quoted the whole line, including the value of a neighbouring key such
+  as `SSH_PASSPHRASE` or an `Authorization: ApiKey ...` header, in scan JSON and SARIF, the map and the passport.
+  The redactor now masks the value of any key whose name contains a secret word with any prefix (passphrase and
+  credential names included) and the credential after any Authorization scheme, which protects every rule; `JH715`
+  and the runner `JH703` finding also give structural evidence (the server and its transport; the allow entry) instead
+  of the line. Found in review.
+- `JH715` reports only the documented SSE transport names; an unrecognised `type` value is no longer read as SSE.
+  Its fix names the setting Claude Code and VS Code accept (`"type": "http"`).
+- A settings file with a non-list `allow` (for example `"allow": true`) no longer stops the Rule of Two (`JH714`)
+  from assessing the project's MCP servers.
+- A Syft SBOM whose licence value is not text no longer stops the passport; the component counts as missing a
+  licence. Licence candidates are judged one by one, so `NOASSERTION` beside `NONE` is not a licence.
+- `JH715` is listed in the agent control inventory, and the passport schema describes the 2026 SBOM basis.
+
 ## [4.21.0] — 2026-11-20
 
 Measured before release: 3,769 repositories (those with agent, MCP, skill or SBOM files, and a 600-repository
