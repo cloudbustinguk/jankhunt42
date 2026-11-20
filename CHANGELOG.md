@@ -6,6 +6,10 @@ semantic versioning.
 
 ## [Unreleased]
 
+Measured before release: the agent-category scan of the same 3,769 repositories as 4.21.0, with 4.21.0 and
+4.21.1 in locked-down containers. No finding was added or removed and no Rule of Two verdict changed; the evidence
+of 131 runner `JH703` findings and 18 `JH715` findings is now structural. Every ruleset available loads as before.
+
 ### Fixed
 
 - Evidence never carries a credential that shares the finding's line. In a one-line or minified settings or MCP file,
