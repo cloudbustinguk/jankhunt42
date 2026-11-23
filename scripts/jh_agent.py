@@ -230,9 +230,16 @@ def _strs(value: Any) -> Dict[str, str]:
     return {str(k): (v if isinstance(v, str) else json.dumps(v)) for k, v in value.items()}
 
 
+# json_lines locates members down to this depth. Each path is a tuple as long as its depth, so locating every member
+# of a document nested 100,000 deep would hold billions of entries; a line is never needed that deep, and a parser
+# that accepts such a document (Python 3.14 with an unlimited stack does) must not exhaust the machine.
+JSON_LINES_DEPTH = 64
+
+
 def json_lines(text: str) -> Dict[tuple, int]:
     """Locate members and array entries in an already parsed JSONC document, including duplicate names in
-    different objects. Record the key line for a member and the value line for an array element."""
+    different objects. Record the key line for a member and the value line for an array element, down to
+    JSON_LINES_DEPTH levels."""
     tokens = re.finditer(r'//[^\n]*|/\*.*?\*/|"(?:[^"\\]|\\.)*"|[{}\[\],:]|[^\s{}\[\],:/"]+', text.lstrip("\ufeff"), re.S)
     text = text.lstrip("\ufeff")
     lines = {}
@@ -254,10 +261,13 @@ def json_lines(text: str) -> Dict[tuple, int]:
             index += 1
         elif stack and key is None and stack[-1][1] != "[":
             key = json.loads(val)
-            lines[path + (key,)] = line
+            if len(stack) <= JSON_LINES_DEPTH:
+                lines[path + (key,)] = line
         else:
-            child = path + ((index if key is None else key),) if stack else ()
-            lines.setdefault(child, line)
+            deep = len(stack) > JSON_LINES_DEPTH                 # deeper members keep the last located path
+            child = path + ((index if key is None else key),) if stack and not deep else path
+            if not deep:
+                lines.setdefault(child, line)
             if val in ("{", "["):
                 stack.append((path, val, index))
                 path, key, index = child, None, 0
