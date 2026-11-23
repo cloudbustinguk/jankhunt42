@@ -1130,6 +1130,14 @@ MUTANTS = [
     ('M714-gpustack-lexical-version', 'GPUStack versions compare as text, so 2.10 counts as older than 2.2', 'jh_checks.py', '    return bool(m) and (int(m.group(1)), int(m.group(2))) < (2, 2)', '    return bool(m) and (m.group(1), m.group(2)) < ("2", "2")', 'test_self_hosted.py'),
     ('M719-gpustack-mention-counted', 'any line that mentions an old GPUStack image counts as deploying it', 'jh_checks.py', '        start = _CONTAINER_CMD_RE.search(line)', '        start = re.search(r"", line)', 'test_self_hosted.py'),
     ('M773-unanchored-allow-glob-honoured', 'an unanchored allow glob such as * counts as a grant', 'jh_agent.py', '    return "*" in tool and not re.fullmatch(r"mcp__[^*]+?__[^()]*", tool)', '    return False', 'test_permissions_422.py'),
+    ('M774-config-above-repo', 'a config in a parent folder filters a project without git', 'jh_config.py', '        if top is None or cur == top:\n            return None', '        if os.path.dirname(cur) == cur:\n            return None', 'test_config_scope.py'),
+    ('M775-ignore-ci-drops-agent', '--ignore-ci also sets aside JH708, an AI agent acting on untrusted text', 'jankhunt42', ' and r.category != "agent"}', '}', 'test_config_scope.py'),
+    ('M776-env-never-read', 'every env folder is skipped as a virtual environment', 'jh_core.py', '    if name == "env" and path is not None and os.path.isfile(os.path.join(path, "pyvenv.cfg")):', '    if name == "env":', 'test_config_scope.py'),
+    ('M777-git-scan-reads-skipped-folders', 'a scan with git reads folders a scan without git sets aside', 'jh_core.py', '                    if dir_reasons[prefix]:\n                        skip = prefix', '                    if False:\n                        skip = prefix', 'test_config_scope.py'),
+    ('M778-inline-ignore-uncounted', 'findings hidden by inline ignore comments are not counted', 'jh_rules.py', '                self._held("inline_ignore", finding)\n', '', 'test_config_scope.py'),
+    ('M779-set-aside-not-rendered', 'the Markdown report leaves out what the run set aside', 'jh_render.py', '        out.extend("- %s" % text for _, text in aside)', '        pass', 'test_config_scope.py'),
+    ('M780-quiet-reads-pristine', 'a scan that flags nothing is called pristine', 'jh_score.py', '        return "quiet"', '        return "pristine"', 'test_config_scope.py'),
+    ('M781-folders-not-listed', 'folders a scan without git skips are not listed', 'jh_core.py', '                            "%s/%s" % (rel_dir, d) if rel_dir else d)', '                            "")', 'test_config_scope.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

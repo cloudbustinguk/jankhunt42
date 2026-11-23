@@ -5,6 +5,7 @@ line, so they belong to whoever runs the pipeline:
 
 ```sh
 jankhunt42 scan . --ignore-rule JH417 --fail-on major          # set a shipped rule aside for this run
+jankhunt42 scan . --ignore-ci                                  # set aside the rules that read only CI files
 jankhunt42 scan . --ruleset /policy/acme.json --fail-on major  # your own rules and rule settings
 jankhunt42 passport . --profile citizen --ruleset /policy/acme.json --ignore-rule JH417
 ```
@@ -18,7 +19,8 @@ Both work with `scan`, `review` and `passport`, and both can be repeated.
 rule's findings are not reported, scored or gated on. Every output still
 says it happened:
 
-- **scan:** `ignored_rules` in the JSON, and no results in SARIF;
+- **scan:** `ignored_rules` in the JSON, the "Set aside in this run"
+  section of the Markdown and terminal reports, and no results in SARIF;
 - **passport:** `scope.ignored_rules`. The citizen profile's governance
   scans honour it too, because the flag is the operator's own call, not
   the repository's.
@@ -29,6 +31,41 @@ ignore that took effect.
 Use it for a rule your team owns the answer to. JH417 (an action not
 pinned to a commit SHA) is the usual one: whether a tag from a publisher
 you trust is good enough is a policy choice, not a defect.
+
+## `--ignore-ci`
+
+`--ignore-ci` is `--ignore-rule` for every rule that reads only CI
+configuration (GitHub Actions and GitLab CI): JH416–JH422, JH426–JH428
+and JH432. Use it when CI hygiene is someone else's job and you want the
+rest of the report on its own. It sets rules aside by name, exactly as
+`--ignore-rule` does. It is not a path or category filter, so every other
+rule still reads every file, the workflow folder included. JH708 stays:
+an AI agent in a workflow acting on untrusted text is an agent risk.
+
+A category filter (`--category`) is not a way to leave CI out: CI rules
+belong to the security and supply-chain categories too, and the filter
+also drops the categories you did not list.
+
+## What a scan sets aside
+
+The Markdown and terminal reports end their header with **Set aside in
+this run** whenever the run held something back, and the JSON carries the
+same facts in `set_aside`:
+
+| Cause | How to see it |
+|---|---|
+| findings under the severity floor (`minor` by default) | `--min-severity info` |
+| findings hidden by `jankhunt42: ignore` comments in the code | `--no-inline-ignore` |
+| rules set aside by name (`--ignore-rule`, `--ignore-ci`, a ruleset) | drop the flag |
+| findings a config file set aside | `--no-config` |
+| findings over the per-file or per-rule cap | `--max-per-file-rule`, `--max-per-rule` |
+| folders not read: dependencies, build output, caches | scan the folder by its path |
+| files over the size limit, or past the file limit | `--max-file-bytes`, `--max-files` |
+
+A config file applies only to the repository it sits in: the search
+stops at the root of the git work tree, and without git only the scanned
+folder itself is searched, so a stray config in a parent folder never
+filters another project.
 
 ## `--ruleset FILE.json`
 

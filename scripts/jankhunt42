@@ -90,8 +90,10 @@ def _probe_root(paths: Sequence[str]) -> str:
 
 
 def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
-                  spinner: Optional[Spinner] = None) -> Tuple[Any, List[Any], int]:
-    root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes)
+                  spinner: Optional[Spinner] = None,
+                  not_read: Optional[Dict[str, Any]] = None) -> Tuple[Any, List[Any], int]:
+    root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes,
+                                 not_read=not_read)
     if spinner:
         spinner.update("reading %d files…" % len(files))
     import jh_powerplatform
@@ -127,6 +129,15 @@ def _rule_list(value: str) -> str:
     return value
 
 
+CI_KINDS = {"github_actions", "gitlab_ci", "ci"}
+
+
+def ci_rule_ids() -> Set[str]:
+    """The rules that read only CI configuration, except the agent ones (an AI agent acting on untrusted text in a
+    workflow is an agent risk, not CI hygiene)."""
+    return {r.id for r in RULES if r.kinds and set(r.kinds) <= CI_KINDS and r.category != "agent"}
+
+
 def ignored_rules(args: argparse.Namespace) -> Set[str]:
     """Every rule set aside for the main scan: --ignore-rule, and each ruleset's ignore list (prepare_rules)."""
     return set(getattr(args, "ignore_rule_ids", None) or ())
@@ -138,6 +149,8 @@ def prepare_rules(args: argparse.Namespace) -> Optional[str]:
     and rulesets outside the repository). The error to print, or None."""
     paths = getattr(args, "ruleset", None) or []
     flags = {r.strip().upper() for v in (getattr(args, "ignore_rule", None) or ()) for r in v.split(",") if r.strip()}
+    if getattr(args, "ignore_ci", False):
+        flags |= ci_rule_ids()
     if not paths and not flags:
         return None
     given = getattr(args, "paths", None) or [getattr(args, "path", None) or "."]
@@ -180,11 +193,12 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
             disabled=getattr(args, "no_config", False),
         )
         jh_config.emit_warnings(cfg)
+    not_read: Dict[str, Any] = {}
     if preloaded is not None:
         root, sources, skipped = preloaded
     else:
         root, sources, skipped = _load_sources(args.paths, list(args.exclude or ()) + cfg.ignore_globs,
-                                               args.max_files, args.max_file_bytes, spinner)
+                                               args.max_files, args.max_file_bytes, spinner, not_read)
     if spinner:
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
     opts = ScanOptions(
@@ -194,13 +208,16 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         ignore_rule_ids=ignored_rules(args) or None,
         max_per_file_rule=args.max_per_file_rule,
         max_per_rule=args.max_per_rule,
-        honor_suppressions=getattr(args, "honor_suppressions", True),
+        honor_suppressions=getattr(args, "honor_suppressions", True) and not getattr(args, "no_inline_ignore", False),
     )
     result = scan_sources(sources, opts)
     rerate(result.findings, getattr(args, "severity_map", None))
+    config_suppressed = 0
     if cfg.source:
+        before = len(result.findings)
         result.findings = jh_config.apply_to_findings(cfg, result.findings)
         result.findings.sort(key=lambda f: f.sort_key())
+        config_suppressed = before - len(result.findings)
     meta: Dict[str, object] = {
         "root": str(root),
         "elapsed": time.time() - t0,
@@ -212,10 +229,18 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         meta["archive_warnings"] = list((jh_powerplatform.GAPS + jh_n8n.GAPS)[:50])
     if cfg.source:
         meta["config"] = cfg.source
+        meta["config_suppressed"] = config_suppressed
+        if cfg.ignore_globs:
+            meta["config_ignored_paths"] = list(cfg.ignore_globs)[:50]
+        if config_suppressed or cfg.ignore_globs:
+            print("jankhunt42: config %s set aside %d finding(s)%s; run with --no-config to see everything" % (
+                cfg.source, config_suppressed, " and skipped the paths it ignores" if cfg.ignore_globs else ""),
+                file=sys.stderr)
     if ignored_rules(args):
         meta["ignored_rules"] = sorted(ignored_rules(args))
     if getattr(args, "rulesets", None):
         meta["rulesets"] = args.rulesets
+    meta["set_aside"] = set_aside(result, not_read, config_suppressed, ignored_rules(args), args)
     for rid in sorted(result.site_overrun):
         note = "site rule %s ran over its %g-second budget and was switched off for this run; its findings are " \
                "incomplete" % (rid, jh_rules.SITE_BUDGET)
@@ -227,6 +252,30 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     if spinner:
         spinner.done()
     return str(root), result, meta
+
+
+def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: int, ignored: Set[str],
+              args: argparse.Namespace) -> Dict[str, Any]:
+    """Everything this run held back from the report, by cause, so a quiet report shows where it did not look:
+    findings (inline ignore comments, the severity floor, rules set aside by name, the caps, the config) and input
+    (folders not read by name, files over the size limit, the file limit). Version-control folders are left out."""
+    out: Dict[str, Any] = {k: v for k, v in result.set_aside.items() if v}
+    if out.get("below_floor"):
+        out["below_floor"] = dict(out["below_floor"], floor=getattr(args, "min_severity", "minor"))
+    if ignored:
+        out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
+    if config_suppressed:
+        out["config"] = config_suppressed
+    folders = {reason: paths for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}
+    if folders:
+        out["folders_not_read"] = {reason: {"count": len(paths), "paths": sorted(paths)[:20]}
+                                   for reason, paths in sorted(folders.items())}
+    if not_read.get("too_large"):
+        out["files_too_large"] = {"count": len(not_read["too_large"]), "limit_bytes": getattr(args, "max_file_bytes", None),
+                                  "paths": sorted(not_read["too_large"])[:20]}
+    if not_read.get("file_limit"):
+        out["file_limit"] = not_read["file_limit"]
+    return out
 
 
 def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
@@ -250,6 +299,8 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
         },
         "warnings": meta.get("site_warnings", []) + meta.get("archive_warnings", []),
         "config": meta.get("config"),
+        "config_suppressed": meta.get("config_suppressed"),
+        "set_aside": meta.get("set_aside"),
         "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         "minified": meta.get("minified", []),
         "findings": [dict(asdict(f), owasp=jh_frameworks.owasp(f.rule), prompt=jh_prompt.finding_prompt(f))
@@ -412,6 +463,8 @@ def cmd_score(args: argparse.Namespace) -> int:
             "jank": report.to_dict(),
             "warnings": meta.get("site_warnings", []) + meta.get("archive_warnings", []),
             "config": meta.get("config"),
+            "config_suppressed": meta.get("config_suppressed"),
+            "set_aside": meta.get("set_aside"),
             "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         }
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -958,6 +1011,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
                         help="set a rule aside for this run (repeatable, or comma-separated): its findings are not "
                              "reported, scored or gated on, and the report lists it as ignored")
+        sp.add_argument("--no-inline-ignore", action="store_true",
+                        help="report findings that `jankhunt42: ignore` comments in the code would hide (the report "
+                             "always counts them)")
+        sp.add_argument("--ignore-ci", action="store_true",
+                        help="set aside the rules that read only CI configuration (GitHub Actions, GitLab CI): listed in the report as "
+                             "ignored rules, never a path filter; JH708 (an AI agent in a workflow reading untrusted text) stays")
         sp.add_argument("--ruleset", action="append", metavar="FILE.json",
                         help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
                              "re-rated (repeatable; references/rulesets.md)")
@@ -1020,6 +1079,9 @@ def build_parser() -> argparse.ArgumentParser:
     filters.add_argument("--rule", action="append", help="filter rule id (repeatable)")
     filters.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
                          help="set a rule aside (repeatable, or comma-separated): not reported or gated on")
+    filters.add_argument("--ignore-ci", action="store_true",
+                         help="set aside the rules that read only CI configuration (GitHub Actions, GitLab CI): listed in the report as "
+                              "ignored rules, never a path filter; JH708 (an AI agent in a workflow reading untrusted text) stays")
     filters.add_argument("--ruleset", action="append", metavar="FILE.json",
                          help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
                               "re-rated (repeatable; references/rulesets.md)")
@@ -1084,6 +1146,9 @@ def build_parser() -> argparse.ArgumentParser:
     inputs.add_argument("--ignore-rule", action="append", metavar="JHxxx", type=_rule_list,
                         help="set a scan rule aside (repeatable, or comma-separated): it adds no lead or reason, and "
                              "the passport records it in scope.ignored_rules")
+    inputs.add_argument("--ignore-ci", action="store_true",
+                        help="set aside the rules that read only CI configuration (GitHub Actions, GitLab CI): listed in the report as "
+                             "ignored rules, never a path filter; JH708 (an AI agent in a workflow reading untrusted text) stays")
     inputs.add_argument("--ruleset", action="append", metavar="FILE.json",
                         help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
                              "re-rated (repeatable; references/rulesets.md)")

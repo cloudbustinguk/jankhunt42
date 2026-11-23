@@ -84,8 +84,10 @@ def grade_for(score: float) -> str:
 
 
 def label_for(score: float) -> str:
+    # the lowest band says what happened (these rules flagged little), never that the code is clean: a scan that
+    # read little or held findings back scores here too (the report's "Set aside in this run" says what it skipped)
     if score <= 5:
-        return "pristine"
+        return "quiet"
     if score <= 15:
         return "mild jank"
     if score <= 35:

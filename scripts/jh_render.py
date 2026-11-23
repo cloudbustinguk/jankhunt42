@@ -268,6 +268,50 @@ def banner(subtitle: str, meta: str, color: Colors, width: int) -> List[str]:
     return _boxed(lines, color, width, "gradient")
 
 
+def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
+    """(label, sentence) for each thing the run held back (meta["set_aside"]), each with the switch that shows it.
+    Shared by the Markdown and terminal reports so neither can be quieter than the other."""
+    aside = meta.get("set_aside") or {}
+    if not isinstance(aside, dict):
+        return []
+    out: List[Tuple[str, str]] = []
+    floor = aside.get("below_floor") or {}
+    held = {k: v for k, v in floor.items() if k != "floor"}
+    if held:
+        parts = ", ".join("%d %s" % (held[s], s) for s in ("blocker", "critical", "major", "minor", "info") if held.get(s))
+        out.append(("BELOW FLOOR", "%d finding(s) under the severity floor (%s): %s; `--min-severity info` shows them"
+                    % (sum(held.values()), floor.get("floor", "minor"), parts)))
+    if aside.get("inline_ignore"):
+        out.append(("INLINE IGNORE", "%d finding(s) hidden by `jankhunt42: ignore` comments in the code; "
+                    "`--no-inline-ignore` shows them" % aside["inline_ignore"]))
+    ignored = aside.get("ignored_rules") or {}
+    if ignored:
+        rules = ignored.get("rules") or []
+        out.append(("RULES OFF", "%d rule(s) set aside by name and not run: %s%s"
+                    % (len(rules), ", ".join(rules[:12]), ", …" if len(rules) > 12 else "")))
+    if meta.get("config") and (meta.get("config_suppressed") or meta.get("config_ignored_paths")):
+        out.append(("CONFIG", "%s set aside %d finding(s)%s; `--no-config` shows everything" % (
+            safe_text(str(meta["config"])), meta.get("config_suppressed", 0),
+            " and skipped %d path pattern(s)" % len(meta["config_ignored_paths"]) if meta.get("config_ignored_paths") else "")))
+    if aside.get("capped"):
+        out.append(("CAPPED", "%d finding(s) over the per-file or per-rule cap; raise `--max-per-file-rule` or "
+                    "`--max-per-rule`" % aside["capped"]))
+    for reason, info in sorted((aside.get("folders_not_read") or {}).items()):
+        paths = [safe_text(p) + "/" for p in info.get("paths") or []]
+        out.append(("NOT READ", "%d %s folder(s): %s%s; scan a folder by its path to read it" % (
+            info.get("count", 0), reason, ", ".join("`%s`" % p for p in paths[:6]),
+            ", …" if info.get("count", 0) > 6 else "")))
+    big = aside.get("files_too_large") or {}
+    if big:
+        out.append(("NOT READ", "%d file(s) over the %s-byte limit: %s%s; raise `--max-file-bytes`" % (
+            big.get("count", 0), big.get("limit_bytes"), ", ".join("`%s`" % safe_text(p) for p in (big.get("paths") or [])[:4]),
+            ", …" if big.get("count", 0) > 4 else "")))
+    if aside.get("file_limit"):
+        out.append(("NOT READ", "stopped at the %d-file limit, so later files were not read; raise `--max-files`"
+                    % aside["file_limit"]))
+    return out
+
+
 def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
                        report: "jh_score.ScoreReport", findings: Sequence[Finding]) -> List[str]:
     out: List[str] = []
@@ -281,6 +325,12 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
     if meta.get("config"):
         out.append("")
         out.append("_Config: `%s`_" % meta["config"])
+    aside = set_aside_lines(meta)
+    if aside:
+        out.append("")
+        out.append("### Set aside in this run")
+        out.append("")
+        out.extend("- %s" % text for _, text in aside)
     minified = meta.get("minified") or []
     if minified:
         names = ", ".join("`%s`" % safe_text(p).replace("`", "\\`") for p in minified[:5])
@@ -430,8 +480,8 @@ def _tty_summary(counts: Dict[str, int], meta: Dict[str, object], color: "Colors
         out.append("  " + "   ".join(sev_bits))
     else:
         out.append("  " + color.yellow("no findings from the built-in rules — not proof of correctness"))
-    if meta.get("config"):
-        out.append("  " + color.cyan("CONFIG") + "  " + color.grey(str(meta["config"])))
+    for label, text in set_aside_lines(meta):
+        out.append("  " + color.yellow(label) + "  " + color.grey(text.replace("`", "")))
     for warning in (meta.get("archive_warnings") or [])[:5]:
         out.append("  " + color.yellow("NOT READ") + "  " + color.grey(str(warning)))
     minified = meta.get("minified") or []

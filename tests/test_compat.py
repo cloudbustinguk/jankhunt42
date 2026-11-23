@@ -23,7 +23,7 @@ ADDED_RULES = {"JH131", "JH132", "JH133", "JH134", "JH427", "JH428", "JH429", "J
                "JH432", "JH709", "JH710", "JH711", "JH712", "JH713", "JH714", "JH433", "JH434", "JH715"} | \
     {"JH%d" % n for n in range(135, 164)}
 # Top-level JSON keys added since 1.1.0 (additive; 2.7.1 lists minified bundles).
-ADDED_KEYS = {"minified"}
+ADDED_KEYS = {"minified", "config_suppressed", "set_aside"}   # 4.22.0: what the run held back, by cause
 # 4.6.0 pared jankhunt42 down to its core (CHANGELOG): these rules, keys and score parts are gone on purpose.
 REMOVED_RULES = {"JH202", "JH203", "JH205", "JH206", "JH207", "JH301", "JH302", "JH303", "JH304", "JH305", "JH307",
                  "JH308", "JH315", "JH413", "JH503", "JH601", "JH901"}
@@ -166,7 +166,8 @@ class CrossVersion(unittest.TestCase):
         old = self.run_old("scan", self.root, "--md").stdout.replace("Jank" + "Hunt42", "jankhunt42")
         new = run_cli("scan", self.root, "--md").stdout
         new = new.split("## Fix with your coding agent\n")[0]       # 4.11.0: the fix prompt closes the report
-        new = re.sub(r"(?m)^  - owasp: .*\n", "", new)        # 4.6.0: the Jank Score is 3.0 (no maintainability row), so score lines are compared by the tests above
+        new = re.sub(r"(?m)^  - owasp: .*\n", "", new)
+        new = re.sub(r"\n### Set aside in this run\n\n(?:- .*\n)+", "", new)   # 4.22.0: what the run held back        # 4.6.0: the Jank Score is 3.0 (no maintainability row), so score lines are compared by the tests above
         drop = lambda t: [l for l in t.splitlines() if "elapsed" not in l and " in " not in l and "v1." not in l
                           and "v2." not in l and "Scan time" not in l and "Minified bundles" not in l
                           and "Jank:" not in l and "Maintainability" not in l and "_Score " not in l

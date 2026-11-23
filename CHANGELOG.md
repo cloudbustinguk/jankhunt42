@@ -8,9 +8,16 @@ semantic versioning.
 
 ### Added
 
+- `--ignore-ci` sets aside, by name, the eleven rules that read only CI configuration, so the rest of a report stands on its own without a path or category filter. JH708 stays.
+- Every report says what the run held back. A **Set aside in this run** section (JSON `set_aside`) counts findings under the severity floor, hidden by inline ignore comments, set aside by name or by a config, or over a cap, and lists the folders and files not read, each with the switch that shows it. `--no-inline-ignore` reports what inline ignore comments would hide.
+
 - Rule of Two findings record the files and lines of effective Claude Code grants. SBOM quality reports distinguish component producers and paired checksum evidence, and supply summaries include the full missing-element list.
 
 ### Changed
+
+- A scan reads the same folders with or without git. Version control, dependencies, build output and caches are set aside and listed. Other folders are read, including hidden ones and the `.agent`, `.antigravity`, `.pi` and `.copilot` agent folders. An `env` folder is read unless it is a Python virtual environment. Before, a copy without `.git` skipped `env`, `tmp`, `temp` and every hidden folder outside a short list, so a credential in `src/env/` or an MCP server in `.antigravity/` could go unreported.
+- A config file applies only to its own repository. The search stops at the git work-tree root, and a folder without git uses only its own config. A parent folder's config no longer filters another project. A config that sets findings aside says how many on stderr and in the report.
+- The lowest score band is called `quiet`, not `pristine`. It describes what these rules flagged, not the code.
 
 - JH101 qualifies name-only credential leads. JH134 describes the operations and audience of a row policy and refers readers to table grants. JH702 distinguishes an approval option in an invocation from an unresolved mention.
 - JH126 checks the whole markup assignment. JH201 reports an ignored error during a locally identified teardown at info severity.
