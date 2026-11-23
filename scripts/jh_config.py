@@ -79,24 +79,27 @@ class Config:
 
 
 def find_config(start_dir: str) -> Optional[str]:
-    """Walk upward from start_dir looking for a config file, stopping at the
-    filesystem root or a `.git` directory (repo boundary)."""
+    """The config of the repository being scanned: in start_dir, or in a folder between it and the root of the git
+    work tree that contains it. Without a .git above start_dir, only start_dir itself is searched: a config in an
+    unrelated parent folder (a download or workspace folder) must never filter another project's scan."""
     cur = os.path.abspath(start_dir)
-    seen = set()
-    while cur not in seen:
-        seen.add(cur)
+    top, probe = None, cur
+    while True:
+        if os.path.isdir(os.path.join(probe, ".git")) or os.path.isfile(os.path.join(probe, ".git")):
+            top = probe
+            break
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    while True:
         for name in CONFIG_NAMES:
             candidate = os.path.join(cur, name)
             if os.path.isfile(candidate):
                 return candidate
-        if os.path.isdir(os.path.join(cur, ".git")):
+        if top is None or cur == top:
             return None
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            return None
-        cur = parent
-    return None
-
+        cur = os.path.dirname(cur)
 
 def _parse_raw(path: str, contents: Optional[str] = None) -> Tuple[Optional[dict], Optional[str]]:
     if path.endswith(".toml"):

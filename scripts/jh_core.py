@@ -131,16 +131,40 @@ GENERATED_RE = re.compile(
     re.IGNORECASE,
 )
 
-DEFAULT_SKIP_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target",
-    "out", "coverage", ".venv", "venv", "env", "__pycache__", ".mypy_cache",
-    ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".gradle",
-    ".next", ".nuxt", ".cache", ".terraform", "bower_components", "Pods",
-    "DerivedData", "site-packages", ".yarn", ".pnpm-store", "tmp", "temp",
-}
+# Folders never read, in a scan with or without git: version control, installed dependencies, build output and
+# caches. Every other folder is read, hidden ones included, and each folder set aside is listed in the report
+# (discover_files' not_read), so a quiet result never hides where the scan did not look. An `env` folder is read
+# unless it is a Python virtual environment (it holds pyvenv.cfg): on the corpus it was application code every time.
+VCS_DIRS = {".git", ".hg", ".svn"}
+DEPENDENCY_DIRS = {"node_modules", "vendor", "bower_components", "Pods", "site-packages", ".yarn", ".pnpm-store",
+                   ".venv", "venv", ".bundle", ".m2", ".npm"}
+BUILD_DIRS = {"dist", "build", "target", "out", "coverage", ".next", ".nuxt", ".svelte-kit", ".turbo", ".vercel",
+              ".open-next", ".output", ".firebase", ".serverless", ".aws-sam", ".docusaurus", ".dart_tool",
+              ".stack-work", ".pio", "DerivedData", ".nyc_output"}
+CACHE_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".cache", ".gradle", ".terraform",
+              ".idea", ".vs", ".parcel-cache", ".angular", ".sass-cache", ".webpack", ".expo", ".metals", ".bloop",
+              ".history", ".ipynb_checkpoints"}
+DEFAULT_SKIP_DIRS = VCS_DIRS | DEPENDENCY_DIRS | BUILD_DIRS | CACHE_DIRS
+
+
+def skipped_dir_reason(name: str, path: Optional[str] = None) -> Optional[str]:
+    """Why a folder is not read ("dependencies", "build output", "cache", "version control"), or None to read it.
+    `path` (the folder on disk) lets an `env` folder be recognised as a virtual environment."""
+    if name in VCS_DIRS:
+        return "version control"
+    if name in DEPENDENCY_DIRS:
+        return "dependencies"
+    if name in BUILD_DIRS:
+        return "build output"
+    if name in CACHE_DIRS:
+        return "cache"
+    if name == "env" and path is not None and os.path.isfile(os.path.join(path, "pyvenv.cfg")):
+        return "dependencies"
+    return None
 # Agent and editor workspace directories are walked too: what a coding agent
 # or editor does when it opens the repository is part of the attack surface.
-AGENT_DIRS = {".vscode", ".claude", ".cursor", ".gemini", ".codex", ".amazonq", ".windsurf",
+AGENT_DIRS = {".vscode", ".claude", ".cursor", ".gemini", ".codex", ".amazonq", ".windsurf", ".agent", ".antigravity",
+              ".pi", ".copilot",
               ".agents", ".opencode", ".roo", ".kiro", ".clinerules", ".continue", ".zed", ".devcontainer"}
 ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".azure"} | AGENT_DIRS
 
@@ -727,7 +751,11 @@ def discover_files(
     max_files: int = 20000,
     max_bytes: int = 1500000,
     on_file: Optional[Callable[[int, int, str], None]] = None,
+    not_read: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Path, List[Path]]:
+    """The files to scan. `not_read`, when given, is filled with what was set aside: folders by reason
+    {"dirs": {reason: [path, ...]}}, files over the size limit ("too_large"), and whether the file limit cut the
+    walk short ("file_limit")."""
     if not paths:
         paths = ["."]
     roots = [Path(p).expanduser().resolve() for p in paths]
@@ -772,6 +800,8 @@ def discover_files(
             # a Power Platform solution export (.zip) or canvas app (.msapp) is read from inside (jh_powerplatform)
             if p.stat().st_size > (max(max_bytes, MAX_ARCHIVE_BYTES) if p.name.lower().endswith((".zip", ".msapp"))
                                    else max_bytes):
+                if not_read is not None:
+                    not_read.setdefault("too_large", []).append(inside.as_posix())
                 return
         except OSError:
             return
@@ -786,8 +816,22 @@ def discover_files(
             continue
         git_list = _git_files(target)
         if git_list is not None:
+            dir_reasons: Dict[str, Optional[str]] = {}
             for rel in git_list:
                 if excluded(rel):
+                    continue
+                segs = rel.split("/")[:-1]
+                skip = None
+                for i, seg in enumerate(segs):           # the same folders are set aside as in a walk without git
+                    prefix = "/".join(segs[:i + 1])
+                    if prefix not in dir_reasons:
+                        dir_reasons[prefix] = skipped_dir_reason(seg, str(target / prefix))
+                        if dir_reasons[prefix] and not_read is not None:
+                            not_read.setdefault("dirs", {}).setdefault(dir_reasons[prefix], []).append(prefix)
+                    if dir_reasons[prefix]:
+                        skip = prefix
+                        break
+                if skip:
                     continue
                 add(target / rel, base=target)
                 if len(found) >= max_files:
@@ -798,9 +842,11 @@ def discover_files(
                 rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
                 keep = []
                 for d in dirnames:
-                    if d == ".git" or d in DEFAULT_SKIP_DIRS:
-                        continue
-                    if d.startswith(".") and d not in ALLOWED_HIDDEN_DIRS:
+                    reason = skipped_dir_reason(d, os.path.join(dirpath, d))
+                    if reason:
+                        if not_read is not None:
+                            not_read.setdefault("dirs", {}).setdefault(reason, []).append(
+                                "%s/%s" % (rel_dir, d) if rel_dir else d)
                         continue
                     keep.append(d)
                 dirnames[:] = keep
@@ -816,6 +862,8 @@ def discover_files(
         if len(found) >= max_files:
             break
 
+    if not_read is not None and len(found) >= max_files:
+        not_read["file_limit"] = max_files
     found.sort(key=lambda p: str(p))
     total = len(found)
     for idx, p in enumerate(found, 1):

@@ -163,7 +163,7 @@ unchanged.
 
 The 70% worst-dimension anchor means a security catastrophe cannot be averaged
 away. The 30% weighted term means breadth still matters: many medium problems
-across dimensions should not look pristine just because none is catastrophic.
+across dimensions should not look clean just because none is catastrophic.
 
 The scorer rounds the combined value to the nearest integer (exact halves to
 even) and then clamps it to 0–100. Use the headline to prioritize review.
@@ -180,8 +180,11 @@ estimate of incident risk or expected incident count.
 | D | 36-60 | Serious; prioritize before the next release |
 | E | 61-100 | Stop and fix; the risk is concentrated |
 
-The flavor labels (`pristine`, `mild jank`, `spicy`, `grimy`, `biohazard`,
+The flavor labels (`quiet`, `mild jank`, `spicy`, `grimy`, `biohazard`,
 `call the priest`) are communication sugar. The grade is the stable part.
+`quiet` means these rules flagged little. It never means the code is clean: a scan that read little, or held
+findings back, lands there too, and the report's "Set aside in this run" section says what it did not show.
+Before 4.22.0 this band was called `pristine`.
 
 ### 2.6 Advisory policy
 

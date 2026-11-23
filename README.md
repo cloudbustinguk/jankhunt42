@@ -295,6 +295,8 @@ Paths take the strength of their weakest edge. "Known" reach means verified; eve
 
 Suppress a confirmed false positive inline, with a reason: `# jankhunt42: ignore JH201`. File-level suppression is `# jankhunt42: ignore-file JH204`, in the first 12 lines.
 
+The report counts every finding an ignore comment hides, and `--no-inline-ignore` shows them. Its **Set aside in this run** section lists everything else the run held back, including findings under the severity floor, rules set aside by name, a config's suppressions and folders not read, each with the switch that shows it. `--ignore-ci` leaves out the rules that read only CI files by name, with no path or category filter. [What a scan sets aside](references/rulesets.md#what-a-scan-sets-aside)
+
 ## Privacy and security
 
 - **Offline by default.** Only `sandbox --fetch URL` reaches a network: it downloads the hash-pinned packages a lockfile names, from the origins you give it. `scan`, `review`, `map` and `passport` never resolve, probe, or connect to anything they find.

@@ -10,7 +10,7 @@ import warnings
 from dataclasses import dataclass, field
 import html
 import urllib.parse
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (
     Finding,
@@ -923,6 +923,9 @@ class ScanResult:
     # `# jankhunt42: ignore` pragma.
     fired_by_rule: Dict[str, int] = field(default_factory=dict)
     suppressed_by_rule: Dict[str, int] = field(default_factory=dict)
+    # what this run held back from the report, by cause (report "set aside"): inline ignore comments honoured,
+    # findings under the severity floor (by severity), rules set aside by name, and the per-file/per-rule caps
+    set_aside: Dict[str, Any] = field(default_factory=dict)
     # site rules switched off for running over their time budget (_site_rule)
     site_overrun: Set[str] = field(default_factory=set)
 
@@ -1187,6 +1190,19 @@ class _FindingAcceptor:
         self.seen: Set[Tuple[str, str, int, int]] = set()
         self.fired_by_rule: Dict[str, int] = {}
         self.suppressed_by_rule: Dict[str, int] = {}
+        self.set_aside: Dict[str, Any] = {}
+        self.held: Set[Tuple[str, Tuple[str, str, int, int]]] = set()
+
+    def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
+        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule == "JH126" else 0))
+        if key in self.held:                      # a rule can match one line twice: count the finding once
+            return
+        self.held.add(key)
+        if severity is None:
+            self.set_aside[why] = self.set_aside.get(why, 0) + 1
+        else:
+            bucket = self.set_aside.setdefault(why, {})
+            bucket[severity] = bucket.get(severity, 0) + 1
 
     def suppressed(self, finding: Finding) -> bool:
         file_ids, line_ids = self.suppression.get(finding.path, (set(), {}))
@@ -1203,14 +1219,17 @@ class _FindingAcceptor:
         if self.suppressed(finding):
             self.suppressed_by_rule[finding.rule] = self.suppressed_by_rule.get(finding.rule, 0) + 1
             if opts.honor_suppressions:
+                self._held("inline_ignore", finding)
                 return False
         if not sev_at_least(finding.severity, opts.min_severity):
+            self._held("below_floor", finding, finding.severity)
             return False
         if opts.categories and finding.category not in opts.categories:
             return False
         if opts.rule_ids and finding.rule not in opts.rule_ids:
             return False
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
+            self._held("ignored_rules", finding)
             return False
         key = (finding.rule, finding.path, finding.line, finding.column if finding.rule == "JH126" else 0)
         if key in self.seen:
@@ -1218,8 +1237,10 @@ class _FindingAcceptor:
         self.seen.add(key)
         file_rule = (finding.rule, finding.path)
         if self.per_file_rule.get(file_rule, 0) >= opts.max_per_file_rule:
+            self._held("capped", finding)
             return False
         if self.per_rule.get(finding.rule, 0) >= opts.max_per_rule:
+            self._held("capped", finding)
             return False
         self.per_file_rule[file_rule] = self.per_file_rule.get(file_rule, 0) + 1
         self.per_rule[finding.rule] = self.per_rule.get(finding.rule, 0) + 1
@@ -1596,6 +1617,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     result.findings.sort(key=lambda f: f.sort_key())
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule
+    result.set_aside = acceptor.set_aside
     return result
 
 
