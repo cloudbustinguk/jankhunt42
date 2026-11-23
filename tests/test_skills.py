@@ -71,7 +71,7 @@ class Entries(unittest.TestCase):
         for entry, want in (("Bash", "any shell command"), ("Bash(*)", "any shell command"),
                             ("Bash(:*)", "any shell command"), ("Bash(sh -c *)", "any command run through sh"),
                             ("Bash(/usr/bin/env *)", "any command run through env"),
-                            ("Bash(npx:*)", "any command run through npx"),
+                            ("Bash(npx:*)", "execution of package binaries through npx"),
                             ("Bash(node*)", "any command run through node")):
             with self.subTest(entry=entry):
                 self.assertEqual(C.broad_shell(entry), want)

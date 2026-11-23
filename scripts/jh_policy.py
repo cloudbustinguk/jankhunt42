@@ -542,7 +542,11 @@ def evaluate(policy: Dict[str, Any], facts: Dict[str, Any], graph: Optional[Dict
     if policy["require"]["sbom"] and not sup.get("sbom"):
         missing.append("SBOM")
     if policy["require"]["sbom_minimum"] and sup.get("sbom_minimum") != "met":
-        missing.append("an SBOM meeting the 2026 SBOM minimum elements (best: %s)" % sup.get("sbom_minimum", "none"))
+        detail = sup.get("sbom_minimum", "none")
+        structural = "generation context (SPDX 2 has no field for it)"
+        if structural in (sup.get("sbom_missing") or []):
+            detail += ", " + structural
+        missing.append("an SBOM meeting the 2026 SBOM minimum elements (best: %s)" % detail)
     if policy["require"]["attestation"] and not sup.get("attestations"):
         missing.append("attestation")
     if policy["require"]["verified_attestation"] and not sup.get("verified_attestations"):

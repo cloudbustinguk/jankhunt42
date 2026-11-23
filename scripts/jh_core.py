@@ -164,7 +164,7 @@ AGENT_CONFIG_FILES = (".vscode/settings.json", ".vscode/tasks.json", ".claude/se
                       ".claude/settings.local.json", ".codex/config.toml", ".gemini/settings.json",
                       ".zed/settings.json", ".cursor/cli.json", "managed-settings.json", ".cursor/hooks.json",
                       ".cursor/sandbox.json")
-MCP_CONFIG_FILES = (".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", ".gemini/settings.json",
+MCP_CONFIG_FILES = (".mcp.json", ".claude.json", "managed-mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", ".gemini/settings.json",
                     ".codex/config.toml", ".amazonq/mcp.json", ".roo/mcp.json", ".kiro/settings/mcp.json",
                     "claude_desktop_config.json", "opencode.json", "opencode.jsonc")
 

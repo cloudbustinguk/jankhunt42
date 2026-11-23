@@ -41,7 +41,7 @@ def in_migrations(rel: str) -> bool:
 
 # ------------------------------------------------------------------ reading SQL
 
-def statements(text: str) -> List[Tuple[int, str, str]]:
+def statements(text: str, keep_terminator: bool = False) -> List[Tuple[int, str, str]]:
     """Each statement as (line, text, bodies): comments removed, strings and quoted names kept, and the bodies of
     dollar-quoted blocks (functions, DO blocks) taken out of the text and returned apart."""
     nl = [m.start() for m in re.finditer("\n", text)]
@@ -51,9 +51,11 @@ def statements(text: str) -> List[Tuple[int, str, str]]:
     first: Optional[int] = None
     i, n = 0, len(text)
 
-    def flush() -> None:
+    def flush(terminated: bool = False) -> None:
         stmt = "".join(buf).strip()
         if stmt and first is not None:
+            if keep_terminator and terminated:
+                stmt += ";"
             out.append((bisect.bisect_left(nl, first) + 1, stmt, "\n".join(bodies)))
 
     while i < n and len(out) < MAX_STATEMENTS:
@@ -114,7 +116,7 @@ def statements(text: str) -> List[Tuple[int, str, str]]:
                 i += 1
         else:                                            # ;
             before = len(out)
-            flush()
+            flush(terminated=True)
             copying = len(out) > before and bool(_COPY_STDIN.match(out[-1][1]))
             buf, bodies, first = [], [], None
             i += 1
@@ -135,6 +137,78 @@ def _qualify(name: str) -> Tuple[str, str]:
     if len(parts) >= 2:
         return _part(parts[0]), _part(parts[1])
     return "public", _part(parts[0]) if parts else ""
+
+
+
+_POLICY_HEADER = re.compile(
+    rf"^create\s+policy\s+{_IDENT}\s+on\s+{_QNAME}(?:\s+as\s+(?:permissive|restrictive))?"
+    rf"(?:\s+for\s+(all|insert|update|delete|select))?(?:\s+to\s+({_IDENT}(?:\s*,\s*{_IDENT})*))?",
+    re.I)
+_POLICY_CLAUSE = re.compile(r"\s*(using|with\s+check)\s*\(", re.I)
+_POLICY_TOKENS = re.compile(r"""'(?:''|[^'])*'|"(?:""|[^"])*"|[()'"]""")
+_UNCONDITIONAL = re.compile(r"\b(?:using|with\s+check)\s*\(\s*true\s*\)", re.I)
+
+
+def _policy_predicates(rest: str) -> Optional[Dict[str, bool]]:
+    """Read complete top-level predicates. Parentheses in SQL strings are data."""
+    predicates = {}
+    pos = 0
+    while rest[pos:].strip():
+        clause = _POLICY_CLAUSE.match(rest, pos)
+        if not clause:
+            return None
+        key = clause[1].lower().split()[0]
+        if key in predicates or "with" in predicates:
+            return None
+        depth = 1
+        for token in _POLICY_TOKENS.finditer(rest, clause.end()):
+            depth += (token[0] == "(") - (token[0] == ")")
+            if depth == 0:
+                predicates[key] = rest[clause.end():token.start()].strip().lower() == "true"
+                pos = token.end()
+                break
+        else:
+            return None
+    return predicates
+
+
+def policy_finding(sf: SourceFile, rule: Rule, line: int, stmt: str) -> Optional[Finding]:
+    if not re.match(r"^create\s+policy\b", stmt, re.I):
+        return None
+    header = _POLICY_HEADER.match(stmt)
+    # Preserve the existing read-only SELECT exclusion.
+    if header and (header[1] or "").upper() == "SELECT":
+        return None
+    tail = stmt[header.end():] if header else stmt
+    if not _UNCONDITIONAL.search(tail):
+        return None
+    roles = re.findall(_IDENT, header[2]) if header and header[2] else []
+    internal = roles and not any(_part(role) in API_ROLES for role in roles)
+    predicates = _policy_predicates(tail[:-1]) if header and tail.endswith(";") else None
+    command = (header[1] or "ALL").upper() if header else ""
+    message = "Review the row-security policy. Its command or predicate could not be resolved here."
+    if predicates is not None:
+        using = predicates.get("using", False)
+        check = predicates.get("with", using if command in ("ALL", "UPDATE") else False)
+        if not using and not check:
+            return None
+        # Only identifiers enter the diagnostic. Free-form quoted names remain in evidence.
+        audience = ", ".join(role if re.fullmatch(r'[A-Za-z_][\w$]*', role) else "the quoted role"
+                             for role in roles) or "PUBLIC"
+        if command == "INSERT" and check:
+            message = f"This policy's INSERT check accepts every proposed row for {audience}. Inserts require table privileges."
+        elif command == "ALL" and using and check:
+            message = (f"This policy imposes no row filter or row check on SELECT, INSERT, UPDATE and DELETE "
+                       f"for {audience}. Table privileges still apply.")
+        elif using and command in ("ALL", "UPDATE", "DELETE"):
+            ops = "SELECT, UPDATE and DELETE" if command == "ALL" else command
+            message = f"For {audience}, USING accepts all existing rows for {ops}. Table privileges still apply."
+            if check and command == "UPDATE":
+                message += " The UPDATE check also accepts every proposed row."
+        elif check and command in ("ALL", "UPDATE"):
+            ops = "INSERT and UPDATE" if command == "ALL" else command
+            message = f"For {audience}, WITH CHECK accepts all proposed rows for {ops}. Table privileges still apply."
+    return make_finding(rule, sf, line, severity="minor" if internal else "major", message=message)
 
 
 def _names(text: str) -> List[Tuple[str, str]]:

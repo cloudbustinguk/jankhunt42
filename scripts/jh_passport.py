@@ -579,7 +579,7 @@ def provenance(supply: Optional[Dict[str, Any]], evidence: List[Dict[str, Any]])
     best = jh_supply.best_sbom_quality(supply.get("sboms", []))
     out = {"state": state, "sboms": s.get("sboms", 0), "packages": s.get("packages", 0),
            "sbom_minimum_elements": best["minimum_elements"],
-           "sbom_missing": best["missing"][:6] if best["minimum_elements"] != "none" else [],
+           "sbom_missing": best["missing"] if best["minimum_elements"] != "none" else [],
            "attestations": atts, "verified_attestations_reported": s.get("verified_attestations", 0),
            "artifact_digests": sorted(digests, key=lambda d: d["digest"])[:20],
            "note": "%s parses provenance files; it does not verify signatures or signer identity" % TOOL}
@@ -770,6 +770,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
         "jank_policy": jank.get("policy", "pass"),
         "blocker_leads": findings_counts.get("blocker", 0),
         "supply": {"sbom": prov.get("sboms", 0), "sbom_minimum": prov.get("sbom_minimum_elements", "none"),
+                   "sbom_missing": prov.get("sbom_missing", []),
                    "attestations": len(prov.get("attestations", [])),
                    "verified_attestations": prov.get("verified_attestations_reported", 0),
                    "verification_problems": (prov.get("verification") or {}).get("problems", [])},

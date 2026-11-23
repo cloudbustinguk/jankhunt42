@@ -154,9 +154,21 @@ rating-by-worst-issue.
 \end{aligned}
 ```
 
+For each dimension, the scorer rounds the result of §2.3 to an integer and
+clamps it to 0–100. These three scores supply the operands above. The weights
+sum to one, so `weighted` also lies in 0–100. A higher score means a worse
+result. If dimensions tie for the highest score, the report names the first
+in the order security, reliability, tests. The tie leaves the headline value
+unchanged.
+
 The 70% worst-dimension anchor means a security catastrophe cannot be averaged
 away. The 30% weighted term means breadth still matters: many medium problems
 across dimensions should not look pristine just because none is catastrophic.
+
+The scorer rounds the combined value to the nearest integer (exact halves to
+even) and then clamps it to 0–100. Use the headline to prioritize review.
+Its 0–100 scale has no probabilistic interpretation and gives no calibrated
+estimate of incident risk or expected incident count.
 
 ### 2.5 Grades
 

@@ -342,7 +342,7 @@ RULES: List[Rule] = [
       "Writing dynamic HTML into innerHTML/outerHTML can execute injected markup.",
       "Use textContent or a vetted sanitizer; treat all HTML as untrusted.",
       confidence="medium", langs=JS,
-      patterns=(r"\.(?:inner|outer)HTML\s*=",)),
+      patterns=(r"\.(?:inner|outer)HTML\s*=(?!=|>)",)),
     R("JH127", "Vue v-html sink", "major", "security",
       "v-html injects raw HTML and bypasses Vue's escaping.",
       "Use interpolation or sanitize the value with DOMPurify.",
@@ -778,7 +778,7 @@ RULES: List[Rule] = [
       "An agent instruction file hides content or asks the agent to act without the user's knowledge; agents read and follow it.",
       "Remove the instruction, review the file like code, and keep agent instructions visible and specific.",
       confidence="medium", check="agent_instruction", kinds=("agent_context",)),
-    R("JH702", "AI agent runs without approvals", "major", "agent",
+    R("JH702", "AI agent approval-control option", "major", "agent",
       "An AI coding agent is started with human approval disabled: any prompt injection in what it reads becomes command execution with this environment's credentials.",
       "Keep approvals on; if automation needs autonomy, run the agent in a sandbox with no secrets, an egress allowlist, and a least-privilege token.",
       confidence="high", target="nocomment", langs=SCRIPT + JS + ("yaml", "docker", "make", "json", "toml"),
@@ -988,6 +988,32 @@ COMMON_PASSWORDS = {"password", "password1", "password123", "passw0rd", "admin",
                     "hunter2", "hunter22"}
 
 
+_NAME_PAIR = re.compile(r"""[\w"'-]+\s*[:=]\s*(["'])(.*?)\1$""")
+_DISPLAY_MAP = re.compile(r"""(?i)\b(?:\w*(?:labels|messages)|translations)["']?\s*[:=]\s*\{\s*(?:["']?[\w-]+["']?\s*:\s*(?:"[^"]*"|'[^']*')\s*,\s*)*$""")
+_AUTH_CALL = re.compile(r"\b(?:connect|login|authenticate|NetworkCredential|PasswordAuthentication)\s*\([^()]*$")
+
+
+def _credential_role(line: str, m: re.Match) -> str:
+    """Classify just the matched name/value pair. Provider shapes have their own patterns."""
+    prefix, value = line[:m.start()], m.group()
+    pair = _NAME_PAIR.fullmatch(value)
+    if pair:
+        if _DISPLAY_MAP.search(prefix):
+            return "display"
+        # In an editor choice the substitution token is paired with its display label.
+        if re.fullmatch(r"\{[\w.-]+\}|%[\w.-]+%", pair[2]) and (
+                re.match(r"""\s*,\s*["']?label["']?\s*:""", line[m.end():]) or
+                re.search(r"""\{\s*["']?label["']?\s*:\s*(?:"[^"]*"|'[^']*')\s*,\s*$""", prefix)):
+            return "display"
+        if _AUTH_CALL.search(prefix):
+            return "direct"
+        return "name"
+    if re.search(r"\b(?:option|add_argument|add_option)\s*\(\s*$", prefix) and re.fullmatch(
+            r"""["'][\w-]+["']\s*,\s*["']--[\w-]+["']""", value):
+        return "option"
+    return ""
+
+
 def secret_placeholder(match_text: str) -> bool:
     """True when a secret-pattern match is a reference, a generated run, or a
     descriptive fixture value rather than credential material."""
@@ -1158,7 +1184,7 @@ class _FindingAcceptor:
         self.suppression = suppression
         self.per_file_rule: Dict[Tuple[str, str], int] = {}
         self.per_rule: Dict[str, int] = {}
-        self.seen: Set[Tuple[str, str, int]] = set()
+        self.seen: Set[Tuple[str, str, int, int]] = set()
         self.fired_by_rule: Dict[str, int] = {}
         self.suppressed_by_rule: Dict[str, int] = {}
 
@@ -1186,7 +1212,7 @@ class _FindingAcceptor:
             return False
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
             return False
-        key = (finding.rule, finding.path, finding.line)
+        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule == "JH126" else 0)
         if key in self.seen:
             return False
         self.seen.add(key)
@@ -1205,6 +1231,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     _compile_rules()
     result = ScanResult(files=len(sources), loc=sum(s.loc for s in sources))
     acceptor = _FindingAcceptor(opts, _collect_suppressions(sources))
+    import jh_agent
+    claude_scopes = jh_agent.claude_scopes((sf.rel, sf.text) for sf in sources)
     import jh_dotnet
     dotnet_context = jh_dotnet.context(sources)
     import jh_supabase
@@ -1214,6 +1242,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
 
     for sf in sources:
         python_docstrings = None
+        approval_scripts = None
         for rule in RULES:
             if not path_matches(rule, sf):
                 continue
@@ -1263,6 +1292,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         found = jh_supabase.findings(sf, rule, supabase_context)
                     elif rule.check.startswith("n8n_"):
                         found = jh_n8n.findings(sf, rule)
+                    elif rule.check in ("agent_config_approvals", "agent_rule_of_two", "skill_allowed_tools"):
+                        found = fn(sf, rule, jh_agent.settings_for(sf.rel, claude_scopes))
                     else:
                         found = fn(sf, rule)
                 except Exception as exc:  # a broken check must not kill the scan
@@ -1275,6 +1306,12 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue
             pats = _COMPILED.get(rule.id) or []
             if not pats:
+                continue
+            if rule.id == "JH126":
+                for f in _html_assignments(sf, rule, pats[0]):
+                    _example_context(f)
+                    if acceptor.accept(f):
+                        result.findings.append(f)
                 continue
             if rule.id == "JH111" and sf.lang == "json":
                 # in JSON only package.json scripts run: each one checked on its own, at the line that holds it
@@ -1326,7 +1363,21 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if m and rule.id == "JH702" and sf.lang in JS:
                         if agent_regexes is None:
                             agent_regexes = _js_regex_spans(sf.code[idx - 1])
-                        while m and _in_regex_spans(agent_regexes, m.end() - 1):
+                    if m and rule.id == "JH702":
+                        if approval_scripts is None:
+                            approval_scripts = {}
+                            if "package_json" in sf.kinds:
+                                try:
+                                    _npm_scripts(sf, approval_scripts)
+                                except (RecursionError, ValueError, IndexError):
+                                    approval_scripts.clear()
+                        while m:
+                            option = re.search(r"(?<![\w-])--?[a-z][\w-]*", m.group())
+                            pos = m.start() + option.start() if option else m.start()
+                            if not (agent_regexes and _in_regex_spans(agent_regexes, pos)):
+                                role = _approval_role(sf, idx, line, pos, approval_scripts)
+                                if role != "inert":
+                                    break
                             m = pat.search(line, m.end())
                     if not m:
                         continue
@@ -1400,15 +1451,15 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "what runs, so check that it never starts a shell with -c.")
                     if rule.id == "JH109" and _inside_prose_string(sf.nocomment[idx - 1], m.start()):
                         continue                # advice text ("origin: '*' lets any website ..."), not a setting
-                    if rule.id in ("JH124", "JH125", "JH126") and _inside_regex_literal(sf.nocomment[idx - 1], m.start()):
+                    if rule.id in ("JH124", "JH125") and _inside_regex_literal(sf.nocomment[idx - 1], m.start()):
                         continue                # a detector's pattern (/innerHTML|dangerouslySetInnerHTML/i)
-                    if rule.id in ("JH124", "JH125", "JH126") and _constant_html(sf, idx, m.end()):
+                    if rule.id in ("JH124", "JH125") and _constant_html(sf, idx, m.end()):
                         continue
-                    if rule.id in ("JH124", "JH125", "JH126") and _constant_name_html(sf, idx, m.end()):
+                    if rule.id in ("JH124", "JH125") and _constant_name_html(sf, idx, m.end()):
                         severity, confidence = "minor", "low"
                         message = (rule.message + " The HTML comes from a CONSTANT_NAME (an icon, a theme script), "
                                    "which usually holds fixed markup; check that it is not built from user data.")
-                    if rule.id in ("JH124", "JH125", "JH126"):
+                    if rule.id in ("JH124", "JH125"):
                         window = " ".join([sf.nocomment[idx - 1][m.end():]] + sf.nocomment[idx:idx + 2])
                         if re.match(r"\s*=\s*\{\{\s*__html\s*:\s*Object\.entries\(\s*THEMES\s*\)", window):
                             severity, confidence = "minor", "low"
@@ -1426,19 +1477,18 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     if rule.id in _TEST_DATA_MINOR and ("test" in sf.kinds or is_test_path(sf.rel)):
                         severity, confidence = "minor", "low"
                         message = rule.message + " It is in test code, where it is usually test data."
-                    if rule.id == "JH702" and sf.lang == "json" and _descriptive_json_value(line, m.start()):
-                        severity, confidence = "minor", "medium"
-                        message = rule.message + " It is the text of a descriptive JSON field (a description, " \
-                                                   "title or help text), which launches nothing."
-                    if rule.id == "JH702" and is_locale_text(sf):
-                        severity, confidence = "minor", "medium"
-                        message = rule.message + " It is in a translation file: UI text that an i18n " \
-                                                   "library renders, not a command, so it launches no agent."
+                    if rule.id == "JH702":
+                        message = ("This agent invocation supplies an option that requests disabled approval checks."
+                                   if role == "invocation" else
+                                   "An approval-control option appears here. Its use in an invocation is unresolved.")
                     if "secret" in rule.tags:
                         # the first match that is neither a placeholder nor the assignment pattern
                         # re-matching one (apiKey: "AIza<words>"); a real secret later on the line counts
-                        while m and (secret_placeholder(m.group(0)) or any(p in m.group(0) for p in placeholders)):
-                            placeholders.append(m.group(0))
+                        while m:
+                            if secret_placeholder(m.group()) or any(p in m.group() for p in placeholders):
+                                placeholders.append(m.group())
+                            elif rule.id != "JH101" or _credential_role(line, m) not in ("display", "option"):
+                                break
                             m = pat.search(line, m.end())
                         if not m:
                             continue
@@ -1510,7 +1560,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             continue
                         if pem and ("test" in sf.kinds or is_test_path(sf.rel)):
                             severity = "major"
-                            message = rule.message + " It is in test data: confirm it is a throwaway test key."
+                            message = "This fixture contains private-key-shaped material. Confirm it is a throwaway test key."
                         ev = redact_secrets(ev)
                         # A generic `key = "..."` assignment in test code or
                         # docs is usually a fixture or an example, and in
@@ -1528,6 +1578,14 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 severity, confidence = "minor", "low"
                                 message = rule.message + " It is in test code or documentation: confirm it is an " \
                                                          "example, not a real credential."
+                        if rule.id == "JH101" and (not message or message.startswith(rule.message)):
+                            role = _credential_role(line, m)
+                            if role == "name":
+                                message = "The field name suggests authentication. Check how its literal value is used."
+                            elif role == "direct" or any(word in pat.pattern for word in (
+                                    "NetworkCredential", "AuthenticationHeaderValue", "Authorization", "setHeader",
+                                    "data\\s+source", "@(?:tcp|unix)", "{6,}@")):
+                                message = "This code supplies a literal as authentication material."
                     f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1, severity=severity,
                                      confidence=confidence, message=message)
                     _example_context(f)
@@ -1541,7 +1599,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
     return result
 
 
-def _npm_scripts(sf: SourceFile) -> List[Tuple[int, str]]:
+def _npm_scripts(sf: SourceFile, sites: Optional[Dict[Tuple[int, int], str]] = None) -> List[Tuple[int, str]]:
     """A package.json's top-level scripts as (line, decoded command): npm runs them, the lifecycle hooks (preinstall,
     install, postinstall, prepare) on every install. The file is walked as JSON (members of the top-level object
     only, any white space), and each string is decoded by the JSON decoder itself. Anything else, or JSON that does
@@ -1611,7 +1669,10 @@ def _npm_scripts(sf: SourceFile) -> List[Tuple[int, str]]:
         if text[start] == '"':
             value = json.loads(text[start:end])
             if value:
-                found.append((text.count("\n", 0, start) + 1, value))
+                line_no = text.count("\n", 0, start) + 1
+                found.append((line_no, value))
+                if sites is not None:
+                    sites[line_no, start - text.rfind("\n", 0, start)] = value
     return found
 
 
@@ -2014,12 +2075,77 @@ _DESCRIPTIVE_KEY_RE = re.compile(r"(?i)^(?:description|desc|summary|title|subtit
 _JSON_PAIR_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"\s*:\s*"((?:[^"\\\n]|\\.)*)"')
 
 
-def _descriptive_json_value(line: str, pos: int) -> bool:
-    """The match sits inside the string value of a descriptive key on this line ("description": "...")."""
-    for m in _JSON_PAIR_RE.finditer(line):
-        if m.start(2) <= pos < m.end(2):
-            return bool(_DESCRIPTIVE_KEY_RE.match(m.group(1)))
-    return False
+_AGENT_WORD = re.compile(r"(?:.*/)?(?:claude|codex|gemini(?:-cli)?|copilot|cursor-agent|aider|q)(?:\.exe|\.cmd)?(?:@[\w.-]+)?$")
+_COMMAND_FIELDS = {"command", "cmd", "run", "postCreateCommand", "initializeCommand", "postStartCommand"}
+_LAUNCH_CALL = re.compile(r"\b(?:launch|run|spawn|execFile|exec|system|Popen)\s*\(\s*\[?\s*$")
+_DISPLAY_CALL = re.compile(r"\b(?:print|println|log|error|warn|toContain|includes|assertNotIn|assertEquals)\s*\(\s*$")
+
+
+def _shell_option_role(command: str, pos: int) -> str:
+    """Inspect shell words up to this option. Quoted separators stay inside their word."""
+    prefix = command[:pos]
+    words = []
+    for token in re.finditer(r"""(?:[^\s;&|'"\\]+|\\.|"(?:\\.|[^"\\])*"|'[^']*')+|[;&|]+|['"]""", prefix):
+        word = token[0]
+        if word[0] in ";&|":
+            words.clear()
+        else:
+            words.append(word)
+    if words and words[-1] in ("'", '"'):
+        words.pop()  # opening quote around the flag
+    if words and words[0] in ("echo", "printf") and "$(" not in prefix and "`" not in prefix:
+        return "inert"
+    if words and words[0] in ("exec", "then", "else", "npx"):
+        words = words[1:]
+    if words and _AGENT_WORD.fullmatch(words[0].strip("\"'")):
+        # A flag embedded in prose, or consumed as the value of a prompt option, is ambiguous.
+        if words[-1] not in ("-p", "--prompt") and re.search(r"""(?:^|\s)['"]?$""", prefix):
+            return "invocation"
+    return "unresolved"
+
+
+def _approval_role(sf: SourceFile, idx: int, line: str, pos: int, scripts: Dict[Tuple[int, int], str]) -> str:
+    if is_locale_text(sf):
+        return "inert"
+    if sf.lang == "json":
+        for pair in _JSON_PAIR_RE.finditer(line):
+            if pair.start(2) <= pos < pair.end(2):
+                if (idx, pair.start(2)) in scripts:
+                    return _shell_option_role(pair[2], pos - pair.start(2))
+                if _DESCRIPTIVE_KEY_RE.match(pair[1]) or pair[1] in ("evidence", "matched_text"):
+                    return "inert"
+                if pair[1] in _COMMAND_FIELDS:
+                    return _shell_option_role(pair[2], pos - pair.start(2))
+                return "unresolved"
+    elif sf.lang in ("shell", "powershell", "make", "docker"):
+        if re.search(r"""(?:==?|!=)\s*['"]?$""", line[:pos]):
+            return "inert"
+        return _shell_option_role(line, pos)
+    elif sf.lang == "yaml":
+        field = re.match(r"""\s*(?:-\s*)?(?:run|command):\s*['"]?""", line)
+        if field:
+            return _shell_option_role(line[field.end():], pos - field.end())
+        if sf.rel.startswith(".github/workflows/"):
+            return _shell_option_role(line, pos)
+
+    # A flag may share a line with a second expression. Bind its literal to the
+    # surrounding operator or call, never to an earlier assertion or print call.
+    for literal in re.finditer(_PLAIN_LIT, line):
+        if not literal.start() < pos < literal.end():
+            continue
+        before = line[:literal.start()]
+        if (_DISPLAY_CALL.search(before)
+                or re.search(r"(?:[!=]==?)\s*$", before)):
+            return "inert"
+        if _LAUNCH_CALL.search(before):
+            return _shell_option_role(literal[0][1:-1], pos - literal.start() - 1)
+        argv = re.search(r"""\b(?:spawn|execFile|run|Popen)\s*\(\s*\[?\s*["']([^"']+)["']\s*,\s*\[?\s*$""", before)
+        if argv and _AGENT_WORD.fullmatch(argv[1]) and literal.start() + 1 == pos:
+            return "invocation"
+        if re.match(r"\s+(?:not\s+)?in\b", line[literal.end():]) and re.search(r"\bassert\s*$", before):
+            return "inert"
+        break
+    return "unresolved"
 
 
 _CONST_OPERAND = r"(?:(?:self|cls)\s*\.\s*)?_*[A-Z][A-Z0-9_]*"
@@ -2214,6 +2340,85 @@ def _shell_true_constant(sf: SourceFile, idx: int, col: int) -> bool:
             m = _SHELL_CALL_LITERAL_RE.search(text[max(0, k - 40):])
             return bool(m) and max(0, k - 40) + m.end("open") == k + 1
     return False
+
+
+_HTML_TOKEN = re.compile(
+    r"""\s+|"(?:\\[^\n]|[^"\\\n])*"|'(?:\\[^\n]|[^'\\\n])*'|`(?:\\[\s\S]|[^`\\])*`|[\w$]+|.""", re.S)
+
+
+def _html_value(text: str, start: int) -> str:
+    """Classify the entire RHS. A bounded or unfinished read cannot establish a literal."""
+    stack = []
+    literal = True
+    need_operand = True
+    newline = False
+    limit = min(len(text), start + 65536)
+    for token in _HTML_TOKEN.finditer(text, start, limit):
+        word = token[0]
+        if word.isspace():
+            newline = newline or "\n" in word
+            continue
+        if not stack:
+            if word in (";", "}", ")", "]", ","):
+                break
+            if newline and not need_operand and (word[0].isalnum() or word[0] in "_$\"'") and word not in (
+                    "in", "instanceof", "as", "satisfies"):
+                break  # automatic semicolon insertion before the next statement
+        newline = False
+        if word in ("'", '"', "`"):
+            return "unresolved"
+        if word[0] in "'\"`":
+            literal = literal and need_operand and not (word.startswith("`") and "${" in word)
+            need_operand = False
+        elif word in ("(", "[", "{"):
+            stack.append({"(": ")", "[": "]", "{": "}"}[word])
+            literal = literal and need_operand and word == "("
+            need_operand = True
+        elif word in (")", "]", "}"):
+            if stack.pop() != word:
+                return "unresolved"
+            literal = literal and not need_operand
+            need_operand = False
+        elif word == "+":
+            literal = literal and not need_operand
+            need_operand = True
+        else:
+            literal = False
+            need_operand = word[0] in ".-*/%?:=|&^!~<>,"
+    else:
+        if limit < len(text):
+            return "unresolved"
+    if stack or need_operand:
+        return "unresolved"
+    return "literal" if literal else "computed"
+
+
+def _html_assignments(sf: SourceFile, rule: Rule, pattern: re.Pattern):
+    text = "\n".join(sf.nocomment)
+    offset = 0
+    for idx, line in enumerate(sf.code, 1):
+        for match in pattern.finditer(line):
+            if _inside_regex_literal(sf.nocomment[idx - 1], match.start()):
+                continue
+            kind = _html_value(text, offset + match.end())
+            if kind == "literal":
+                continue
+            sink = match[0].split("HTML")[0][1:] + "HTML"
+            severity = confidence = None
+            if kind == "unresolved":
+                message = f"This assignment writes to {sink}. The value's source is unresolved."
+            else:
+                message = f"This assignment writes computed markup to {sink}. Review how the value is constructed."
+                rest = sf.nocomment[idx - 1][match.end():]
+                if _constant_name_html(sf, idx, match.end()):
+                    severity, confidence = "minor", "low"
+                    message += " A constant name may hold fixed markup."
+                elif _sanitized_value("=" + rest) or _sanitized_earlier(sf, idx, rest):
+                    severity, confidence = "minor", "low"
+                    message += " Check the sanitizer's handling of markup."
+            yield make_finding(rule, sf, idx, column=match.start() + 1, severity=severity,
+                               confidence=confidence, message=message)
+        offset += len(sf.nocomment[idx - 1]) + 1
 
 
 def _constant_html(sf: SourceFile, idx: int, col: int) -> bool:
