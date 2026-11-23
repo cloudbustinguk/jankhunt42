@@ -20,7 +20,7 @@ if HERE not in sys.path:
 
 from jh_core import (  # noqa: E402
     run_git,
-    Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, discover_files, load_source,
+    Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source,
     make_finding, sev_at_least,
 )
 import jh_rules  # noqa: E402
@@ -92,8 +92,9 @@ def _probe_root(paths: Sequence[str]) -> str:
 def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
                   spinner: Optional[Spinner] = None,
                   not_read: Optional[Dict[str, Any]] = None) -> Tuple[Any, List[Any], int]:
+    ignored_files = set() if not_read is not None else None
     root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes,
-                                 not_read=not_read)
+                                 not_read=not_read, ignored_files=ignored_files)
     if spinner:
         spinner.update("reading %d files…" % len(files))
     import jh_powerplatform
@@ -105,13 +106,20 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
     skipped = 0
     for idx, path in enumerate(files, 1):
         if jh_powerplatform.is_archive(str(path)):
-            sources.extend(jh_powerplatform.load_archive(path, root))     # a solution export's flows, or nothing
-            continue
-        sf = load_source(path, root)
-        if sf is None:
-            skipped += 1
+            members = jh_powerplatform.load_archive(path, root)
+            sources.extend(members)
+            if not members:
+                continue
         else:
+            sf = load_source(path, root)
+            if sf is None:
+                skipped += 1
+                continue
             sources.append(sf)
+        if not_read is not None and ignored_files and path in ignored_files:
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            count_path(not_read, "git_ignored_read", rel)
+            not_read.setdefault("_git_ignored_paths", set()).add(rel)     # internal: never part of set_aside
         if spinner and idx % 17 == 0:
             spinner.update("reading %d/%d  %s" % (idx, len(files), os.path.basename(str(path))))
     return root, sources, skipped
@@ -218,6 +226,24 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         result.findings = jh_config.apply_to_findings(cfg, result.findings)
         result.findings.sort(key=lambda f: f.sort_key())
         config_suppressed = before - len(result.findings)
+    # A file the repository's .gitignore covers is read (a folder without git reads it too), but it is not committed:
+    # a finding there is at most minor and says why, so a key kept in a git-ignored .env is not reported as a secret
+    # the repository carries. A finding that falls under the floor this way is counted, not dropped.
+    ignored_paths = not_read.get("_git_ignored_paths") or set()
+    if ignored_paths:
+        kept = []
+        for f in result.findings:
+            if f.path in ignored_paths and sev_at_least(f.severity, "major"):
+                f.severity = "minor"
+                f.message = (f.message.rstrip() + " This file is not committed (the repository's .gitignore covers "
+                             "it), so the repository does not carry it; keep it out of shared copies such as zips and "
+                             "uploads.")
+                if not sev_at_least(f.severity, args.min_severity):
+                    floor = result.set_aside.setdefault("below_floor", {})
+                    floor[f.severity] = floor.get(f.severity, 0) + 1
+                    continue
+            kept.append(f)
+        result.findings = kept
     meta: Dict[str, object] = {
         "root": str(root),
         "elapsed": time.time() - t0,
@@ -262,6 +288,8 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
         out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
     if config_suppressed:
         out["config"] = config_suppressed
+    if not_read.get("git_ignored_read"):
+        out["git_ignored_read"] = not_read["git_ignored_read"]
     folders = {reason: paths for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}
     if folders:
         out["folders_not_read"] = {reason: {"count": len(paths), "paths": sorted(paths)[:20]}

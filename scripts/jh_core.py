@@ -740,10 +740,10 @@ def run_git(argv: Sequence[str], **kwargs: object) -> "subprocess.CompletedProce
                           env=git_env(filters), **kwargs)
 
 
-def _git_files(root: Path) -> Optional[List[str]]:
+def _git_files(root: Path, *args: str) -> Optional[List[str]]:
     try:
         proc = run_git(
-            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            ["git", "-C", str(root), "ls-files", "-z", "--exclude-standard", *args],
             capture_output=True, timeout=25,
         )
     except (OSError, subprocess.SubprocessError):
@@ -757,6 +757,13 @@ def _git_files(root: Path) -> Optional[List[str]]:
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 
 
+def count_path(counts: Dict[str, Any], reason: str, rel: str) -> None:
+    entry = counts.setdefault(reason, {"count": 0, "paths": []})
+    entry["count"] += 1
+    if len(entry["paths"]) < 20:
+        entry["paths"].append(rel)
+
+
 def discover_files(
     paths: Sequence[str],
     excludes: Sequence[str] = (),
@@ -764,6 +771,7 @@ def discover_files(
     max_bytes: int = 1500000,
     on_file: Optional[Callable[[int, int, str], None]] = None,
     not_read: Optional[Dict[str, Any]] = None,
+    ignored_files: Optional[Set[Path]] = None,
 ) -> Tuple[Path, List[Path]]:
     """The files to scan. `not_read`, when given, is filled with what was set aside: folders by reason
     {"dirs": {reason: [path, ...]}}, files over the size limit ("too_large"), and whether the file limit cut the
@@ -788,7 +796,7 @@ def discover_files(
                 return True
         return False
 
-    def add(p: Path, base: Optional[Path] = None, allow_symlink: bool = False) -> None:
+    def add(p: Path, base: Optional[Path] = None, allow_symlink: bool = False, git_ignored: bool = False) -> None:
         if p.is_symlink() and not allow_symlink:
             try:
                 resolved = p.resolve()
@@ -826,17 +834,24 @@ def discover_files(
             return
         seen.add(key)
         found.append(p)
+        if ignored_files is not None and git_ignored:
+            ignored_files.add(p)
 
     for target in roots:
         if target.is_file():
-            add(target, base=target.parent, allow_symlink=True)
+            ignored = ignored_files is not None and bool(_git_files(target.parent, "--others", "--ignored",
+                                                                     "--", ":(literal)" + target.name))
+            add(target, base=target.parent, allow_symlink=True, git_ignored=ignored)
             continue
         if not target.is_dir():
             continue
-        git_list = _git_files(target)
-        if git_list is not None:
+        git_list = _git_files(target, "--cached", "--others")
+        ignored_list = _git_files(target, "--others", "--ignored") if git_list is not None else None
+        if git_list is not None and ignored_list is not None:
+            ignored_paths = set(ignored_list)
             dir_reasons: Dict[str, Optional[str]] = {}
-            for rel in git_list:
+            # Match the sorted directory walk before applying the file limit.
+            for rel in sorted(git_list + ignored_list, key=lambda p: (p.split("/")[:-1], p.rsplit("/", 1)[-1])):
                 if excluded(rel):
                     continue
                 segs = rel.split("/")[:-1]
@@ -852,7 +867,7 @@ def discover_files(
                         break
                 if skip:
                     continue
-                add(target / rel, base=target)
+                add(target / rel, base=target, git_ignored=rel in ignored_paths)
                 if len(found) >= max_files:
                     break
         else:
@@ -868,8 +883,8 @@ def discover_files(
                                 "%s/%s" % (rel_dir, d) if rel_dir else d)
                         continue
                     keep.append(d)
-                dirnames[:] = keep
-                for fn in filenames:
+                dirnames[:] = sorted(keep)
+                for fn in sorted(filenames):
                     rel = f"{rel_dir}/{fn}" if rel_dir else fn
                     if excluded(rel):
                         continue
