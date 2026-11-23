@@ -152,3 +152,25 @@ class NestedClaudeProjects(unittest.TestCase):
         agents = [n["attributes"] for n in graph.nodes.values() if n["attributes"].get("platform") == "ai-agent"]
         self.assertEqual({a["project"] for a in agents}, set(doc["projects"]))
         self.assertFalse(any("rule_of_two" in a for a in agents))
+
+
+class UnanchoredAllowGlobs(unittest.TestCase):
+    """Claude Code skips an unanchored allow glob ("*", "B*", "mcp__*"); a glob counts only after mcp__<server>__."""
+
+    def test_unanchored_allow_globs_approve_nothing(self):
+        for entry in ("*", "B*", "mcp__*", "Bas*"):
+            with self.subTest(entry=entry):
+                docs = {'.claude/settings.json': {'permissions': {'allow': [entry]}}}
+                self.assertEqual(scan(docs, "JH703"), [])
+                parts = jh_rule2.mcp_agent('.mcp.json', json.dumps({'mcpServers': {'web': FETCH, 'db': PG}}),
+                                           read=lambda p: json.dumps(docs[p]) if p in docs else None)
+                self.assertNotEqual(parts['verdict'], 'K3')
+
+    def test_an_anchored_mcp_glob_still_approves_and_bypass_still_counts(self):
+        anchored = {'.claude/settings.json': {'permissions': {'allow': ['mcp__web__*', 'mcp__db__*', 'WebFetch']}}}
+        parts = jh_rule2.mcp_agent('.mcp.json', json.dumps({'mcpServers': {'web': FETCH, 'db': PG}}),
+                                   read=lambda p: json.dumps(anchored[p]) if p in anchored else None)
+        self.assertEqual(parts['verdict'], 'K3')
+        bypass = {'.claude/settings.json': {'permissions': {'defaultMode': 'bypassPermissions'}}}
+        self.assertEqual({f.rule for f in scan(bypass, "JH703")}, {"JH703"})
+

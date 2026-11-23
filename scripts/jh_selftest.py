@@ -1129,6 +1129,7 @@ MUTANTS = [
     ('M699-gpustack-old-image-missed', 'a GPUStack image before 2.2.0 is not reported', 'jh_checks.py', '    return bool(m) and (int(m.group(1)), int(m.group(2))) < (2, 2)', '    return False', 'test_self_hosted.py'),
     ('M714-gpustack-lexical-version', 'GPUStack versions compare as text, so 2.10 counts as older than 2.2', 'jh_checks.py', '    return bool(m) and (int(m.group(1)), int(m.group(2))) < (2, 2)', '    return bool(m) and (m.group(1), m.group(2)) < ("2", "2")', 'test_self_hosted.py'),
     ('M719-gpustack-mention-counted', 'any line that mentions an old GPUStack image counts as deploying it', 'jh_checks.py', '        start = _CONTAINER_CMD_RE.search(line)', '        start = re.search(r"", line)', 'test_self_hosted.py'),
+    ('M773-unanchored-allow-glob-honoured', 'an unanchored allow glob such as * counts as a grant', 'jh_agent.py', '    return "*" in tool and not re.fullmatch(r"mcp__[^*]+?__[^()]*", tool)', '    return False', 'test_permissions_422.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

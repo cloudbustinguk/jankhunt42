@@ -337,5 +337,22 @@ class Passport(unittest.TestCase):
         self.assertEqual(jh_frameworks.owasp("JH714"), ["CD-SEC-04", "CD-SEC-07", "ASI01", "ASI02"])
 
 
+class ReaderStaysInTheProject(unittest.TestCase):
+    def test_settings_symlink_outside_the_project_is_not_read(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            project, outside = os.path.join(tmp, "p"), os.path.join(tmp, "outside.json")
+            os.makedirs(os.path.join(project, ".claude"))
+            with open(outside, "w") as fh:
+                fh.write('{"permissions": {"allow": ["Bash"]}}')
+            os.symlink(outside, os.path.join(project, ".claude", "settings.json"))
+            with open(os.path.join(project, ".claude", "settings.local.json"), "w") as fh:
+                fh.write('{"permissions": {"allow": ["Read"]}}')
+            read = R.fs_reader(project)
+            self.assertIsNone(read(".claude/settings.json"))
+            self.assertIsNotNone(read(".claude/settings.local.json"))
+
+
 if __name__ == "__main__":
     unittest.main()
