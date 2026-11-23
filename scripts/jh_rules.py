@@ -25,7 +25,7 @@ from jh_core import (
     redact_secrets,
     sev_at_least,
 )
-from jh_checks import CHECKS
+from jh_checks import CHECKS, nonsecurity_hashes
 
 
 def R(rid: str, title: str, sev: str, cat: str, msg: str, fix: str, **kw) -> Rule:
@@ -951,6 +951,20 @@ _PASSWORD_HASH_RE = re.compile(r"\$(?:2[abxy]?|argon2(?:id|i|d)|pbkdf2(?:-sha(?:
                                r"\{(?:SSHA|SHA|SSHA256|SSHA512|CRYPT|PBKDF2(?:-SHA\d+)?|ARGON2)\}[./A-Za-z0-9$=+]{8,}")
 
 
+_SECRET_COMMAND_RE = re.compile(r"!(?:~?\.{0,2}/\S|(?:python[23]?(?:\.\d+)?|node|sh|bash|zsh|cat|op|pass|gopass|vault|"
+                                r"env|printenv|printf|echo|security|secret-tool|aws|gcloud|az|doppler|infisical|bw|"
+                                r"lpass|keyring|sops|kubectl)\s+\S)")
+
+
+def auth_method_list(line: str, match_text: str) -> bool:
+    """True when the matched value is an authentication method named inside a list of them on this line (three or
+    more quoted method names, as in pg_hba.conf's own comment); a single ("password", "md5") pair stays a lead."""
+    pair = _SECRET_ARG_PAIR_RE.match(match_text)
+    if not pair or not _AUTH_METHOD_RE.fullmatch(pair.group(2).strip()):
+        return False
+    return sum(1 for q in re.findall(r"[\"']([\w-]+)[\"']", line) if _AUTH_METHOD_RE.fullmatch(q)) >= 3
+
+
 def password_hash(match_text: str) -> bool:
     """True when the matched value is a password hash (bcrypt, argon2, PBKDF2, crypt, LDAP {SSHA})."""
     quoted = _SECRET_QUOTED_RE.search(match_text) or _SECRET_ARG_PAIR_RE.match(match_text)
@@ -1043,9 +1057,9 @@ def secret_placeholder(match_text: str) -> bool:
     value = quoted.group(2) if quoted else (pair.group(2) if pair else match_text)
     if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
         return True
-    # an authentication method listed after the word (a comma list, as in pg_hba.conf's own comment: a value given
-    # as password: "trust" is a weak password and stays), or a command that fetches the secret ("!python3 /x.py")
-    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(r"!(?:[\w.-]+\s+\S|\.{0,2}/)", value):
+    # a command that fetches the secret: "!" then a path or a known secret-fetching program and its argument
+    # ("!python3 /x.py", "!op read secret"); "!correct horse" is a passphrase and stays
+    if _SECRET_COMMAND_RE.match(value):
         return True
     if value.strip().lower() in _TOKEN_USERNAMES:
         return True
@@ -1217,7 +1231,7 @@ class _FindingAcceptor:
         self.held: Set[Tuple[str, Tuple[str, str, int, int]]] = set()
 
     def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
-        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule == "JH126" else 0))
+        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126") else 0))
         if key in self.held:                      # a rule can match one line twice: count the finding once
             return
         self.held.add(key)
@@ -1254,7 +1268,7 @@ class _FindingAcceptor:
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
             self._held("ignored_rules", finding)
             return False
-        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule == "JH126" else 0)
+        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126") else 0)
         if key in self.seen:
             return False
         self.seen.add(key)
@@ -1389,12 +1403,19 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 continue
             lines = getattr(sf, rule.target)
             ignore = _IGNORES.get(rule.id)
+            marked_hashes = nonsecurity_hashes(sf) if rule.id == "JH107" else {}
             for idx, line in enumerate(lines, 1):
                 if not line or not line.strip():
                     continue
                 # on a long (minified) line, an ignore word elsewhere on it must not hide a match
                 if ignore and len(line) <= 400 and ignore.search(line):
                     continue
+                if idx in marked_hashes:
+                    for column in sorted(marked_hashes[idx]):
+                        f = make_finding(rule, sf, idx, column=column + 1, severity="info",
+                                         message="This weak hash call explicitly sets usedforsecurity=False for a non-security use.")
+                        if acceptor.accept(f):
+                            result.findings.append(f)
                 placeholders: List[str] = []
                 agent_regexes = None
                 for pat in pats:
@@ -1453,8 +1474,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                    "credentials to a wildcard origin; it matters when the endpoint trusts network "
                                    "position (an intranet or localhost service) rather than a token.")
                     if rule.id == "JH107" and m.group(0).startswith(("hashlib", "createHash", "MessageDigest")):
-                        if "usedforsecurity=False" in line:
-                            continue        # Python says so explicitly
+                        while m and m.start() in marked_hashes.get(idx, ()):
+                            m = pat.search(line, m.end())
+                        if not m:
+                            continue
                         own = " ".join(sf.nocomment[max(0, idx - 2):idx]).lower()   # this statement and the one before
                         security = re.search(r"passw|token|sign|hmac|secret|auth|salt|session|nonce|otp|api_?key", own)
                         if not security and (_HASHING_TRICK_RE.search(line) and "digest" in line
@@ -1529,7 +1552,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         # the first match that is neither a placeholder nor the assignment pattern
                         # re-matching one (apiKey: "AIza<words>"); a real secret later on the line counts
                         while m:
-                            if secret_placeholder(m.group()) or any(p in m.group() for p in placeholders):
+                            if secret_placeholder(m.group()) or any(p in m.group() for p in placeholders) or \
+                                    (rule.id == "JH101" and auth_method_list(line, m.group())):
                                 placeholders.append(m.group())
                             elif rule.id != "JH101" or _credential_role(line, m) not in ("display", "option"):
                                 break
@@ -1538,9 +1562,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             continue
                         if rule.id == "JH101" and password_hash(m.group()):
                             severity, confidence = "minor", "low"
-                            message = ("A password hash, not the password: what a service that checks passwords "
-                                       "stores. Nobody can sign in with it, but a committed hash can be guessed "
-                                       "offline, so a weak password behind it is exposed.")
+                            message = ("The value is shaped like a password hash. If the code hashes a supplied "
+                                       "password and compares the result, a weak password behind it can still be "
+                                       "guessed offline. If the code compares a supplied password with this value "
+                                       "directly, it is the password itself: treat it as a hard-coded secret.")
                         if "data\\s+source" in pat.pattern:
                             host = _CONN_HOST_RE.search(m.group(0))
                             if host and _local_db_host(host.group(1)):

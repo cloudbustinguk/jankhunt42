@@ -1140,10 +1140,11 @@ MUTANTS = [
     ('M781-folders-not-listed', 'folders a scan without git skips are not listed', 'jh_core.py', '                            "%s/%s" % (rel_dir, d) if rel_dir else d)', '                            "")', 'test_config_scope.py'),
     ('M782-plugin-code-read', "installed plugin bundles are read as the project's own code", 'jh_core.py', '        plugin = installed_plugin_dir(inside.as_posix())\n', '        plugin = None\n', 'test_config_scope.py'),
     ('M783-password-hash-critical', 'a committed password hash is reported as a critical secret', 'jh_rules.py', '                        if rule.id == "JH101" and password_hash(m.group()):', '                        if False:', 'test_precision_422.py'),
-    ('M784-auth-method-is-secret', 'an authentication method named in a comment is reported as a secret', 'jh_rules.py', '    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', '    if False or re.match(', 'test_precision_422.py'),
-    ('M785-command-reference-is-secret', 'a command that fetches a key is reported as the key', 'jh_rules.py', ' or re.match(r"!(?:[\\w.-]+\\s+\\S|\\.{0,2}/)", value):', ':', 'test_precision_422.py'),
-    ('M786-method-word-password-dropped', 'a weak password that is also a method name is not reported', 'jh_rules.py', '    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', '    if (_AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', 'test_precision_422.py'),
+    ('M784-auth-method-is-secret', 'an authentication method named in a list of them is reported as a secret', 'jh_rules.py', '(rule.id == "JH101" and auth_method_list(line, m.group()))', 'False', 'test_precision_422.py'),
+    ('M785-command-reference-is-secret', 'a command that fetches a key is reported as the key', 'jh_rules.py', '    if _SECRET_COMMAND_RE.match(value):\n        return True', '    if False:\n        return True', 'test_precision_422.py'),
+    ('M786-method-word-password-dropped', 'a single name/value pair whose value is a method name is dropped', 'jh_rules.py', 'if _AUTH_METHOD_RE.fullmatch(q)) >= 3', 'if _AUTH_METHOD_RE.fullmatch(q)) >= 1', 'test_precision_422.py'),
     ('M787-json-lines-unbounded', 'locating JSON members has no depth bound, so a deeply nested file exhausts memory', 'jh_agent.py', 'JSON_LINES_DEPTH = 64\n', 'JSON_LINES_DEPTH = 10 ** 9\n', 'test_fuzz.py'),
+    ('M788-nonsecurity-hash', 'an explicit non-security hash use loses its info finding', 'jh_checks.py', '_constant_keyword(call, ("usedforsecurity",), False)', '_constant_keyword(call, ("usedforsecurity",), True)', 'test_precision_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
