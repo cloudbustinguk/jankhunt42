@@ -58,7 +58,7 @@ class ConfigScope(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_a_parent_folder_config_does_not_filter_a_project_without_git(self):
-        write(self.tmp, {".jankhunt42.toml": '[paths."*"]\nignore = ["*"]\n', "downloads/app/index.js": APP})
+        write(self.tmp, {".jankhunt42.json": '{"paths": {"*": {"ignore": ["*"]}}}\n', "downloads/app/index.js": APP})
         app = os.path.join(self.tmp, "downloads", "app")
         self.assertIsNone(jh_config.find_config(app))
         doc, _ = scan(app)
@@ -67,9 +67,9 @@ class ConfigScope(unittest.TestCase):
 
     def test_the_repository_config_applies_from_a_subfolder_and_is_reported(self):
         os.makedirs(os.path.join(self.tmp, "repo", ".git"))
-        write(self.tmp, {"repo/.jankhunt42.toml": '[paths."*"]\nignore = ["*"]\n', "repo/src/index.js": APP})
+        write(self.tmp, {"repo/.jankhunt42.json": '{"paths": {"*": {"ignore": ["*"]}}}\n', "repo/src/index.js": APP})   # JSON: TOML needs 3.11+
         self.assertEqual(jh_config.find_config(os.path.join(self.tmp, "repo", "src")),
-                         os.path.join(self.tmp, "repo", ".jankhunt42.toml"))
+                         os.path.join(self.tmp, "repo", ".jankhunt42.json"))
         doc, err = scan(os.path.join(self.tmp, "repo"))
         self.assertEqual(doc["findings"], [])
         self.assertGreaterEqual(doc["config_suppressed"], 1)
