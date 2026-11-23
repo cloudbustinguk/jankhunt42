@@ -3169,6 +3169,31 @@ def _constant_keyword(call: ast.Call, names: Sequence[str], value: bool) -> Opti
     return None
 
 
+def nonsecurity_hashes(sf: SourceFile) -> Dict[int, Set[int]]:
+    """Line and character columns of weak hashlib calls marked for non-security use."""
+    sites: Dict[int, Set[int]] = {}
+    if sf.lang != "python" or "usedforsecurity" not in sf.text or "hashlib" not in sf.text:
+        return sites
+    tree = _python_tree(sf)
+    if tree is None:
+        return sites
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name) and call.func.value.id == "hashlib"):
+            continue
+        if call.func.attr == "new" and call.args and isinstance(call.args[0], ast.Constant):
+            algorithm = call.args[0].value
+        else:
+            algorithm = call.func.attr
+        if algorithm in ("md5", "sha1") and _constant_keyword(call, ("usedforsecurity",), False):
+            raw = sf.raw[call.lineno - 1]
+            # The syntax tree uses UTF-8 byte offsets and omits the initial byte order mark.
+            bom = int(call.lineno == 1 and raw.startswith("\ufeff"))
+            column = bom + len(raw[bom:].encode("utf-8")[:call.col_offset].decode("utf-8"))
+            sites.setdefault(call.lineno, set()).add(column)
+    return sites
+
+
 def _call_text(code: Sequence[str], i: int, open_col: int, max_lines: int = 8) -> str:
     """The code of a call from its opening parenthesis (line i, column open_col) to the matching one, over at most
     max_lines lines; strings and comments are already blanked in the code view."""

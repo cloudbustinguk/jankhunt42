@@ -262,7 +262,7 @@ class SecretShapes(unittest.TestCase):
             with self.subTest(line=line):
                 found = scan("JH101", line + "\n", "users.yml")
                 self.assertFalse(any(f.severity == "critical" for f in found))
-                self.assertTrue(all(f.severity == "minor" and f.message.startswith("A password hash") for f in found))
+                self.assertTrue(all(f.severity == "minor" and f.message.startswith("The value is shaped like a password hash") for f in found))
         found = scan("JH101", 'password: "$argon2id$v=19$m=65536,t=3,p=4$DjuQZ1CwKrfFsOLd$BsnyuCLeLKypIDZoM37czEgTtD"\n',
                      "users.yml")
         self.assertEqual(len(found), 1)             # reported, not dropped: a hash can still be guessed offline
@@ -270,15 +270,28 @@ class SecretShapes(unittest.TestCase):
     def test_method_names_and_commands_are_not_secrets(self):
         for line in ('# METHOD can be "trust", "reject", "md5", "password", "scram-sha-256",',
                      "apiKey: '!python3 /srv/agent/grok-token.py'",
-                     "apiKey: '!./bin/fetch-token'"):
+                     "apiKey: '!./bin/fetch-token'",
+                     "apiKey: '!op read secret'"):
             with self.subTest(line=line):
                 self.assertEqual(scan("JH101", line + "\n", "config.yml"), [])
 
     def test_real_values_in_the_same_shapes_still_count(self):
         for line in ('db.login("password", "Rk8vT2qWm9Zs")',
+                     'cfg.set("password", "scram-sha-256")',          # one name/value pair, not a list of methods
+                     'password = "!correct horse 7"',                  # a passphrase that starts with "!"
+                     'creds = dict([("password", "!correcthorse7")])',  # a value starting with "!" in a pair
                      "const db = { password: 'plaintext' };",
                      "apiKey: '!Rk8vT2qWm9ZsLp4XbN7c'",
                      'password: "Qp7Nz8Rm6At2Hv"'):
             with self.subTest(line=line):
                 found = scan("JH101", line + "\n", "app.js")
                 self.assertEqual([f.severity for f in found], ["critical"])
+
+
+class HashMessageIsConditional(unittest.TestCase):
+    def test_the_hash_message_never_promises_nobody_can_sign_in(self):
+        found = scan("JH101", 'password: "$argon2id$v=19$m=65536,t=3,p=4$DjuQZ1CwKrfFsOLd$BsnyuCLeLKypIDZoM37czEgTtD"\n',
+                     "users.yml")
+        self.assertEqual(len(found), 1)
+        self.assertNotIn("Nobody can sign in", found[0].message)
+        self.assertIn("compares a supplied password with this value directly", found[0].message)

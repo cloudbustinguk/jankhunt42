@@ -1116,7 +1116,7 @@ class Scanner(unittest.TestCase):
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH125", "web/help.tsx")),
                          [(1, "minor"), (2, "major")])
         self.assertEqual(sorted((f["line"], f["severity"]) for f in self.hits("JH107", "app/ids.py")),
-                         [(2, "minor"), (3, "minor"), (5, "major")])
+                         [(2, "minor"), (3, "minor"), (4, "info"), (5, "major")])
 
     def test_review_of_270(self):
         self.assertEqual(self.lines("JH502", "tests/test_helpers.py"), [2, 5])

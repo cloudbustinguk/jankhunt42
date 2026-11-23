@@ -4,6 +4,16 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- JH107 reports a hashlib MD5 or SHA-1 call that sets `usedforsecurity=False` at info severity because the caller explicitly declares a non-security use.
+
+### Fixed
+
+- JH101 reports a passphrase that starts with `!` again (4.22.0 read `"!correct horse 7"` as a command that fetches a key). A command now needs a path or a known secret-fetching program. An authentication method name counts as a placeholder only inside a list of method names, so a single `("password", "md5")` pair stays a lead. The password-hash message no longer says nobody can sign in with the value: if the code compares a supplied password with it directly, the value is the password.
+
 ## [4.22.0] — 2026-11-23
 
 Measured before release. The precision changes, against 4.21.1 in locked-down containers: on the agent-category
