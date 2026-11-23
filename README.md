@@ -299,8 +299,8 @@ Suppress a confirmed false positive inline, with a reason: `# jankhunt42: ignore
 
 - **Offline by default.** Only `sandbox --fetch URL` reaches a network: it downloads the hash-pinned packages a lockfile names, from the origins you give it. `scan`, `review`, `map` and `passport` never resolve, probe, or connect to anything they find.
 - **Redaction.** Credentials, URL userinfo, query strings, connection-string secrets, keys, tokens and emails are removed before anything is hashed, displayed or stored. Repository control characters are neutralized before they reach a terminal. HTML output escapes everything and runs under a no-network content security policy.
-- **Sharing.** A connectivity graph can reveal internal topology, so use `--redact` for anything you share. Generated artifacts contain relative paths only.
-- **Untrusted repositories.** jankhunt42 never executes repository code. Instructions embedded in repository content are data, not commands. Its Git calls switch off every way a repository's own configuration can name a program (hooks, fsmonitor, clean/smudge filters, diff drivers and text converters, signature checking), never write the index or use the network, and drop inherited variables that name a program (`GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND`, `GIT_PAGER`, editors). A test proves each of these runs under plain Git and never under jankhunt42.
+- **Sharing.** A connectivity graph can reveal internal topology, so use `--redact` for anything you share. Generated artifacts contain relative paths only. Inspect a report before you share it; reports written by 4.21.0 could quote a credential that shared a line with a finding (fixed in 4.21.1).
+- **Untrusted repositories.** `scan`, `review`, `map` and `passport` read a repository as data and never execute its code; run them from a trusted copy of jankhunt42 outside the target checkout. The opt-in `sandbox` command is the exception, by design: it runs the target's install hooks, dependency imports and open-time commands inside its container ([limits](references/sandbox.md)). Instructions embedded in repository content are data, not commands. Its Git calls switch off every way a repository's own configuration can name a program (hooks, fsmonitor, clean/smudge filters, diff drivers and text converters, signature checking), never write the index or use the network, and drop inherited variables that name a program (`GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND`, `GIT_PAGER`, editors). A test proves each of these runs under plain Git and never under jankhunt42.
 
 ## Install as an agent skill
 
@@ -336,36 +336,56 @@ This confirms the tarball came from this repository's CI at the tagged commit. I
 
 ## CI integration
 
+Run the required check from a workflow the pull request cannot change, with a pinned copy of jankhunt42 installed
+outside the application checkout. The checkout is only the input. The operator's policy (and any branch-rule export
+or baseline) comes from a repository the pull request cannot write to. A copy of jankhunt42 kept inside the
+repository under review would let a pull request change its own evaluator.
+
 ```yaml
 name: jankhunt42
-on: [push, pull_request]
+on: [pull_request]
 permissions:
   contents: read
-  security-events: write
 jobs:
   assure:
     runs-on: ubuntu-latest
     env:
-      JANKHUNT42: .agents/skills/jankhunt42/scripts/jankhunt42   # wherever this repository keeps its copy
+      JH_VERSION: "4.21.1"
+      JH_SHA256: "8ecbc5318463daf4fe9616b758db49bee9f09dde32a260d76dfec653a137e9b0"
     steps:
-      - uses: actions/checkout@v7   # pin to a SHA in production
+      - uses: actions/checkout@v7        # the candidate, as data (pin actions to a SHA in production)
         with:
+          path: app
           fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v7        # the operator's policy, from a repository the pull request cannot change
+        with:
+          repository: your-org/release-policy
+          path: gate
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python3 "$JANKHUNT42" scan . --sarif > jankhunt42.sarif
-      - name: What changed in what it can reach
-        if: github.event_name == 'pull_request'
-        run: python3 "$JANKHUNT42" map . --base "${{ github.event.pull_request.base.sha }}" --md >> "$GITHUB_STEP_SUMMARY"
-      - name: Passport (enforced; add --profile citizen for software built by non-engineers)
-        run: python3 "$JANKHUNT42" passport . --json --fail-on block > passport.json
-      - uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: jankhunt42.sarif
+      - name: Install a pinned, verified jankhunt42 outside the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP"
+          gh release download "v$JH_VERSION" -R cloudbustinguk/jankhunt42 -p "jankhunt42-$JH_VERSION.tar.gz"
+          echo "$JH_SHA256  jankhunt42-$JH_VERSION.tar.gz" | sha256sum -c
+          gh attestation verify "jankhunt42-$JH_VERSION.tar.gz" -R cloudbustinguk/jankhunt42
+          tar -xzf "jankhunt42-$JH_VERSION.tar.gz"
+          echo "JANKHUNT42=$RUNNER_TEMP/jankhunt42-$JH_VERSION/scripts/jankhunt42" >> "$GITHUB_ENV"
+      - name: Citizen passport (stops on insufficient-evidence and block)
+        run: python3 "$JANKHUNT42" passport app --profile citizen --policy gate/policy/citizen.json --fail-on insufficient-evidence --md >> "$GITHUB_STEP_SUMMARY"
 ```
+
+This job stops on `insufficient-evidence` and `block` and lets `review` through the automated threshold: route that
+outcome to the named human reviewer, or use `--fail-on review` if every outcome but `pass` must stop the job. Use
+`--fail-on block` only for a policy that deliberately lets missing evidence through. The [citizen pull-request
+gate](references/passport.md#the-citizen-pull-request-gate) gives the full layout. For SARIF upload or a PR map, add
+a separate job that grants `security-events: write` only where it publishes, and supply the trusted base commit for
+`map --base` with its history fetched. Keep report files outside the assessed tree.
 
 Keep enforcement explicit. The gates are:
 
