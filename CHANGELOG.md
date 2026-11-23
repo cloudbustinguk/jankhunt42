@@ -19,7 +19,8 @@ semantic versioning.
 ### Fixed
 
 - Option names, display entries and inert approval-option mentions no longer mask adjacent executable or credential-bearing sites.
-- Agent permission checks share runner recognition, apply deny and ask before allow, and combine settings within the captured scope. Explicit runner grants retain their severity alongside bypass mode. Gemini transport keys and Claude project-local MCP servers retain their client-specific meanings.
+- Agent permission checks share runner recognition, apply deny and ask before allow, and combine settings within the captured scope. Explicit runner grants retain their severity alongside bypass mode.
+- An unanchored allow glob (`"*"`, `"B*"`, `"mcp__*"`) is no longer read as a grant: Claude Code skips it and approves nothing. A glob still counts after a literal `mcp__<server>__` prefix. Gemini transport keys and Claude project-local MCP servers retain their client-specific meanings.
 - SBOM quality assesses every declared component before display filtering. Hashes require a digest and algorithm together. Author and tool names need their own evidence. SPDX 3 resolves creation metadata, hashes and licences locally, and SWHIDs and format-specific producer fields count. The passport explains the SPDX 2 generation-context gap. Older minimum-element verdicts require reassessment.
 
 ## [4.21.1] — 2026-11-20

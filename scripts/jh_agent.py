@@ -551,7 +551,7 @@ _EXEC_FLAGS = {"sh": "-c", "bash": "-c", "zsh": "-c", "dash": "-c", "ksh": "-c",
 
 
 def shell_access(pattern: Permission) -> Optional[str]:
-    if pattern.tool not in ("Bash", "Shell", "*") or not pattern.wildcard:
+    if pattern.tool not in ("Bash", "Shell") or not pattern.wildcard:
         return None
     if pattern.wildcard == "all":
         return "any shell command"
@@ -627,6 +627,12 @@ def settings_scope(rel: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+def _unanchored_glob(tool: str) -> bool:
+    """A tool name with a wildcard that Claude Code will not honour in an allow list: a glob is accepted there only in
+    an MCP tool name after a literal mcp__<server>__ prefix."""
+    return "*" in tool and not re.fullmatch(r"mcp__[^*]+?__[^()]*", tool)
+
+
 def claude_scopes(files: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], ClaudeSettings]:
     """Combine only settings present in this scan or snapshot, retaining declaration locations."""
     scopes: Dict[Tuple[str, str], ClaudeSettings] = {}
@@ -648,7 +654,8 @@ def claude_scopes(files: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], Cla
             continue
         lines = json_lines(text)
         if perms.get("defaultMode") == "bypassPermissions":
-            settings.bypass = Grant("bypassPermissions", permission("*"), rel, lines["permissions", "defaultMode"])
+            settings.bypass = Grant("bypassPermissions", Permission("Bash", wildcard="all"), rel,
+                                    lines["permissions", "defaultMode"])
         for key in ("allow", "ask", "deny"):
             entries = perms.get(key, [])
             if not isinstance(entries, list):
@@ -658,6 +665,11 @@ def claude_scopes(files: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], Cla
                 if not isinstance(entry, str):
                     continue
                 pattern = permission(entry)
+                if key == "allow" and _unanchored_glob(pattern.tool):
+                    # Claude Code skips an unanchored allow glob ("*", "B*", "mcp__*"): it approves nothing
+                    settings.gaps.append("%s: allow entry %r is an unanchored glob, which Claude Code skips"
+                                         % (rel, entry.strip()[:60]))
+                    continue
                 if key == "allow":
                     settings.allow.append(Grant(entry.strip(), pattern, rel, lines["permissions", key, idx]))
                 elif key == "ask":
