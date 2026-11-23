@@ -276,6 +276,7 @@ class SecretShapes(unittest.TestCase):
 
     def test_real_values_in_the_same_shapes_still_count(self):
         for line in ('db.login("password", "Rk8vT2qWm9Zs")',
+                     "const db = { password: 'plaintext' };",
                      "apiKey: '!Rk8vT2qWm9ZsLp4XbN7c'",
                      'password: "Qp7Nz8Rm6At2Hv"'):
             with self.subTest(line=line):
