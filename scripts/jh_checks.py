@@ -124,7 +124,7 @@ def _handler_severity(sf: SourceFile, body: str, end_line: int) -> Tuple[str, st
         return "minor", ""
     m = _CONSEQUENTIAL_RE.search(body)
     if m:
-        return "major", ("The handler swallows a failure of `%s(...)` and carries on as if it succeeded."
+        return "major", ("This handler discards an error from `%s(...)`."
                          % m.group(0).rstrip("( "))
     if any(_SUCCESS_AFTER_RE.search(line) for line in after[:3]):
         return "major", "The handler swallows the error, and the code right after reports success."
@@ -171,12 +171,75 @@ def _except_only_import_error(clause: str) -> bool:
     return bool(parts) and all(_IMPORT_ERR_RE.match(p) for p in parts)
 
 
+_LISTENER_TEARDOWN = re.compile(
+    r"""(?P<target>[A-Za-z_$][\w$]*)\.(?P<register>addEventListener|on|addListener)\(\s*"""
+    r"""(?P<event>"[\w.-]+"|'[\w.-]+')\s*,\s*(?P<listener>[A-Za-z_$][\w$]*)\s*\)\s*;?\s*"""
+    r"""return\s*\(\s*\)\s*=>\s*\{\s*try\s*\{\s*(?P=target)\.(?P<remove>removeEventListener|off|removeListener)"""
+    r"""\(\s*(?P=event)\s*,\s*(?P=listener)\s*\)\s*;?\s*\}\s*catch(?:\s*\([^()]*\))?\s*\{\s*\}\s*\}\s*;?""")
+_REMOVE_LISTENER = {"addEventListener": "removeEventListener", "on": "off", "addListener": "removeListener"}
+
+
+def _cleanup_handlers(sf: SourceFile) -> Dict[int, str]:
+    """Identify the empty handler by its own line, only with a local lifetime witness."""
+    actions = {}
+    if sf.lang in ("js", "ts") and "catch" in sf.text:
+        text = "\n".join(sf.nocomment)
+        for m in _LISTENER_TEARDOWN.finditer(text):
+            if m["remove"] == _REMOVE_LISTENER[m["register"]]:
+                start = text.rfind("catch", m.start(), m.end())
+                line = text.count("\n", 0, start)
+                if re.search(r"\bcatch\b", sf.code[line]):
+                    actions[line] = "unregistering the listener"
+    if sf.lang != "python" or "NamedTemporaryFile" not in sf.text:
+        return actions
+    try:
+        tree = ast.parse(sf.text)
+    except (SyntaxError, ValueError, RecursionError):
+        return actions
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) or len(function.body) < 2:
+            continue
+        owned, cleanup = function.body[-2:]
+        if not isinstance(owned, ast.With) or len(owned.items) != 1 or not isinstance(cleanup, ast.Try):
+            continue
+        item = owned.items[0]
+        if not (isinstance(item.optional_vars, ast.Name) and isinstance(item.context_expr, ast.Call)
+                and ast.unparse(item.context_expr.func) == "tempfile.NamedTemporaryFile"):
+            continue
+        name = item.optional_vars.id
+        if any(isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, (ast.Store, ast.Del))
+               for stmt in owned.body for n in ast.walk(stmt)):
+            continue
+        if len(cleanup.body) != 1 or cleanup.orelse or cleanup.finalbody or len(cleanup.handlers) != 1:
+            continue
+        call = cleanup.body[0]
+        handler = cleanup.handlers[0]
+        if (len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass) and isinstance(call, ast.Expr)
+                and isinstance(call.value, ast.Call) and ast.unparse(call.value.func) in ("os.unlink", "os.remove")
+                and len(call.value.args) == 1 and not call.value.keywords
+                and ast.unparse(call.value.args[0]) == name + ".name"):
+            actions[handler.lineno - 1] = "removing the temporary file"
+    return actions
+
+
 @check("empty_handler")
 def empty_handler(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
 
+    cleanup = _cleanup_handlers(sf)
     def add(line: int, end: int, message: Optional[str] = None, explained: bool = False) -> None:
-        severity, why = _handler_severity(sf, _try_body(sf, line, sf.lang == "python"), end + 1)
+        if line in cleanup:
+            out.append(make_finding(rule, sf, line + 1, severity="info",
+                                    message="This cleanup handler ignores an error while " + cleanup[line] + "."))
+            return
+        body = _try_body(sf, line, sf.lang == "python")
+        severity, why = _handler_severity(sf, body, end + 1)
+        # Attribute a state change only to the immediate, unconditional continuation.
+        following = next((ln for ln in sf.code[end + 1:end + 5] if ln.strip()), "")
+        if (re.fullmatch(r"\s*(?:try:\s*)?(?:await\s+)?[\w.]+\.close\(\s*\)\s*;?\s*", body)
+                and indent_of(following) == indent_of(sf.code[line])
+                and re.match(r"\s*[\w.]+(?:\.[\w]+\s*=(?!=)|\.(?:add|push|append|remove)\()", following)):
+            why = "This handler discards an error from close(). The failure path continues to a state update."
         if explained and severity != "major":
             return                      # documented cleanup/fallbacks stay quiet; comments cannot hide failed writes
         out.append(make_finding(rule, sf, line + 1, end_line=end + 1 if end != line else None, severity=severity,
@@ -1072,10 +1135,7 @@ def _redact_env_value(line: str) -> str:
 _RULES_ALLOW_RE = re.compile(r"\ballow\s+([a-z, ]+?)\s*(?::\s*if\s+(.+?))?\s*;")
 _SQL_STATEMENT_RES = (
     (re.compile(r"(?is)\balter\s+table\s+[^;]*?\bdisable\s+row\s+level\s+security\b"), "major",
-     "Row-level security is disabled, so any role that can reach the table (including the public anon key) "
-     "reads and writes every row."),
-    (re.compile(r"(?is)\bcreate\s+policy\b(?:(?!\bfor\s+select\b)[^;])*?\b(?:using|with\s+check)\s*\(\s*true\s*\)"),
-     "major", "A row-level security policy allows every row to every role it applies to, for writes as well as reads."),
+     "Row-level security is disabled on this table. Check the table grants to determine who has access."),
     (re.compile(r"(?is)\bgrant\s+(?:all|insert|update|delete)\b[^;]*?\bto\s+(?:anon|public)\b"), "major",
      "Write privileges are granted to the anonymous or public role."),
 )
@@ -1183,25 +1243,18 @@ def public_data_store(sf: SourceFile, rule: Rule) -> List[Finding]:
         return sorted(out, key=lambda f: f.line)[:10]
     if sf.lang == "sql":
         import jh_supabase
-        text = "\n".join(sf.nocomment)
         # in a Supabase project a grant to anon is how a protected table is served; whether that table has row-level
         # security is judged across all its migrations (jh_supabase), so the grant alone is not reported there
         migration = jh_supabase.in_migrations(sf.rel)
-        for rx, severity, message in _SQL_STATEMENT_RES:
-            if migration and rx is _SQL_STATEMENT_RES[2][0]:
-                continue
-            for m in rx.finditer(text):
-                sev, msg = severity, message
-                # the TO clause after ON <table>; a quoted policy name may say "to" too
-                stmt = re.sub(r'(?i)(\bpolicy\s+)"[^"]*"', r'\1""', m.group(0), count=1)
-                role = re.search(r"(?is)\bon\s+[\w.\"]+(?:\s+as\s+\w+)?(?:\s+for\s+\w+)?\s+to\s+([\w\",\s]+?)"
-                                 r"\s+(?:using|with\s+check)\b", stmt)
-                if "policy" in m.group(0).lower() and role and not re.search(
-                        r"(?i)\b(public|anon|authenticated)\b", role.group(1)):
-                    # every row, but only for one named (often internal service) role
-                    sev, msg = "minor", message.replace("to every role it applies to", "to the role it names") + \
-                        " It applies to %s only; confirm that role is internal." % role.group(1).strip()
-                out.append(make_finding(rule, sf, text.count("\n", 0, m.start()) + 1, severity=sev, message=msg))
+        for line, stmt, _ in jh_supabase.statements(sf.text, keep_terminator=True):
+            policy = jh_supabase.policy_finding(sf, rule, line, stmt)
+            if policy:
+                out.append(policy)
+            for rx, severity, message in _SQL_STATEMENT_RES:
+                if migration and rx is _SQL_STATEMENT_RES[1][0]:
+                    continue
+                if rx.match(stmt):
+                    out.append(make_finding(rule, sf, line, severity=severity, message=message))
         return sorted(out, key=lambda f: f.line)[:10]
     if sf.lang == "hcl":
         for i, line in enumerate(sf.nocomment):
@@ -1486,9 +1539,6 @@ def _line_matching(sf: SourceFile, pattern: str, start: int = 0, default: int = 
     return default
 
 
-_SHELL_ALLOW_ALL = {"Bash", "Bash(*)", "Bash(:*)", "Bash(**)"}
-
-
 def claude_scope(rel: str) -> str:
     """Which Claude Code settings file this is: 'managed' (managed-settings.json or a managed-settings.d
     fragment, which an administrator deploys and every key applies from), 'local' (.claude/settings.local.json),
@@ -1504,11 +1554,11 @@ def claude_scope(rel: str) -> str:
 def _cursor_cli_approvals(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> List[Finding]:
     """.cursor/cli.json: permissions.allow entries that pre-approve any command, every MCP tool or any address."""
     perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
-    allow = [str(e).strip() for e in perms.get("allow") or [] if isinstance(e, str)] \
+    allow = perms.get("allow") \
         if isinstance(perms.get("allow"), list) else []
     deny = {str(e).strip() for e in perms.get("deny") or [] if isinstance(e, str)} \
         if isinstance(perms.get("deny"), list) else set()
-    start = _line_matching(sf, r'"allow"\s*:') - 1
+    locations = jh_agent.json_lines(sf.text)
     out: List[Finding] = []
     seen = set()
 
@@ -1520,23 +1570,25 @@ def _cursor_cli_approvals(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> L
         head, _, tail = m.group(2).strip().partition(":")
         return m.group(1), head.strip().rsplit("/", 1)[-1].lower() or "*", tail.strip() or "*"
 
-    denied = [d for d in (parts(e) for e in deny) if d]
+    restrictions = [jh_agent.permission(d) for d in deny]
+    if isinstance(perms.get("ask"), list):
+        restrictions.extend(jh_agent.permission(d) for d in perms["ask"] if isinstance(d, str))
 
-    def covered(kind: str, base: str) -> bool:
-        """A deny entry for the whole of this command, server or address wins over the allow entry."""
-        return any(k == kind and b in ("*", "**", base) and a in ("*", "**") for k, b, a in denied)
-
-    for entry in allow:
+    for index, entry in enumerate(allow):
+        if not isinstance(entry, str):
+            continue
+        entry = entry.strip()
         got = parts(entry)
         if entry in deny or not got or got[0] in seen:
             continue
         kind, base, rest = got
         shown = redact_secrets(entry).replace("`", "'")
-        if covered(kind, base):
+        if any(d.covers(jh_agent.permission(entry)) for d in restrictions):
             continue
         # arguments narrow an entry: Shell(python:--version) is one command, Shell(python) and Shell(python:*) any
-        if kind == "Shell" and rest in ("*", "**") and (base in ("*", "**") or base in _RUNNERS):
-            what, severity = ("any shell command" if base in ("*", "**") else "any command run through %s" % base), "major"
+        what = jh_agent.broad_shell(entry) if kind == "Shell" else None
+        if what:
+            severity = "major"
             message = ("The Cursor CLI's project permissions pre-approve %s (`%s`), so the agent runs it without "
                        "asking." % (what, shown))
         elif kind == "Mcp" and base in ("*", "**") and rest in ("*", "**"):
@@ -1550,13 +1602,13 @@ def _cursor_cli_approvals(sf: SourceFile, rule: Rule, data: Dict[str, Any]) -> L
         else:
             continue
         seen.add(kind)
-        out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % entry), start), severity=severity,
+        out.append(make_finding(rule, sf, locations["permissions", "allow", index], severity=severity,
                                 message=message))
     return out
 
 
 @check("agent_config_approvals")
-def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
+def agent_config_approvals(sf: SourceFile, rule: Rule, settings: Optional[jh_agent.ClaudeSettings] = None) -> List[Finding]:
     posix = "/" + sf.rel.lower()
     out: List[Finding] = []
 
@@ -1600,33 +1652,21 @@ def agent_config_approvals(sf: SourceFile, rule: Rule) -> List[Finding]:
             add(r'"skipDangerousModePermissionPrompt"', "major", (
                 "Claude Code enters bypassPermissions mode without its confirmation dialog, so nothing warns the "
                 "person before every permission prompt is skipped."))
-        allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
-        for entry in allow:
-            if isinstance(entry, str) and entry.strip() in _SHELL_ALLOW_ALL:
-                add(re.escape('"%s"' % entry), "major",
-                    "Unrestricted shell access is pre-approved for every session these managed settings reach."
-                    if scope == "managed" else
-                    "Unrestricted shell access is pre-approved for every session that trusts this repository.",
-                    start=_line_matching(sf, r'"allow"\s*:') - 1)
-                break
-        deny = {str(e).strip() for e in perms.get("deny") or [] if isinstance(e, str)} \
-            if isinstance(perms.get("deny"), list) else set()
-        # a runner grant is reported only when no unrestricted entry was, and no deny entry covers the shell
-        runner_entries = [] if (_SHELL_ALLOW_ALL & {str(e).strip() for e in allow if isinstance(e, str)}
-                                or _SHELL_ALLOW_ALL & deny) else allow
-        for entry in runner_entries:
-            what = broad_shell(entry.strip()) if isinstance(entry, str) else None
-            if what and what != "any shell command" and entry.strip() not in deny:
-                shown = redact_secrets(entry.strip()).replace("`", "'")
-                # structural evidence (the entry alone): a one-line settings file holds other keys on the same line
-                out.append(make_finding(rule, sf, _line_matching(sf, re.escape('"%s"' % entry),
-                                                                 _line_matching(sf, r'"allow"\s*:') - 1),
-                                        severity="major", evidence="permissions.allow: %s" % shown, message=(
-                    "%s is pre-approved (`%s`) for every session that %s, so a prompt injection in anything the "
-                    "agent reads can run a command with the developer's files and credentials." % (
-                        what[0].upper() + what[1:], shown,
-                        "these managed settings reach" if scope == "managed" else "trusts this repository"))))
-                break
+        if settings is None:
+            settings = jh_agent.settings_for(sf.rel, jh_agent.claude_scopes([(sf.rel, sf.text)]))
+        grants = settings.shell_grants()
+        whole = next((g for g in grants if jh_agent.shell_access(g.pattern) == "any shell command"), None)
+        for grant in [whole] if whole else grants:
+            if grant.file != sf.rel:
+                continue
+            what = jh_agent.shell_access(grant.pattern)
+            shown = redact_secrets(grant.entry).replace("`", "'")
+            if what == "any shell command":
+                message = "Unrestricted shell access is pre-approved for sessions using these settings."
+            else:
+                message = "%s is pre-approved for sessions using these settings." % (what[0].upper() + what[1:])
+            out.append(make_finding(rule, sf, grant.line, severity="major", evidence="permissions.allow: %s" % shown,
+                                    message=message))
         if data.get("enableAllProjectMcpServers") is True:
             add(r'"enableAllProjectMcpServers"', "major", (
                 "Every MCP server in the project's .mcp.json starts without individual approval, including "
@@ -2392,18 +2432,17 @@ def _tool_list(value: str) -> List[str]:
 
 
 # a command that runs whatever text follows it
-_RUNNERS = jh_agent.RUNNERS
 broad_shell = jh_agent.broad_shell
 
 
 @check("skill_allowed_tools")
-def skill_allowed_tools(sf: SourceFile, rule: Rule) -> List[Finding]:
+def skill_allowed_tools(sf: SourceFile, rule: Rule, settings: Optional[jh_agent.ClaudeSettings] = None) -> List[Finding]:
     if not is_skill_entry(sf.rel):
         return []
     noun = "skill" if sf.basename.lower() == "skill.md" else "command"
     for line_no, entry in allowed_tools(sf.raw):
         why = broad_shell(entry)
-        if not why:
+        if not why or (settings and settings.decision(jh_agent.permission(entry)) != "allow"):
             continue
         message = ("allowed-tools pre-approves %s (`%s`): during the turn that invokes this %s, Claude Code runs it "
                    "without asking, so a prompt injection in anything the agent reads in that turn can run commands "
@@ -2502,14 +2541,22 @@ def _mcp(sf: SourceFile) -> List[jh_agent.McpServer]:
 
 
 @check("agent_rule_of_two")
-def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
+def agent_rule_of_two(sf: SourceFile, rule: Rule, settings: Optional[jh_agent.ClaudeSettings] = None) -> List[Finding]:
     """JH714: one agent with untrusted input, sensitive data and a way to act (jh_rule2)."""
     import jh_n8n
     import jh_rule2
     from jh_core import visible_text
     if "mcp_config" in sf.kinds:
-        found = jh_rule2.mcp_agent(sf.rel, sf.text, sf.abspath)
-        agents = [found] if found else []
+        agents = []
+        try:
+            groups = jh_agent.server_groups(jh_agent.mcp_servers(sf.rel, sf.text))
+        except (ValueError, RecursionError):
+            return []
+        for project, servers in groups.items():
+            found = jh_rule2.mcp_agent(sf.rel, sf.text, sf.abspath, settings=settings, servers=servers)
+            if found:
+                found["project"] = project
+                agents.append(found)
     elif sf.lang == "json":
         agents = jh_rule2.n8n_agents(sf)
     else:
@@ -2556,7 +2603,10 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule) -> List[Finding]:
                                        "untrusted_input": jh_rule2.sources(v, "A", 10),
                                        "sensitive_data": jh_rule2.sources(v, "B", 10),
                                        "acts": jh_rule2.sources(v, "C", 10), "unapproved": unapproved[:10],
-                                       "unknown_servers": list(v.get("unknown") or [])[:10]}))
+                                       "unknown_servers": list(v.get("unknown") or [])[:10],
+                                       **({"project": v["project"]} if v.get("project") else {}),
+                                       **({"grants": v["grants"]} if v.get("grants") else {}),
+                                       **({"coverage_gaps": v["coverage_gaps"]} if v.get("coverage_gaps") else {})}))
     return out[:10]
 
 
@@ -2606,7 +2656,8 @@ def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
     return [make_finding(rule, sf, s.line, message=(
         "MCP server '%s' uses the deprecated SSE transport (HTTP+SSE), which the 2026-07-28 MCP specification "
         "retires with a 12-month offramp; it keeps a held-open stream, a wider surface than the stateless "
-        "request/response core." % s.name), evidence="%s: transport sse" % s.name, extra={"server": s.name})
+        "request/response core." % s.name), evidence="%s: transport sse" % s.name,
+        extra={"server": s.name, **({"project": s.project} if s.project else {})})
         for s in _mcp(sf) if s.transport == "sse"][:10]
 
 

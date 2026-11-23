@@ -194,23 +194,14 @@ def _doc(read: Optional[Reader], rel: str) -> Any:
         return None
 
 
-def claude_settings(read: Optional[Reader]) -> Dict[str, Any]:
-    """Claude Code's project settings (.claude/settings.json, then settings.local.json): whether permissions are
-    bypassed, what is pre-approved, which project servers are switched off, and the first file read."""
-    out: Dict[str, Any] = {"bypass": False, "allow": [], "deny": [], "disabled": [], "file": "", "line": 1}
-    for name in ("settings.json", "settings.local.json"):
-        doc = _doc(read, ".claude/" + name)
-        if not isinstance(doc, dict):
-            continue
-        out["file"] = out["file"] or ".claude/" + name
-        perms = doc.get("permissions") if isinstance(doc.get("permissions"), dict) else {}
-        if perms.get("defaultMode") == "bypassPermissions":
-            out["bypass"] = True
-        # a settings editor can save a non-list here ("allow": true); read lists only, never iterate anything else
-        out["allow"] += [x for x in _as_str_list(perms.get("allow"))]
-        out["deny"] += [x for x in _as_str_list(perms.get("deny"))]
-        out["disabled"] += [x for x in _as_str_list(doc.get("disabledMcpjsonServers"))]
-    return out
+def claude_settings(read: Optional[Reader], config: str) -> jh_agent.ClaudeSettings:
+    files = []
+    names = ("managed-settings.json",) if config == "managed-mcp.json" else (".claude/settings.json", ".claude/settings.local.json")
+    for rel in names:
+        text = read(rel) if read else None
+        if text is not None:
+            files.append((rel, text))
+    return jh_agent.settings_for(config, jh_agent.claude_scopes(files))
 
 
 def vscode_auto_approve(read: Optional[Reader]) -> bool:
@@ -287,81 +278,90 @@ def project_of(path: str, sep: str = os.sep) -> str:
 
 
 def mcp_agent(rel: str, text: str, abspath: Optional[str] = None,
-              read: Optional[Reader] = None) -> Optional[Dict[str, Any]]:
-    """The agent an MCP client configuration file defines, with the Claude Code or VS Code settings beside it
-    (through `read`, or from the disk beside `abspath`); None when the file defines no enabled server."""
-    try:
-        servers = [s for s in jh_agent.mcp_servers(rel, text) if not s.disabled]
-        raw = jh_agent.loads_jsonc(text) if not rel.lower().endswith(".toml") else {}
-    except (ValueError, RecursionError):
-        return None
+              read: Optional[Reader] = None, settings: Optional[jh_agent.ClaudeSettings] = None,
+              servers: Optional[List[jh_agent.McpServer]] = None) -> Optional[Dict[str, Any]]:
+    """Assess one scope. A caller with a multi-project config supplies each group separately."""
+    if servers is None:
+        try:
+            groups = jh_agent.server_groups(jh_agent.mcp_servers(rel, text))
+        except (ValueError, RecursionError):
+            return None
+        servers = groups.get("", next(iter(groups.values()), [])) if len(groups) <= 1 else groups.get("", [])
     posix = rel.replace(os.sep, "/").lower()
     if read is None and abspath:
         read = fs_reader(project_of(abspath) or os.sep)
-    claude = claude_settings(read if os.path.basename(posix) == ".mcp.json" else None)
+    config = os.path.basename(posix)
+    claude = jh_agent.ClaudeSettings()
+    if config in (".mcp.json", ".claude.json", "managed-mcp.json"):
+        claude = settings if settings is not None else claude_settings(read, config)
     cursor = cursor_cli(read if posix.endswith(".cursor/mcp.json") else None)
     # Claude Code applies deny rules even when permissions are bypassed
-    servers = [s for s in servers if s.name not in claude["disabled"]
-               and not {"mcp__%s" % s.name, "mcp__%s__*" % s.name} & set(claude["deny"])
+    servers = [s for s in servers if s.name not in claude.disabled
+               and claude.decision(jh_agent.permission("mcp__" + s.name)) != "deny"
                and not any(n in ("*", s.name) and t == "*" for n, t in cursor["deny"])]
     if not servers:
         return None
-    container: Dict[str, Any] = {}
-    if isinstance(raw, dict):
-        for key in ("mcpServers", "servers", "mcp"):
-            if isinstance(raw.get(key), dict):
-                container = raw[key]
-                break
-    everything = claude["bypass"] or (posix.endswith(".vscode/mcp.json") and vscode_auto_approve(read)) \
+    everything = claude.bypass or (posix.endswith(".vscode/mcp.json") and vscode_auto_approve(read)) \
         or (posix.endswith(".toml") and re.search(r'(?m)^\s*approval_policy\s*=\s*"never"', text) is not None)
     parts, unknown = [], []
+    origins = []
     for s in servers:
         cap = server_capability(s)
         if cap is None:
             unknown.append(s.name)
             continue
-        denied = {d.split("__", 2)[2] for d in claude["deny"] if d.startswith("mcp__%s__" % s.name)} \
+        denied = {d.tool.split("__", 2)[2] for d in claude.deny if d.tool.startswith("mcp__%s__" % s.name)} \
             | {t for n, t in cursor["deny"] if n in ("*", s.name)}
         if cap["label"] in ACTING_TOOLS and ACTING_TOOLS[cap["label"]] <= denied:
             cap = dict(cap, C="", A="" if cap["label"] == "Fetch" else cap["A"],
                        what=cap["what"] + " (its acting tools are denied)")
-        spec = container.get(s.name) if isinstance(container.get(s.name), dict) else {}
-        listed = [x for k in ("autoApprove", "alwaysAllow") for x in (spec.get(k) or []) if isinstance(x, str)]
-        explicit = _approved(claude["allow"], s.name, False) or _approved(listed, s.name, True) \
+        grants = [g for g in claude.allow if claude.decision(g.pattern) == "allow"
+                  and (_approved([g.entry], s.name, False) or g.entry == "*")]
+        allowed = ["mcp__" + s.name if g.entry == "*" else g.entry for g in grants]
+        explicit = _approved(allowed, s.name, False) or _approved(s.approvals, s.name, True) \
             or _cursor_approved(cursor, s.name)
         approved = "all" if everything else explicit
-        why = ("permissions are bypassed" if claude["bypass"] else "every tool call is auto-approved") if everything \
+        if approved:
+            tool = "mcp__" + s.name + "__" + ("*" if approved == "all" else approved)
+            if claude.decision(jh_agent.permission(tool)) != "allow":
+                approved = None
+        why = ("permissions are bypassed" if claude.bypass else "every tool call is auto-approved") if everything \
             else ("every tool of '%s' is pre-approved" % s.name if approved == "all"
                   else "'%s' is pre-approved" % approved if approved else "")
+        if approved:
+            origins.extend(grants)
+            if not grants and claude.bypass:
+                origins.append(claude.bypass)
         parts.append({"source": "%s server '%s'" % (cap["label"], s.name), "label": cap["label"], "file": rel,
                       "line": s.line,
                       "A": cap["A"], "B": cap["B"], "C": cap["C"], "what": cap["what"],
                       "supervised": not approved, "why": why,
-                      "bypass_only": claude["bypass"] and not explicit})
-    if claude["file"]:
-        fetch_allowed, bash_allowed = _webfetch_any(claude["allow"]), any(a in _BROAD_BASH for a in claude["allow"])
-        runner = next((jh_agent.broad_shell(a) for a in claude["allow"] if a not in claude["deny"]
-                       and (jh_agent.broad_shell(a) or "").startswith("any command run through")), None)
-        if (claude["bypass"] or fetch_allowed) and "WebFetch" not in claude["deny"]:
-            parts.append({"source": "Claude Code WebFetch", "file": claude["file"], "line": claude["line"],
-                          "A": YES, "B": "", "C": YES, "what": "any web page, and a request to any address",
-                          "supervised": False, "bypass_only": not fetch_allowed,
-                          "why": "WebFetch is pre-approved for any address" if fetch_allowed
-                          else "permissions are bypassed"})
-        if (claude["bypass"] or bash_allowed) and not _BROAD_BASH & set(claude["deny"]):
-            parts.append({"source": "Claude Code shell", "label": "Claude Code shell", "file": claude["file"],
-                          "line": claude["line"],
-                          "A": "", "B": POSSIBLE, "C": YES, "what": "any command, with the developer's files and "
-                          "credentials", "supervised": False, "bypass_only": not bash_allowed,
-                          "why": "any shell command is pre-approved" if bash_allowed else "permissions are bypassed"})
-        elif runner and not _BROAD_BASH & set(claude["deny"]):
-            parts.append({"source": "Claude Code shell", "label": "Claude Code shell", "file": claude["file"],
-                          "line": claude["line"],
-                          "A": "", "B": POSSIBLE, "C": YES, "what": "%s, with the developer's files and credentials"
-                          % runner, "supervised": False, "bypass_only": False,
-                          "why": "%s is pre-approved" % runner})
+                      "bypass_only": bool(claude.bypass and not explicit and config == ".mcp.json")})
+    grants = claude.shell_grants()
+    fetch = next((g for g in claude.allow if _webfetch_any([g.entry]) and claude.decision(g.pattern) == "allow"), None)
+    if fetch or (claude.bypass and claude.decision(jh_agent.permission("WebFetch")) == "allow"):
+        origin = fetch or claude.bypass
+        origins.append(origin)
+        parts.append({"source": "Claude Code WebFetch", "file": origin.file, "line": origin.line,
+                      "A": YES, "B": "", "C": YES, "what": "any web page, and a request to any address",
+                      "supervised": False, "bypass_only": not fetch and config == ".mcp.json",
+                      "why": "WebFetch is pre-approved for any address" if fetch else "permissions are bypassed"})
+    whole = next((g for g in grants if jh_agent.shell_access(g.pattern) == "any shell command"), None)
+    bypass = claude.bypass if claude.decision(jh_agent.permission("Bash")) == "allow" else None
+    origin = whole or next(iter(grants), None) or bypass
+    if origin:
+        origins.extend(grants or [origin])
+        access = jh_agent.shell_access(origin.pattern)
+        parts.append({"source": "Claude Code shell", "label": "Claude Code shell", "file": origin.file,
+                      "line": origin.line, "A": "", "B": POSSIBLE, "C": YES,
+                      "what": "%s, with the developer's files and credentials" % access,
+                      "supervised": False, "bypass_only": origin is bypass and config == ".mcp.json",
+                      "why": "permissions are bypassed" if origin is bypass else "%s is pre-approved" % access})
     out = assess(parts)
     out["unknown"] = unknown
+    out["grants"] = [{"file": g.file, "line": g.line} for g in dict.fromkeys(origins)]
+    if claude.gaps:
+        out["coverage_gaps"] = claude.gaps
     return out
 
 

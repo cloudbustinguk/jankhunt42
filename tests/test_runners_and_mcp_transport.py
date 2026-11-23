@@ -141,3 +141,16 @@ class RunnerInTheRuleOfTwo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiTransport(unittest.TestCase):
+    def test_native_transport_keys_are_independent_of_url_path(self):
+        for path in ("events", "sse"):
+            url = "https://ledger.example.org/" + path
+            for fields, expected in [({"url": url}, "sse"), ({"httpUrl": url}, "http"),
+                                      ({"url": url, "httpUrl": url + "2"}, "http")]:
+                doc = json.dumps(servers(relay=fields))
+                server, = jh_agent.mcp_servers(".gemini/settings.json", doc)
+                self.assertEqual((server.transport, server.url), (expected, fields.get("httpUrl", url)))
+                control, = jh_agent.mcp_servers(".mcp.json", doc)
+                self.assertEqual(control.transport, "http")

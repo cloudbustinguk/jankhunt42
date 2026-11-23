@@ -8,11 +8,13 @@ session in this repository would start, not proof that it runs.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
+import shlex
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 MAX_SERVERS = 200
 
@@ -29,6 +31,8 @@ class McpServer:
     headers: Dict[str, str] = field(default_factory=dict)
     token_env: str = ""                 # Codex bearer_token_env_var
     disabled: bool = False
+    project: str = ""
+    approvals: List[str] = field(default_factory=list)
 
 
 def client_for(rel: str) -> str:
@@ -40,7 +44,7 @@ def client_for(rel: str) -> str:
         if marker in p:
             return client
     base = os.path.basename(p)
-    if base == ".mcp.json":
+    if base in (".mcp.json", ".claude.json", "managed-mcp.json"):
         return "claude-code"
     if base == "claude_desktop_config.json":
         return "claude-desktop"
@@ -226,25 +230,55 @@ def _strs(value: Any) -> Dict[str, str]:
     return {str(k): (v if isinstance(v, str) else json.dumps(v)) for k, v in value.items()}
 
 
-def _line_of_name(lines: List[str], name: str) -> int:
-    needle = '"%s"' % name
-    for idx, line in enumerate(lines, 1):
-        pos = line.find(needle)
-        if pos >= 0 and line[pos + len(needle):].lstrip().startswith(":"):
-            return idx
-    return 1
+def json_lines(text: str) -> Dict[tuple, int]:
+    """Locate members and array entries in an already parsed JSONC document, including duplicate names in
+    different objects. Record the key line for a member and the value line for an array element."""
+    tokens = re.finditer(r'//[^\n]*|/\*.*?\*/|"(?:[^"\\]|\\.)*"|[{}\[\],:]|[^\s{}\[\],:/"]+', text.lstrip("\ufeff"), re.S)
+    text = text.lstrip("\ufeff")
+    lines = {}
+    path = ()
+    stack = []
+    key = None
+    index = 0
+    line, last = 1, 0
+    for token in tokens:
+        line += text.count("\n", last, token.start())
+        last = token.start()
+        val = token[0]
+        if val.startswith(("//", "/*")) or val == ":":
+            continue
+        if val in ("}", "]"):
+            path, key, index = stack.pop()
+        elif val == ",":
+            key = None
+            index += 1
+        elif stack and key is None and stack[-1][1] != "[":
+            key = json.loads(val)
+            lines[path + (key,)] = line
+        else:
+            child = path + ((index if key is None else key),) if stack else ()
+            lines.setdefault(child, line)
+            if val in ("{", "["):
+                stack.append((path, val, index))
+                path, key, index = child, None, 0
+    return lines
 
 
 _SSE_KINDS = {"sse", "http+sse", "sse+http", "legacy-sse", "http-sse"}
 
 
-def _server_from_spec(name: str, spec: Dict[str, Any], line: int) -> McpServer:
+def _server_from_spec(name: str, spec: Dict[str, Any], line: int, client: str, project: str) -> McpServer:
     command = spec.get("command")
     args = spec.get("args") if isinstance(spec.get("args"), list) else []
     if isinstance(command, list):                       # opencode: command is argv
         command, args = (command[0] if command else ""), command[1:] + list(args)
     url = spec.get("url") or spec.get("serverUrl") or spec.get("httpUrl") or ""
     kind = str(spec.get("type") or spec.get("transport") or "").lower()
+    if client == "gemini-cli":
+        if spec.get("httpUrl"):
+            url, kind = spec["httpUrl"], "http"
+        elif spec.get("url") and not kind:
+            kind = "sse"
     s = McpServer(name=name, line=line, transport="unknown",
                   command=command if isinstance(command, str) else "",
                   args=[a if isinstance(a, str) else json.dumps(a) for a in args],
@@ -253,6 +287,9 @@ def _server_from_spec(name: str, spec: Dict[str, Any], line: int) -> McpServer:
                   headers=_strs(spec.get("headers") or spec.get("http_headers")))
     # only the documented SSE names are SSE; an unrecognised value is not evidence of the legacy transport
     s.transport = ("sse" if kind in _SSE_KINDS else "http") if s.url else ("stdio" if s.command else "unknown")
+    s.project = project
+    s.approvals = [x for k in ("autoApprove", "alwaysAllow") if isinstance(spec.get(k), list)
+                   for x in spec[k] if isinstance(x, str)]
     s.disabled = spec.get("disabled") is True or spec.get("enabled") is False
     return s
 
@@ -267,22 +304,43 @@ def mcp_servers(rel: str, text: str) -> List[McpServer]:
     if not isinstance(data, dict):
         return []                                       # valid JSON, but not an MCP client config
     base = os.path.basename(posix)
-    container = data.get("mcpServers")
-    if container is None and base == "mcp.json":
-        container = data.get("servers")                 # VS Code .vscode/mcp.json
-    if container is None and base.startswith("opencode.json"):
-        container = data.get("mcp")
-    if not isinstance(container, dict):
+    containers = [((), data)]
+    if base == ".claude.json" and isinstance(data.get("projects"), dict):
+        containers.extend((("projects", project), config) for project, config in data["projects"].items()
+                          if isinstance(config, dict))
+    if not any(isinstance(config.get(key), dict) for _, config in containers for key in ("mcpServers", "servers", "mcp")):
         return []
-    lines = text.split("\n")
+    lines = json_lines(text)
     out = []
-    for name, spec in list(container.items())[:MAX_SERVERS]:
-        if isinstance(spec, dict):
-            out.append(_server_from_spec(str(name), spec, _line_of_name(lines, str(name))))
+    for path, config in containers:
+        key = "mcpServers"
+        if key not in config and base == "mcp.json":
+            key = "servers"
+        if key not in config and base.startswith("opencode.json"):
+            key = "mcp"
+        container = config.get(key)
+        if not isinstance(container, dict):
+            continue
+        for name, spec in container.items():
+            if len(out) >= MAX_SERVERS:
+                return out
+            if isinstance(spec, dict):
+                out.append(_server_from_spec(name, spec, lines[path + (key, name)], client_for(rel),
+                                             path[-1] if path else ""))
     return out
 
 
 # ---------------------------------------------------------------------------
+def server_groups(servers: List[McpServer]) -> Dict[str, List[McpServer]]:
+    """Each project sees the user servers plus its own overrides. Project keys are never filesystem paths."""
+    groups: Dict[str, Dict[str, McpServer]] = {}
+    for server in servers:
+        groups.setdefault(server.project, {})[server.name] = server
+    shared = groups.get("", {})
+    return {project: [s for s in {**shared, **local}.values() if not s.disabled]
+            for project, local in groups.items()}
+
+
 # What a stdio server downloads and runs at start
 # ---------------------------------------------------------------------------
 
@@ -421,25 +479,206 @@ def credential_names(server: McpServer) -> List[str]:
     return sorted(names)
 
 
-# Runners: commands that execute whatever program or script they are given, so a pre-approval naming only the
-# runner approves any command (shells, interpreters, package runners, and utilities such as awk, sed and make).
-RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "python", "python3", "node",
-            "deno", "bun", "ruby", "perl", "php", "env", "xargs", "sudo", "eval", "exec", "npx", "uvx",
-           "awk", "gawk", "mawk", "nawk", "sed", "gsed", "make", "gmake"}
+# A permission is a tool, a fixed command prefix and the kind of wildcard after it.
+# Keep the prefix in the permission's spelling for matching, including its path.
+@dataclass(frozen=True)
+class Permission:
+    tool: str
+    prefix: str = ""
+    wildcard: str = ""                  # all | word | glob | exact (empty)
+
+
+    def covers(self, grant: Permission) -> bool:
+        """A restriction cancels a grant only if it covers every command that grant admits."""
+        if self.tool == "*":
+            return True
+        if self.tool.startswith("mcp__") and grant.tool.startswith("mcp__"):
+            pattern = self.tool if "__" in self.tool[5:] else self.tool + "__*"
+            name = grant.tool if "__" in grant.tool[5:] else grant.tool + "__*"
+            return fnmatch.fnmatchcase(name, pattern)
+        if self.tool != grant.tool or not self.tool:
+            return False
+        if self.wildcard == "all" or self == grant:
+            return True
+        if grant.wildcard == "all":
+            return False
+        if self.wildcard == "word":
+            return (grant.prefix == self.prefix and grant.wildcard != "glob"
+                    or grant.prefix.startswith(self.prefix + " "))
+        if self.wildcard == "glob":
+            # The trailing star can absorb any continuation of a matching fixed prefix.
+            return fnmatch.fnmatchcase(grant.prefix, self.prefix + "*")
+        return not grant.wildcard and fnmatch.fnmatchcase(grant.prefix, self.prefix)
+
+
+def permission(entry: str) -> Permission:
+    m = re.fullmatch(r"([\w*.-]+)(?:\((.*)\))?", entry.strip())
+    if not m:
+        return Permission("", entry)
+    tool, value = m[1], (m[2] or "").strip()
+    cursor = tool == "Shell"
+    if cursor:
+        # Cursor matches command basenames, with a colon separating the argument pattern.
+        base, sep, args = value.partition(":")
+        if sep and args.strip() not in ("*", "**"):
+            return Permission(tool, value)
+        value = base.strip()
+        if value and not value.endswith("*"):
+            value += ":*"
+    if value in ("", "*", ":*", "**"):
+        return Permission(tool, wildcard="all")
+    wildcard = ""
+    if value.endswith(":*") or value.endswith(" *"):
+        value, wildcard = value[:-2], "word"
+    elif value.endswith("*"):
+        value, wildcard = value[:-1], "glob"
+    if tool in ("Bash", "Shell"):
+        try:
+            words = shlex.split(value)
+        except ValueError:
+            return Permission("", entry)
+        if cursor and words:
+            words[0] = os.path.basename(words[0]).lower()
+        value = " ".join(shlex.quote(w) for w in words)
+    return Permission(tool, value, wildcard)
+
+
+_RUNNERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "deno", "bun",
+            "env", "xargs", "sudo", "eval", "exec", "awk", "gawk", "mawk", "nawk", "sed", "gsed", "make", "gmake"}
+_EXEC_FLAGS = {"sh": "-c", "bash": "-c", "zsh": "-c", "dash": "-c", "ksh": "-c", "fish": "-c",
+               "powershell": "-c", "pwsh": "-c", "cmd": "/c", "python": "-c", "node": "-e", "perl": "-e",
+               "ruby": "-e", "php": "-r", "sed": "-e", "gsed": "-e"}
+
+
+def shell_access(pattern: Permission) -> Optional[str]:
+    if pattern.tool not in ("Bash", "Shell", "*") or not pattern.wildcard:
+        return None
+    if pattern.wildcard == "all":
+        return "any shell command"
+    words = shlex.split(pattern.prefix)
+    if not words:
+        return None
+    # Match executable basenames case-insensitively, including paths on typical macOS filesystems.
+    exe = os.path.basename(words[0]).lower()
+    if exe == "env" and len(words) > 1 or re.match(r"^[A-Za-z_]\w*=", words[0]):
+        if exe == "env":
+            words = words[1:]
+        while words and re.match(r"^[A-Za-z_]\w*=", words[0]):
+            words = words[1:]
+        if not words:
+            return "any command run through env"
+        exe = os.path.basename(words[0]).lower()
+    args = words[1:]
+    if exe in ("npm", "pnpm", "yarn") and args == ["run"]:
+        return "execution of the project's own scripts through %s run" % exe
+    if (exe in ("npx", "bunx", "uvx") and not args or exe == "pipx" and args == ["run"]
+            or exe in ("npm", "pnpm", "yarn") and args == ["exec"]
+            or exe in ("pnpm", "yarn") and args == ["dlx"]):
+        return "execution of package binaries through %s" % " ".join([exe] + args)
+    interpreter = re.fullmatch(r"(python|node|ruby|php|perl)(?:\d+(?:\.\d+)*)?", exe)
+    family = interpreter[1] if interpreter else exe
+    if not interpreter and exe not in _RUNNERS:
+        return None
+    if not args or args == [_EXEC_FLAGS.get(family)]:
+        return "any command run through %s" % exe
+    return None
 
 
 def broad_shell(entry: str) -> Optional[str]:
-    """What a pre-approved Bash entry lets the agent run, when that is any command; None when it is narrower."""
-    m = re.match(r"^Bash(?:\((.*)\))?$", entry)
-    if not m:
-        return None
-    spec = (m.group(1) or "").strip()
-    if spec in ("", "*", "**", ":*"):
-        return "any shell command"
-    wild = re.match(r"^([^\s:*]+)(?:\s+-[ce])?\s*(?::\*|\s\*|\*)$", spec)
-    if wild and wild.group(1).rsplit("/", 1)[-1].lower() in RUNNERS:
-        return "any command run through %s" % wild.group(1).rsplit("/", 1)[-1]
+    return shell_access(permission(entry))
+
+
+@dataclass(frozen=True)
+class Grant:
+    entry: str
+    pattern: Permission
+    file: str
+    line: int
+
+
+@dataclass
+class ClaudeSettings:
+    allow: List[Grant] = field(default_factory=list)
+    deny: List[Permission] = field(default_factory=list)
+    ask: List[Permission] = field(default_factory=list)
+    disabled: List[str] = field(default_factory=list)
+    bypass: Optional[Grant] = None
+    gaps: List[str] = field(default_factory=list)
+
+    def decision(self, pattern: Permission) -> str:
+        if any(d.covers(pattern) for d in self.deny):
+            return "deny"
+        if any(a.covers(pattern) for a in self.ask):
+            return "ask"
+        return "allow"
+
+    def shell_grants(self) -> List[Grant]:
+        return [g for g in self.allow if shell_access(g.pattern) and self.decision(g.pattern) == "allow"]
+
+
+def settings_scope(rel: str) -> Optional[Tuple[str, str]]:
+    folder, name = os.path.split(rel)
+    if name == "managed-settings.json":
+        return "managed", folder
+    if os.path.basename(folder) == "managed-settings.d" and name.endswith(".json"):
+        return "managed", os.path.dirname(folder)
+    if os.path.basename(folder) == ".claude" and name in ("settings.json", "settings.local.json"):
+        return "project", os.path.dirname(folder)
     return None
+
+
+def claude_scopes(files: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], ClaudeSettings]:
+    """Combine only settings present in this scan or snapshot, retaining declaration locations."""
+    scopes: Dict[Tuple[str, str], ClaudeSettings] = {}
+    for rel, text in files:
+        scope = settings_scope(rel)
+        if scope is None:
+            continue
+        try:
+            doc = loads_jsonc(text)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        settings = scopes.setdefault(scope, ClaudeSettings())
+        if isinstance(doc.get("disabledMcpjsonServers"), list):
+            settings.disabled.extend(x for x in doc["disabledMcpjsonServers"] if isinstance(x, str))
+        perms = doc.get("permissions")
+        if not isinstance(perms, dict):
+            continue
+        lines = json_lines(text)
+        if perms.get("defaultMode") == "bypassPermissions":
+            settings.bypass = Grant("bypassPermissions", permission("*"), rel, lines["permissions", "defaultMode"])
+        for key in ("allow", "ask", "deny"):
+            entries = perms.get(key, [])
+            if not isinstance(entries, list):
+                settings.gaps.append("%s: permissions.%s must be a list" % (rel, key))
+                continue
+            for idx, entry in enumerate(entries):
+                if not isinstance(entry, str):
+                    continue
+                pattern = permission(entry)
+                if key == "allow":
+                    settings.allow.append(Grant(entry.strip(), pattern, rel, lines["permissions", key, idx]))
+                elif key == "ask":
+                    settings.ask.append(pattern)
+                else:
+                    settings.deny.append(pattern)
+    return scopes
+
+
+def settings_for(rel: str, scopes: Dict[Tuple[str, str], ClaudeSettings]) -> ClaudeSettings:
+    folder, name = os.path.split(rel)
+    scope = settings_scope(rel)
+    if scope is None and name in (".mcp.json", ".claude.json", "managed-mcp.json"):
+        scope = ("managed" if name == "managed-mcp.json" else "project", folder)
+    if scope is None:
+        # Skills may live in .claude/skills, .claude/commands or a standalone skills directory.
+        while folder:
+            if os.path.basename(folder) in (".claude", "skills") and ("project", os.path.dirname(folder)) in scopes:
+                return scopes["project", os.path.dirname(folder)]
+            folder = os.path.dirname(folder)
+    return scopes.get(scope, ClaudeSettings())
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "host.docker.internal"}

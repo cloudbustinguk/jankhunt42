@@ -996,9 +996,9 @@ class Scanner(unittest.TestCase):
         self.assertEqual(self.lines("JH105", "web/src/agent.ts"), [1])
         self.assertEqual(self.lines("JH210", "py/bridge.py"), [11])
 
-    def test_soak_b16_jh702_descriptive_json_is_minor(self):
+    def test_soak_b16_jh702_descriptive_json_is_inert(self):
         sev = lambda rel: sorted((f["line"], f["severity"]) for f in self.hits("JH702", rel))
-        self.assertEqual(sev("data/catalogue.json"), [(5, "minor"), (6, "minor")])
+        self.assertEqual(sev("data/catalogue.json"), [])
         self.assertEqual(sev(".devcontainer/devcontainer.json"), [(3, "major")])
         self.assertEqual(sev(".vscode/tasks.json"), [(6, "major")])
 
@@ -1073,7 +1073,7 @@ class Scanner(unittest.TestCase):
     def test_labelled_sample_a(self):
         self.assertEqual(self.lines("JH102", "app/runner.py"), [6])
         self.assertEqual(self.lines("JH103", "android/Tap.java"), [4, 6, 7])
-        self.assertEqual(self.lines("JH126", "web/render.js"), [3, 4, 5])
+        self.assertEqual(self.lines("JH126", "web/render.js"), [2, 3, 4, 5])
         self.assertEqual(self.lines("JH125", "web/Theme.jsx"), [4])
         self.assertEqual(self.hits("JH108", "lib/agent.py"), [])
         self.assertEqual(self.lines("JH108", "web/server.py"), [4])
@@ -1149,10 +1149,10 @@ class Scanner(unittest.TestCase):
         # (still visible) in a locale file — by directory, by locale-shaped name, and for
         # YAML under an i18n dir — but a real command in package.json scripts, a manifest
         # that merely sits under an i18n dir, or a CI workflow stays major.
-        self.assertEqual({f["severity"] for f in self.hits("JH702", "lang/es.json")}, {"minor"})
-        self.assertEqual({f["severity"] for f in self.hits("JH702", "lang/messages.json")}, {"minor"})
-        self.assertEqual({f["severity"] for f in self.hits("JH702", "pt-BR.json")}, {"minor"})
-        self.assertEqual({f["severity"] for f in self.hits("JH702", "locales/en.yaml")}, {"minor"})
+        self.assertEqual(self.hits("JH702", "lang/es.json"), [])
+        self.assertEqual(self.hits("JH702", "lang/messages.json"), [])
+        self.assertEqual(self.hits("JH702", "pt-BR.json"), [])
+        self.assertEqual(self.hits("JH702", "locales/en.yaml"), [])
         self.assertEqual({f["severity"] for f in self.hits("JH702", "package.json")}, {"major"})
         self.assertEqual({f["severity"] for f in self.hits("JH702", "lang/package.json")}, {"major"})
         self.assertEqual({f["severity"] for f in self.hits("JH702", ".github/workflows/ci.yaml")}, {"major"})

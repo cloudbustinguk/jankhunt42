@@ -235,6 +235,7 @@ class Ctx:
         self.parse_failures: List[Dict[str, str]] = []
         # every collected file by its posix path, for adapters that read a neighbour (an agent's settings)
         self.texts: Dict[str, str] = {}
+        self.claude_scopes = {}
         self.templates: List[str] = []
         self.by_adapter: Dict[str, int] = {}
         self.inspected: List[str] = []
@@ -2069,17 +2070,22 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
     principal per config file, an edge to every MCP server it would start,
     and the endpoints and credentials each server is handed. The servers'
     own tools are not visible here, so every capability is unknown."""
+    for project, servers in jh_agent.server_groups(jh_agent.mcp_servers(item.rel, item.text)).items():
+        if servers:
+            _map_mcp_group(ctx, item, project, servers)
+
+
+def _map_mcp_group(ctx: Ctx, item: Item, project: str, servers: List[jh_agent.McpServer]) -> None:
     g = ctx.g
-    servers = [s for s in jh_agent.mcp_servers(item.rel, item.text) if not s.disabled]
-    if not servers:
-        return
+    scope = [project] if project else []
     lines = item.text.split("\n")
     client = jh_agent.client_for(item.rel)
     ev = g.add_evidence(item.rel, 1, "mcp:config", "MCP config for %s" % client, "declared")
-    agent = g.add_node("workload", ["ai-agent", item.rel], "AI agent (%s, %s)" % (client, os.path.basename(item.rel)),
+    agent = g.add_node("workload", ["ai-agent", item.rel] + scope, "AI agent (%s, %s)" % (client, os.path.basename(item.rel)),
                        trust_domain="local", attributes={"platform": "ai-agent", "client": client,
-                                                         "config": item.rel}, evidence=ev)
-    verdict = jh_rule2.mcp_agent(item.rel, item.text, read=_project_reader(ctx, item.rel))
+                                                         "config": item.rel, **({"project": project} if project else {})}, evidence=ev)
+    verdict = jh_rule2.mcp_agent(item.rel, item.text, read=_project_reader(ctx, item.rel),
+                                 settings=jh_agent.settings_for(item.rel, ctx.claude_scopes), servers=servers)
     if verdict and verdict["verdict"] != "none":
         g.nodes[agent]["attributes"]["rule_of_two"] = rule_of_two_summary(verdict)
     for s in servers:
@@ -2093,7 +2099,7 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
             if src:
                 attrs.update({"launcher": src["launcher"], "package": src["package"][:120],
                               "pinned": src["pinned"]})
-            sid = g.add_node("workload", ["mcp-server", item.rel, s.name], "MCP server %s (local)" % s.name,
+            sid = g.add_node("workload", ["mcp-server", item.rel, s.name] + scope, "MCP server %s (local)" % s.name,
                              trust_domain="local", attributes=attrs, evidence=sev)
             g.add_edge(agent, sid, "calls", "unknown", "declared", "high", evidence=sev, assumptions=[
                 "a local MCP server runs with the developer's privileges; its tools decide what it can read, "
@@ -2105,7 +2111,7 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
                 continue
             host = ep.get("host", "")
             sid = g.add_node("external" if G.trust_domain_for_host(host) == "external" else "api",
-                             ["mcp-remote", item.rel, s.name], "MCP server %s (remote%s)" % (s.name, ", " + host if host else ""),
+                             ["mcp-remote", item.rel, s.name] + scope, "MCP server %s (remote%s)" % (s.name, ", " + host if host else ""),
                              trust_domain=G.trust_domain_for_host(host) if host else "unknown",
                              attributes={"platform": "mcp", "transport": s.transport, "mcp_server": s.name,
                                          **({"host": host} if host else {})}, evidence=sev)
@@ -2126,7 +2132,7 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
                     "endpoint handed to MCP server %s; the grants of its credentials are not verified" % s.name])
         # Credentials, by name only: values are never read into the graph.
         for name in jh_agent.credential_names(s):
-            iid = g.add_node("identity", ["mcp-credential", item.rel, s.name, name],
+            iid = g.add_node("identity", ["mcp-credential", item.rel, s.name, name] + scope,
                              "credential %s (MCP %s)" % (name, s.name), trust_domain="external",
                              attributes={"credential_refs": ["env %s" % name]}, evidence=sev)
             g.add_edge(sid, iid, "authenticates-as", "unknown", "declared", "high", evidence=sev, assumptions=[
@@ -2366,6 +2372,7 @@ def build_graph(items: Sequence[Item], app_name: str, snapshot: str) -> Tuple[G.
     tests = 0
     _collect_str_vars(ctx, items)
     ctx.texts = {i.rel.replace(os.sep, "/"): i.text for i in items}
+    ctx.claude_scopes = jh_agent.claude_scopes(ctx.texts.items())
     for item in sorted(items, key=lambda i: i.rel):
         kind, docs = _classify_file(item.rel, item.text)
         if kind.startswith("yaml-error:"):

@@ -4,6 +4,24 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- Rule of Two findings record the files and lines of effective Claude Code grants. SBOM quality reports distinguish component producers and paired checksum evidence, and supply summaries include the full missing-element list.
+
+### Changed
+
+- JH101 qualifies name-only credential leads. JH134 describes the operations and audience of a row policy and refers readers to table grants. JH702 distinguishes an approval option in an invocation from an unresolved mention.
+- JH126 checks the whole markup assignment. JH201 reports an ignored error during a locally identified teardown at info severity.
+- The scoring reference documents headline rounding, tie order and use in prioritizing review.
+
+### Fixed
+
+- Option names, display entries and inert approval-option mentions no longer mask adjacent executable or credential-bearing sites.
+- Agent permission checks share runner recognition, apply deny and ask before allow, and combine settings within the captured scope. Explicit runner grants retain their severity alongside bypass mode. Gemini transport keys and Claude project-local MCP servers retain their client-specific meanings.
+- SBOM quality assesses every declared component before display filtering. Hashes require a digest and algorithm together. Author and tool names need their own evidence. SPDX 3 resolves creation metadata, hashes and licences locally, and SWHIDs and format-specific producer fields count. The passport explains the SPDX 2 generation-context gap. Older minimum-element verdicts require reassessment.
+
 ## [4.21.1] — 2026-11-20
 
 Measured before release: the agent-category scan of the same 3,769 repositories as 4.21.0, with 4.21.0 and
