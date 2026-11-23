@@ -122,7 +122,11 @@ class SetAside(unittest.TestCase):
 
     def test_env_and_agent_folders_are_read_with_or_without_git(self):
         key = lambda d: sorted({(f["rule"], f["path"]) for f in d["findings"]})
+        write(self.tmp, {".vercel/output/functions/index.js":
+                         'const k = "sk-proj-%s";\nmodule.exports = (s) => eval(s);\n' % ("Qm4x9" * 8)})
         plain, _ = scan(self.tmp)
+        self.assertFalse(any(f["path"].startswith(".vercel/") for f in plain["findings"]))
+        self.assertIn(".vercel", plain["set_aside"]["folders_not_read"]["build output"]["paths"])
         paths = {f["path"] for f in plain["findings"]}
         self.assertIn("src/env/server.ts", paths)
         self.assertIn(".antigravity/mcp_config.json", paths)
@@ -132,6 +136,7 @@ class SetAside(unittest.TestCase):
             subprocess.run(["git", "-C", self.tmp, "add", "-A"], check=True)
             gitted, _ = scan(self.tmp)
             self.assertEqual(key(plain), key(gitted))
+            self.assertIn(".vercel", gitted["set_aside"]["folders_not_read"]["build output"]["paths"])
 
     def test_a_python_virtualenv_named_env_is_not_read(self):
         write(self.tmp, {"env/pyvenv.cfg": "home = /usr/bin\n", "env/lib/x.py": 'KEY = "sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA"\n'})
@@ -166,9 +171,21 @@ class SetAside(unittest.TestCase):
         try:
             write(empty, {"README.md": "hello\n"})
             doc, _ = scan(empty)
-            self.assertEqual(doc["jank"]["label"], "quiet")
+            self.assertEqual(doc["summary"]["jank"]["label"], "quiet")
+            md = run_cli("scan", empty, "--md", "--no-progress").stdout
+            self.assertIn("quiet", md.split("\n", 3)[2])
+            self.assertNotIn("pristine", md)
         finally:
             shutil.rmtree(empty)
+
+    def test_installed_plugin_code_is_listed_and_its_settings_are_read(self):
+        write(self.tmp, {".obsidian/plugins/chat/data.json": '{"anthropicApiKey": "sk-ant-api03-%s"}\n' % ("Zq7" * 30),
+                         ".obsidian/plugins/chat/main.js": 'var a = {enabled: ":not(:disabled)"};\n'})
+        doc, _ = scan(self.tmp)
+        paths = {f["path"] for f in doc["findings"]}
+        self.assertIn(".obsidian/plugins/chat/data.json", paths)
+        self.assertNotIn(".obsidian/plugins/chat/main.js", paths)
+        self.assertIn(".obsidian/plugins/chat", doc["set_aside"]["folders_not_read"]["dependencies"]["paths"])
 
     def test_a_file_over_the_size_limit_is_listed(self):
         write(self.tmp, {"big.js": "x" * 5000})

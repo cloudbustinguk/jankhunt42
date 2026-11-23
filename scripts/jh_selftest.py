@@ -1138,6 +1138,7 @@ MUTANTS = [
     ('M779-set-aside-not-rendered', 'the Markdown report leaves out what the run set aside', 'jh_render.py', '        out.extend("- %s" % text for _, text in aside)', '        pass', 'test_config_scope.py'),
     ('M780-quiet-reads-pristine', 'a scan that flags nothing is called pristine', 'jh_score.py', '        return "quiet"', '        return "pristine"', 'test_config_scope.py'),
     ('M781-folders-not-listed', 'folders a scan without git skips are not listed', 'jh_core.py', '                            "%s/%s" % (rel_dir, d) if rel_dir else d)', '                            "")', 'test_config_scope.py'),
+    ('M782-plugin-code-read', "installed plugin bundles are read as the project's own code", 'jh_core.py', '        plugin = installed_plugin_dir(inside.as_posix())\n', '        plugin = None\n', 'test_config_scope.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

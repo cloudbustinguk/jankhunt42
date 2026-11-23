@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.21.1"
+VERSION = "4.22.0"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -145,6 +145,18 @@ CACHE_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".to
               ".idea", ".vs", ".parcel-cache", ".angular", ".sass-cache", ".webpack", ".expo", ".metals", ".bloop",
               ".history", ".ipynb_checkpoints"}
 DEFAULT_SKIP_DIRS = VCS_DIRS | DEPENDENCY_DIRS | BUILD_DIRS | CACHE_DIRS
+
+
+# Installed plugin code inside a tool's own folder: an Obsidian plugin's bundle is someone else's released code (on the
+# corpus, minified selectors read as secrets), while its data.json beside it holds the user's settings, API keys
+# included, and is read. The plugin folder is listed under dependencies.
+_INSTALLED_PLUGIN_RE = re.compile(r"(?:^|/)(\.obsidian/plugins/[^/]+)/(?:main\.js|styles\.css)$")
+
+
+def installed_plugin_dir(rel: str) -> Optional[str]:
+    """The plugin folder when `rel` is installed plugin code that is not read, else None."""
+    m = _INSTALLED_PLUGIN_RE.search(rel)
+    return rel[:m.end(1)] if m else None
 
 
 def skipped_dir_reason(name: str, path: Optional[str] = None) -> Optional[str]:
@@ -795,6 +807,13 @@ def discover_files(
         except ValueError:
             inside = Path(p.name)
         if not p.is_file() or _is_skipped_file(inside):
+            return
+        plugin = installed_plugin_dir(inside.as_posix())
+        if plugin:
+            if not_read is not None:
+                listed = not_read.setdefault("dirs", {}).setdefault("dependencies", [])
+                if plugin not in listed:
+                    listed.append(plugin)
             return
         try:
             # a Power Platform solution export (.zip) or canvas app (.msapp) is read from inside (jh_powerplatform)
