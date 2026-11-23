@@ -232,10 +232,6 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         meta["config_suppressed"] = config_suppressed
         if cfg.ignore_globs:
             meta["config_ignored_paths"] = list(cfg.ignore_globs)[:50]
-        if config_suppressed or cfg.ignore_globs:
-            print("jankhunt42: config %s set aside %d finding(s)%s; run with --no-config to see everything" % (
-                cfg.source, config_suppressed, " and skipped the paths it ignores" if cfg.ignore_globs else ""),
-                file=sys.stderr)
     if ignored_rules(args):
         meta["ignored_rules"] = sorted(ignored_rules(args))
     if getattr(args, "rulesets", None):

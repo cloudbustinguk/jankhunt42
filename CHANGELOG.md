@@ -25,7 +25,7 @@ repositories, 20 findings fell past the 200-per-rule cap; the report now counts 
 ### Changed
 
 - A scan reads the same folders with or without git. Version control, dependencies, build output and caches are set aside and listed. Other folders are read, including hidden ones and the `.agent`, `.antigravity`, `.pi` and `.copilot` agent folders. An `env` folder is read unless it is a Python virtual environment. Before, a copy without `.git` skipped `env`, `tmp`, `temp` and every hidden folder outside a short list, so a credential in `src/env/` or an MCP server in `.antigravity/` could go unreported.
-- A config file applies only to its own repository. The search stops at the git work-tree root, and a folder without git uses only its own config. A parent folder's config no longer filters another project. A config that sets findings aside says how many on stderr and in the report.
+- A config file applies only to its own repository. The search stops at the git work-tree root, and a folder without git uses only its own config. A parent folder's config no longer filters another project. A config that sets findings aside says how many in the report.
 - The lowest score band is called `quiet`, not `pristine`. It describes what these rules flagged, not the code.
 
 - JH101 qualifies name-only credential leads. JH134 describes the operations and audience of a row policy and refers readers to table grants. JH702 distinguishes an approval option in an invocation from an unresolved mention.
@@ -33,6 +33,8 @@ repositories, 20 findings fell past the 200-per-rule cap; the report now counts 
 - The scoring reference documents headline rounding, tie order and use in prioritizing review.
 
 ### Fixed
+
+- JH101 reports a committed password hash (argon2, PBKDF2, crypt, LDAP `{SSHA}`) at minor severity, with a message saying it is a hash: nobody can sign in with it, but it can be guessed offline. An authentication method named as a value (`"password", "scram-sha-256"` in a `pg_hba.conf` comment) and a command that fetches a key (`'!python3 …/token.py'`) are no longer reported as secrets.
 
 - Option names, display entries and inert approval-option mentions no longer mask adjacent executable or credential-bearing sites.
 - Agent permission checks share runner recognition, apply deny and ask before allow, and combine settings within the captured scope. Explicit runner grants retain their severity alongside bypass mode.

@@ -73,8 +73,10 @@ class ConfigScope(unittest.TestCase):
         doc, err = scan(os.path.join(self.tmp, "repo"))
         self.assertEqual(doc["findings"], [])
         self.assertGreaterEqual(doc["config_suppressed"], 1)
-        self.assertIn("set aside", err)
-        self.assertIn("--no-config", err)
+        self.assertEqual(doc["set_aside"]["config"], doc["config_suppressed"])
+        self.assertEqual(err, "")                     # a valid config is quiet on stderr; the report says it all
+        md = run_cli("scan", os.path.join(self.tmp, "repo"), "--md", "--no-progress").stdout
+        self.assertIn("`--no-config` shows everything", md)
         full, _ = scan(os.path.join(self.tmp, "repo"), "--no-config")
         self.assertEqual(len(full["findings"]), doc["config_suppressed"])
 

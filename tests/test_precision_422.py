@@ -249,3 +249,35 @@ class CleanupClaims(unittest.TestCase):
         self.assertIn("close()", f.message)
         self.assertIn("state update", f.message)
         self.assertEqual(scan("JH201", "try { save(); } catch (e) { if (needed) throw e; }", "work.js"), [])
+
+
+class SecretShapes(unittest.TestCase):
+    """Hashes are reported at minor severity with their own message; method names and command references are not
+    secrets; real values in the same shapes still are."""
+
+    def test_password_hashes_are_minor(self):
+        for line in ('password: "$argon2id$v=19$m=65536,t=3,p=4$DjuQZ1CwKrfFsOLd$BsnyuCLeLKypIDZoM37czEgTtD"',
+                     'client_secret: "$pbkdf2-sha512$310000$c8p78n7pUMln0jzv$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1"',
+                     'password: "$2b$12$KIXQe1sLqOq8vR9x0Yb2/eW7z3mN4pQrStUvWxYz01234567890ab"'):
+            with self.subTest(line=line):
+                found = scan("JH101", line + "\n", "users.yml")
+                self.assertFalse(any(f.severity == "critical" for f in found))
+                self.assertTrue(all(f.severity == "minor" and f.message.startswith("A password hash") for f in found))
+        found = scan("JH101", 'password: "$argon2id$v=19$m=65536,t=3,p=4$DjuQZ1CwKrfFsOLd$BsnyuCLeLKypIDZoM37czEgTtD"\n',
+                     "users.yml")
+        self.assertEqual(len(found), 1)             # reported, not dropped: a hash can still be guessed offline
+
+    def test_method_names_and_commands_are_not_secrets(self):
+        for line in ('# METHOD can be "trust", "reject", "md5", "password", "scram-sha-256",',
+                     "apiKey: '!python3 /srv/agent/grok-token.py'",
+                     "apiKey: '!./bin/fetch-token'"):
+            with self.subTest(line=line):
+                self.assertEqual(scan("JH101", line + "\n", "config.yml"), [])
+
+    def test_real_values_in_the_same_shapes_still_count(self):
+        for line in ('db.login("password", "Rk8vT2qWm9Zs")',
+                     "apiKey: '!Rk8vT2qWm9ZsLp4XbN7c'",
+                     'password: "Qp7Nz8Rm6At2Hv"'):
+            with self.subTest(line=line):
+                found = scan("JH101", line + "\n", "app.js")
+                self.assertEqual([f.severity for f in found], ["critical"])

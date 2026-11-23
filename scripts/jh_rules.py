@@ -938,6 +938,24 @@ _IGNORES: Dict[str, re.Pattern] = {}
 # (`"test-token"`, `"managed-bedrock-api-key"`). Found by running the scanner
 # on public repositories, where these were nearly all of JH101's hits.
 _SECRET_QUOTED_RE = re.compile(r"[:=]\s*([\"'])((?:(?!\1)[^\n])+)\1")
+# ("password", "<value>"): the value of a quoted name-and-value argument pair
+_SECRET_ARG_PAIR_RE = re.compile(r"""^["'][\w-]+["']\s*,\s*(["'])((?:(?!\1)[^\n])+)\1?$""")
+# an authentication method or algorithm named as a value ("password", "scram-sha-256" in pg_hba.conf's own comment)
+_AUTH_METHOD_RE = re.compile(r"(?i)(?:scram-)?sha-?(?:1|224|256|384|512)|md5|bcrypt|argon2(?:id|i|d)?|pbkdf2(?:-sha\d+)?|"
+                             r"hmac-sha\d+|scrypt|plain(?:text)?|basic|bearer|digest|ntlm|kerberos|gss|sspi|trust|reject|"
+                             r"peer|ident|ldap|radius|pam|cert")
+# a password hash in a modular crypt or LDAP format: what a service that checks passwords stores, not the password
+_PASSWORD_HASH_RE = re.compile(r"\$(?:2[abxy]?|argon2(?:id|i|d)|pbkdf2(?:-sha(?:1|256|512))?|[156]|y|gy|7|scrypt|"
+                               r"bcrypt(?:-sha256)?)\$[./A-Za-z0-9$=,+-]{16,}|"
+                               r"(?:pbkdf2_sha(?:1|256)|argon2|bcrypt(?:_sha256)?|scrypt)\$[./A-Za-z0-9$=,+-]{16,}|"
+                               r"\{(?:SSHA|SHA|SSHA256|SSHA512|CRYPT|PBKDF2(?:-SHA\d+)?|ARGON2)\}[./A-Za-z0-9$=+]{8,}")
+
+
+def password_hash(match_text: str) -> bool:
+    """True when the matched value is a password hash (bcrypt, argon2, PBKDF2, crypt, LDAP {SSHA})."""
+    quoted = _SECRET_QUOTED_RE.search(match_text) or _SECRET_ARG_PAIR_RE.match(match_text)
+    value = (quoted.group(2) if quoted else match_text).strip()
+    return bool(_PASSWORD_HASH_RE.fullmatch(value))
 _SECRET_REF_RE = re.compile(r"\benv\(|\{\{|\$\(|\$\{|%\(|^\$\w+(?:$|[/\\.:])|^<[^>]+>$")
 _SECRET_PREFIX_RE = re.compile(r"^(?:sk-ant-(?:api|admin)\d+-|sk-(?:proj-|lf-)?|[sr]k_live_|gh[pousr]_|github_pat_|xox[baprs]-|glpat-|hf_|gsk_|npm_)")
 # a UI label like "Bearer Token Env Var" (Title Case); lowercase word runs may be passphrases
@@ -1021,8 +1039,12 @@ def secret_placeholder(match_text: str) -> bool:
     """True when a secret-pattern match is a reference, a generated run, or a
     descriptive fixture value rather than credential material."""
     quoted = _SECRET_QUOTED_RE.search(match_text)
-    value = quoted.group(2) if quoted else match_text
+    pair = None if quoted else _SECRET_ARG_PAIR_RE.match(match_text)
+    value = quoted.group(2) if quoted else (pair.group(2) if pair else match_text)
     if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
+        return True
+    # an authentication method named as a value, or a command that fetches the secret ("!python3 /path/token.py")
+    if _AUTH_METHOD_RE.fullmatch(value.strip()) or re.match(r"!(?:[\w.-]+\s+\S|\.{0,2}/)", value):
         return True
     if value.strip().lower() in _TOKEN_USERNAMES:
         return True
@@ -1513,6 +1535,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             m = pat.search(line, m.end())
                         if not m:
                             continue
+                        if rule.id == "JH101" and password_hash(m.group()):
+                            severity, confidence = "minor", "low"
+                            message = ("A password hash, not the password: what a service that checks passwords "
+                                       "stores. Nobody can sign in with it, but a committed hash can be guessed "
+                                       "offline, so a weak password behind it is exposed.")
                         if "data\\s+source" in pat.pattern:
                             host = _CONN_HOST_RE.search(m.group(0))
                             if host and _local_db_host(host.group(1)):
