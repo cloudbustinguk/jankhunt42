@@ -1139,6 +1139,9 @@ MUTANTS = [
     ('M780-quiet-reads-pristine', 'a scan that flags nothing is called pristine', 'jh_score.py', '        return "quiet"', '        return "pristine"', 'test_config_scope.py'),
     ('M781-folders-not-listed', 'folders a scan without git skips are not listed', 'jh_core.py', '                            "%s/%s" % (rel_dir, d) if rel_dir else d)', '                            "")', 'test_config_scope.py'),
     ('M782-plugin-code-read', "installed plugin bundles are read as the project's own code", 'jh_core.py', '        plugin = installed_plugin_dir(inside.as_posix())\n', '        plugin = None\n', 'test_config_scope.py'),
+    ('M783-password-hash-critical', 'a committed password hash is reported as a critical secret', 'jh_rules.py', '                        if rule.id == "JH101" and password_hash(m.group()):', '                        if False:', 'test_precision_422.py'),
+    ('M784-auth-method-is-secret', 'an authentication method named in a comment is reported as a secret', 'jh_rules.py', '    if _AUTH_METHOD_RE.fullmatch(value.strip()) or re.match(', '    if False or re.match(', 'test_precision_422.py'),
+    ('M785-command-reference-is-secret', 'a command that fetches a key is reported as the key', 'jh_rules.py', ' or re.match(r"!(?:[\\w.-]+\\s+\\S|\\.{0,2}/)", value):', ':', 'test_precision_422.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
