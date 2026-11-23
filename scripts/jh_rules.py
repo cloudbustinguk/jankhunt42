@@ -1043,8 +1043,9 @@ def secret_placeholder(match_text: str) -> bool:
     value = quoted.group(2) if quoted else (pair.group(2) if pair else match_text)
     if _SECRET_REF_RE.search(value) or _SECRET_RUN_RE.search(value):
         return True
-    # an authentication method named as a value, or a command that fetches the secret ("!python3 /path/token.py")
-    if _AUTH_METHOD_RE.fullmatch(value.strip()) or re.match(r"!(?:[\w.-]+\s+\S|\.{0,2}/)", value):
+    # an authentication method listed after the word (a comma list, as in pg_hba.conf's own comment: a value given
+    # as password: "trust" is a weak password and stays), or a command that fetches the secret ("!python3 /x.py")
+    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(r"!(?:[\w.-]+\s+\S|\.{0,2}/)", value):
         return True
     if value.strip().lower() in _TOKEN_USERNAMES:
         return True
