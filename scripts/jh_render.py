@@ -7,7 +7,7 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from jh_core import Finding, SEV_LABEL, SEV_WEIGHT, safe_text
 import jh_score
@@ -268,6 +268,12 @@ def banner(subtitle: str, meta: str, color: Colors, width: int) -> List[str]:
     return _boxed(lines, color, width, "gradient")
 
 
+def _sample_paths(info: Dict[str, Any]) -> str:
+    paths = info["paths"][:6]
+    names = ", ".join("`%s`" % safe_text(p).replace("`", "\\`") for p in paths)
+    return names + (", …" if info["count"] > len(paths) else "")
+
+
 def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
     """(label, sentence) for each thing the run held back (meta["set_aside"]), each with the switch that shows it.
     Shared by the Markdown and terminal reports so neither can be quieter than the other."""
@@ -275,6 +281,10 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
     if not isinstance(aside, dict):
         return []
     out: List[Tuple[str, str]] = []
+    git_ignored = aside.get("git_ignored_read")
+    if git_ignored:
+        out.append(("READ", "%d untracked file(s) covered by git ignore rules were read, including %s"
+                    % (git_ignored["count"], _sample_paths(git_ignored))))
     floor = aside.get("below_floor") or {}
     held = {k: v for k, v in floor.items() if k != "floor"}
     if held:

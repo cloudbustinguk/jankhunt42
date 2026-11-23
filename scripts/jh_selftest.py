@@ -1145,6 +1145,9 @@ MUTANTS = [
     ('M786-method-word-password-dropped', 'a single name/value pair whose value is a method name is dropped', 'jh_rules.py', 'if _AUTH_METHOD_RE.fullmatch(q)) >= 3', 'if _AUTH_METHOD_RE.fullmatch(q)) >= 1', 'test_precision_422.py'),
     ('M787-json-lines-unbounded', 'locating JSON members has no depth bound, so a deeply nested file exhausts memory', 'jh_agent.py', 'JSON_LINES_DEPTH = 64\n', 'JSON_LINES_DEPTH = 10 ** 9\n', 'test_fuzz.py'),
     ('M788-nonsecurity-hash', 'an explicit non-security hash use loses its info finding', 'jh_checks.py', '_constant_keyword(call, ("usedforsecurity",), False)', '_constant_keyword(call, ("usedforsecurity",), True)', 'test_precision_4221.py'),
+    ("M789-ignored-files-missing", "ignored files disappear from a repository scan", "jh_core.py",
+     "sorted(git_list + ignored_list, key=", "sorted(git_list, key=", "test_discovery_4221.py"),
+    ('M790-git-ignored-finding-critical', 'a key in a git-ignored file is reported as a secret the repository carries', 'jankhunt42', '            if f.path in ignored_paths and sev_at_least(f.severity, "major"):', '            if False:', 'test_discovery_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
