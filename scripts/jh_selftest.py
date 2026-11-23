@@ -1143,6 +1143,7 @@ MUTANTS = [
     ('M784-auth-method-is-secret', 'an authentication method named in a comment is reported as a secret', 'jh_rules.py', '    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', '    if False or re.match(', 'test_precision_422.py'),
     ('M785-command-reference-is-secret', 'a command that fetches a key is reported as the key', 'jh_rules.py', ' or re.match(r"!(?:[\\w.-]+\\s+\\S|\\.{0,2}/)", value):', ':', 'test_precision_422.py'),
     ('M786-method-word-password-dropped', 'a weak password that is also a method name is not reported', 'jh_rules.py', '    if (pair and _AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', '    if (_AUTH_METHOD_RE.fullmatch(value.strip())) or re.match(', 'test_precision_422.py'),
+    ('M787-json-lines-unbounded', 'locating JSON members has no depth bound, so a deeply nested file exhausts memory', 'jh_agent.py', 'JSON_LINES_DEPTH = 64\n', 'JSON_LINES_DEPTH = 10 ** 9\n', 'test_fuzz.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -4,6 +4,7 @@ emit any seeded secret in JSON, Markdown, TTY, or HTML. Seeds are fixed so
 any failure reproduces exactly; JH_FUZZ_CASES raises the case count."""
 import json
 import os
+import sys
 import random
 import time
 import unittest
@@ -107,6 +108,41 @@ class DeepJson(unittest.TestCase):
                 if args[0] == "scan":
                     hooks = [f for f in doc["findings"] if f["rule"] == "JH111" and f["path"] == "package.json"]
                     self.assertEqual([(f["line"], f["severity"]) for f in hooks], [(2, "critical")])
+
+    def test_an_unlimited_stack_does_not_exhaust_memory(self):
+        """On a machine whose stack limit is unlimited, Python 3.14 parses the 100,000-deep document instead of
+        refusing it; everything after the parser must still stay small (a CI runner once ran out of memory here)."""
+        try:
+            import resource
+        except ImportError:
+            self.skipTest("no resource module on this platform")
+        import shutil
+        import subprocess
+        import tempfile
+        deep = "[" * 100000 + "]" * 100000
+        root = tempfile.mkdtemp(prefix="jh-deep-stack-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for rel, text in {".mcp.json": '{"mcpServers": {"x": {"command": "node", "args": %s}}}\n' % deep,
+                          ".vscode/mcp.json": '{"servers": %s}\n' % deep,
+                          "package.json": '{"name": "deep", "metadata": %s}\n' % deep}.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)) or root, exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+        def limits():
+            resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+            resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+
+        for args in (("scan", root, "--json"), ("map", root, "--json")):
+            with self.subTest(command=args[0]):
+                try:
+                    r = subprocess.run([sys.executable, _util.CLI] + list(args), capture_output=True, text=True,
+                                       timeout=120, preexec_fn=limits, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                except (ValueError, OSError) as exc:          # the hard limit forbids raising the stack limit
+                    self.skipTest("cannot raise the stack limit here: %s" % exc)
+                self.assertNotIn("MemoryError", r.stderr)
+                self.assertEqual(r.returncode, 0, r.stderr[-400:])
+                json.loads(r.stdout)
 
 if __name__ == "__main__":
     unittest.main()
