@@ -4,7 +4,16 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.0] — 2026-11-23
+
+Measured before release. The precision changes, against 4.21.1 in locked-down containers: on the agent-category
+scan of the same 3,769 repositories, `JH703` reports 184 more runner grants in 114 repositories and `JH702` 177
+fewer mentions that are not invocations; on the full scan of 1,840 repositories, 138,848 findings became 138,788
+(`JH126` 70 fewer where markup is assigned a constant, `JH134` 20 fewer, and six template placeholders no longer
+reported as `JH101`). The folder change, on the 1,149 of 4,000 sampled repositories with an `env`, `tmp`, `temp` or
+hidden folder: 1,103 findings added in 101 repositories, among them 15 critical hard-coded secrets in 9 (an API key
+in a note-app plugin's settings, client secrets in a compose folder, a password in `env/`) and 179 major. In two
+repositories, 20 findings fell past the 200-per-rule cap; the report now counts them.
 
 ### Added
 
