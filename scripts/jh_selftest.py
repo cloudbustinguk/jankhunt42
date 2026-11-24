@@ -1219,6 +1219,9 @@ MUTANTS = [
     ('M859-bound-drops-silently', "findings past the debug check's bound vanish without a count", 'jh_checks.py', '                BOUND_DROPPED[(rule.id, sf.rel)] = BOUND_DROPPED.get((rule.id, sf.rel), 0) + 1\n', '                pass\n', 'test_audit_4222.py'),
     ('M860-display-collision', 'a byte name and its escaped spelling share one display path', 'jh_core.py', '    if _AMBIGUOUS_BACKSLASH.search(rel):\n        rel = rel.replace', '    if False:\n        rel = rel.replace', 'test_audit_4222.py'),
     ('M861-untracked-backslash-folder', 'a backslash in an untracked name becomes a folder', 'jh_review.py', '    return [p for p in proc.stdout.split("\\0") if p]      # git always writes "/"; a backslash is part of a name', '    return [p.replace("\\\\", "/") for p in proc.stdout.split("\\0") if p]', 'test_audit_4222.py'),
+    ('M862-parse-failures-scan-only', 'review and passport lose the files a check could not parse', 'jh_rules.py', '        acceptor.set_aside["files_not_parsed"] = {"count": len(failed), "paths": failed[:20]}', '        pass', 'test_audit_4222.py'),
+    ('M863-review-sarif-silent', "a review's SARIF says nothing about what it held back", 'jh_review.py', '    if aside or skipped:\n        run["properties"]', '    if False:\n        run["properties"]', 'test_audit_4222.py'),
+    ('M864-map-skips-unrecorded', 'the working-tree map forgets the folders discovery set aside', 'jh_map.py', '            col.skip("folder: " + reason, rel)', '            pass', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

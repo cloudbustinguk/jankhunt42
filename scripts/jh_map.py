@@ -88,6 +88,23 @@ def collect_worktree(root: str, paths: Sequence[str], excludes: Sequence[str],
         col.considered += 1
         col.skip("over the size limit", rel)
         col.unread.append(rel)
+    # everything else discovery set aside is recorded too, as a revision map records it: folders by reason (each
+    # counted once, as a folder), files by name, excluded files and files that could not be read as text
+    for reason, paths in sorted((not_read.get("dirs") or {}).items()):
+        for rel in sorted(set(paths)):
+            if reason == "version control" and rel == ".git":
+                continue                             # the repository's own history
+            col.skip("folder: " + reason, rel)
+    for key in ("files_by_name", "files_excluded", "files_not_read"):
+        for reason, entry in sorted((not_read.get(key) or {}).items()):
+            listed = list(entry.get("paths") or [])
+            for rel in listed:
+                col.considered += 1
+                col.skip(reason, rel)
+            extra = int(entry.get("count") or 0) - len(listed)
+            if extra > 0:                            # beyond the sample paths: still counted
+                col.considered += extra
+                col.skipped[reason] = col.skipped.get(reason, 0) + extra
     for p in files:
         rel = display_path(os.path.relpath(str(p), str(base)).replace(os.sep, "/"))
         try:

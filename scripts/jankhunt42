@@ -251,11 +251,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         honor_suppressions=getattr(args, "honor_suppressions", True) and not getattr(args, "no_inline_ignore", False),
         rate=rate,
     )
-    import jh_checks
-    jh_checks.PARSE_FAILURES.clear()
-    result = scan_sources(sources, opts)
-    for rel in sorted(jh_checks.PARSE_FAILURES):          # supported files a structured check could not parse
-        count_path(not_read, "files_not_parsed", rel)
+    result = scan_sources(sources, opts)              # its set_aside carries the files a structured check could not parse
     config_suppressed = int(result.set_aside.get("config", 0)) if cfg.source else 0
     # A file the repository's .gitignore covers is read (a folder without git reads it too), but it is not committed:
     # a finding there is at most minor and says why, so a key kept in a git-ignored .env is not reported as a secret
