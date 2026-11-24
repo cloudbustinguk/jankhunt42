@@ -2080,6 +2080,9 @@ def adapt_mcp(ctx: Ctx, item: Item) -> None:
     for project, servers in jh_agent.server_groups(jh_agent.mcp_servers(item.rel, item.text)).items():
         if servers:
             _map_mcp_group(ctx, item, project, servers)
+    if jh_agent.OMITTED.get(item.rel):
+        ctx.g._truncate("%s: %d MCP server definition(s) past the first %d were not inventoried"
+                       % (safe_text(item.rel), jh_agent.OMITTED[item.rel], jh_agent.MAX_SERVERS))
 
 
 def _map_mcp_group(ctx: Ctx, item: Item, project: str, servers: List[jh_agent.McpServer]) -> None:

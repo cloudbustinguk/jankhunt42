@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 MAX_SERVERS = 200
+# files whose server list reached MAX_SERVERS, with how many definitions were left out: the inventory is partial and
+# the map says so (it reads this after each call)
+OMITTED: Dict[str, int] = {}
 
 
 @dataclass
@@ -308,8 +311,12 @@ def mcp_servers(rel: str, text: str) -> List[McpServer]:
     """MCP servers defined in one config file. Raises ValueError when the
     file cannot be parsed, so callers can record a coverage gap."""
     posix = rel.replace(os.sep, "/").lower()
+    OMITTED.pop(rel, None)
     if posix.endswith(".toml"):
-        return _codex_servers(text)[:MAX_SERVERS]
+        found = _codex_servers(text)
+        if len(found) > MAX_SERVERS:
+            OMITTED[rel] = len(found) - MAX_SERVERS
+        return found[:MAX_SERVERS]
     data = loads_jsonc(text)
     if not isinstance(data, dict):
         return []                                       # valid JSON, but not an MCP client config
@@ -333,7 +340,9 @@ def mcp_servers(rel: str, text: str) -> List[McpServer]:
             continue
         for name, spec in container.items():
             if len(out) >= MAX_SERVERS:
-                return out
+                if isinstance(spec, dict):
+                    OMITTED[rel] = OMITTED.get(rel, 0) + 1
+                continue
             if isinstance(spec, dict):
                 out.append(_server_from_spec(name, spec, lines[path + (key, name)], client_for(rel),
                                              path[-1] if path else ""))
