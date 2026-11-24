@@ -330,7 +330,7 @@ class RevisionsUseTheSameFolderRule(unittest.TestCase):
     def test_working_and_revision_runs_read_the_same_files(self):
         sp = __import__("subprocess")
         root = project(self, {"app.py": "x = 1\n"})
-        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.invalid"]
+        git = ["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
         sp.run(["git", "-C", str(root), "init", "-q"], check=True)
         sp.run(git + ["add", "-A"], check=True)
         sp.run(git + ["commit", "-qm", "one"], check=True)
@@ -364,7 +364,7 @@ class RevisionsUseTheSameFolderRule(unittest.TestCase):
 class EachRevisionItsOwnConfig(unittest.TestCase):
     def _commit(self, root, message):
         sp = __import__("subprocess")
-        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.invalid"]
+        git = ["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
         sp.run(git + ["add", "-A"], check=True)
         sp.run(git + ["commit", "-qm", message], check=True)
 

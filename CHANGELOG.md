@@ -18,6 +18,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Changed
 
+- The README explains the two ways to use jankhunt42: ask an AI coding agent that has it installed as a skill, or run the command-line tool yourself.
 - The mass-testing page (`references/soak.md`) says how the evaluation corpus is pinned (tree hash, and for 9,043 snapshots the commit holding that content) and how each release is measured on 1,840 of its repositories before it ships.
 
 ### Fixed
