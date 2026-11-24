@@ -26,6 +26,7 @@ from jh_core import (  # noqa: F401
     Finding,
     safe_text,
     GENERATED_RE,
+    skipped_dir_reason,
     SEV_RANK,
     TOOL,
     VERSION,
@@ -402,8 +403,9 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
         if _excluded(rel, getattr(args, "exclude", ()) or ()):
             skipped.append({"path": rel, "reason": "excluded by pattern"})
             continue
-        if GENERATED_RE.search(rel):
-            skipped.append({"path": rel, "reason": "generated/vendor"})
+        folder_why = next((r for r in (skipped_dir_reason(seg) for seg in rel.split("/")[:-1]) if r), None)
+        if GENERATED_RE.search(rel) or folder_why:
+            skipped.append({"path": rel, "reason": "generated/vendor" if not folder_why else folder_why})
             continue
         sf = load_review_source(root, rel, scope, df.status)
         if sf is None:

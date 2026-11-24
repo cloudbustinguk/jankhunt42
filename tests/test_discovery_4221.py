@@ -255,3 +255,21 @@ class EveryOutputSaysWhatWasHeldBack(unittest.TestCase):
         self.assertEqual(passport["scope"]["set_aside"]["below_floor"], {"info": 1, "floor": "minor"})
         self.assertIn("## Set aside in this run", run_cli("passport", ".", "--md", cwd=str(self.root)).stdout)
 
+
+class NameBasedSkipsAreCountedAndNarrow(unittest.TestCase):
+    def test_generated_minified_and_lock_names(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        files = {"Build/sample.py": HANDLER, "clock": "# a hand-written schedule\n", "reader.generated.py": HANDLER,
+                 "bundle.min.js": "debugger;\n", "Cargo.lock": "# lock\n"}
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        doc = json.loads(run_cli("scan", str(root), "--json", "--no-progress", "--no-config", "--min-severity", "info").stdout)
+        self.assertEqual(doc["summary"]["files"], 2)                       # Build/sample.py and clock
+        self.assertIn(("JH217", "Build/sample.py"), [(f["rule"], f["path"]) for f in doc["findings"]])
+        by_name = doc["set_aside"]["files_by_name"]
+        self.assertEqual((by_name["generated"]["paths"], by_name["minified"]["paths"], by_name["lockfile"]["paths"]),
+                         (["reader.generated.py"], ["bundle.min.js"], ["Cargo.lock"]))
+

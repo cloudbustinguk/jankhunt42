@@ -124,11 +124,11 @@ TEST_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Files set aside by name: generated code, maps, snapshots, minified libraries and lockfiles. Folders are the shared
+# folder rule's job (skipped_dir_reason), which matches names exactly; a name merely ending in "lock" (clock) is read.
 GENERATED_RE = re.compile(
     r"(\.min\.(js|css)$|\.map$|\.generated\.|_pb2(_grpc)?\.py$|\.pb\.go$|"
-    r"\.designer\.cs$|\.g\.dart$|\.freezed\.dart$|lock$|\.lock$|"
-    r"(^|/)(dist|build|target|out|coverage|\.next|\.nuxt|vendor|node_modules|"
-    r"bower_components|Pods|DerivedData|__pycache__|\.venv|venv|site-packages)(/|$))",
+    r"\.designer\.cs$|\.g\.dart$|\.freezed\.dart$|\.lock$)",
     re.IGNORECASE,
 )
 
@@ -645,16 +645,20 @@ SKIP_FILENAMES = {
 }
 
 
+def skipped_file_reason(path: Path) -> Optional[str]:
+    """Why a file is set aside by its name ("lockfile", "minified", "generated"), or None to read it."""
+    low = path.name.lower()
+    if low in SKIP_FILENAMES or low.endswith(".lock"):
+        return "lockfile"
+    if low.endswith((".min.js", ".min.css")):
+        return "minified"
+    if low.endswith((".map", ".snap")) or GENERATED_RE.search(low):
+        return "generated"
+    return None
+
+
 def _is_skipped_file(path: Path) -> bool:
-    name = path.name
-    low = name.lower()
-    if low in SKIP_FILENAMES:
-        return True
-    if GENERATED_RE.search(path.as_posix()):
-        return True
-    if low.endswith((".min.js", ".min.css", ".map", ".snap")):
-        return True
-    return False
+    return skipped_file_reason(path) is not None
 
 
 # Git reads the repository's own .git/config, attributes and hooks, and an untrusted folder controls
@@ -821,7 +825,10 @@ def discover_files(
                     else:
                         pending_excludes[p] = origin if pending_excludes.get(p, origin) == origin else "both"
                 return
-        if _is_skipped_file(inside):
+        why_name = skipped_file_reason(inside)
+        if why_name:
+            if not_read is not None:                 # set aside by name, and counted
+                count_path(not_read.setdefault("files_by_name", {}), why_name, inside.as_posix())
             return
         plugin = installed_plugin_dir(inside.as_posix())
         if plugin:

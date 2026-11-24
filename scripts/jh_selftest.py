@@ -856,7 +856,6 @@ MUTANTS = [
     ('M492-substrate-boundary-without-policy', 'an actor template without a policy declares an empty boundary', 'jh_egress.py', '            continue                    # an actor template without a policy declares no boundary', '            pass', 'test_substrate.py'),
     ('M493-substrate-dummy-is-a-key', 'a dummy value (a prefix and one repeated character) is reported as a key', 'jh_substrate.py', '    if len(set(re.sub(r"^[A-Za-z]{2,10}[_-]", "", v))) <= 1:', '    if False:', 'test_substrate.py'),
     ('M494-substrate-cluster-cleartext-major', 'cleartext credentials to a cluster service stay major', 'jh_checks.py', '                    inside = bool(hosts) and all(S.cluster_internal(h) for h in hosts)', '                    inside = False', 'test_substrate.py'),
-    ('M495-skip-dirs-above-root', 'a scan root under a folder named out/ or build/ scans nothing', 'jh_core.py', '        if _is_skipped_file(inside):', '        if _is_skipped_file(p):', 'test_substrate.py'),
     ('M496-substrate-ceiling-cli-refused', 'the CLI refuses --sandbox-network-ceiling with --emit-sandbox-policy substrate', 'jankhunt42', '            and args.emit_sandbox_policy not in ("openshell", "claude-code", "substrate"):', '            and args.emit_sandbox_policy not in ("openshell", "claude-code"):', 'test_substrate.py'),
     ('M511-substrate-bare-name-in-cluster', 'a name without a dot counts as a cluster service', 'jh_substrate.py', '    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local"))', '    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local")) or "." not in h', 'test_substrate.py'),
     ('M497-runlog-ocsf-prefix-ignored', "OpenShell's OCSF-JSON stderr lines are not read", 'jh_runlog.py', '        if start < 0 or (start > 0 and " OCSF-JSON " not in " " + line[:start] + " "):', '        if start != 0:', 'test_runlog.py'),
@@ -1168,6 +1167,8 @@ MUTANTS = [
     ('M807-prompt-clean-despite-held', 'the fix prompt says nothing to fix while findings were held back', 'jh_prompt.py', '        if held:\n            return (', '        if False:\n            return (', 'test_discovery_4221.py'),
     ('M808-review-set-aside-dropped', 'a review drops what its scan held back', 'jh_review.py', '        "set_aside": _review_aside(result, review_capped, getattr(args, "min_severity", "minor")),\n', '', 'test_discovery_4221.py'),
     ('M809-passport-set-aside-dropped', 'a passport drops what its scan held back', 'jh_passport.py', '                      **({"set_aside": dict(set_aside)} if set_aside else {}),\n', '', 'test_discovery_4221.py'),
+    ('M810-name-skips-uncounted', 'files set aside by name disappear without a count', 'jh_core.py', '                count_path(not_read.setdefault("files_by_name", {}), why_name, inside.as_posix())\n', '                pass\n', 'test_discovery_4221.py'),
+    ('M811-lock-suffix-broad', 'any name ending in lock is taken for a lockfile', 'jh_core.py', '    if low in SKIP_FILENAMES or low.endswith(".lock"):', '    if low in SKIP_FILENAMES or low.endswith("lock"):', 'test_discovery_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

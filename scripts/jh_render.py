@@ -290,6 +290,11 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
         out.append(("NOT READ", "%d file(s) could not be read (permission or read error), including %s; check the "
                     "account running the scan can read them" % (not_text["unreadable"]["count"],
                                                                 _sample_paths(not_text["unreadable"]))))
+    by_name = aside.get("files_by_name") or {}
+    if by_name:
+        out.append(("NOT READ", "set aside by name: %s" % "; ".join(
+            "%d %s file(s), including %s" % (by_name[w]["count"], w, _sample_paths(by_name[w]))
+            for w in ("lockfile", "minified", "generated") if by_name.get(w))))
     plain = [(why, not_text[why]["count"]) for why in ("binary", "empty") if not_text.get(why)]
     if plain:
         out.append(("NOT READ", "%s not read as text" % " and ".join("%d %s file(s)" % (n, why) for why, n in plain)))
