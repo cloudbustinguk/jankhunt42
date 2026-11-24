@@ -1187,6 +1187,9 @@ MUTANTS = [
     ('M827-paths-relative-to-target', "two named projects' skipped folders collapse into one path", 'jh_core.py', '        return os.path.relpath(str(path), str(root)).replace(os.sep, "/")', '        return os.path.basename(os.path.dirname(str(path))) + "/" + os.path.basename(str(path)) if False else os.path.basename(str(path))', 'test_audit_4222.py'),
     ('M828-vcs-folders-hidden', 'version-control folders are never listed', 'jankhunt42', '               for reason, paths in (not_read.get("dirs") or {}).items()}', '               for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}', 'test_audit_4222.py'),
     ('M829-ruleset-falsy-fields-accepted', 'a wrongly typed empty ruleset field passes validation', 'jh_ruleset.py', '    rules = doc.get("rules", [])', '    rules = doc.get("rules") or []', 'test_audit_4222.py'),
+    ('M830-folder-link-silent', 'a folder link inside the root vanishes without a count', 'jh_core.py', '                    not_read.setdefault("dirs", {}).setdefault("linked folder (not followed)", []).append(shown(p))\n', '                    pass\n', 'test_audit_4222.py'),
+    ('M831-outside-link-silent', 'a link leading outside the scanned folder vanishes without a count', 'jh_core.py', '                    not_read.setdefault("dirs", {}).setdefault("link outside the scanned folder", []).append(shown(p))\n', '                    pass\n', 'test_audit_4222.py'),
+    ('M832-hash-gets-rotate-fix', 'a stored hash is told to rotate an exposed password', 'jh_rules.py', '                        f.fix = HASH_FIX\n', '', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

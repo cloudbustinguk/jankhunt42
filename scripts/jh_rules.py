@@ -974,6 +974,12 @@ HASH_MESSAGE = ("The value is shaped like a password hash. If the code hashes a 
                 "password with this value directly, it is the password itself: treat it as a hard-coded secret.")
 
 
+HASH_FIX = ("Keep password verifiers out of source: load them from the user store or a secret manager at runtime. "
+            "Decide with the owner whether the password behind this hash should be changed, given who can read the "
+            "repository and how strong the password is; if the code compares a supplied password with this value "
+            "directly, treat it as a hard-coded password and replace it.")
+
+
 def password_hash(match_text: str) -> bool:
     """True when the matched value is a password hash (bcrypt, argon2, PBKDF2, crypt, LDAP {SSHA})."""
     quoted = _SECRET_QUOTED_RE.search(match_text) or _SECRET_ARG_PAIR_RE.match(match_text)
@@ -1699,6 +1705,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 message = "This code supplies a literal as authentication material."
                     f = make_finding(rule, sf, idx, evidence=ev, column=m.start() + 1, severity=severity,
                                      confidence=confidence, message=message)
+                    if (message or "").startswith(HASH_MESSAGE[:30]):
+                        # a password verifier, not the password: nothing says the password itself was disclosed, so
+                        # the fix is about the verifier (no "rotate now"), and it is not tagged as a secret
+                        f.fix = HASH_FIX
+                        f.tags = tuple(t for t in f.tags if t != "secret")
                     _example_context(f)
                     if acceptor.accept(f):
                         result.findings.append(f)

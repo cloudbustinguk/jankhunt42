@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- A folder link is never followed and is now listed, as a link inside the scanned folder or one leading outside it, instead of vanishing. A stored password hash gets guidance about the verifier (no "rotate now", not tagged as a secret), since nothing shows the password itself was disclosed.
 - A ruleset field that is present is checked as written: `"rules": false`, `"ignore": null` or `"severity": ""` is refused with the field named (exit 2), while a field left out still takes its default.
 - Folders and files set aside are recorded relative to the report's root, so two projects scanned together no longer collapse into one path. Version-control folders other than the repository's own `.git` (`.hg`, `.svn`, a nested `.git`) are listed, as 4.22.0 promised. An installed plugin's bundle is counted as a file, so its folder is no longer called unread when its settings were read. Findings are ordered once more after every severity change, so the first detailed finding is the most serious.
 - The file-limit notice appears only when the limit turned an eligible file away (a folder holding exactly as many files as the limit no longer claims later files were skipped); files named on the command line count toward the limit; `--max-files` must be at least 1.
