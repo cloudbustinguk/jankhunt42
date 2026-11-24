@@ -24,6 +24,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
+- A virtual-environment marker deleted in the index no longer hides its folder from a staged review. Revision maps and passports of a subfolder whose path holds a backslash keep their paths relative to that subfolder.
 - No check stops at a fixed count any more: 22 checks used to return at most 3, 5 or 10 findings per file without counting the rest (a sixth unpinned base image went unreported); one safety bound now applies to every check and counts what it holds back. The terminal review and the review brief say what the review set aside, and a review counts findings the engine held back.
 - A name holding a raw byte has every backslash doubled when shown, so no two files can share a displayed name; an excluded file with such a name no longer breaks the JSON or the map. A link is read under its own name when a rule selects files by that name, and a link the operator excluded stays excluded whatever order the files are listed in.
 - A PHP one-line comment (`#` or `//`) ends at the closing `?>` tag, so code after it on the same line is read. A finding in a git-ignored file is capped at minor as part of its rating, before the limits and the gate, so a limit can no longer make `--fail-on` act on a rating no finding carries. Findings past a check's safety bound are counted only when the run selected that rule, at the rating the run gives it.

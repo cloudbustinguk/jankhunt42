@@ -738,5 +738,42 @@ class SecondPassBatch3(unittest.TestCase):
         self.assertEqual(jh_review._review_aside(res, 1, "minor")["capped"], 3)
 
 
+class SecondPassBatch4(unittest.TestCase):
+    def _git(self, root):
+        return ["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_marker_deleted_in_the_index_no_longer_hides_its_folder(self):
+        root = project(self, {"env/pyvenv.cfg": "home = fixture\n", "env/note.py": "tone = 1\n"})
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(self._git(root) + ["add", "-A"], check=True)
+        sp.run(self._git(root) + ["commit", "-qm", "one"], check=True)
+        (root / "env" / "pyvenv.cfg").unlink()
+        with open(str(root / "env" / "note.py"), "a") as fh:
+            fh.write("# noqa\n")
+        sp.run(self._git(root) + ["add", "-A"], check=True)
+        doc = json.loads(run_cli("review", ".", "--staged", "--rule", "JH306", "--min-severity", "info", "--json",
+                                 cwd=str(root)).stdout)
+        self.assertEqual([(f["path"], f["line"]) for f in doc["findings"]], [("env/note.py", 2)])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    @unittest.skipIf(os.name == "nt", "a backslash is a separator on Windows")
+    def test_a_backslash_in_a_selected_folders_ancestry_keeps_revision_paths_scoped(self):
+        root = project(self, {"literal-\\xFF/leaf/card.py": "n = 1\n"})
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(self._git(root) + ["add", "-A"], check=True)
+        sp.run(self._git(root) + ["commit", "-qm", "one"], check=True)
+        (root / "literal-\\xFF" / "leaf" / "card.py").write_text("n = 2\n")
+        sp.run(self._git(root) + ["add", "-A"], check=True)
+        sp.run(self._git(root) + ["commit", "-qm", "two"], check=True)
+        leaf = str(root / "literal-\\xFF" / "leaf")
+        m = json.loads(run_cli("map", leaf, "--base", "HEAD^", "--json").stdout)
+        self.assertEqual(m["coverage"]["inspected_paths"], ["card.py"])
+        proc = run_cli("passport", leaf, "--base", "HEAD^", "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

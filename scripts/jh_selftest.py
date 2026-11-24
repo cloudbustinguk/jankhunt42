@@ -1234,6 +1234,8 @@ MUTANTS = [
     ('M875-check-silent-bound', 'findings past the shared safety bound vanish without a count', 'jh_rules.py', '                    jh_checks.BOUND_DROPPED[(rule.id, sf.rel)] = (jh_checks.BOUND_DROPPED.get((rule.id, sf.rel), 0)\n                                                                  + len(found) - jh_checks.DEBUG_BOUND)', '                    pass', 'test_audit_4222.py'),
     ('M876-review-brief-silent', 'the review brief says nothing about what was set aside', 'jh_review.py', '    if held:                                     # what the pre-pass held back is part of what the reviewer must know', '    if False:', 'test_audit_4222.py'),
     ('M877-review-drops-engine-capped', "a review drops the engine's held-back count", 'jh_review.py', '    capped = capped + int(result.set_aside.get("capped") or 0)   # the engine\'s own: past a check\'s bound or a limit', '    capped = capped', 'test_audit_4222.py'),
+    ('M878-deleted-marker-counts', 'a marker deleted in the index still hides its folder', 'jh_review.py', '        folder_why = tree_skip_reason(rel, lambda q: _in_reviewed_tree(root, scope, q))   # a deleted marker is gone', '        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or _in_reviewed_tree(root, scope, q))', 'test_audit_4222.py'),
+    ('M879-prefix-off-display', "a revision path's prefix is cut from its display form", 'jh_map.py', '                it.rel = display_path(raw[len(prefix):]) if raw.startswith(prefix) else it.rel', '                it.rel = it.rel[len(prefix):] if it.rel.startswith(prefix) else it.rel', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
