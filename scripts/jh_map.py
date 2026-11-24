@@ -153,7 +153,8 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
     entries = [e for e in os.fsdecode(listing).split("\0") if e]
     in_tree = {e.partition("\t")[2] for e in entries}      # what the revision holds, for the shared folder rule
     for entry in entries:
-        meta, _, rel = entry.partition("\t")
+        meta, _, raw_rel = entry.partition("\t")
+        rel = display_path(raw_rel)      # reports show a name byte that is not UTF-8 as \xNN; blobs are read by object id
         parts = meta.split()
         if len(parts) < 4:
             continue
@@ -165,7 +166,7 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
         segs = rel.split("/")
         scoped_rel = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel
         # the same folders as a walk sets aside: an env folder only when it holds pyvenv.cfg, installed plugin code
-        why = tree_skip_reason(rel, in_tree.__contains__)
+        why = tree_skip_reason(raw_rel, in_tree.__contains__)
         if why:
             col.skip(why, display_path(rel))
             continue

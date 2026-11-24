@@ -86,7 +86,13 @@ def config_at_revision(top: str, root: str, rev: str, config_path: Optional[str]
             cfg = jh_config.Config()
             cfg.warnings.append("committed config exceeds the file byte limit")
             return cfg
-        return jh_config.load_config(path, jh_map._git(top, ["cat-file", "blob", obj]).decode("utf-8"))
+        try:
+            text = jh_map._git(top, ["cat-file", "blob", obj]).decode("utf-8")
+        except UnicodeDecodeError as exc:            # diagnosed for this revision, as the loader does; never fatal
+            cfg = jh_config.Config()
+            cfg.warnings.append("could not parse %s at %s: %s" % (rel, rev[:12], exc))
+            return cfg
+        return jh_config.load_config(path, text)
     if config_path:
         raise ValueError("explicit repository --config must exist at both compared revisions")
     return jh_config.Config()

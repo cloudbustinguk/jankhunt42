@@ -474,5 +474,46 @@ class LinkSpellings(unittest.TestCase):
                 self.assertEqual([f["path"] for f in doc["findings"]], ["a.md", "b.md"])
 
 
+class RevisionRunsOnOddInput(unittest.TestCase):
+    def _repo(self):
+        root = project(self, {"main.py": "x = 1\n"})
+        sp = __import__("subprocess")
+        self.git = ["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(self.git + ["add", "-A"], check=True)
+        sp.run(self.git + ["commit", "-qm", "one"], check=True)
+        return root
+
+    def _commit(self):
+        sp = __import__("subprocess")
+        sp.run(self.git + ["add", "-A"], check=True)
+        sp.run(self.git + ["commit", "-qm", "two"], check=True)
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_a_name_that_is_not_utf8_in_a_revision(self):
+        root = self._repo()
+        with open(os.path.join(os.fsencode(str(root)), b"item-\xff.py"), "wb") as fh:
+            fh.write(b"number = 1\n")
+        self._commit()
+        for cmd in ("map", "passport"):
+            with self.subTest(cmd=cmd):
+                proc = __import__("subprocess").run([sys.executable, "-I", "-B", str(CLI), cmd, ".", "--base", "HEAD^", "--json"],
+                                                    cwd=str(root), capture_output=True, timeout=300)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+                json.loads(proc.stdout.decode("utf-8"))
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_committed_config_that_is_not_utf8_is_a_warning(self):
+        root = self._repo()
+        (root / ".jankhunt42.json").write_bytes(b'{"label":"caf\xe9"}\n')
+        self._commit()
+        proc = run_cli("map", ".", "--base", "HEAD^", "--json", cwd=str(root))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        doc = json.loads(proc.stdout)
+        self.assertEqual(doc["coverage"]["inspected_paths"], ["main.py"])
+        self.assertTrue(any("could not parse .jankhunt42.json" in w for w in doc["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()
