@@ -108,6 +108,11 @@ A single noisy rule must not own the score. For each rule:
 This keeps a hundred debug leftovers from outranking one critical injection, while still
 acknowledging volume.
 
+The score also reads a bounded budget: for each rule, the 200 highest-point findings, with at most 5 from any one
+file. Reports list every finding; the score summarises a fixed amount of each rule, so a repository with two
+thousand copies of one leftover scores as one with two hundred. These are the limits reports themselves used before
+4.22.2, so lifting them from reports did not move any score.
+
 ### 2.3 Dimension score
 
 ```math

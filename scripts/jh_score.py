@@ -103,6 +103,28 @@ def finding_points(f: Finding) -> float:
     return SEV_POINTS.get(f.severity, 1.0) * CONF_FACTOR.get(f.confidence, 0.65)
 
 
+# The score reads a bounded budget of findings: per rule, the 200 highest-point findings with at most 5 per file. These
+# are the limits reports used before 4.22.2, so scores and grades do not move now that reports list every finding; a
+# report's full list and the score's budget are different jobs (one shows, one summarises).
+SCORE_PER_FILE_RULE = 5
+SCORE_PER_RULE = 200
+
+
+def score_budget(items: Sequence[Finding]) -> List[Finding]:
+    """The findings the score reads: the most serious first, within the per-file and per-rule budget."""
+    per_file: Dict[Tuple[str, str], int] = {}
+    per_rule: Dict[str, int] = {}
+    kept: List[Finding] = []
+    for f in sorted(items, key=finding_points, reverse=True):     # stable: equal points keep their order
+        key = (f.rule, f.path)
+        if per_file.get(key, 0) >= SCORE_PER_FILE_RULE or per_rule.get(f.rule, 0) >= SCORE_PER_RULE:
+            continue
+        per_file[key] = per_file.get(key, 0) + 1
+        per_rule[f.rule] = per_rule.get(f.rule, 0) + 1
+        kept.append(f)
+    return kept
+
+
 def _counted_points(items: Sequence[Finding]) -> float:
     """Count a rule's findings, but let a flood of one pattern saturate."""
     by_rule: Dict[str, List[Finding]] = {}
@@ -245,7 +267,8 @@ def _policy(findings: Sequence[Finding], dims: Dict[str, DimensionScore], overal
 def compute(findings: Sequence[Finding], loc: int) -> ScoreReport:
     items = list(findings)
     loc = max(0, int(loc or 0))
-    dims = {key: _dimension([f for f in items if dimension_for(f) == key], loc, key)
+    budget = score_budget(items)              # what the score reads; the policy still sees every finding
+    dims = {key: _dimension([f for f in budget if dimension_for(f) == key], loc, key)
             for key in DIMENSIONS}
     weighted = sum(DIMENSION_WEIGHTS[k] * dims[k].score for k in DIMENSIONS)
     worst_key = max(DIMENSIONS, key=lambda k: dims[k].score)

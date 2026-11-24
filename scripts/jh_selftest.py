@@ -1236,6 +1236,7 @@ MUTANTS = [
     ('M877-review-drops-engine-capped', "a review drops the engine's held-back count", 'jh_review.py', '    capped = capped + int(result.set_aside.get("capped") or 0)   # the engine\'s own: past a check\'s bound or a limit', '    capped = capped', 'test_audit_4222.py'),
     ('M878-deleted-marker-counts', 'a marker deleted in the index still hides its folder', 'jh_review.py', '        folder_why = tree_skip_reason(rel, lambda q: _in_reviewed_tree(root, scope, q))   # a deleted marker is gone', '        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or _in_reviewed_tree(root, scope, q))', 'test_audit_4222.py'),
     ('M879-prefix-off-display', "a revision path's prefix is cut from its display form", 'jh_map.py', '                it.rel = display_path(raw[len(prefix):]) if raw.startswith(prefix) else it.rel', '                it.rel = it.rel[len(prefix):] if it.rel.startswith(prefix) else it.rel', 'test_audit_4222.py'),
+    ('M880-score-reads-everything', 'the score reads every finding, so listing them all raises it', 'jh_score.py', '    budget = score_budget(items)              # what the score reads; the policy still sees every finding', '    budget = items', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
