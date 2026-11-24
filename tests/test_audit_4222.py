@@ -412,5 +412,20 @@ class ALinkWithARole(unittest.TestCase):
         self.assertEqual(doc["summary"]["files"], 3)
 
 
+class PhpHashComments(unittest.TestCase):
+    def test_a_php_hash_comment_suppresses_and_an_attribute_stays_code(self):
+        root = project(self, {"card.php": "<?php\n# jankhunt42: ignore JH204\nvar_dump($shade);\n#[Route(\"/x\")]\n"
+                                          "function f() { var_dump(1); }\n"})
+        doc = scan(str(root), "--no-config", "--rule", "JH204")
+        self.assertEqual([f["line"] for f in doc["findings"]], [5])
+        self.assertEqual(doc["set_aside"].get("inline_ignore"), 1)
+        import sys as _s
+        _s.path.insert(0, str(Path(CLI).parent))
+        import jh_core
+        code, _, comments = jh_core.sanitize('#[Route("/x")]\n# note\n', "php")
+        self.assertTrue(code[0].startswith("#[Route("))
+        self.assertEqual(comments[1], "# note")
+
+
 if __name__ == "__main__":
     unittest.main()
