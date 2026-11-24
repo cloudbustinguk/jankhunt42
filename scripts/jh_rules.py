@@ -867,6 +867,9 @@ RULES: List[Rule] = [
 # Scanning
 # ---------------------------------------------------------------------------
 
+NO_CAP = 10 ** 9                                # per-file and per-rule limits when none is given
+
+
 @dataclass
 class ScanOptions:
     min_severity: str = "info"
@@ -874,8 +877,9 @@ class ScanOptions:
     rule_ids: Optional[Set[str]] = None
     # rules the operator set aside (--ignore-rule): never reported, scored or gated on
     ignore_rule_ids: Optional[Set[str]] = None
-    max_per_file_rule: int = 5
-    max_per_rule: int = 200
+    # no cap unless one is asked for: every finding reaches JSON and SARIF; human output has its own display limit
+    max_per_file_rule: int = NO_CAP
+    max_per_rule: int = NO_CAP
     # False for governance scans: repository pragmas cannot hide what the
     # citizen profile must see.
     honor_suppressions: bool = True

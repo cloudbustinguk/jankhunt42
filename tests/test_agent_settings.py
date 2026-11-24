@@ -28,8 +28,8 @@ def write(root, files):
             fh.write(text if isinstance(text, str) else json.dumps(text, indent=2) + "\n")
 
 
-def scan(root):
-    out = run_cli("scan", root, "--json", "--min-severity", "info", "--no-progress", "--category", "agent").stdout
+def scan(root, *extra):
+    out = run_cli("scan", root, "--json", "--min-severity", "info", "--no-progress", "--category", "agent", *extra).stdout
     return json.loads(out)["findings"]
 
 
@@ -235,10 +235,10 @@ class Settings(unittest.TestCase):
         root = tempfile.mkdtemp(prefix="jh-agent-settings-")
         try:
             write(root, {".claude/settings.json": doc})
-            got = [f["message"] for f in scan(root) if f["rule"] == "JH704"]
+            got = [f["message"] for f in scan(root, "--max-per-file-rule", "5") if f["rule"] == "JH704"]
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        # the scan keeps five findings per file and rule: the major leads, then what 4.16.0 reported
+        # under a limit of five per file and rule (opt-in since 4.22.2): the major leads, then what 4.16.0 reported
         self.assertEqual(len(got), 5)
         self.assertEqual(len([m for m in got if "plain HTTP" in m]), 1)
         self.assertEqual(len([m for m in got if "project hook" in m]), 4)
@@ -253,7 +253,7 @@ class Settings(unittest.TestCase):
         root = tempfile.mkdtemp(prefix="jh-agent-settings-")
         try:
             write(root, {".claude/settings.json": doc})
-            got = [(f["severity"], f["message"]) for f in scan(root) if f["rule"] == "JH704"]
+            got = [(f["severity"], f["message"]) for f in scan(root, "--max-per-file-rule", "5") if f["rule"] == "JH704"]
             gate = run_cli("scan", root, "--json", "--no-progress", "--category", "agent", "--fail-on", "major")
         finally:
             shutil.rmtree(root, ignore_errors=True)
@@ -287,7 +287,7 @@ class Settings(unittest.TestCase):
         found = run_cli("scan", os.path.join(self.root, "secret5"), "--json", "--no-progress", "--min-severity", "info")
         self.assertLessEqual({"JH709", "JH710"}, {f["rule"] for f in json.loads(found.stdout)["findings"]})
         # the findings those canaries sit in are still made: six from the settings file, two from Codex's
-        self.assertEqual(len(self.got("JH709", "secret3/.claude/settings.json")), 5)      # the scan's cap of five
+        self.assertEqual(len(self.got("JH709", "secret3/.claude/settings.json")), 6)      # every one: no cap by default
         self.assertEqual(len(self.got("JH709", "secret3/.codex/config.toml")), 2)
         rules = {f["rule"] for f in self.found if f["path"].startswith("secret/")}
         self.assertLessEqual({"JH703", "JH704"}, rules)       # the findings are still made

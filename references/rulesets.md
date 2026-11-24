@@ -58,7 +58,7 @@ same facts in `set_aside`:
 | findings hidden by `jankhunt42: ignore` comments in the code | `--no-inline-ignore` |
 | rules set aside by name (`--ignore-rule`, `--ignore-ci`, a ruleset) | drop the flag |
 | findings a config file set aside | `--no-config` |
-| findings over the per-file or per-rule cap | `--max-per-file-rule`, `--max-per-rule` |
+| findings over a per-file or per-rule limit you set (there is none by default) | drop `--max-per-file-rule`, `--max-per-rule` |
 | folders not read: dependencies, build output, caches | scan the folder by its path |
 | files over the size limit, or past the file limit | `--max-file-bytes`, `--max-files` |
 

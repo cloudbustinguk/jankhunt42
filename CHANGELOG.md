@@ -18,6 +18,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Changed
 
+- **No findings are capped by default.** Scan and review used to keep 5 findings per rule in one file and 200 per rule, and count the rest; every finding now reaches JSON and SARIF. Human-readable output keeps its own display limit (`--max-findings`), and the score already counts a rule's findings past its first ten at 10%. `--max-per-file-rule` and `--max-per-rule` remain as limits you can set; what they hold back is counted and still fails `--fail-on`.
 - The README explains the two ways to use jankhunt42: ask an AI coding agent that has it installed as a skill, or run the command-line tool yourself.
 - The mass-testing page (`references/soak.md`) says how the evaluation corpus is pinned (tree hash, and for 17,013 snapshots the commit holding that content) and how each release is measured on 1,840 of its repositories before it ships.
 

@@ -593,5 +593,14 @@ class PreTagAuditBatch3(unittest.TestCase):
         self.assertEqual(sorted(cov["skipped_paths"]), ["alias", "build", "yarn.lock"])
 
 
+class NoCapByDefault(unittest.TestCase):
+    def test_every_finding_reaches_json_unless_a_limit_is_set(self):
+        root = project(self, {"w.py": "breakpoint()\n" * 12})
+        full = scan(str(root), "--no-config", "--rule", "JH204")
+        self.assertEqual((full["summary"]["findings"], full["set_aside"].get("capped")), (12, None))
+        limited = scan(str(root), "--no-config", "--rule", "JH204", "--max-per-file-rule", "5")
+        self.assertEqual((limited["summary"]["findings"], limited["set_aside"].get("capped")), (5, 7))
+
+
 if __name__ == "__main__":
     unittest.main()
