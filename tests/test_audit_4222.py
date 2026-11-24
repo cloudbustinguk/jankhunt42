@@ -775,5 +775,16 @@ class SecondPassBatch4(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
+class ScoreBudget(unittest.TestCase):
+    def test_listing_every_finding_does_not_move_the_score(self):
+        files = {"f%02d.py" % i: "breakpoint()\n" * 50 for i in range(40)}
+        root = project(self, files)
+        doc = scan(str(root), "--no-config")
+        self.assertEqual(doc["summary"]["findings"], 2000)
+        limited = scan(str(root), "--no-config", "--max-per-file-rule", "5", "--max-per-rule", "200")
+        self.assertEqual(limited["summary"]["findings"], 200)
+        self.assertEqual(doc["summary"]["jank"]["score"], limited["summary"]["jank"]["score"])
+
+
 if __name__ == "__main__":
     unittest.main()
