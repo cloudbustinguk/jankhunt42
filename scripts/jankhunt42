@@ -647,6 +647,8 @@ def _one_format(args: argparse.Namespace, names: Sequence[str]) -> bool:
 
 
 def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, html) -> None:
+    if getattr(args, "out", None):               # the full JSON to a file, to read selectively; stdout as asked
+        _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False))
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     elif args.html:
@@ -1256,6 +1258,8 @@ def build_parser() -> argparse.ArgumentParser:
         out.add_argument("--json", action="store_true", help="versioned JSON (stdout carries only JSON)")
         out.add_argument("--html", action="store_true", help="self-contained offline HTML (stdout)")
         out.add_argument("--md", action="store_true", help="force Markdown output")
+        out.add_argument("--out", metavar="FILE",
+                         help="also write the full JSON to FILE (any output format), to read selectively")
         out.add_argument("--no-color", action="store_true")
         out.add_argument("--redact", action="store_true",
                          help="shareable output: pseudonymous IDs/labels, no hostnames, owners, or snippets")
