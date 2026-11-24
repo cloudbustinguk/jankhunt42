@@ -20,13 +20,29 @@ It is a stdlib-only CLI (`scripts/jankhunt42`). Everything runs locally and offl
 
 **Jank doesn't check who or what wrote the line.** AI paste-ins, low-code flows and "quick scripts" that became services fail the same ways hand-written code does. jankhunt42 judges what the code and its configuration do, never who wrote it. Governing software built by non-engineers is a separate, explicit choice: the `citizen` passport profile, which only ever tightens the decision.
 
+## Keep the conversation small (read this first)
+
+A full report on a large repository can run to megabytes; printed into the conversation, it is paid for again on
+every later turn. So, as the agent running this skill:
+
+- Run scans as `jankhunt42 scan . --summary --out .jankhunt42/scan.json`. The summary is a few dozen lines whatever
+  the repository; the full report goes to the file.
+- Read the file selectively: one rule, one path or one severity at a time (for example
+  `python3 -c "import json; d=json.load(open('.jankhunt42/scan.json')); print([f for f in d['findings'] if f['rule']=='JH101'][:5])"`),
+  or rerun narrowed: `jankhunt42 scan . --summary --rule JH101` or a single path.
+- Never print `--json`, `--sarif`, `--html`, `map --json` or `passport --json` into the conversation: write them to a
+  file and read the parts you need. `map .` and `passport .` without `--json` are short and fine to show.
+- For a diff, use `jankhunt42 review . --base <ref> --summary`; use `--brief` only when handing the review to a
+  separate reviewer, and write it to a file first.
+- Read only the reference section that answers the question, not whole reference files.
+
 ## Route the request
 
 | The user wants… | Run | Then read |
 |---|---|---|
-| a security pass, "is this safe", a score | `jankhunt42 scan .`, `jankhunt42 scan . --score` | `references/scoring.md`; for ASP.NET Core, `references/dotnet.md` |
+| a security pass, "is this safe", a score | `jankhunt42 scan . --summary --out .jankhunt42/scan.json`, `jankhunt42 scan . --score` | `references/scoring.md`; for ASP.NET Core, `references/dotnet.md` |
 | the findings fixed, or a prompt for a coding agent to fix them | `jankhunt42 scan . --prompt` (or `prompt` per finding in `--json`) | `references/citizen.md` |
-| a PR or diff reviewed | `jankhunt42 review . --base <ref> --brief` | `references/review.md` |
+| a PR or diff reviewed | `jankhunt42 review . --base <ref> --summary` | `references/review.md` |
 | "what does this talk to", data exposure, blast radius | `jankhunt42 map .`, `jankhunt42 map . --base <ref>` | `references/connectivity.md` |
 | "can we ship this", ownership, a software passport | `jankhunt42 passport .` | `references/passport.md` |
 | the new access a pull request asks for, approving one change | `jankhunt42 passport . --base <ref> --md` | `references/change-review.md` |

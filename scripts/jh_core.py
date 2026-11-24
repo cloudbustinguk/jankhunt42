@@ -165,6 +165,8 @@ def skipped_dir_reason(name: str, path: Optional[str] = None) -> Optional[str]:
     `path` (the folder on disk) lets an `env` folder be recognised as a virtual environment."""
     if name in VCS_DIRS:
         return "version control"
+    if name == ".jankhunt42":                    # this tool's own reports (--out .jankhunt42/...)
+        return "jankhunt42 reports"
     if name in DEPENDENCY_DIRS:
         return "dependencies"
     if name in BUILD_DIRS:

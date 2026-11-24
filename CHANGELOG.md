@@ -18,6 +18,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Changed
 
+- **Agent-sized output.** `scan --summary` and `review --summary` print a bounded overview (counts, top rules, the most serious findings, what was set aside: a few dozen lines on any repository), and `--out FILE` writes the full JSON report to a file to be read selectively. On a large repository the default scan printed about 190 KB; the summary is about 2 KB. The skill now tells the agent to use them and never to print a full JSON report into the conversation, where it is paid for on every later turn. A `.jankhunt42` folder (where `--out` reports go) is never scanned.
 - **Scores do not move.** The Jank Score reads the same bounded budget as before (per rule, the 200 highest-point findings, at most 5 per file), so listing every finding changes no score or grade.
 - **No findings are capped by default.** Scan and review used to keep 5 findings per rule in one file and 200 per rule, and count the rest; every finding now reaches JSON and SARIF. Human-readable output keeps its own display limit (`--max-findings`), and the score already counts a rule's findings past its first ten at 10%. `--max-per-file-rule` and `--max-per-rule` remain as limits you can set; what they hold back is counted and still fails `--fail-on`.
 - The README explains the two ways to use jankhunt42: ask an AI coding agent that has it installed as a skill, or run the command-line tool yourself.
