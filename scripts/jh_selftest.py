@@ -1408,6 +1408,8 @@ def _copy_tree(tmp: str) -> None:
     shutil.copytree(TESTS, os.path.join(tmp, "tests"), ignore=shutil.ignore_patterns("__pycache__"))
     if os.path.isdir(os.path.join(ROOT, "templates")):
         shutil.copytree(os.path.join(ROOT, "templates"), os.path.join(tmp, "templates"))
+    if os.path.isfile(os.path.join(ROOT, "SKILL.md")):   # test_skill_bounded.py reads every command the skill suggests
+        shutil.copy2(os.path.join(ROOT, "SKILL.md"), os.path.join(tmp, "SKILL.md"))
 
 
 def check_mutants() -> Check:
