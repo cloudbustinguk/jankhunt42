@@ -290,6 +290,11 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
         out.append(("NOT READ", "%d file(s) could not be read (permission or read error), including %s; check the "
                     "account running the scan can read them" % (not_text["unreadable"]["count"],
                                                                 _sample_paths(not_text["unreadable"]))))
+    selection = aside.get("selection") or {}
+    if selection:
+        out.append(("SCOPE", "this run reported only %s; drop `--rule`/`--category` for a full scan" % " and ".join(
+            "%s %s" % ("rule(s)" if k == "rules" else "categor(y/ies)", ", ".join(safe_text(x) for x in v))
+            for k, v in sorted(selection.items()))))
     unparsed = aside.get("files_not_parsed") or {}
     if unparsed:
         out.append(("NOT PARSED", "%d supported file(s) could not be parsed, so their structured checks did not run, "

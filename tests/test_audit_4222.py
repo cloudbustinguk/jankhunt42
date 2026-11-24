@@ -95,5 +95,34 @@ class DebugLeftoversAndDirectives(unittest.TestCase):
         self.assertEqual((comment["findings"], comment["set_aside"].get("inline_ignore")), ([], 1))
 
 
+class ScopeAndSelection(unittest.TestCase):
+    def test_the_floor_counts_only_what_the_selection_could_show_and_the_selection_is_stated(self):
+        root = project(self, {"sample.py": "value = 1  # noqa\n"})
+        tests_only = scan(str(root), "--category", "tests")
+        self.assertNotIn("below_floor", tests_only["set_aside"])
+        self.assertEqual(tests_only["set_aside"]["selection"], {"categories": ["tests"]})
+        md = run_cli("scan", str(root), "--rule", "JH204", "--md", "--no-progress").stdout
+        self.assertIn("reported only rule(s) JH204", md)
+
+    def test_a_site_rule_id_in_an_ignore_comment_takes_effect(self):
+        rule = {"id": "ACME-001", "title": "Internal hostname in code", "severity": "major", "category": "security",
+                "message": "An internal hostname is written into the code.", "fix": "Read it from configuration.",
+                "patterns": [r"\b[a-z0-9-]+\.corp\.acme\.internal\b"], "target": "raw", "files": ["*.py"],
+                "examples": {"match": ['host = "db1.corp.acme.internal"'], "no_match": ["see acme.com"]}}
+        ops = project(self, {"rs.json": json.dumps({"schema_version": "jankhunt.ruleset.v1", "name": "acme", "rules": [rule]})})
+        root = project(self, {"app.py": 'host = "db1.corp.acme.internal"  # jankhunt42: ignore ACME-001\n'})
+        held = scan(str(root), "--ruleset", str(ops / "rs.json"))
+        self.assertEqual((held["findings"], held["set_aside"].get("inline_ignore")), ([], 1))
+        shown = scan(str(root), "--ruleset", str(ops / "rs.json"), "--no-inline-ignore")
+        self.assertEqual([f["rule"] for f in shown["findings"]], ["ACME-001"])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_review_names_the_rules_switched_off(self):
+        root = project(self, {"sample.py": "value = 1\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        doc = json.loads(run_cli("review", ".", "--ignore-ci", "--json", cwd=str(root)).stdout)
+        self.assertIn("JH417", doc["review"]["set_aside"]["ignored_rules"]["rules"])
+
+
 if __name__ == "__main__":
     unittest.main()

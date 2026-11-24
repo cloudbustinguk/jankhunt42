@@ -1214,6 +1214,13 @@ _COMMENTED_LANGS = set(_ANY_LINE_COMMENTS) | set(_WS_LINE_COMMENTS) | set(_BLOCK
 _MARKED_DIRECTIVE = re.compile(r"(?:#|//|--|;|<!--|/\*|%)\s*(jankhunt(?:42)?:.*)")
 
 
+def _directive_ids(text: str) -> Set[str]:
+    """The rule ids an ignore directive names: whole identifiers of loaded rules (shipped or a site ruleset's,
+    hyphens allowed), or ALL; any other word is not an id."""
+    known = {r.id.upper() for r in RULES}
+    return {w for w in re.findall(r"[A-Z][A-Z0-9_-]*[A-Z0-9]|[A-Z]", text.upper()) if w == "ALL" or w in known}
+
+
 def _directive_text(sf: SourceFile, i: int) -> str:
     """The text of line i (0-based) where an ignore directive may stand."""
     if sf.lang in _COMMENTED_LANGS:
@@ -1230,14 +1237,14 @@ def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[
         # `jankhunt42:` is canonical; the pre-0.4 `jankhunt:` prefix is still
         # honored so existing suppressions in users' code keep working.
         for i in range(min(12, len(sf.raw))):
-            m = re.search(r"jankhunt(?:42)?:\s*ignore-file\s+([A-Za-z0-9, ]+)", _directive_text(sf, i))
+            m = re.search(r"jankhunt(?:42)?:\s*ignore-file\s+([A-Za-z0-9_, -]+)", _directive_text(sf, i))
             if m:
-                file_ids.update(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
+                file_ids.update(_directive_ids(m.group(1)))
         for i in range(1, len(sf.raw) + 1):
             raw = _directive_text(sf, i - 1)
-            m = re.search(r"jankhunt(?:42)?:\s*ignore\s+([A-Za-z0-9, ]+)", raw)
+            m = re.search(r"jankhunt(?:42)?:\s*ignore\s+([A-Za-z0-9_, -]+)", raw)
             if m:
-                line_ids[i] = set(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
+                line_ids[i] = _directive_ids(m.group(1))
         suppression[sf.rel] = (file_ids, line_ids)
     return suppression
 
@@ -1278,6 +1285,12 @@ class _FindingAcceptor:
         # Telemetry first, independent of the CLI's display filters below,
         # so it reflects the rule's actual precision in this repo.
         self.fired_by_rule[finding.rule] = self.fired_by_rule.get(finding.rule, 0) + 1
+        # the selection (--category, --rule) first: what the run then holds back is counted only among findings it
+        # could have shown, so each recovery instruction in the report really recovers them
+        if opts.categories and finding.category not in opts.categories:
+            return False
+        if opts.rule_ids and finding.rule not in opts.rule_ids:
+            return False
         if self.suppressed(finding):
             self.suppressed_by_rule[finding.rule] = self.suppressed_by_rule.get(finding.rule, 0) + 1
             if opts.honor_suppressions:
@@ -1291,10 +1304,6 @@ class _FindingAcceptor:
             finding.severity = effective
         if not sev_at_least(finding.severity, opts.min_severity):
             self._held("below_floor", finding, finding.severity)
-            return False
-        if opts.categories and finding.category not in opts.categories:
-            return False
-        if opts.rule_ids and finding.rule not in opts.rule_ids:
             return False
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
             self._held("ignored_rules", finding)
