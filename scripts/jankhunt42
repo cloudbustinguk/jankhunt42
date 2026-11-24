@@ -19,6 +19,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from jh_core import (  # noqa: E402
+    display_path,
     run_git,
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source, load_source_why,
     make_finding, sev_at_least,
@@ -121,11 +122,12 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
             if sf is None:
                 skipped += 1
                 if not_read is not None and why:
-                    count_path(not_read, "files_not_read_" + why, os.path.relpath(path, root).replace(os.sep, "/"))
+                    count_path(not_read, "files_not_read_" + why,
+                               display_path(os.path.relpath(path, root).replace(os.sep, "/")))
                 continue
             sources.append(sf)
         if not_read is not None and ignored_files and path in ignored_files:
-            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            rel = display_path(os.path.relpath(path, root).replace(os.sep, "/"))
             count_path(not_read, "git_ignored_read", rel)
             not_read.setdefault("_git_ignored_paths", set()).add(rel)     # internal: never part of set_aside
         if spinner and idx % 17 == 0:
@@ -412,7 +414,11 @@ def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Di
                     },
                 }
             }],
-            "partialFingerprints": {"jankhunt42": "%s:%s:%d" % (f.rule, f.path, f.line)},
+            # a rule that can fire twice on one line adds the column, so two calls on a line are two alerts; every
+            # other rule keeps the identity it always had
+            "partialFingerprints": {"jankhunt42": ("%s:%s:%d:%d" % (f.rule, f.path, f.line, f.column)
+                                                   if f.rule in ("JH107", "JH126", "JH204")
+                                                   else "%s:%s:%d" % (f.rule, f.path, f.line))},
             "properties": {
                 "severity": f.severity,
                 "confidence": f.confidence,

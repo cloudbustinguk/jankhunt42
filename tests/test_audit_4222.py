@@ -602,5 +602,22 @@ class NoCapByDefault(unittest.TestCase):
         self.assertEqual((limited["summary"]["findings"], limited["set_aside"].get("capped")), (5, 7))
 
 
+class PreTagAuditP2(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_an_unread_file_with_a_byte_name_keeps_the_report_utf8(self):
+        root = project(self, {})
+        open(os.path.join(os.fsencode(str(root)), b"item-\xff.py"), "wb").close()
+        proc = __import__("subprocess").run([sys.executable, "-I", "-B", str(CLI), "scan", str(root), "--json",
+                                             "--no-progress"], capture_output=True, timeout=300)
+        doc = json.loads(proc.stdout.decode("utf-8"))
+        self.assertEqual(doc["set_aside"]["files_not_read"]["empty"]["paths"], ["item-\\xFF.py"])
+
+    def test_two_debug_calls_on_one_line_are_two_sarif_alerts(self):
+        root = project(self, {"a.py": "breakpoint(); breakpoint()\n", "b.py": "eval(input())\n"})
+        run = json.loads(run_cli("scan", str(root), "--sarif", "--no-progress").stdout)["runs"][0]
+        ids = {r["partialFingerprints"]["jankhunt42"] for r in run["results"] if r["ruleId"] == "JH204"}
+        self.assertEqual(ids, {"JH204:a.py:1:1", "JH204:a.py:1:15"})
+
+
 if __name__ == "__main__":
     unittest.main()

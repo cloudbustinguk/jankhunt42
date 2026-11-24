@@ -983,7 +983,7 @@ def discover_files(
     if not_read is not None:
         for path, origin in pending_excludes.items():
             if str(path.resolve()) not in seen:
-                rel = os.path.relpath(path, root).replace(os.sep, "/")
+                rel = display_path(os.path.relpath(path, root).replace(os.sep, "/"))
                 count_path(not_read.setdefault("files_excluded", {}), origin, rel)
         if overflow[0]:
             not_read["file_limit"] = max_files
