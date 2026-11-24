@@ -238,5 +238,52 @@ class FileNames(unittest.TestCase):
         self.assertNotEqual(doc["coverage"].get("max_files_reached"), True)
 
 
+class SiteRulesMatchEveryLine(unittest.TestCase):
+    def _rules(self, rid, pattern, match):
+        rule = {"id": rid, "title": "Spacing", "message": "Spacing.", "fix": "Remove it.", "severity": "major",
+                "category": "style", "patterns": [pattern], "target": "raw",
+                "examples": {"match": match, "no_match": ["value = 1"]}}
+        ops = project(self, {"rs.json": json.dumps({"schema_version": "jankhunt.ruleset.v1", "name": "s", "rules": [rule]})})
+        return str(ops / "rs.json")
+
+    def test_a_line_its_example_describes_is_found_and_the_end_of_the_file_is_not_a_line(self):
+        root = project(self, {"sample.py": "value = 1\n   \nvalue = 2   \n"})
+        trailing = scan(str(root), "--no-config", "--ruleset", self._rules("SPACE01", " +$", ["   ", "value = 2   "]),
+                        "--rule", "SPACE01")
+        self.assertEqual([f["line"] for f in trailing["findings"]], [2, 3])
+        blank = scan(str(root), "--no-config", "--ruleset", self._rules("BLANK01", r"^\s*$", ["   "]), "--rule", "BLANK01")
+        self.assertEqual([f["line"] for f in blank["findings"]], [2])
+
+
+class ReviewPolicyIdentity(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_the_policy_shapes_the_identity_and_the_replay_command_restores_it(self):
+        rule = {"id": "STYLE001", "title": "Print call", "message": "A print call.", "fix": "Use logging.",
+                "severity": "minor", "category": "style", "patterns": [r"\bprint\("], "target": "code",
+                "files": ["*.py"], "examples": {"match": ["print(1)"], "no_match": ["log(1)"]}}
+        doc = {"schema_version": "jankhunt.ruleset.v1", "name": "site", "rules": [rule]}
+        text_only = dict(doc, rules=[dict(rule, files=["*.txt"])])
+        root = project(self, {"config/site.json": json.dumps(doc), "config/text.json": json.dumps(text_only),
+                              "project/sample.py": "print('hi')\n"})
+        repo = str(root / "project")
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", repo, "init", "-q"], check=True)
+        sp.run(["git", "-C", repo, "add", "-A"], check=True)
+
+        def review(policy):
+            return json.loads(run_cli("review", ".", "--rule", "STYLE001", "--ruleset", policy, "--json", cwd=repo).stdout)
+        first, narrowed, again = review("../config/site.json"), review("../config/text.json"), review("../config/site.json")
+        self.assertNotEqual(first["scan_id"], narrowed["scan_id"])
+        self.assertNotEqual(first["review"]["rulepack_hash"], narrowed["review"]["rulepack_hash"])
+        self.assertEqual((first["scan_id"], first["review"]["rulepack_hash"]),
+                         (again["scan_id"], again["review"]["rulepack_hash"]))
+        self.assertEqual([r["name"] for r in first["rulesets"]], ["site"])
+        repro = first["findings"][0]["repro"]
+        self.assertIn("--ruleset ../config/site.json", repro)
+        argv = __import__("shlex").split(repro)[1:]
+        replay = json.loads(run_cli(*argv, cwd=repo).stdout)
+        self.assertEqual([(f["rule"], f["line"], f["severity"]) for f in replay["findings"]], [("STYLE001", 1, "minor")])
+
+
 if __name__ == "__main__":
     unittest.main()

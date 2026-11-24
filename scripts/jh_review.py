@@ -575,19 +575,35 @@ def _receipt_hash(receipt: Dict[str, Any]) -> str:
 def rulepack_hash() -> str:
     payload = {
         "version": VERSION,
+        # every field that changes what a rule reports, so a site rule narrowed to other files is a different pack
         "rules": [{"id": r.id, "severity": r.severity, "category": r.category,
                    "confidence": r.confidence, "patterns": list(r.patterns),
-                   "check": r.check} for r in RULES],
+                   "check": r.check, "langs": list(r.langs), "files": list(r.files), "target": r.target,
+                   "ignore": r.ignore} for r in RULES],
     }
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
 
-def _repro(f: Finding) -> str:
+def _repro(f: Finding, policy: str = "") -> str:
     path = shlex.quote(f.path)
-    return "jankhunt42 scan %s --rule %s --min-severity info --json" % (path, f.rule)
+    return "jankhunt42 scan %s --rule %s --min-severity info --json%s" % (path, f.rule, policy)
 
 
-def make_receipt(f: Finding, scope_status: str, scan_id: str) -> Dict[str, Any]:
+def _repro_policy(args: Any, root: str) -> str:
+    """The --ruleset arguments a replay needs (from the repository root, where the receipt's path is relative): a site
+    rule, or a ruleset's severity change, is lost without them. Their digests are in the report's `rulesets`."""
+    out = ""
+    for given in getattr(args, "ruleset", None) or ():
+        full = os.path.abspath(given)
+        try:
+            shown = os.path.relpath(full, root)
+        except ValueError:                       # another drive: only the full path names it
+            shown = full
+        out += " --ruleset %s" % shlex.quote(shown.replace(os.sep, "/"))
+    return out
+
+
+def make_receipt(f: Finding, scope_status: str, scan_id: str, policy: str = "") -> Dict[str, Any]:
     verification = "supported" if f.confidence in ("high", "medium") and f.evidence else "unverified"
     receipt: Dict[str, Any] = {
         "id": "",
@@ -611,7 +627,7 @@ def make_receipt(f: Finding, scope_status: str, scan_id: str) -> Dict[str, Any]:
             "Static pattern/structural rule only. Reachability, guards, and runtime behavior "
             "were not reproduced by this review."
         ),
-        "repro": _repro(f),
+        "repro": _repro(f, policy),
         "tags": list(f.tags),
         "scan_id": scan_id,
         "receipt_version": _REVIEW_RECEIPT_VERSION,
@@ -811,10 +827,15 @@ def run_review(args: Any) -> Dict[str, Any]:
             "mode": diff_scope.mode, "base": diff_scope.base,
             "head": diff_scope.head, "changed": scope_meta["reviewed_files"],
             "diff_hash": diff_hash, "rulepack": rulepack_hash(),
+            # the policy that shaped this review: which rulesets, which rules switched off, which ratings changed
+            "rulesets": [r.get("sha256") for r in getattr(args, "rulesets", None) or []],
+            "ignored": sorted(getattr(args, "ignore_rule_ids", None) or ()),
+            "severity": dict(sorted((getattr(args, "severity_map", None) or {}).items())),
         }).encode("utf-8")
     ).hexdigest()
-    receipts = [make_receipt(f, "new", scan_id) for f in new]
-    contextual_receipts = [make_receipt(f, "contextual", scan_id) for f in contextual]
+    policy = _repro_policy(args, root)
+    receipts = [make_receipt(f, "new", scan_id, policy) for f in new]
+    contextual_receipts = [make_receipt(f, "contextual", scan_id, policy) for f in contextual]
 
     baseline = None
     if getattr(args, "baseline", ""):
@@ -918,6 +939,8 @@ def run_review(args: Any) -> Dict[str, Any]:
             + overrun
         )),
     }
+    if getattr(args, "rulesets", None):              # name and digest of each policy, as a scan records them
+        data["rulesets"] = args.rulesets
     return data
 
 

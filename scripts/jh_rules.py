@@ -900,8 +900,13 @@ def _site_rule(rule: Rule, sf: SourceFile, pats: List["re.Pattern[str]"], accept
     ignore = _IGNORES.get(rule.id)
     try:
         with jh_ruleset.bounded(SITE_BUDGET - spent):
-            for idx, line in enumerate(getattr(sf, rule.target), 1):
-                if not line.strip() or (ignore and ignore.search(line)):
+            lines = getattr(sf, rule.target)
+            if lines and sf.raw and sf.raw[-1] == "":
+                lines = lines[:-1]                   # the empty entry after a final newline is not a line
+            # every real line is matched as written, blank or spaces-only included: the policy's examples are
+            # checked the same way when it loads, so a rule never passes its example and misses the same line
+            for idx, line in enumerate(lines, 1):
+                if ignore and ignore.search(line):
                     continue
                 if any(p.search(line) for p in pats):
                     f = make_finding(rule, sf, idx)
