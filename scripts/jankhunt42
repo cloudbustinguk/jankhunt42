@@ -20,7 +20,7 @@ if HERE not in sys.path:
 
 from jh_core import (  # noqa: E402
     run_git,
-    Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source,
+    Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source, load_source_why,
     make_finding, sev_at_least,
 )
 import jh_rules  # noqa: E402
@@ -111,9 +111,11 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
             if not members:
                 continue
         else:
-            sf = load_source(path, root)
+            sf, why = load_source_why(path, root)
             if sf is None:
                 skipped += 1
+                if not_read is not None and why:
+                    count_path(not_read, "files_not_read_" + why, os.path.relpath(path, root).replace(os.sep, "/"))
                 continue
             sources.append(sf)
         if not_read is not None and ignored_files and path in ignored_files:
@@ -291,6 +293,9 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
                                  for origin, info in not_read["files_excluded"].items()}
     if not_read.get("git_ignored_read"):
         out["git_ignored_read"] = not_read["git_ignored_read"]
+    for why in ("unreadable", "binary", "empty"):               # files found but not read as text, by reason
+        if not_read.get("files_not_read_" + why):
+            out.setdefault("files_not_read", {})[why] = not_read["files_not_read_" + why]
     folders = {reason: paths for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}
     if folders:
         out["folders_not_read"] = {reason: {"count": len(paths), "paths": sorted(paths)[:20]}
