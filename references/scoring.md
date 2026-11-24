@@ -65,8 +65,11 @@ software can hurt, and style and complexity are a linter's job.
 
 ### 2.1 Risk points per finding
 
-```math
-\mathrm{points} = \mathrm{severity\_weight} \times \mathrm{confidence\_factor} \times \mathrm{exposure\_factor}
+Each finding is worth its severity's weight, scaled down by how sure the rule is and how directly the problem can
+hurt users or data:
+
+```text
+points = severity_weight × confidence_factor × exposure_factor
 ```
 
 | Severity | Weight | Meaning |
@@ -101,8 +104,8 @@ A single noisy rule must not own the score. For each rule:
 - the 10 highest-point findings count fully;
 - every additional finding counts at 10%.
 
-```math
-\mathrm{rule\_points} = \sum(\text{points of top 10}) + 0.10 \times \sum(\text{points of the rest})
+```text
+rule_points = (sum of the 10 highest-point findings) + 0.10 × (sum of the rest)
 ```
 
 This keeps a hundred debug leftovers from outranking one critical injection, while still
@@ -116,17 +119,19 @@ most serious first, so a serious finding the old limits happened to hide now cou
 
 ### 2.3 Dimension score
 
-```math
-\begin{aligned}
-\mathrm{raw\_dimension} &= \sum \mathrm{rule\_points} \quad \text{for findings in the dimension}
-\\ \mathrm{density} &= \mathrm{raw\_dimension} \,/\, \max(0.25,\ \mathrm{LOC} / 1000)
-\\ \mathrm{density\_score} &= 100 \times \left(1 - e^{-\mathrm{density} / K_{\mathrm{dimension}}}\right)
-\\ \mathrm{floor} &= \max(\mathrm{severity\_floor} \times \mathrm{confidence} \times \mathrm{exposure})
-\\ \mathrm{score} &= \max(\mathrm{density\_score},\ \mathrm{floor})
-\end{aligned}
+In words: add up the dimension's points, divide by the size of the code in thousands of lines, and turn that density
+into a 0–100 score that rises quickly at first and levels off near 100. The worst single finding sets a floor the
+score cannot go below.
+
+```text
+raw_dimension  = the sum of rule_points over the dimension's findings
+density        = raw_dimension / max(0.25, LOC / 1000)
+density_score  = 100 × (1 − e^(−density / K))        K is the dimension's constant in the table below
+floor          = the highest severity_floor × confidence × exposure among the dimension's findings
+score          = the higher of density_score and floor
 ```
 
-$`\max(0.25,\ \mathrm{LOC}/1000)`$ is a 250-line floor. It prevents a tiny
+`max(0.25, LOC / 1000)` is a 250-line floor. It prevents a tiny
 file from producing an absurd density score and keeps the formula stable for
 small repositories.
 
@@ -152,12 +157,12 @@ rating-by-worst-issue.
 
 ### 2.4 Headline score
 
-```math
-\begin{aligned}
-\mathrm{weighted} &= 0.45 \times \mathrm{security} + 0.35 \times \mathrm{reliability} + 0.20 \times \mathrm{tests}
-\\ \mathrm{worst} &= \max(\text{dimension scores})
-\\ \mathrm{score} &= \operatorname{round}(0.70 \times \mathrm{worst} + 0.30 \times \mathrm{weighted})
-\end{aligned}
+The headline leans mostly on the worst dimension, so one bad area cannot hide behind two good ones:
+
+```text
+weighted = 0.45 × security + 0.35 × reliability + 0.20 × tests
+worst    = the highest of the three dimension scores
+score    = round(0.70 × worst + 0.30 × weighted)
 ```
 
 For each dimension, the scorer rounds the result of §2.3 to an integer and

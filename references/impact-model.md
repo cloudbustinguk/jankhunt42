@@ -20,16 +20,14 @@ impact rule here is built from those operations alone.
 
 ## Evidence tiers and reach (released)
 
-Every edge in the connectivity map carries an evidence tier:
+Every edge in the connectivity map carries an evidence tier, strongest first: **verified** (3), **supported** (2),
+**inferred** (1), **unknown** (0).
 
-```math
-\text{verified}\ (3) > \text{supported}\ (2) > \text{inferred}\ (1) > \text{unknown}\ (0)
-```
+A path is like a chain: it is only as strong as its weakest edge. A principal (p) reaches an asset (a) as strongly as
+its strongest path to it:
 
-A path is as strong as its weakest edge, and a principal reaches an asset as strongly as its best path:
-
-```math
-\operatorname{reach}(p, a) = \max_{\text{paths } \pi \text{ from } p \text{ to } a} \Bigl( \min_{\text{edges } e \text{ in } \pi} \operatorname{tier}(e) \Bigr)
+```text
+reach(p, a) = the highest, over every path from p to a, of (the lowest tier among that path's edges)
 ```
 
 This is the max-min composition of possibility theory. It needs no probabilities, gives the same answer under any
@@ -40,8 +38,8 @@ relabelling of the tiers that keeps their order, and adding an edge or strengthe
 Each principal (a workload, a workflow, an identity, an agent) gets the highest class whose condition holds; the
 application gets the highest class over its principals:
 
-```math
-\operatorname{class}(\text{app}) = \max_{\text{principals } p} \operatorname{class}(p)
+```text
+class(app) = the highest class(p) over the application's principals p
 ```
 
 | Class | Condition (any of) |
@@ -52,8 +50,8 @@ application gets the highest class over its principals:
 | Low | only local assets reached, or nothing reached with coverage |
 
 Every condition is upward-closed, so the class is monotone: adding authority, sensitivity, criticality, evidence or
-reach never lowers it (tested exhaustively). The breadth indicator $`1 + 0.5 \cdot \left(1 - e^{-(n-1)/4}\right)`$
-over distinct trust domains is shown for context only and never changes the class.
+reach never lowers it (tested exhaustively). The breadth indicator `1 + 0.5 × (1 − e^(−(n−1)/4))`, where n is the
+number of distinct trust domains, is shown for context only and never changes the class.
 
 ## The Agents Rule of Two (released in 4.16.0)
 
@@ -73,21 +71,17 @@ private repository into a public pull request.
 
 `JH714` reads each agent a repository configures (an MCP client configuration with the Claude Code or VS Code
 settings beside it, or an n8n AI Agent node with its triggers and tools). Each part of the agent (a server, a tool, a
-trigger, a built-in tool such as WebFetch) contributes to each property on a three-step scale:
-
-```math
-\text{none} < \text{possible} < \text{yes}
-```
+trigger, a built-in tool such as WebFetch) contributes to each property on a three-step scale: **none**, then
+**possible**, then **yes**.
 
 "possible" marks what the configuration cannot show, such as which repositories a GitHub token reaches. Then, per
-agent:
+agent, each property takes the strongest value any of its parts gives it, and the agent combines all three when
+even the weakest of the three is at least possible:
 
-```math
-\begin{aligned}
-\operatorname{holds}(k) &= \max_{\text{parts}} \mathrm{part}[k] && \text{for } k \in \{A, B, C\}
-\\ \text{all three} &= \min\bigl(\operatorname{holds}(A), \operatorname{holds}(B), \operatorname{holds}(C)\bigr) > \text{none}
-\\ \text{certain} &= \min\bigl(\operatorname{holds}(A), \operatorname{holds}(B), \operatorname{holds}(C)\bigr) = \text{yes}
-\end{aligned}
+```text
+holds(k)   = the highest value any part of the agent gives property k      (k is A, B or C)
+all three  = the lowest of holds(A), holds(B), holds(C) is above none
+certain    = the lowest of holds(A), holds(B), holds(C) is yes
 ```
 
 Supervision is judged where the harm happens, at [C]: the agent is **unsupervised** when some part that gives [C]
@@ -139,12 +133,14 @@ Toxic combinations, each the minimum of its ingredients' tiers:
 | K3 trifecta, unsupervised | an agent's Rule of Two verdict K3 (supported when certain, inferred when part is possible) | Critical |
 | K4 trifecta, supervised | an agent's Rule of Two verdict K4, certain only (an uncertain K4 is information only) | High |
 
-```math
-\begin{aligned}
-\operatorname{sat}_k(p) &= \min_{\text{ingredients of } k} \operatorname{tier}(\text{ingredient}, p)
-\\ \operatorname{level}(p) &= \max\Bigl( \operatorname{class}_{\mathrm{v1}}(p),\ \max\{\, \operatorname{level}(k) : \operatorname{sat}_k(p) > \text{unknown} \,\} \Bigr)
-\\ \operatorname{level}(\text{app}) &= \max_{\text{principals } p} \operatorname{level}(p)
-\end{aligned}
+A combination holds for a principal as strongly as its weakest ingredient. The principal's level is the highest of
+its exposure class and the level of every combination that holds for it on any evidence; the application takes its
+highest principal:
+
+```text
+sat(k, p)   = the lowest tier among combination k's ingredients for principal p
+level(p)    = the highest of: class_v1(p), and level(k) for every combination k with sat(k, p) above unknown
+level(app)  = the highest level(p) over the application's principals p
 ```
 
 Each driver of a level reports its own weakest tier, and each combination also lists its ingredients, so a
@@ -157,7 +153,7 @@ tested:
 - **Monotone:** every ingredient is upward-closed (a more open entry, a stronger tier, more authority, more
   sensitivity) and only max and min combine them. Entry is lowered only by counter-evidence in the export itself.
 - **Ordinal:** only comparisons, max and min; any order-preserving relabelling of tiers gives the same result.
-- **Conservative extension:** $`\operatorname{level} \ge \operatorname{class}_{\mathrm{v1}}`$ for every principal, by
+- **Conservative extension:** `level ≥ class_v1` for every principal, by
   construction (v1's conditions stay drivers).
 
 **Policy.** The passport's `P-EXP-001` compares this class with `max_exposure`. The citizen profile's maximum is
