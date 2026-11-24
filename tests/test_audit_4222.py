@@ -215,7 +215,7 @@ class FileNames(unittest.TestCase):
     @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
     def test_a_name_that_is_not_utf8_is_found_and_every_report_stays_utf8(self):
         sp = __import__("subprocess")
-        for git in (False, True):
+        for git in (False, True) if __import__("shutil").which("git") else (False,):
             root = project(self, {})
             with open(os.path.join(os.fsencode(str(root)), b"caf\xe9.py"), "wb") as fh:
                 fh.write(BARE.encode())
