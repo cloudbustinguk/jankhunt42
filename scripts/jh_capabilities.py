@@ -13,6 +13,7 @@ import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Optional
 
 import jh_agent
 import jh_config
@@ -56,6 +57,39 @@ EXTRA_INSTRUCTIONS = ("agents.override.md",)
 _ANCHORS = re.compile(r"(?:^|/)(?:\.claude|\.codex|\.cursor|\.gemini|\.github|\.opencode|\.windsurf|\.clinerules|\.cline|"
                       r"\.kiro|\.roo|\.amazonq|\.continue|\.agents|managed-settings\.d)(?:/|$)", re.I)
 
+
+
+def config_at_revision(top: str, root: str, rev: str, config_path: Optional[str], disabled: bool,
+                       max_bytes: int) -> "jh_config.Config":
+    """The config that governs `root` at a committed revision, read from that revision's own objects (never the
+    working tree): the nearest .jankhunt42.toml/.json from root up to the repository top, an explicit --config
+    inside the repository at that revision, or an explicit --config outside it as given. --no-config gives none."""
+    if disabled:
+        return jh_config.Config()
+    if config_path and not jh_map.inside(config_path, top):
+        return jh_config.load_config(config_path)
+    candidates = [os.path.abspath(config_path)] if config_path else []
+    cur = root
+    while not config_path:
+        candidates.extend(os.path.join(cur, n) for n in (".jankhunt42.toml", ".jankhunt42.json"))
+        if cur == top or os.path.dirname(cur) == cur:
+            break
+        cur = os.path.dirname(cur)
+    for path in candidates:
+        rel = os.path.relpath(path, top).replace(os.sep, "/")
+        obj = rev + ":" + rel
+        try:
+            size = int(jh_map._git(top, ["cat-file", "-s", obj]))
+        except jh_map.GitError:
+            continue
+        if size > max_bytes:
+            cfg = jh_config.Config()
+            cfg.warnings.append("committed config exceeds the file byte limit")
+            return cfg
+        return jh_config.load_config(path, jh_map._git(top, ["cat-file", "blob", obj]).decode("utf-8"))
+    if config_path:
+        raise ValueError("explicit repository --config must exist at both compared revisions")
+    return jh_config.Config()
 
 def _skill_dirs(paths):
     """Folders that hold a SKILL.md ("" for one at the root): every file in one is part of that skill."""
@@ -568,37 +602,12 @@ def snapshots(args):
         if jh_map.inside(args.inventory, top):
             raise ValueError("--base requires operator inventory outside the repository")
         inventory = jh_map.load_json_file(args.inventory)
+    # an operator's config outside the repository, kept apart so the passport can name it as the operator's own
     external_cfg = jh_config.load_config(args.config) if args.config and not args.no_config and \
         not jh_map.inside(args.config, top) else None
 
     def config_at(sha):
-        if args.no_config:
-            return jh_config.Config()
-        if external_cfg is not None:
-            return external_cfg
-        candidates = [os.path.abspath(args.config)] if args.config else []
-        cur = root
-        while not args.config:
-            candidates.extend(os.path.join(cur, n) for n in (".jankhunt42.toml", ".jankhunt42.json"))
-            if cur == top:
-                break
-            cur = os.path.dirname(cur)
-        for path in candidates:
-            rel = os.path.relpath(path, top).replace(os.sep, "/")
-            obj = sha + ":" + rel
-            try:
-                size = int(jh_map._git(top, ["cat-file", "-s", obj]))
-            except jh_map.GitError:
-                continue
-            if size > args.max_file_bytes:
-                cfg = jh_config.Config()
-                cfg.warnings.append("committed config exceeds the file byte limit")
-                return cfg
-            cfg = jh_config.load_config(path, jh_map._git(top, ["cat-file", "blob", obj]).decode("utf-8"))
-            return cfg
-        if args.config:
-            raise ValueError("explicit repository --config must exist at both compared revisions")
-        return jh_config.Config()
+        return config_at_revision(top, root, sha, args.config, args.no_config, args.max_file_bytes)
 
     reports, collections, configs = [], [], []
     for sha in (base_sha, head_sha):

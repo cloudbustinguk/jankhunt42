@@ -651,8 +651,20 @@ def cmd_map(args: argparse.Namespace) -> int:
         root, excludes, cfg = _map_inputs(args)
         common = (root, [root], excludes, args.max_files, args.max_file_bytes, cfg.passport, args.inventory, depth)
         if args.base:
-            base = jh_map.run_map(*common, rev=args.base)
-            report = jh_map.run_map(*common, rev="HEAD")
+            # each revision is governed by its own committed config (its ignore globs and declarations), never by
+            # the working tree's, unless --config names one outside the repository or --no-config turns it off
+            import jh_capabilities
+            top = jh_map.git_toplevel(root)
+            if not top:
+                raise jh_map.GitError("--base needs a git repository")
+            sides = []
+            for rev in (args.base, "HEAD"):
+                rcfg = jh_capabilities.config_at_revision(top, root, rev, args.config, args.no_config, args.max_file_bytes)
+                side = jh_map.run_map(root, [root], list(args.exclude or ()) + rcfg.ignore_globs, args.max_files,
+                                      args.max_file_bytes, rcfg.passport, args.inventory, depth, rev=rev)
+                side["warnings"] = sorted(set(side.get("warnings") or []) | set(rcfg.warnings))
+                sides.append(side)
+            base, report = sides
             report["delta"] = jh_graph.diff(base, report)
             if jh_map.git_dirty(root):
                 report["warnings"] = sorted(set(report["warnings"]) | {

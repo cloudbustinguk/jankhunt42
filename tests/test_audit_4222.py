@@ -361,5 +361,43 @@ class RevisionsUseTheSameFolderRule(unittest.TestCase):
         self.assertEqual([(e["path"], e["line"]) for e in ev if e["adapter"] == "python:http-call"], [("ink\\page.py", 2)])
 
 
+class EachRevisionItsOwnConfig(unittest.TestCase):
+    def _commit(self, root, message):
+        sp = __import__("subprocess")
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.invalid"]
+        sp.run(git + ["add", "-A"], check=True)
+        sp.run(git + ["commit", "-qm", message], check=True)
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_working_tree_policy_edit_does_not_change_a_comparison_of_two_commits(self):
+        root = project(self, {"app.py": "x = 1\n", ".jankhunt42.json": "{}\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        self._commit(root, "one")
+        (root / ".mcp.json").write_text('{"mcpServers":{"fetch":{"command":"npx","args":["-y","@modelcontextprotocol/server-fetch"]}}}\n')
+        self._commit(root, "two")
+
+        def row():
+            d = json.loads(run_cli("map", ".", "--base", "HEAD^", "--json", cwd=str(root)).stdout)
+            return d["coverage"]["inspected_paths"], len(d["delta"]["nodes"]["added"]), len(d["delta"]["edges"]["added"])
+        clean = row()
+        (root / ".jankhunt42.json").write_text('{"ignore":[".mcp.json"]}\n')
+        self.assertEqual(row(), clean)
+        self.assertEqual(clean[0], [".mcp.json", "app.py"])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_declarations_follow_the_config_choice_in_both_directions(self):
+        root = project(self, {".jankhunt42.json": '{"passport":{"assets":[{"match":"application","sensitivity":"restricted"}]}}\n',
+                              "sub/app.py": "value = 1\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        self._commit(root, "one")
+        (root / "sub" / "app.py").write_text("value = 2\n")
+        self._commit(root, "two")
+        got = []
+        for argv in ((".", "--no-config"), (".", "--base", "HEAD^", "--no-config"), ("sub",), ("sub", "--base", "HEAD^")):
+            d = json.loads(run_cli("map", *argv, "--json", cwd=str(root)).stdout)
+            got.append([n.get("sensitivity") for n in d["graph"]["nodes"] if n.get("kind") == "application"])
+        self.assertEqual(got, [["unknown"], ["unknown"], ["restricted"], ["restricted"]])
+
+
 if __name__ == "__main__":
     unittest.main()
