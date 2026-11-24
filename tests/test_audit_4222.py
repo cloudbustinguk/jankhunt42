@@ -285,5 +285,45 @@ class ReviewPolicyIdentity(unittest.TestCase):
         self.assertEqual([(f["rule"], f["line"], f["severity"]) for f in replay["findings"]], [("STYLE001", 1, "minor")])
 
 
+class ReviewCountsIdentityAndScorecard(unittest.TestCase):
+    def _repo(self, files):
+        root = project(self, files)
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        return root
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_final_newline_adds_no_changed_line(self):
+        counts = []
+        for end in ("\n", ""):
+            root = self._repo({"chip.py": "# noqa\nvalue = 1" + end})
+            doc = json.loads(run_cli("review", ".", "--rule", "JH306", "--min-severity", "info", "--json",
+                                     cwd=str(root)).stdout)
+            counts.append((doc["review"]["scope"]["changed_lines"], doc["review"]["score"]["loc"]))
+        self.assertEqual(counts, [(2, 2), (2, 2)])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_an_unrelated_clean_file_keeps_the_sarif_identity_of_an_alert(self):
+        ids = []
+        for extra in ({}, {"sample.py": "hue = 1\n"}):
+            root = self._repo(dict({"sheet.py": "# noqa\n"}, **extra))
+            sarif = json.loads(run_cli("review", ".", "--rule", "JH306", "--min-severity", "info", "--sarif",
+                                       cwd=str(root)).stdout)
+            ids.append([r["partialFingerprints"]["jankhunt42"] for r in sarif["runs"][0]["results"]])
+        self.assertEqual(len(ids[0]), 1)
+        self.assertEqual(ids[0], ids[1])
+
+    def test_the_scorecard_names_the_policy_that_changed_a_rating(self):
+        root = project(self, {"score/sheet.py": BARE,
+                              "rating.json": '{"schema_version":"jankhunt.ruleset.v1","name":"studio-rating",'
+                                             '"severity":{"JH217":"info"}}\n'})
+        args = (str(root / "score"), "--no-config", "--rule", "JH217", "--min-severity", "info",
+                "--ruleset", str(root / "rating.json"))
+        card = json.loads(run_cli("scan", *args, "--score", "--json").stdout)
+        full = scan(*args)
+        self.assertEqual([r["name"] for r in card["rulesets"]], ["studio-rating"])
+        self.assertEqual(card["rulesets"], full["rulesets"])
+        self.assertEqual(card["jank"]["score"], full["summary"]["jank"]["score"])
+
+
 if __name__ == "__main__":
     unittest.main()

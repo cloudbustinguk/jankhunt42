@@ -543,6 +543,8 @@ def cmd_score(args: argparse.Namespace) -> int:
             "set_aside": meta.get("set_aside"),
             "cross_file_duplicates": meta.get("cross_file_duplicates", []),
         }
+        if meta.get("rulesets"):                       # the policy behind a changed rating travels with the score
+            data["rulesets"] = meta["rulesets"]
         print(json.dumps(data, indent=2, ensure_ascii=False))
     elif tty and not args.no_color:
         color = jh_render.Colors(True)

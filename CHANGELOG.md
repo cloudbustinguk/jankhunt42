@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- In a review, a new file's final newline no longer counts as an extra changed line (which lowered the score); a review's SARIF alert keeps its identity when unrelated files change, using the same finding identity baselines compare; the scorecard names the rulesets behind a changed rating, as the full scan does.
 - A review's rule-pack digest covers every field that changes what a rule reports (files, languages, target, exclusions), and its scan id includes the rulesets, rules switched off and changed ratings, so two reviews under different policies no longer share an identity. The review names each ruleset with its digest, and a receipt's reproduction command carries the `--ruleset` arguments it needs.
 - A site rule is matched against every real line as written, spaces-only lines included, the same way its examples are checked when the policy loads; before, a rule could pass its example and miss the same line in a file.
 - Review lists every changed path, a staged binary included (recorded as binary), from git's exact name list; accented names, spaces and quotes in staged names are kept as written instead of becoming unreadable paths. A file name byte that is not valid UTF-8 no longer hides the file in a git project or crashes map and passport: reports write it as `\xNN` and stay valid UTF-8. The map claims the file limit only when a file was turned away.

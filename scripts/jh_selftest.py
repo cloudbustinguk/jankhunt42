@@ -1198,6 +1198,9 @@ MUTANTS = [
     ('M838-site-rule-phantom-line', 'the empty entry after a final newline is matched as a line', 'jh_rules.py', '                lines = lines[:-1]                   # the empty entry after a final newline is not a line', '                pass', 'test_audit_4222.py'),
     ('M839-rulepack-omits-files', 'a site rule narrowed to other files keeps the same rule-pack digest', 'jh_review.py', '                   "check": r.check, "langs": list(r.langs), "files": list(r.files), "target": r.target,', '                   "check": r.check, "langs": list(r.langs), "target": r.target,', 'test_audit_4222.py'),
     ('M840-repro-drops-ruleset', "a receipt's reproduction command drops the ruleset", 'jh_review.py', '        "repro": _repro(f, policy),', '        "repro": _repro(f),', 'test_audit_4222.py'),
+    ('M841-final-newline-line', 'a final newline counts as an extra added line', 'jh_review.py', '            real = len(sf.raw) - (1 if sf.raw and sf.raw[-1] == "" else 0)   # a final newline ends a line, adds none', '            real = len(sf.raw)', 'test_audit_4222.py'),
+    ('M842-sarif-identity-per-review', "a review's SARIF alert identity changes with unrelated files", 'jh_review.py', '            "partialFingerprints": {"jankhunt42": stable[n]},', '            "partialFingerprints": {"jankhunt42": r["receipt_hash"]},', 'test_audit_4222.py'),
+    ('M843-scorecard-drops-policy', 'the scorecard omits the rulesets behind a changed rating', 'jankhunt42', '        if meta.get("rulesets"):                       # the policy behind a changed rating travels with the score', '        if False:', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

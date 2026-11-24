@@ -471,7 +471,8 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
             skipped.append({"path": rel, "reason": "larger than max-file-bytes"})
             continue
         if df.status == "untracked" or df.status == "added":
-            lines = set(range(1, len(sf.raw) + 1))
+            real = len(sf.raw) - (1 if sf.raw and sf.raw[-1] == "" else 0)   # a final newline ends a line, adds none
+            lines = set(range(1, real + 1))
             df.added.update(lines)
             df.hunk_lines.update(lines)
         sources.append(sf)
@@ -1239,7 +1240,11 @@ def sarif(review: Dict[str, Any]) -> str:
               "minor": "note", "info": "note"}
     rules: Dict[str, Any] = {}
     results = []
-    for r in review.get("findings", []):
+    # an alert's identity is the finding itself (rule, path, evidence, occurrence), the identity baselines compare;
+    # the receipt hash also covers the whole review, so an unrelated change elsewhere would rename every alert
+    stable = [hashlib.sha256(fp.encode("utf-8", "surrogateescape")).hexdigest()
+              for fp in _fingerprints(review.get("findings", []))]
+    for n, r in enumerate(review.get("findings", [])):
         if r["rule"] not in rules:
             rule = rule_by_id(r["rule"])
             rules[r["rule"]] = {
@@ -1263,7 +1268,7 @@ def sarif(review: Dict[str, Any]) -> str:
                                **({"endLine": r["end_line"]} if r.get("end_line") else {})},
                 }
             }],
-            "partialFingerprints": {"jankhunt42": r["receipt_hash"]},
+            "partialFingerprints": {"jankhunt42": stable[n]},
             "properties": {
                 "severity": r["severity"], "confidence": r["confidence"],
                 "scope": r["scope"], "verification": r["verification"],
