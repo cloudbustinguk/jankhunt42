@@ -620,7 +620,8 @@ def snapshots(args):
         col = jh_map.collect_git(top, sha, args.exclude or (), args.max_files, args.max_file_bytes,
                                 prefix, include_locks=True)
         for item in col.items:
-            item.rel = item.rel[len(prefix):]
+            raw = item.raw or item.rel           # the prefix comes off the raw path, then the display form applies
+            item.rel = jh_map.display_path(raw[len(prefix):]) if raw.startswith(prefix) else item.rel
         cfg = config_at(sha)
         warnings = list(cfg.warnings)
         declarations = cfg.passport

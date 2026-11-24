@@ -474,7 +474,7 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
             continue
         # the shared folder rule: an env folder holding pyvenv.cfg (on disk or among the changes) is installed code,
         # and so is an installed plugin's bundle
-        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or _in_reviewed_tree(root, scope, q))
+        folder_why = tree_skip_reason(rel, lambda q: _in_reviewed_tree(root, scope, q))   # a deleted marker is gone
         if GENERATED_RE.search(rel) or folder_why:
             skipped.append({"path": rel, "reason": "generated/vendor" if not folder_why else folder_why})
             continue

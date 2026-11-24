@@ -49,6 +49,7 @@ from jh_core import (TOOL, VERSION, run_git, display_path, tree_skip_reason, DEF
 class Item:
     rel: str
     text: str
+    raw: str = ""                       # the path as the revision names it, before display (prefixes come off this)
 
     def __post_init__(self) -> None:
         # A UTF-8 byte-order mark (common in .NET appsettings.json) is not content.
@@ -168,10 +169,12 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
     wanted: List[Tuple[str, str]] = []
     pats = list(excludes) + ["*.min.js", "*.min.css", "*.map", "*.snap"] + ([] if include_locks else ["*.lock"])
     entries = [e for e in os.fsdecode(listing).split("\0") if e]
+    raw_by_rel: Dict[str, str] = {}
     in_tree = {e.partition("\t")[2] for e in entries}      # what the revision holds, for the shared folder rule
     for entry in entries:
         meta, _, raw_rel = entry.partition("\t")
         rel = display_path(raw_rel)      # reports show a name byte that is not UTF-8 as \xNN; blobs are read by object id
+        raw_by_rel[rel] = raw_rel
         parts = meta.split()
         if len(parts) < 4:
             continue
@@ -217,7 +220,7 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
         if text is None:
             col.skip("binary", rel)
             continue
-        col.items.append(Item(rel, text))
+        col.items.append(Item(rel, text, raw=raw_by_rel.get(rel, rel)))
     return col
 
 
@@ -2660,7 +2663,8 @@ def run_map(root: str, paths: Sequence[str], excludes: Sequence[str], max_files:
         col = collect_git(top, rev, excludes, max_files, max_bytes, prefix)
         if prefix:
             for it in col.items:
-                it.rel = it.rel[len(prefix):] if it.rel.startswith(prefix) else it.rel
+                raw = it.raw or it.rel           # the prefix comes off the raw path, then the display form applies
+                it.rel = display_path(raw[len(prefix):]) if raw.startswith(prefix) else it.rel
         # declarations come from the caller, resolved from this revision's own config (jh_capabilities)
         snapshot = "git:%s" % (git_revision(top, rev) or rev)
         source_revision = git_revision(top, rev)
