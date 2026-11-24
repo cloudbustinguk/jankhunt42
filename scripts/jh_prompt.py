@@ -39,9 +39,13 @@ def finding_prompt(f: Finding) -> str:
     return _clean_lines(lines)
 
 
-def combined(findings: Sequence[Finding], limit: int = LIMIT) -> str:
-    """Every finding (up to the limit, most serious first) as one prompt to paste into a coding agent."""
+def combined(findings: Sequence[Finding], limit: int = LIMIT, held: Sequence[str] = ()) -> str:
+    """Every finding (up to the limit, most serious first) as one prompt to paste into a coding agent. `held`: what
+    the run set aside, so an empty prompt never reads as a clean project."""
     if not findings:
+        if held:
+            return ("jankhunt42 reported nothing to fix, but it held some things back, so this is not a clean bill: "
+                    + "; ".join(held) + ".")
         return "jankhunt42 found nothing to fix in this project."
     chosen = sorted(findings, key=lambda f: f.sort_key())[:limit]
     lines = ["jankhunt42 found %d problem%s in this project. Fix them one at a time, most serious first. For each, "

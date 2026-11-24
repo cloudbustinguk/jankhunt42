@@ -157,6 +157,11 @@ class CrossVersion(unittest.TestCase):
                         r["category"] = "reliability"     # 4.6.0: the maintainability category is gone
             if isinstance(new, dict):
                 new = {k: v for k, v in new.items() if k not in ADDED_KEYS - set(old)}
+            if args[-1] == "--sarif":          # 4.22.1: a run says what it held back (notes and setAside properties)
+                for run in new.get("runs", []):
+                    run.pop("properties", None)
+                    if not any(r.get("invocations") for r in old.get("runs", [])):
+                        run.pop("invocations", None)
             self.assertEqual(without_removed(strip_volatile(old)), without_removed(strip_volatile(without_added(new))),
                              args)
 

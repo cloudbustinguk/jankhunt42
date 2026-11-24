@@ -468,6 +468,16 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
 # Receipts and baseline
 # ---------------------------------------------------------------------------
 
+def _review_aside(result: ScanResult, capped: int, floor: str) -> Dict[str, Any]:
+    """What the review's scan of the changed files held back, in the same shape as a scan's set_aside."""
+    out: Dict[str, Any] = {k: v for k, v in result.set_aside.items() if v and k != "capped"}
+    if out.get("below_floor"):
+        out["below_floor"] = dict(out["below_floor"], floor=floor)
+    if capped:
+        out["capped"] = capped
+    return out
+
+
 def cap_review(new: List[Finding], others: List[List[Finding]], max_per_file_rule: int,
                max_per_rule: int) -> Tuple[List[List[Finding]], int]:
     """Apply the per-file-rule and per-rule caps after classification. Findings on changed lines are never capped
@@ -826,6 +836,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "resolved": (baseline or {}).get("resolved_findings", []),
         "unknowns": unknowns,
         "gate": gate,
+        "set_aside": _review_aside(result, review_capped, getattr(args, "min_severity", "minor")),
         "receipt_version": _REVIEW_RECEIPT_VERSION,
         "rulepack_hash": rulepack_hash(),
     }
@@ -926,6 +937,10 @@ def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
                       baseline.get("resolved", 0),
                       " · not reassessed %d (file not reviewed this time)" % baseline["unassessed"]
                       if baseline.get("unassessed") else ""))
+    import jh_render
+    aside = jh_render.set_aside_lines({"set_aside": review.get("set_aside") or {}})
+    if aside:
+        out += ["", "### Set aside in this review", ""] + ["- %s" % text for _, text in aside]
     out.append("")
     out.append("| Metric | Value |")
     out.append("|---|---|")

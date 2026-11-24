@@ -38,7 +38,9 @@ class IgnoreRule(unittest.TestCase):
         self.assertNotIn("JH417", [f["rule"] for f in after["findings"]])
         self.assertIn("JH101", [f["rule"] for f in after["findings"]])
         self.assertEqual(after["ignored_rules"], ["JH417"])
-        self.assertNotIn("JH417", run_cli("scan", self.root, "--sarif", "--ignore-rule", "JH417").stdout)
+        sarif = json.loads(run_cli("scan", self.root, "--sarif", "--ignore-rule", "JH417").stdout)["runs"][0]
+        self.assertNotIn("JH417", [r["ruleId"] for r in sarif["results"]])
+        self.assertEqual(sarif["properties"]["setAside"]["ignored_rules"]["rules"], ["JH417"])   # 4.22.1: and it says so
 
     def test_the_gate_no_longer_counts_it(self):
         self.assertEqual(run_cli("scan", self.root, "--fail-on", "major", "--ignore-rule", "JH101").returncode, 1)

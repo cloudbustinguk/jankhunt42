@@ -89,7 +89,9 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
     policy = _policy_class(report.policy)
     worst = report.dimensions.get(report.worst_dimension)
     worst_label = _e(worst.label if worst else "risk")
+    import jh_render
     warnings: List[str] = ["Not read: %s" % w for w in (meta.get("archive_warnings") or [])]
+    warnings += ["Set aside: %s" % text.replace("`", "") for _, text in jh_render.set_aside_lines(meta)]
     elapsed = meta.get("elapsed")
     elapsed_text = "%.2fs" % float(elapsed) if elapsed is not None else "—"
     warnings_html = ""
@@ -284,7 +286,8 @@ def _render_findings(findings: Sequence[Finding], max_findings: int) -> str:
         return '''<section class="section empty-state">
           <div class="empty-mark">✦</div>
           <h2>No findings from the built-in rules</h2>
-          <p>That is good news, not a certificate. Run the compiler, tests, linters, and sanitizers.</p>
+          <p>These rules found nothing in what they read. That is not a certificate: check what was set aside above,
+          and run the compiler, tests, linters and sanitizers.</p>
         </section>'''
     shown = findings[:max_findings]
     cards = "".join(_render_finding_card(finding, idx) for idx, finding in enumerate(shown, 1))
