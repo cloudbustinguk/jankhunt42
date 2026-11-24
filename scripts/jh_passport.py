@@ -694,6 +694,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
           capability_delta: Optional[Dict[str, Any]] = None,
           capability_approval_record: Optional[Dict[str, Any]] = None,
           capability_approval_label: str = "", ignored_rules: Sequence[str] = (),
+          set_aside: Optional[Dict[str, Any]] = None,
           rulesets: Sequence[Dict[str, Any]] = (),
           sandbox: Optional[Dict[str, Any]] = None,
           runtime_log: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -827,6 +828,7 @@ def build(*, name: str, source_revision: Optional[str], dirty: Optional[bool], i
                     "environment": passport_cfg.get("environment") if passport_cfg.get("environment") in G.ENVIRONMENTS else "unknown"},
         "scope": dict({"root": ".", "files_scanned": scan_files, "loc": scan_loc, "redaction": "none"},
                       **({"ignored_rules": list(ignored_rules)} if ignored_rules else {}),
+                      **({"set_aside": dict(set_aside)} if set_aside else {}),
                       **({"rulesets": [dict(r) for r in rulesets]} if rulesets else {})),
         "coverage": {
             "evidence_areas": completeness,
@@ -1093,6 +1095,10 @@ def markdown(p: Dict[str, Any]) -> str:
              "- Revision: %s%s" % (p["subject"]["revision"] or "unknown (not a git checkout)",
                                    " (working tree dirty)" if p["subject"].get("working_tree_dirty") else ""),
              ""]
+    import jh_render
+    aside = jh_render.set_aside_lines({"set_aside": (p.get("scope") or {}).get("set_aside") or {}})
+    if aside:
+        lines += ["## Set aside in this run", ""] + ["- " + text for _, text in aside] + [""]   # as in the scan report
     gov = p.get("governance") or {}
     trigger_text = jh_n8n.trigger_line(p.get('triggers'))
     if trigger_text:

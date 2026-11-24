@@ -350,7 +350,7 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
-def _sarif(result: ScanResult, notes: Sequence[str] = ()) -> str:
+def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Dict[str, Any]] = None) -> str:
     levels = {"blocker": "error", "critical": "error", "major": "warning", "minor": "note", "info": "note"}
     rules = {}
     results = []
@@ -406,9 +406,15 @@ def _sarif(result: ScanResult, notes: Sequence[str] = ()) -> str:
             "results": results,
         }],
     }
-    if notes:       # what the scan could not read (an archive member over a limit): a warning, not a result
-        sarif["runs"][0]["invocations"] = [{"executionSuccessful": True, "toolExecutionNotifications": [
-            {"level": "warning", "message": {"text": str(n)}} for n in notes]}]
+    # what the scan could not read (an archive member over a limit) is a warning; what the run held back (the floor,
+    # ignore comments, rules off, folders and files not read) is a note: neither is a result, both are said
+    held = [text.replace("`", "") for _, text in jh_render.set_aside_lines({"set_aside": set_aside or {}})]
+    if notes or held:
+        sarif["runs"][0]["invocations"] = [{"executionSuccessful": True, "toolExecutionNotifications":
+            [{"level": "warning", "message": {"text": str(n)}} for n in notes]
+            + [{"level": "note", "message": {"text": h}} for h in held]}]
+    if set_aside:
+        sarif["runs"][0]["properties"] = {"setAside": set_aside}
     return json.dumps(sarif, indent=2, ensure_ascii=False)
 
 
@@ -431,9 +437,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.json:
         print(_scan_json(root, result, meta))
     elif args.prompt:
-        print(jh_prompt.combined(result.findings))
+        print(jh_prompt.combined(result.findings, held=[t.replace("`", "") for _, t in jh_render.set_aside_lines(meta)]))
     elif args.sarif:
-        print(_sarif(result, meta.get("archive_warnings") or ()))
+        print(_sarif(result, meta.get("archive_warnings") or (), meta.get("set_aside")))
     elif args.html:
         print(jh_html.render_scan(result, meta, args.max_findings))
     else:
@@ -514,9 +520,22 @@ def cmd_score(args: argparse.Namespace) -> int:
             "%s  ·  %s files  ·  %s LOC" % (root, f"{result.files:,}", f"{result.loc:,}"),
             color, width,
         )
-        print("\n".join(header + [""] + jh_score.scorecard_tty(report, color, width)))
+        lines = header + [""] + jh_score.scorecard_tty(report, color, width)
+        if not result.files:
+            lines.append("  " + color.yellow("NO FILES READ") + "  " + color.grey("this score describes nothing"))
+        for label, text in jh_render.set_aside_lines(meta):
+            lines.append("  " + color.yellow(label) + "  " + color.grey(text.replace("`", "")))
+        print("\n".join(lines))
     else:
-        print(jh_score.scorecard_markdown(report))
+        # the score never stands alone: how much it read, and what the run held back (a quiet score over zero
+        # files is not a pass of anything)
+        lines = [jh_score.scorecard_markdown(report), "", "_Files read: %d · lines of code: %d_" % (result.files, result.loc)]
+        if not result.files:
+            lines += ["", "> No files were read, so this score describes nothing. See what was set aside below."]
+        aside = jh_render.set_aside_lines(meta)
+        if aside:
+            lines += ["", "### Set aside in this run", ""] + ["- %s" % text for _, text in aside]
+        print("\n".join(lines))
     if args.fail_policy and report.policy == "fail":
         return 1
     return 0
@@ -744,19 +763,25 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     # again, so the main scan is never starved by ignored trees.
     scan_cfg = cfg
     operator_excludes = list(args.exclude or ())
+    pp_not_read: Dict[str, Any] = {}               # what discovery set aside, for the passport's own account
     raw_pre = (root, [s for s in (jh_capabilities.source_from_text(i.rel, os.path.join(root, i.rel), i.text)
                     for i in col.items) if s is not None], 0) if snapshot else _load_sources(
-                        [root], operator_excludes, args.max_files, args.max_file_bytes)
+                        [root], operator_excludes, args.max_files, args.max_file_bytes, not_read=pp_not_read)
     raw_capped = len(raw_pre[1]) + raw_pre[2] >= args.max_files
     if not scan_cfg.ignore_globs:
         main_pre = raw_pre
     elif not raw_capped:
         main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
+        for s in raw_pre[1]:
+            if _globbed(s.rel, scan_cfg.ignore_globs):
+                count_path(pp_not_read.setdefault("files_excluded", {}), "config", s.rel)
     elif not snapshot:
         main_pre = _load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
     else:
         main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
     _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
+    passport_aside = set_aside(result, pp_not_read, int(_meta.get("config_suppressed") or 0), ignored_rules(args),
+                               scan_args, cfg.source)
     # Governance leads (P-SEC-001, P-AGT-001). Raw: the shipped rules with no
     # repository ignore globs, config, or inline pragmas, which is what the
     # citizen profile uses so the repository cannot opt out. Tuned: the same
@@ -869,7 +894,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         fail_on=args.fail_on, warnings=warnings, extra_repo_policies=repo_extra,
         ignored_rules=sorted(ignored_rules(args)),
         rulesets=getattr(args, "rulesets", None) or [],
-        findings=result.findings, governance_findings=raw, governance_tuned=tuned,
+        findings=result.findings, governance_findings=raw, governance_tuned=tuned, set_aside=passport_aside,
         governance_truncated=raw_capped, profile=args.profile, change_control=change_control,
         package_sources=package_sources, capability_delta=capability_delta,
         capability_approval_record=capability_approval_record,

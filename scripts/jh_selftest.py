@@ -682,7 +682,7 @@ MUTANTS = [
     ('M314-query-secret-shown', 'a URL query-string signature is printed in the evidence', 'jh_core.py', 'for m in _QUERY_SECRET_RE.finditer(text)', 'for m in _QUERY_SECRET_RE.finditer("")', 'test_trial_recall.py'),
     ('M315-pp-all-mode-closed', 'an HTTP trigger serialized as All (open) is taken for a sign-in mode', 'jh_powerplatform.py', 'OPEN_MODES = {"all", "anyone"}', 'OPEN_MODES = {"anyone"}', 'test_powerplatform.py'),
     ('M316-pp-markdown-warning-dropped', 'what a zip could not read is left out of the Markdown report', 'jh_render.py', '            out.append("> Not read: %s" % warning)', '            pass', 'test_powerplatform.py'),
-    ('M317-pp-sarif-warning-dropped', 'what a zip could not read is left out of SARIF', 'jankhunt42', '        print(_sarif(result, meta.get("archive_warnings") or ()))', '        print(_sarif(result))', 'test_powerplatform.py'),
+    ('M317-pp-sarif-warning-dropped', 'what a zip could not read is left out of SARIF', 'jankhunt42', '        print(_sarif(result, meta.get("archive_warnings") or (), meta.get("set_aside")))', '        print(_sarif(result, (), meta.get("set_aside")))', 'test_powerplatform.py'),
     ('M318-pp-bad-names-silent', 'a zip with names that are not UTF-8 is skipped without a warning', 'jh_powerplatform.py', '        return None, [], ["%s: entry names are not valid UTF-8, not read" % rel]', '        return None, [], []', 'test_powerplatform.py'),
     ('M319-postgrest-filter-flagged', 'a PostgREST filter (?key=eq.value) is taken for a credential', 'jh_rules.py', 'r"(?!(?:eq|neq|gt|gte|lt|lte|like|ilike|in|is|not)\\.|[$<{%@])" + _CRED_SHAPE.replace(', 'r"" + _CRED_SHAPE.replace(', 'test_trial_recall.py'),
     ('M320-firebase-download-token-flagged', 'a Firebase Storage download token (public) is reported as a secret', 'jh_rules.py', 'r"(?i)(?<!alt=media)[?&](?:sig', 'r"(?i)[?&](?:sig', 'test_trial_recall.py'),
@@ -1163,6 +1163,11 @@ MUTANTS = [
     ('M802-rating-after-floor', 'a configured promotion is filtered at the original rating', 'jh_rules.py', '        if opts.rate is not None:\n            effective = opts.rate(finding)', '        if False:\n            effective = opts.rate(finding)', 'test_config_4221.py'),
     ('M803-unknown-severity-accepted', 'a misspelled configured severity becomes a rating', 'jh_config.py', '    if sev in SEVERITIES:\n        return sev', '    if sev:\n        return sev', 'test_config_4221.py'),
     ('M804-ignore-type-unchecked', 'a wrongly typed ignore setting stops the scan', 'jh_config.py', '    cfg.ignore_globs = _globs(raw.get("ignore", []), "ignore", cfg)', '    cfg.ignore_globs = [str(g) for g in raw.get("ignore", [])]', 'test_config_4221.py'),
+    ('M805-score-silent-on-coverage', 'a score over zero files gives no file count or reason', 'jankhunt42', '        lines = [jh_score.scorecard_markdown(report), "", "_Files read: %d · lines of code: %d_" % (result.files, result.loc)]', '        lines = [jh_score.scorecard_markdown(report)]', 'test_discovery_4221.py'),
+    ('M806-sarif-silent-on-set-aside', 'SARIF says nothing about findings the run held back', 'jankhunt42', '            + [{"level": "note", "message": {"text": h}} for h in held]}]', '            }]', 'test_discovery_4221.py'),
+    ('M807-prompt-clean-despite-held', 'the fix prompt says nothing to fix while findings were held back', 'jh_prompt.py', '        if held:\n            return (', '        if False:\n            return (', 'test_discovery_4221.py'),
+    ('M808-review-set-aside-dropped', 'a review drops what its scan held back', 'jh_review.py', '        "set_aside": _review_aside(result, review_capped, getattr(args, "min_severity", "minor")),\n', '', 'test_discovery_4221.py'),
+    ('M809-passport-set-aside-dropped', 'a passport drops what its scan held back', 'jh_passport.py', '                      **({"set_aside": dict(set_aside)} if set_aside else {}),\n', '', 'test_discovery_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -211,3 +211,47 @@ class EvidenceUsesTheSharedFolderRule(unittest.TestCase):
             results[name] = [r["outcome"] for r in doc["assessment"]["decision"]["rules"] if r["rule"] == "P-EVD-001"][0]
         self.assertEqual(results, {"hidden": "pass", "virtual": "insufficient-evidence"})
 
+
+class ScoreSaysWhatItRead(unittest.TestCase):
+    def test_a_score_over_zero_files_says_so_and_names_why(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "b.py").write_text("long_value = 1234567890\n", encoding="utf-8")
+        md = run_cli("scan", str(root), "--max-file-bytes", "1", "--score", "--md", "--no-progress").stdout
+        self.assertIn("Files read: 0", md)
+        self.assertIn("No files were read", md)
+        self.assertIn("over the 1-byte limit", md)
+
+
+class EveryOutputSaysWhatWasHeldBack(unittest.TestCase):
+    """One info finding under the default floor: JSON, Markdown, SARIF, HTML, the prompt, review and passport all
+    account for it."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name) / "one"
+        self.root.mkdir()
+        (self.root / "note.py").write_text("# noqa\n", encoding="utf-8")
+
+    def test_scan_exports(self):
+        sarif = json.loads(run_cli("scan", str(self.root), "--sarif").stdout)["runs"][0]
+        notes = [n["message"]["text"] for n in sarif["invocations"][0]["toolExecutionNotifications"]]
+        self.assertTrue(any("under the severity floor" in n for n in notes))
+        self.assertEqual(sarif["properties"]["setAside"]["below_floor"]["info"], 1)
+        self.assertIn("Set aside: 1 finding(s) under the severity floor", run_cli("scan", str(self.root), "--html").stdout)
+        prompt = run_cli("scan", str(self.root), "--prompt").stdout
+        self.assertIn("not a clean bill", prompt)
+        self.assertIn("under the severity floor", prompt)
+
+    @unittest.skipUnless(shutil.which("git"), "git unavailable")
+    def test_review_and_passport(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        review = json.loads(run_cli("review", ".", "--json", cwd=str(self.root)).stdout)["review"]
+        self.assertEqual(review["set_aside"]["below_floor"], {"info": 1, "floor": "minor"})
+        passport = json.loads(run_cli("passport", ".", "--json", cwd=str(self.root)).stdout)
+        self.assertEqual(passport["scope"]["set_aside"]["below_floor"], {"info": 1, "floor": "minor"})
+        self.assertIn("## Set aside in this run", run_cli("passport", ".", "--md", cwd=str(self.root)).stdout)
+
