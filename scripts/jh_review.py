@@ -1293,13 +1293,29 @@ def sarif(review: Dict[str, Any]) -> str:
             },
         }
         results.append(result)
+    run: Dict[str, Any] = {
+        "tool": {"driver": {"name": "jankhunt42", "version": VERSION,
+                            "informationUri": "https://github.com/cloudbustinguk/jankhunt42",
+                            "rules": list(rules.values())}},
+        "results": results,
+    }
+    # what the review held back (findings under the floor, ignore comments, rules off, caps) and the changed files it
+    # skipped are notes, never results: a run with no alerts still says what it did not show
+    rv = review.get("review") or review           # the CLI passes the review record itself
+    aside = rv.get("set_aside") or {}
+    skipped = (rv.get("scope") or {}).get("skipped_files") or []
+    import jh_render
+    held = [text.replace("`", "") for _, text in jh_render.set_aside_lines({"set_aside": aside})]
+    if skipped:
+        held.append("%d changed file%s skipped (see the review's scope.skipped_files)"
+                    % (len(skipped), "" if len(skipped) == 1 else "s"))
+    if held:
+        run["invocations"] = [{"executionSuccessful": True, "toolExecutionNotifications":
+                               [{"level": "note", "message": {"text": h}} for h in held]}]
+    if aside or skipped:
+        run["properties"] = {k: v for k, v in (("setAside", aside), ("skippedFiles", skipped)) if v}
     return json.dumps({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{
-            "tool": {"driver": {"name": "jankhunt42", "version": VERSION,
-                                "informationUri": "https://github.com/anomalyco/opencode",
-                                "rules": list(rules.values())}},
-            "results": results,
-        }],
+        "runs": [run],
     }, indent=2, ensure_ascii=False)

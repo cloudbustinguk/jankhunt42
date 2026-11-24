@@ -1354,6 +1354,7 @@ class _FindingAcceptor:
 def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] = None) -> ScanResult:
     opts = options or ScanOptions()
     _compile_rules()
+    jh_checks.PARSE_FAILURES.clear()             # supported files a structured check could not parse, this run only
     result = ScanResult(files=len(sources), loc=sum(s.loc for s in sources))
     acceptor = _FindingAcceptor(opts, _collect_suppressions(sources))
     import jh_agent
@@ -1744,6 +1745,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
             if acceptor.capped_worst is None or sev_at_least(sev, acceptor.capped_worst):
                 acceptor.capped_worst = sev
     jh_checks.BOUND_DROPPED.clear()
+    if jh_checks.PARSE_FAILURES:                 # every command that scans (scan, review, passport) reports them
+        failed = sorted(jh_checks.PARSE_FAILURES)
+        acceptor.set_aside["files_not_parsed"] = {"count": len(failed), "paths": failed[:20]}
     result.capped_worst = acceptor.capped_worst
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule

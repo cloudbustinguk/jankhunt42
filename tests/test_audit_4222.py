@@ -560,5 +560,38 @@ class PreTagAuditBatch2(unittest.TestCase):
         self.assertEqual((scope["changed_files"], scope["changed_lines"]), (["a/b.txt", "a\\b.txt"], 3))
 
 
+class PreTagAuditBatch3(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_review_and_passport_report_a_settings_file_that_could_not_be_parsed(self):
+        root = project(self, {".claude/settings.json": '{"theme":\n'})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        want = {"count": 1, "paths": [".claude/settings.json"]}
+        self.assertEqual(scan(str(root), "--no-config", "--min-severity", "info")["set_aside"]["files_not_parsed"], want)
+        rv = json.loads(run_cli("review", ".", "--min-severity", "info", "--json", cwd=str(root)).stdout)
+        self.assertEqual(rv["review"]["set_aside"]["files_not_parsed"], want)
+        pp = json.loads(run_cli("passport", str(root), "--no-config", "--json").stdout)
+        self.assertEqual(pp["scope"]["set_aside"]["files_not_parsed"], want)
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_review_sarif_with_no_alerts_says_what_it_held_back(self):
+        root = project(self, {"a.py": "x = 1  # noqa\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        run = json.loads(run_cli("review", ".", "--rule", "JH306", "--min-severity", "major", "--sarif",
+                                 cwd=str(root)).stdout)["runs"][0]
+        self.assertEqual(run["results"], [])
+        self.assertEqual(run["properties"]["setAside"]["below_floor"], {"info": 1, "floor": "major"})
+        self.assertTrue(run["invocations"][0]["toolExecutionNotifications"])
+        self.assertEqual(run["tool"]["driver"]["informationUri"], "https://github.com/cloudbustinguk/jankhunt42")
+
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_a_working_tree_map_records_what_it_skipped(self):
+        root = project(self, {"lib/card.py": "n = 1\n", "build/extra.py": "n = 2\n", "yarn.lock": "{}\n"})
+        os.symlink("lib", str(root / "alias"))
+        cov = json.loads(run_cli("map", str(root), "--json").stdout)["coverage"]
+        self.assertEqual(cov["skipped"], {"folder: build output": 1, "folder: linked folder (not followed)": 1,
+                                          "lockfile": 1})
+        self.assertEqual(sorted(cov["skipped_paths"]), ["alias", "build", "yarn.lock"])
+
+
 if __name__ == "__main__":
     unittest.main()
