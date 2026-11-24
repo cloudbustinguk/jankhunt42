@@ -668,5 +668,49 @@ class SecondPassBatch1(unittest.TestCase):
         self.assertEqual((len(mine.findings), mine.set_aside.get("capped")), (3, 2))
 
 
+class SecondPassBatch2(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_a_backslash_before_a_byte_never_collides_with_its_escaped_text(self):
+        root = project(self, {})
+        for ending in (bytes([92, 255]), bytes([92]) + b"xFF"):
+            with open(os.path.join(os.fsencode(str(root)), b"card-" + ending + b".py"), "wb") as fh:
+                fh.write(b"# noqa\n")
+        doc = scan(str(root), "--no-config", "--rule", "JH306", "--min-severity", "info")
+        self.assertEqual(len({f["path"] for f in doc["findings"]}), 2)
+
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_an_excluded_byte_name_keeps_scan_and_map_output_valid(self):
+        root = project(self, {})
+        with open(os.path.join(os.fsencode(str(root)), b"card-\xff.py"), "wb") as fh:
+            fh.write(b"shade = 1\n")
+        for cmd in ("scan", "map"):
+            with self.subTest(cmd=cmd):
+                proc = __import__("subprocess").run([sys.executable, "-I", "-B", str(CLI), cmd, str(root), "--no-config",
+                                                     "--exclude", "*.py", "--json"], capture_output=True, timeout=300)
+                self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+                json.loads(proc.stdout.decode("utf-8"))
+
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_links_a_file_rule_names_are_read_and_excluded_links_stay_excluded(self):
+        rs = {"schema_version": "jankhunt.ruleset.v1", "name": "Pencil", "rules": [{
+            "id": "PENCIL1", "title": "Draft note", "message": "Review.", "fix": "x", "severity": "minor",
+            "category": "style", "files": ["a.md"], "patterns": ["pencil"], "target": "raw",
+            "examples": {"match": ["pencil"], "no_match": ["pen"]}}]}
+        root = project(self, {"pencil.json": json.dumps(rs), "same/z.md": "pencil\n"})
+        os.symlink("z.md", str(root / "same" / "a.md"))
+        doc = scan(str(root / "same"), "--no-config", "--ruleset", str(root / "pencil.json"), "--rule", "PENCIL1")
+        self.assertEqual([f["path"] for f in doc["findings"]], ["a.md"])
+        for target in ("0.txt", "z.txt"):
+            with self.subTest(target=target):
+                d = root / ("ex-" + target)
+                d.mkdir()
+                (d / target).write_text("pencil\n")
+                os.symlink(target, str(d / "a.md"))
+                got = scan(str(d), "--no-config", "--ruleset", str(root / "pencil.json"), "--rule", "PENCIL1",
+                           "--exclude", "a.md")
+                self.assertEqual(got["findings"], [])
+                self.assertEqual(got["set_aside"]["files_excluded"]["--exclude"]["paths"], ["a.md"])
+
+
 if __name__ == "__main__":
     unittest.main()
