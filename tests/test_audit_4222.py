@@ -1,11 +1,12 @@
 """Fixes for findings an audit of 4.22.0 left open for 4.22.2 (invented projects only)."""
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from _util import run_cli
+from _util import CLI, run_cli
 
 BARE = "try:\n    value = 1\nexcept:\n    raise\n"
 
@@ -195,6 +196,46 @@ class LinksLimitsAndVerifiers(unittest.TestCase):
         self.assertNotIn("secret", f["tags"])
         prompt = run_cli("scan", str(root), "--rule", "JH101", "--min-severity", "info", "--prompt").stdout
         self.assertNotIn("already been exposed", prompt)
+
+
+class FileNames(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_review_keeps_every_staged_name_and_lists_a_binary(self):
+        root = project(self, {"page.bin": "\x00hello\n", "pêche.py": "# noqa\n", "two words.py": "# noqa\n",
+                              'a"q.py': "# noqa\n"})
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(["git", "-C", str(root), "add", "-A"], check=True)
+        doc = json.loads(run_cli("review", ".", "--staged", "--min-severity", "info", "--json", cwd=str(root)).stdout)
+        scope = doc["review"]["scope"]
+        self.assertEqual(scope["changed_files"], ['a"q.py', "page.bin", "pêche.py", "two words.py"])
+        self.assertEqual(scope["skipped_files"], [{"path": "page.bin", "reason": "binary or unreadable"}])
+        self.assertEqual(sorted(f["path"] for f in doc["findings"]), ['a"q.py', "pêche.py", "two words.py"])
+
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_a_name_that_is_not_utf8_is_found_and_every_report_stays_utf8(self):
+        sp = __import__("subprocess")
+        for git in (False, True):
+            root = project(self, {})
+            with open(os.path.join(os.fsencode(str(root)), b"caf\xe9.py"), "wb") as fh:
+                fh.write(BARE.encode())
+            if git:
+                sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+            for cmd in ("scan", "map", "passport"):
+                with self.subTest(git=git, cmd=cmd):
+                    argv = [sys.executable, "-I", "-B", str(CLI), cmd, str(root), "--no-config", "--json"]
+                    proc = sp.run(argv, capture_output=True, timeout=300)
+                    self.assertEqual(proc.returncode in (0, 1), True, proc.stderr[-300:])
+                    doc = json.loads(proc.stdout.decode("utf-8"))      # strict UTF-8
+                    if cmd == "scan":
+                        self.assertEqual([f["path"] for f in doc["findings"] if f["rule"] == "JH217"], ["caf\\xE9.py"])
+                    if cmd == "map":
+                        self.assertEqual(doc["coverage"]["inspected_paths"], ["caf\\xE9.py"])
+
+    def test_the_map_claims_the_file_limit_only_when_a_file_was_turned_away(self):
+        root = project(self, {"a.py": "x = 1\n"})
+        doc = json.loads(run_cli("map", str(root), "--no-config", "--json", "--max-files", "1").stdout)
+        self.assertNotEqual(doc["coverage"].get("max_files_reached"), True)
 
 
 if __name__ == "__main__":
