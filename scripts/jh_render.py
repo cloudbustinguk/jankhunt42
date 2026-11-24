@@ -335,8 +335,8 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
         out.append(("NOT READ", "%d file(s) excluded by %s, including %s. To read them, %s."
                     % (info["count"], " and ".join(causes), _sample_paths(info), " and ".join(actions))))
     if aside.get("capped"):
-        out.append(("CAPPED", "%d finding(s) over the per-file or per-rule cap; raise `--max-per-file-rule` or "
-                    "`--max-per-rule`" % aside["capped"]))
+        out.append(("CAPPED", "%d finding(s) over the per-file or per-rule limit this run set; drop or raise "
+                    "`--max-per-file-rule` / `--max-per-rule`" % aside["capped"]))
     for reason, info in sorted((aside.get("folders_not_read") or {}).items()):
         paths = [safe_text(p) + "/" for p in info.get("paths") or []]
         out.append(("NOT READ", "%d %s folder(s): %s%s; scan a folder by its path to read it" % (

@@ -1222,6 +1222,7 @@ MUTANTS = [
     ('M862-parse-failures-scan-only', 'review and passport lose the files a check could not parse', 'jh_rules.py', '        acceptor.set_aside["files_not_parsed"] = {"count": len(failed), "paths": failed[:20]}', '        pass', 'test_audit_4222.py'),
     ('M863-review-sarif-silent', "a review's SARIF says nothing about what it held back", 'jh_review.py', '    if aside or skipped:\n        run["properties"]', '    if False:\n        run["properties"]', 'test_audit_4222.py'),
     ('M864-map-skips-unrecorded', 'the working-tree map forgets the folders discovery set aside', 'jh_map.py', '            col.skip("folder: " + reason, rel)', '            pass', 'test_audit_4222.py'),
+    ('M865-default-cap', 'scan caps findings by default', 'jh_rules.py', 'NO_CAP = 10 ** 9                                # per-file and per-rule limits when none is given', 'NO_CAP = 5', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

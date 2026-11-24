@@ -246,8 +246,8 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         categories=set(args.category) if args.category else None,
         rule_ids=set(args.rule) if args.rule else None,
         ignore_rule_ids=ignored_rules(args) or None,
-        max_per_file_rule=args.max_per_file_rule,
-        max_per_rule=args.max_per_rule,
+        max_per_file_rule=args.max_per_file_rule or jh_rules.NO_CAP,   # no cap unless asked for
+        max_per_rule=args.max_per_rule or jh_rules.NO_CAP,
         honor_suppressions=getattr(args, "honor_suppressions", True) and not getattr(args, "no_inline_ignore", False),
         rate=rate,
     )
@@ -797,7 +797,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         return 0
     scan_args = argparse.Namespace(
         paths=[root], exclude=args.exclude, max_files=args.max_files, max_file_bytes=args.max_file_bytes,
-        min_severity="minor", category=None, rule=None, max_per_file_rule=5, max_per_rule=200,
+        min_severity="minor", category=None, rule=None, max_per_file_rule=None, max_per_rule=None,
         config=args.config, no_config=args.no_config,
         ignore_rule_ids=ignored_rules(args), severity_map=getattr(args, "severity_map", None),
         rulesets=getattr(args, "rulesets", None))
@@ -1134,8 +1134,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
         sp.add_argument("--max-files", type=_positive_int, default=20000)
         sp.add_argument("--max-file-bytes", type=int, default=1500000)
-        sp.add_argument("--max-per-file-rule", type=int, default=5)
-        sp.add_argument("--max-per-rule", type=int, default=200)
+        sp.add_argument("--max-per-file-rule", type=_positive_int, default=None,
+                        help="opt-in limit on findings per rule in one file (default: none; held findings are counted)")
+        sp.add_argument("--max-per-rule", type=_positive_int, default=None,
+                        help="opt-in limit on findings per rule (default: none; held findings are counted)")
         sp.add_argument("--config", metavar="PATH",
                         help="explicit .jankhunt42.toml/.jankhunt42.json (default: discovered upward from root)")
         sp.add_argument("--no-config", action="store_true", help="ignore any .jankhunt42.toml/.jankhunt42.json")
@@ -1199,8 +1201,10 @@ def build_parser() -> argparse.ArgumentParser:
     filters.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
     limits.add_argument("--max-files", type=_positive_int, default=20000)
     limits.add_argument("--max-file-bytes", type=int, default=1500000)
-    limits.add_argument("--max-per-file-rule", type=int, default=5)
-    limits.add_argument("--max-per-rule", type=int, default=200)
+    limits.add_argument("--max-per-file-rule", type=_positive_int, default=None,
+                        help="opt-in limit on findings per rule in one file (default: none; held findings are counted)")
+    limits.add_argument("--max-per-rule", type=_positive_int, default=None,
+                        help="opt-in limit on findings per rule (default: none; held findings are counted)")
     # Deliberately no --config here: `review` has its own
     # evidence-gated receipt pipeline (jh_review.py) that these do not
     # yet reach. Accepting the flags without wiring them would silently
