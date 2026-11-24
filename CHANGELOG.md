@@ -24,6 +24,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
+- A name holding a raw byte has every backslash doubled when shown, so no two files can share a displayed name; an excluded file with such a name no longer breaks the JSON or the map. A link is read under its own name when a rule selects files by that name, and a link the operator excluded stays excluded whatever order the files are listed in.
 - A PHP one-line comment (`#` or `//`) ends at the closing `?>` tag, so code after it on the same line is read. A finding in a git-ignored file is capped at minor as part of its rating, before the limits and the gate, so a limit can no longer make `--fail-on` act on a rating no finding carries. Findings past a check's safety bound are counted only when the run selected that rule, at the rating the run gives it.
 - A connection to an international host name in an agent sandbox's log (`café.example.com`) is compared in its ASCII (punycode) form, so it is listed by name and reaches the undeclared-destination check instead of being counted as a connection with no destination.
 - A file that could not be read and has a name byte that is not UTF-8 no longer makes the JSON invalid. In a scan's SARIF, two debug calls (or two weak-hash or inner-HTML findings) on one line are two alerts; every other rule's alert identity is unchanged.

@@ -856,6 +856,13 @@ def discover_files(
             # it (see the pass after the walk), so the order the listing yields them in never decides
             prev = found[seen[key]]
             if p.is_symlink():
+                link_rel = p.relative_to(base).as_posix()
+                cli, config = matches(link_rel, excludes), matches(link_rel, config_excludes)
+                if not explicit and (cli or config):          # an excluded spelling stays excluded, whatever its order
+                    if not_read is not None:
+                        origin = "both" if cli and config else "--exclude" if cli else "config"
+                        count_path(not_read.setdefault("files_excluded", {}), origin, shown(p))
+                    return
                 aliases.setdefault(key, []).append((p, base))
             elif prev.is_symlink():
                 found[seen[key]] = p
@@ -871,7 +878,7 @@ def discover_files(
                 if not_read is not None:
                     origin = "both" if cli and config else "--exclude" if cli else "config"
                     if len(roots) == 1:
-                        count_path(not_read.setdefault("files_excluded", {}), origin, rel)
+                        count_path(not_read.setdefault("files_excluded", {}), origin, shown(p))
                     else:
                         pending_excludes[p] = origin if pending_excludes.get(p, origin) == origin else "both"
                 return
@@ -1009,6 +1016,7 @@ def _path_kinds(rel: str) -> Set[str]:
 
 
 _PLAIN_LANGS = {"text", ""}
+RULE_FILE_GLOBS: Set[str] = set()                # every loaded rule's `files` patterns (set by jh_rules)
 
 
 def _adds_role(link_rel: str, real_rel: str) -> bool:
@@ -1016,6 +1024,10 @@ def _adds_role(link_rel: str, real_rel: str) -> bool:
     MCP clients look for it) or a language whose checks the real name would not run."""
     if _path_kinds(link_rel) - _path_kinds(real_rel):
         return True
+    def named(rel: str, pat: str) -> bool:
+        return fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat)
+    if any(named(link_rel, g) and not named(real_rel, g) for g in RULE_FILE_GLOBS):
+        return True                              # a rule that selects files by name selects this name, not the real one
     link_lang = detect_lang(link_rel)
     return link_lang not in _PLAIN_LANGS and link_lang != detect_lang(real_rel)
 
@@ -1026,12 +1038,14 @@ _AMBIGUOUS_BACKSLASH = re.compile(r"\\(?:x[0-9A-Fa-f]{2}|\\)")
 def display_path(rel: str) -> str:
     """A path as reports show it. A file name byte that is not valid UTF-8 (kept by the file system's decoding as a
     lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered. A
-    name whose own text holds a backslash before xNN or another backslash has its backslashes doubled, so it can never
-    look like another file's escaped byte; any other backslash is shown as it is."""
+    name that holds such a byte, or whose own text holds a backslash before xNN or another backslash, has its
+    backslashes doubled, so it can never look like another file's name; any other backslash is shown as it is."""
     has_bytes = any("\udc80" <= ch <= "\udcff" for ch in rel)
     if not has_bytes and "\\" not in rel:
         return rel
-    if _AMBIGUOUS_BACKSLASH.search(rel):
+    # an escaped form doubles every backslash and writes each raw byte as \xNN, so it always holds \\ or \xNN; a
+    # name shown as it is never does, which keeps every two names apart
+    if has_bytes or _AMBIGUOUS_BACKSLASH.search(rel):
         rel = rel.replace("\\", "\\\\")
     if not has_bytes:
         return rel

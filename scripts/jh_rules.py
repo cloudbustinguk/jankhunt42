@@ -12,6 +12,7 @@ import html
 import urllib.parse
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+import jh_core
 from jh_core import (
     _ANY_LINE_COMMENTS, _BLOCK_COMMENTS, _WS_LINE_COMMENTS,
     Finding,
@@ -2712,11 +2713,15 @@ def _firebase_web_config(sf: SourceFile, idx: int) -> bool:
     return bool(re.search(r"\b(?:authDomain|projectId|storageBucket|messagingSenderId|appId)\b|firebaseapp\.com", window))
 
 
+jh_core.RULE_FILE_GLOBS.update(g for r in RULES for g in r.files)   # the shipped rules' file patterns
+
+
 def register(rules: Sequence[Rule]) -> None:
     """Add site rules (jh_ruleset) to this run's engine, compiled like the shipped ones."""
     _compile_rules()
     for rule in rules:
         RULES.append(rule)
+        jh_core.RULE_FILE_GLOBS.update(rule.files)   # discovery reads a link under a name a rule selects
         _COMPILED[rule.id] = [re.compile(p) for p in rule.patterns]
         if rule.ignore:
             _IGNORES[rule.id] = re.compile(rule.ignore)
