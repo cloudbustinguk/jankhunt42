@@ -2617,32 +2617,6 @@ def finalize_report(report: Dict[str, Any]) -> Dict[str, Any]:
     return report
 
 
-def _declarations_from_items(items: Sequence[Item], warnings: List[str]) -> Optional[Dict[str, Any]]:
-    """In --base mode the `passport` declarations come from the same git
-    revision as the code, never from the (possibly dirty) working tree."""
-    by_rel = {i.rel: i for i in items}
-    if ".jankhunt42.json" in by_rel:
-        try:
-            data = json.loads(by_rel[".jankhunt42.json"].text)
-            sect = data.get("passport") if isinstance(data, dict) else None
-            return sect if isinstance(sect, dict) else None
-        except (ValueError, RecursionError):
-            warnings.append(".jankhunt42.json at this revision is not valid JSON; declarations ignored")
-            return None
-    if ".jankhunt42.toml" in by_rel:
-        try:
-            import tomllib  # type: ignore[import-not-found]
-        except ImportError:
-            warnings.append(".jankhunt42.toml needs Python 3.11+ (tomllib); declarations at this revision ignored")
-            return None
-        try:
-            sect = tomllib.loads(by_rel[".jankhunt42.toml"].text).get("passport")
-            return sect if isinstance(sect, dict) else None
-        except (ValueError, AttributeError):
-            warnings.append(".jankhunt42.toml at this revision could not be parsed; declarations ignored")
-    return None
-
-
 def run_map(root: str, paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
             declarations: Optional[Dict[str, Any]], inventory_path: Optional[str], max_depth: int,
             rev: Optional[str] = None, with_items: bool = False) -> Any:
@@ -2669,7 +2643,7 @@ def run_map(root: str, paths: Sequence[str], excludes: Sequence[str], max_files:
         if prefix:
             for it in col.items:
                 it.rel = it.rel[len(prefix):] if it.rel.startswith(prefix) else it.rel
-        declarations = _declarations_from_items(col.items, warnings)
+        # declarations come from the caller, resolved from this revision's own config (jh_capabilities)
         snapshot = "git:%s" % (git_revision(top, rev) or rev)
         source_revision = git_revision(top, rev)
         base_dir = root
