@@ -1440,6 +1440,11 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                 except Exception as exc:  # a broken check must not kill the scan
                     print(f"jankhunt42: check {rule.check} failed on {sf.rel}: {exc}", file=sys.stderr)
                     continue
+                found = list(found)
+                if len(found) > jh_checks.DEBUG_BOUND:  # one safety bound for every check: the rest are counted
+                    jh_checks.BOUND_DROPPED[(rule.id, sf.rel)] = (jh_checks.BOUND_DROPPED.get((rule.id, sf.rel), 0)
+                                                                  + len(found) - jh_checks.DEBUG_BOUND)
+                    found = found[:jh_checks.DEBUG_BOUND]
                 for f in found:
                     _example_context(f)
                     if acceptor.accept(f):

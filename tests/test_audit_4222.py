@@ -712,5 +712,31 @@ class SecondPassBatch2(unittest.TestCase):
                 self.assertEqual(got["set_aside"]["files_excluded"]["--exclude"]["paths"], ["a.md"])
 
 
+class SecondPassBatch3(unittest.TestCase):
+    def test_no_check_stops_at_a_fixed_count(self):
+        root = project(self, {"Dockerfile": "".join("FROM paint:%s AS %s\n" % (s, s) for s in
+                                                     ("one", "two", "three", "four", "five", "six"))})
+        doc = scan(str(root), "--no-config", "--min-severity", "info", "--rule", "JH404")
+        self.assertEqual([f["line"] for f in doc["findings"]], [1, 2, 3, 4, 5, 6])
+        limited = scan(str(root), "--no-config", "--min-severity", "info", "--rule", "JH404", "--max-per-file-rule", "5")
+        self.assertEqual((len(limited["findings"]), limited["set_aside"]["capped"]), (5, 1))
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_the_review_brief_and_terminal_say_what_was_set_aside(self):
+        root = project(self, {".claude/settings.json": '{"theme":\n'})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        for flag in ("--brief", "--no-color"):
+            with self.subTest(flag=flag):
+                out = run_cli("review", ".", flag, cwd=str(root)).stdout
+                self.assertIn(".claude/settings.json", out)
+
+    def test_the_review_carries_the_engines_held_back_count(self):
+        sys.path.insert(0, str(Path(CLI).parent))
+        import jh_review, jh_rules
+        res = jh_rules.ScanResult()
+        res.set_aside = {"capped": 2}
+        self.assertEqual(jh_review._review_aside(res, 1, "minor")["capped"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
