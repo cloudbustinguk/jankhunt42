@@ -119,8 +119,11 @@ def _compile(pattern: str, where: str) -> "re.Pattern[str]":
         raise RulesetError("%s: pattern %r does not compile: %s" % (where, pattern, exc))
 
 
+_ABSENT = object()                       # a field left out, as opposed to one written as null, false or 0
+
+
 def _strings(value: Any, where: str, limit: int, most: int) -> List[str]:
-    if value is None:
+    if value is _ABSENT:
         return []
     if not isinstance(value, list) or len(value) > most or not all(isinstance(v, str) and 0 < len(v) <= limit
                                                                   for v in value):
@@ -157,7 +160,9 @@ def load(path: str, root: str, known: Set[str]) -> Ruleset:
         raise RulesetError("%s: unknown keys %s" % (path, ", ".join(extra)))
     rs = Ruleset(path=path, name=_text(doc.get("name"), "name", 80), sha256=hashlib.sha256(raw).hexdigest(),
                  trusted=not jh_ceiling.inside_repository(path, root))
-    rules = doc.get("rules") or []
+    # a field that is present is checked as written (null, false or "" is a mistake, not "nothing"); only a field
+    # left out takes its default
+    rules = doc.get("rules", [])
     if not isinstance(rules, list) or len(rules) > MAX_RULES:
         raise RulesetError("rules: expected a list of at most %d rules" % MAX_RULES)
     ids = set(known)
@@ -167,11 +172,11 @@ def load(path: str, root: str, known: Set[str]) -> Ruleset:
             raise RulesetError("rules[%d]: id %s is already defined" % (i, rule.id))
         ids.add(rule.id)
         rs.rules.append(rule)
-    for rid in _strings(doc.get("ignore"), "ignore", 32, MAX_RULES):
+    for rid in _strings(doc.get("ignore", _ABSENT), "ignore", 32, MAX_RULES):
         if rid.upper() not in ids:
             raise RulesetError("ignore: no such rule: %s" % rid)
         rs.ignore.add(rid.upper())
-    severity = doc.get("severity") or {}
+    severity = doc.get("severity", {})
     if not isinstance(severity, dict):
         raise RulesetError("severity: expected an object of rule id to severity")
     for rid, sev in severity.items():
@@ -202,7 +207,7 @@ def _rule(spec: Any, where: str) -> Rule:
     if confidence not in CONFIDENCE or target not in TARGETS:
         raise RulesetError("%s: confidence must be one of %s, and target one of %s"
                            % (where, ", ".join(CONFIDENCE), ", ".join(TARGETS)))
-    patterns = _strings(spec.get("patterns"), where + ".patterns", MAX_PATTERN, MAX_PATTERNS)
+    patterns = _strings(spec.get("patterns", _ABSENT), where + ".patterns", MAX_PATTERN, MAX_PATTERNS)
     if not patterns:
         raise RulesetError("%s.patterns: at least one is required" % where)
     compiled = [_compile(p, where) for p in patterns]
@@ -211,13 +216,13 @@ def _rule(spec: Any, where: str) -> Rule:
     examples = spec.get("examples")
     if not isinstance(examples, dict) or set(examples) - {"match", "no_match"}:
         raise RulesetError("%s.examples: expected {\"match\": [...], \"no_match\": [...]}" % where)
-    match = _strings(examples.get("match"), where + ".examples.match", 1000, 50)
+    match = _strings(examples.get("match", _ABSENT), where + ".examples.match", 1000, 50)
     if not match:
         raise RulesetError("%s.examples.match: at least one line the rule must report is required" % where)
 
     def hits(line: str) -> bool:
         return any(p.search(line) for p in compiled) and not (exclude_re and exclude_re.search(line))
-    no_match = _strings(examples.get("no_match"), where + ".examples.no_match", 1000, 50)
+    no_match = _strings(examples.get("no_match", _ABSENT), where + ".examples.no_match", 1000, 50)
     try:
         with bounded(EXAMPLE_SECONDS):
             for line in match:
@@ -233,8 +238,8 @@ def _rule(spec: Any, where: str) -> Rule:
                 category=_category(spec.get("category", "site"), where),
                 message=_text(spec.get("message"), where + ".message", 600),
                 fix=_text(spec.get("fix"), where + ".fix", 600, required=False), confidence=confidence,
-                langs=tuple(_strings(spec.get("langs"), where + ".langs", 32, 30)),
-                files=tuple(_strings(spec.get("files"), where + ".files", 200, 50)),
+                langs=tuple(_strings(spec.get("langs", _ABSENT), where + ".langs", 32, 30)),
+                files=tuple(_strings(spec.get("files", _ABSENT), where + ".files", 200, 50)),
                 patterns=tuple(patterns), target=target, ignore=exclude, tags=("site",))
 
 

@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- A ruleset field that is present is checked as written: `"rules": false`, `"ignore": null` or `"severity": ""` is refused with the field named (exit 2), while a field left out still takes its default.
 - Folders and files set aside are recorded relative to the report's root, so two projects scanned together no longer collapse into one path. Version-control folders other than the repository's own `.git` (`.hg`, `.svn`, a nested `.git`) are listed, as 4.22.0 promised. An installed plugin's bundle is counted as a file, so its folder is no longer called unread when its settings were read. Findings are ordered once more after every severity change, so the first detailed finding is the most serious.
 - The file-limit notice appears only when the limit turned an eligible file away (a folder holding exactly as many files as the limit no longer claims later files were skipped); files named on the command line count toward the limit; `--max-files` must be at least 1.
 - A run narrowed with `--rule` or `--category` says so (JSON `set_aside.selection`, a scope line in the report), and what it holds back is counted only among findings it could have shown, so `--min-severity info` really reveals the count it gives. An ignore comment can name a site rule, hyphens included. Review lists the rules `--ignore-ci` or `--ignore-rule` switched off.

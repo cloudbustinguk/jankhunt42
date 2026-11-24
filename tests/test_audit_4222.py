@@ -150,5 +150,21 @@ class SkippedPathsAreAccurate(unittest.TestCase):
                 self.assertEqual(built["paths"], ["m1/build", "m2/build"])
 
 
+class RulesetFieldsAsWritten(unittest.TestCase):
+    def test_a_present_field_of_the_wrong_type_is_refused_and_omitted_or_empty_ones_load(self):
+        root = project(self, {"a.py": "x = 1\n"})
+        ops = project(self, {})
+        base = {"schema_version": "jankhunt.ruleset.v1", "name": "x"}
+        for extra, ok in (({"rules": False}, False), ({"ignore": None}, False), ({"severity": ""}, False),
+                          ({"rules": [], "ignore": [], "severity": {}}, True), ({}, True)):
+            with self.subTest(extra=extra):
+                (ops / "rs.json").write_text(json.dumps(dict(base, **extra)), encoding="utf-8")
+                proc = run_cli("scan", str(root), "--ruleset", str(ops / "rs.json"), "--json")
+                self.assertEqual(proc.returncode == 0, ok, proc.stderr)
+                if not ok:
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn(next(iter(extra)), proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
