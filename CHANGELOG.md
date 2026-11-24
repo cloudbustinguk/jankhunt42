@@ -12,6 +12,7 @@ semantic versioning.
 
 ### Fixed
 
+- With `--baseline`, a finding that is gone is resolved only when its file was reviewed this time; in a file the review skipped or did not reach it is counted as not reassessed. Before, every missing finding was called resolved. The passport's search for supply-chain evidence uses the scan's folder rule, so a bill of materials in a hidden project folder counts and one inside a virtual environment named `env` does not.
 - A file that could not be read (permission or another read error), a folder the scan could not enter, and binary or empty files are counted with the reason and sample paths; before, a project whose only source was unreadable looked empty and scored quiet. Text in UTF-16 or UTF-32 with a byte-order mark is read instead of being taken for binary.
 - `review one` from the parent folder reviews the repository `one`, as `review .` inside it does; before, the relative path was looked up again inside the repository, no file was reviewed and the gate passed. With `--baseline`, occurrences of the same finding are numbered across the whole file in line order, so a second copy added on a new line is new while the original sits unchanged.
 - In a review, the per-file and per-rule caps apply after findings are sorted into new, contextual and unchanged. A finding on a changed line is never capped, so an unchanged finding can no longer take the only slot and let a new one pass the gate. The review summary counts what the caps held back.

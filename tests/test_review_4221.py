@@ -97,5 +97,26 @@ class RelativePathsAndBaselines(unittest.TestCase):
         self.assertEqual(doc["review"]["gate"]["result"], "fail")
 
 
+@unittest.skipUnless(shutil.which("git"), "git unavailable")
+class BaselineResolution(unittest.TestCase):
+    def test_a_finding_in_a_file_not_reviewed_is_not_called_resolved(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        repo = Path(temp.name) / "one"
+        repo.mkdir()
+        (repo / "note.py").write_text("# noqa\n", encoding="utf-8")
+        git(repo, "init", "-q")
+        first = Path(temp.name) / "first.json"
+        first.write_text(run_cli("review", ".", "--min-severity", "info", "--json", cwd=str(repo)).stdout, encoding="utf-8")
+        doc = json.loads(run_cli("review", ".", "--min-severity", "info", "--baseline", str(first), "--max-file-bytes", "1",
+                                 "--json", cwd=str(repo)).stdout)
+        base = doc["review"]["baseline"]
+        self.assertEqual((base["resolved"], base["unassessed"]), (0, 1))
+        (repo / "note.py").write_text("value = 1\n", encoding="utf-8")        # now the finding really is gone
+        doc = json.loads(run_cli("review", ".", "--min-severity", "info", "--baseline", str(first), "--json",
+                                 cwd=str(repo)).stdout)
+        self.assertEqual((doc["review"]["baseline"]["resolved"], doc["review"]["baseline"]["unassessed"]), (1, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

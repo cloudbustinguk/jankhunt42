@@ -611,7 +611,8 @@ def load_baseline(path: str) -> Dict[str, Any]:
 
 
 def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any],
-                     current_score: int, context: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
+                     current_score: int, context: Sequence[Dict[str, Any]] = (),
+                     reviewed_paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """`context`: the other current findings in the same files (unchanged and contextual lines). Occurrences of the
     same finding are numbered across all of them in line order, so a second copy added on a new line is the second
     occurrence and stays new while the original sits unchanged."""
@@ -633,7 +634,15 @@ def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any]
     base_index = baseline["fingerprints"]
     new = [current_index[fp] for fp in current_fps if fp not in base_index]
     persisting = [current_index[fp] for fp in current_fps if fp in base_index]
-    resolved = [f for fp, f in base_index.items() if fp not in all_fps]
+    gone = [f for fp, f in base_index.items() if fp not in all_fps]
+    # a baseline finding is resolved only when its file was reviewed this time; in a file the review skipped or did
+    # not reach, its state is unknown, and saying "resolved" would be a claim nobody checked
+    if reviewed_paths is None:
+        resolved, unassessed = gone, []
+    else:
+        seen = set(reviewed_paths)
+        resolved = [f for f in gone if _finding_from_any(f)["path"] in seen]
+        unassessed = [f for f in gone if _finding_from_any(f)["path"] not in seen]
     base_score = baseline.get("score")
     delta = (current_score - base_score) if isinstance(base_score, int) else None
     return {
@@ -644,10 +653,12 @@ def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any]
         "new": len(new),
         "persisting": len(persisting),
         "resolved": len(resolved),
+        "unassessed": len(unassessed),
         "new_findings": new,
         "persisting_fingerprints": [fp for fp in current_fps if fp in base_index],
         "current_fingerprints": current_fps,
         "resolved_findings": resolved,
+        "unassessed_findings": unassessed,
     }
 
 
@@ -738,7 +749,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         baseline_data = load_baseline(args.baseline)
         context = [{"rule": f.rule, "title": f.title, "path": f.path, "line": f.line, "evidence": f.evidence}
                    for f in unchanged + contextual]
-        baseline = compare_baseline(receipts, baseline_data, jank.score, context)
+        baseline = compare_baseline(receipts, baseline_data, jank.score, context, scope_meta["reviewed_files"])
         # Mark current findings that already existed in the baseline.
         persisting_fps = set(baseline.get("persisting_fingerprints", []))
         current_fps = baseline["current_fingerprints"]
@@ -909,10 +920,12 @@ def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
     if baseline:
         delta = baseline.get("delta")
         delta_text = ("%+d" % delta) if isinstance(delta, int) else "n/a"
-        out.append("**Baseline:** %s → %s (**%s**) · new %d · persisting %d · resolved %d"
+        out.append("**Baseline:** %s → %s (**%s**) · new %d · persisting %d · resolved %d%s"
                    % (baseline.get("baseline_score", "?"), baseline.get("current_score", "?"),
                       delta_text, baseline.get("new", 0), baseline.get("persisting", 0),
-                      baseline.get("resolved", 0)))
+                      baseline.get("resolved", 0),
+                      " · not reassessed %d (file not reviewed this time)" % baseline["unassessed"]
+                      if baseline.get("unassessed") else ""))
     out.append("")
     out.append("| Metric | Value |")
     out.append("|---|---|")
@@ -1072,12 +1085,14 @@ def tty(review: Dict[str, Any], max_findings: int = 300, no_color: bool = False)
     baseline = review.get("baseline")
     if baseline:
         delta = baseline.get("delta")
-        out.append("  " + color.grey("baseline %s → %s  delta %s  new %d  persisting %d  resolved %d"
+        out.append("  " + color.grey("baseline %s → %s  delta %s  new %d  persisting %d  resolved %d%s"
                                      % (baseline.get("baseline_score", "?"),
                                         baseline.get("current_score", "?"),
                                         ("%+d" % delta) if isinstance(delta, int) else "n/a",
                                         baseline.get("new", 0), baseline.get("persisting", 0),
-                                        baseline.get("resolved", 0))))
+                                        baseline.get("resolved", 0),
+                                        "  not reassessed %d" % baseline["unassessed"]
+                                        if baseline.get("unassessed") else "")))
     out.append("")
     counts = review["summary"]["counts"]
     bits = []
