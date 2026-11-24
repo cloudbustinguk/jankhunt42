@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (  # noqa: F401
     display_path,
+    tree_skip_reason,
     run_git,
     Finding,
     safe_text,
@@ -459,7 +460,9 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
         if _excluded(rel, getattr(args, "exclude", ()) or ()):
             skipped.append({"path": rel, "reason": "excluded by pattern"})
             continue
-        folder_why = next((r for r in (skipped_dir_reason(seg) for seg in rel.split("/")[:-1]) if r), None)
+        # the shared folder rule: an env folder holding pyvenv.cfg (on disk or among the changes) is installed code,
+        # and so is an installed plugin's bundle
+        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or os.path.isfile(os.path.join(root, q)))
         if GENERATED_RE.search(rel) or folder_why:
             skipped.append({"path": rel, "reason": "generated/vendor" if not folder_why else folder_why})
             continue

@@ -1201,6 +1201,9 @@ MUTANTS = [
     ('M841-final-newline-line', 'a final newline counts as an extra added line', 'jh_review.py', '            real = len(sf.raw) - (1 if sf.raw and sf.raw[-1] == "" else 0)   # a final newline ends a line, adds none', '            real = len(sf.raw)', 'test_audit_4222.py'),
     ('M842-sarif-identity-per-review', "a review's SARIF alert identity changes with unrelated files", 'jh_review.py', '            "partialFingerprints": {"jankhunt42": stable[n]},', '            "partialFingerprints": {"jankhunt42": r["receipt_hash"]},', 'test_audit_4222.py'),
     ('M843-scorecard-drops-policy', 'the scorecard omits the rulesets behind a changed rating', 'jankhunt42', '        if meta.get("rulesets"):                       # the policy behind a changed rating travels with the score', '        if False:', 'test_audit_4222.py'),
+    ('M844-revision-own-folder-rule', 'a revision listing ignores the venv marker and installed plugins', 'jh_map.py', '        why = tree_skip_reason(rel, in_tree.__contains__)', '        why = next(("excluded" for s in segs[:-1] if s in DEFAULT_SKIP_DIRS), None)', 'test_audit_4222.py'),
+    ('M845-review-plugin-read', 'review reads an installed plugin bundle', 'jh_core.py', '    return "installed plugin" if installed_plugin_dir(rel) else None', '    return None', 'test_audit_4222.py'),
+    ('M846-graph-backslash-rewritten', 'map evidence turns a backslash in a name into a folder', 'jh_graph.py', '        path = safe_text(path).replace(os.sep, "/") if os.sep != "/" else safe_text(path)', '        path = safe_text(path).replace("\\\\", "/")', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

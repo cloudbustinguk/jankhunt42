@@ -37,7 +37,7 @@ import jh_n8n
 import jh_n8n_code
 import jh_rule2
 import jh_yaml
-from jh_core import (TOOL, VERSION, run_git, display_path, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
+from jh_core import (TOOL, VERSION, run_git, display_path, tree_skip_reason, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
 
 
@@ -150,9 +150,9 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
     col = Collected()
     wanted: List[Tuple[str, str]] = []
     pats = list(excludes) + ["*.min.js", "*.min.css", "*.map", "*.snap"] + ([] if include_locks else ["*.lock"])
-    for entry in listing.decode("utf-8", "replace").split("\0"):
-        if not entry:
-            continue
+    entries = [e for e in os.fsdecode(listing).split("\0") if e]
+    in_tree = {e.partition("\t")[2] for e in entries}      # what the revision holds, for the shared folder rule
+    for entry in entries:
         meta, _, rel = entry.partition("\t")
         parts = meta.split()
         if len(parts) < 4:
@@ -164,8 +164,10 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
             continue
         segs = rel.split("/")
         scoped_rel = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel
-        if any(s in DEFAULT_SKIP_DIRS for s in segs[:-1]):
-            col.skip("excluded", rel)
+        # the same folders as a walk sets aside: an env folder only when it holds pyvenv.cfg, installed plugin code
+        why = tree_skip_reason(rel, in_tree.__contains__)
+        if why:
+            col.skip(why, display_path(rel))
             continue
         if any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(scoped_rel, p) or fnmatch.fnmatch(segs[-1], p) for p in pats) \
                 or (_is_skipped_file(Path(rel)) and not (include_locks and segs[-1].lower() in

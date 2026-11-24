@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- Revision comparisons (`map --base`, `passport --base`, `review`) apply the same folder rule as a scan: a virtual environment (an `env` folder holding `pyvenv.cfg`) and an installed plugin's bundle are set aside, so switching to a revision comparison no longer brings installed code back into the assessment. Map evidence keeps a backslash that is part of a file name instead of pointing at a different file.
 - In a review, a new file's final newline no longer counts as an extra changed line (which lowered the score); a review's SARIF alert keeps its identity when unrelated files change, using the same finding identity baselines compare; the scorecard names the rulesets behind a changed rating, as the full scan does.
 - A review's rule-pack digest covers every field that changes what a rule reports (files, languages, target, exclusions), and its scan id includes the rulesets, rules switched off and changed ratings, so two reviews under different policies no longer share an identity. The review names each ruleset with its digest, and a receipt's reproduction command carries the `--ruleset` arguments it needs.
 - A site rule is matched against every real line as written, spaces-only lines included, the same way its examples are checked when the policy loads; before, a rule could pass its example and miss the same line in a file.
