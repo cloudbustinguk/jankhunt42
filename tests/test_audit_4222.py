@@ -449,5 +449,30 @@ class CapsKeepTheMostSerious(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
 
 
+class LinkSpellings(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_a_link_that_gives_a_language_is_read_and_order_never_decides(self):
+        root = project(self, {"b12/z.txt": "try:\n    count = 1\nexcept:\n    raise\n", "a17/b.py": BARE,
+                              "rs.json": json.dumps({"schema_version": "jankhunt.ruleset.v1", "name": "c", "rules": [{
+                                  "id": "COLOUR01", "title": "Draft colour", "message": "Check.", "fix": "x",
+                                  "severity": "minor", "category": "style", "files": ["*.md"], "patterns": ["pencil"],
+                                  "target": "raw", "examples": {"match": ["pencil"], "no_match": ["pen"]}}]})})
+        os.symlink("z.txt", str(root / "b12" / "a.py"))
+        b12 = scan(str(root / "b12"), "--rule", "JH217")
+        self.assertEqual([(f["path"], f["line"]) for f in b12["findings"]], [("a.py", 3)])
+        os.symlink("b.py", str(root / "a17" / "a.txt"))
+        a17 = scan(str(root / "a17"), "--rule", "JH217")
+        self.assertEqual(([f["path"] for f in a17["findings"]], a17["summary"]["files"]), (["b.py"], 1))
+        for target in ("0.txt", "z.txt"):
+            with self.subTest(target=target):
+                d = root / ("b22-" + target)
+                d.mkdir()
+                (d / target).write_text("pencil\n")
+                os.symlink(target, str(d / "a.md"))
+                os.symlink(target, str(d / "b.md"))
+                doc = scan(str(d), "--ruleset", str(root / "rs.json"), "--rule", "COLOUR01")
+                self.assertEqual([f["path"] for f in doc["findings"]], ["a.md", "b.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

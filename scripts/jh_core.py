@@ -812,6 +812,7 @@ def discover_files(
     found: List[Path] = []
     seen: Dict[str, int] = {}             # resolved path -> its index in found
     overflow = [False]                    # an eligible file was left out by the file limit (explicit files count too)
+    aliases: Dict[str, List[Tuple[Path, Path]]] = {}   # resolved path -> every link spelling of it (and its base)
     pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
     def shown(path: Any) -> str:
@@ -843,19 +844,13 @@ def discover_files(
             # and the checks that run, whichever spelling the listing yields first. A link whose own location gives
             # the file a role its real path lacks (an agent command, settings, MCP config, a CI workflow) is read
             # there too: that is where the tool that loads it finds it.
+            # every link spelling is remembered; once discovery ends, each is compared with the file that represents
+            # it (see the pass after the walk), so the order the listing yields them in never decides
             prev = found[seen[key]]
-            if prev.is_symlink() and not p.is_symlink():
-                found[seen[key]], link, real = p, prev, p
-            elif p.is_symlink() and not prev.is_symlink():
-                link, real = p, prev
-            else:
-                return
-            if _adds_role(link.relative_to(base).as_posix(), real.relative_to(base).as_posix()) \
-                    and link not in found:
-                if len(found) >= max_files:
-                    overflow[0] = True
-                    return
-                found.append(link)
+            if p.is_symlink():
+                aliases.setdefault(key, []).append((p, base))
+            elif prev.is_symlink():
+                found[seen[key]] = p
             return
         inside = p.relative_to(base)
         if not p.is_file():
@@ -896,6 +891,8 @@ def discover_files(
             return
         seen[key] = len(found)
         found.append(p)
+        if p.is_symlink():
+            aliases.setdefault(key, []).append((p, base))
         if ignored_files is not None and git_ignored:
             ignored_files.add(p)
 
@@ -964,6 +961,25 @@ def discover_files(
         if overflow[0]:
             break
 
+    # a link is read where it is, as well as the file it represents, when its own name gives the file something that
+    # file's name lacks: a role (agent command, settings, MCP config, CI workflow) or a language with its own checks
+    for key, spellings in aliases.items():
+        representative = found[seen[key]]
+        rep_rel = None
+        for link, link_base in spellings:
+            if link == representative or link in found:
+                continue
+            if rep_rel is None:
+                try:
+                    rep_rel = representative.relative_to(link_base).as_posix()
+                except ValueError:
+                    rep_rel = representative.name
+            if _adds_role(link.relative_to(link_base).as_posix(), rep_rel):
+                if len(found) >= max_files:
+                    overflow[0] = True
+                    break
+                found.append(link)
+
     if not_read is not None:
         for path, origin in pending_excludes.items():
             if str(path.resolve()) not in seen:
@@ -984,9 +1000,16 @@ def _path_kinds(rel: str) -> Set[str]:
     return set(detect_kinds(rel, "", detect_lang(rel)))
 
 
+_PLAIN_LANGS = {"text", ""}
+
+
 def _adds_role(link_rel: str, real_rel: str) -> bool:
-    """True when a link's own location classifies the file in a way its real path does not."""
-    return bool(_path_kinds(link_rel) - _path_kinds(real_rel))
+    """True when a link's own name classifies the file in a way its real name does not: a kind (where agents, CI and
+    MCP clients look for it) or a language whose checks the real name would not run."""
+    if _path_kinds(link_rel) - _path_kinds(real_rel):
+        return True
+    link_lang = detect_lang(link_rel)
+    return link_lang not in _PLAIN_LANGS and link_lang != detect_lang(real_rel)
 
 
 def display_path(rel: str) -> str:
