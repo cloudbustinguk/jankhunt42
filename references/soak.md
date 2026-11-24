@@ -40,9 +40,9 @@ review, so they add to what was scanned, not to what was checked. Unique reposit
 b04 rescanned the repositories cloned before them, so unique repositories through b05 were **200**. The changelog is
 left as written; this page is the corrected count.
 
-## The evaluation corpus (collected, not yet evaluated)
+## The evaluation corpus
 
-For the next round of testing, a larger corpus of **17,529 public repositories** was collected on 2026-11-17:
+A larger corpus of **17,529 public repositories** was collected on 2026-11-17:
 
 | Group | Repositories |
 |---|---|
@@ -50,4 +50,19 @@ For the next round of testing, a larger corpus of **17,529 public repositories**
 | Found by code search for specific file types (low-code exports, Supabase and Firebase, agent configs, CI, WinGet) | 6,070 |
 | Ordinary repositories across 16 languages, for false-alarm rates | 7,949 |
 
-It is collected, not yet evaluated: no precision figure on this page comes from it.
+**How each snapshot is pinned.** Each snapshot is identified by its git tree hash, which names its exact content.
+When it was pinned, the tip of the repository's default branch was also recorded; for a repository that kept
+changing, that tip can be later than the snapshot. On 2026-11-24 the first two groups (9,580 repositories) were
+fetched again with their history: for **9,043** of them the commit holding the snapshot's content is now recorded
+(8,866 with the identical tree, 177 with the same files and different file permissions). For 193 no commit in the
+history fetched matches, 169 were not checked and 175 are no longer available. The ordinary-repositories group is
+identified by tree hash only.
+
+**Release measurement.** Since 4.22.0 each release is compared, before it ships, with the previous one on a full scan
+of the same **1,840** repositories from this corpus (1,239 found by code search, 396 ordinary, 205 vibe-coded), in the
+same locked-down containers; the release's changelog entry states what changed. For 4.22.2, 200 of them were also
+scanned with and without their git folders: the two scans read the same files and reported the same findings, except
+that a committed secrets file is rated critical only when git can show it is committed.
+
+No precision figure on this page comes from the corpus: the release measurement counts what changed, not whether each
+finding is right.

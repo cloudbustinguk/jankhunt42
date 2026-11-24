@@ -16,6 +16,10 @@ repositories, linked folders not followed in 48, files that could not be parsed 
 repositories with and without their git folders read the same files and report the same findings, except that a
 committed secrets file is rated critical only when git can show it is committed.
 
+### Changed
+
+- The mass-testing page (`references/soak.md`) says how the evaluation corpus is pinned (tree hash, and for 9,043 snapshots the commit holding that content) and how each release is measured on 1,840 of its repositories before it ships.
+
 ### Fixed
 
 - `map --base` reads each compared revision's own committed config (its ignore globs and declarations, found from the scanned folder up to the repository top), as `passport --base` does: an uncommitted policy edit no longer changes a comparison of two commits, `--no-config` is honoured, and a parent folder's declarations apply to a subfolder.
