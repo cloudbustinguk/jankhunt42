@@ -811,6 +811,12 @@ def discover_files(
             try:
                 resolved.relative_to(base)
             except ValueError:
+                if not_read is not None:             # never followed outside the scanned folder, and said so
+                    not_read.setdefault("dirs", {}).setdefault("link outside the scanned folder", []).append(shown(p))
+                return
+            if resolved.is_dir():
+                if not_read is not None:             # a folder link inside the root: its target is read where it is
+                    not_read.setdefault("dirs", {}).setdefault("linked folder (not followed)", []).append(shown(p))
                 return
         key = str(p.resolve())
         if key in seen:
@@ -890,7 +896,7 @@ def discover_files(
                         break
                 if skip:
                     continue
-                if (target / rel).is_dir():                  # a submodule or a nested repository: its own project
+                if (target / rel).is_dir() and not (target / rel).is_symlink():   # a submodule or nested repository
                     if not_read is not None:
                         not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(shown(target / rel.rstrip("/")))
                     continue
@@ -906,6 +912,9 @@ def discover_files(
                 rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
                 keep = []
                 for d in dirnames:
+                    if os.path.islink(os.path.join(dirpath, d)):   # the walk never follows a folder link: list it
+                        add(Path(dirpath) / d, base=target)
+                        continue
                     reason = skipped_dir_reason(d, os.path.join(dirpath, d))
                     if reason:
                         if not_read is not None:

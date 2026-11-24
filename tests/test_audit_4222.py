@@ -166,5 +166,36 @@ class RulesetFieldsAsWritten(unittest.TestCase):
                     self.assertIn(next(iter(extra)), proc.stderr)
 
 
+class LinksLimitsAndVerifiers(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_folder_links_are_listed_never_followed(self):
+        root = project(self, {"project/main.py": "x = 1\n", "shared/leaf.py": BARE, "project/lib/a.py": "y = 2\n"})
+        os.symlink("../shared", str(root / "project" / "env"))
+        os.symlink("lib", str(root / "project" / "alias"))
+        aside = scan(str(root / "project"), "--no-config")["set_aside"]["folders_not_read"]
+        self.assertEqual(aside["link outside the scanned folder"]["paths"], ["env"])
+        self.assertEqual(aside["linked folder (not followed)"]["paths"], ["alias"])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_the_same_files_are_chosen_at_a_limit_with_or_without_git(self):
+        chosen = []
+        for git in (False, True):
+            root = project(self, {"z.py": BARE, "a/one.py": "x = 1\n"})
+            if git:
+                __import__("subprocess").run(["git", "init", "-q", str(root)], check=True)
+            doc = scan(str(root), "--rule", "JH217", "--no-config", "--max-files", "1")
+            chosen.append([f["path"] for f in doc["findings"]])
+        self.assertEqual(chosen, [["z.py"], ["z.py"]])
+
+    def test_a_stored_hash_gets_verifier_guidance_not_an_exposed_password_alarm(self):
+        root = project(self, {"derived.yml": 'password: "$pbkdf2-sha512$310000$c8p78n7pUMln0jzv$JNRBzwAo0ek5qKn50cFzzvE9RXV88h1"\n'})
+        f = scan(str(root), "--rule", "JH101", "--min-severity", "info")["findings"][0]
+        self.assertEqual(f["severity"], "minor")
+        self.assertTrue(f["fix"].startswith("Keep password verifiers out of source"))
+        self.assertNotIn("secret", f["tags"])
+        prompt = run_cli("scan", str(root), "--rule", "JH101", "--min-severity", "info", "--prompt").stdout
+        self.assertNotIn("already been exposed", prompt)
+
+
 if __name__ == "__main__":
     unittest.main()
