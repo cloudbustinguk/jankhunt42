@@ -11,7 +11,7 @@ Fixes for regressions a third review pass found in the 4.22.2 changes, each now 
 ### Fixed
 
 - `review`: the score again reads every finding on changed lines. 4.22.2's score budget (at most 5 per file per rule) applied to review as well, so nine findings on nine changed lines scored as five and a failing score policy passed; review never limited changed-line findings.
-- PHP: text after a closing `?>` tag, up to the next `<?`, is template text, not code. 4.22.2 ended a one-line comment at the closing tag and then read the template text after it as code, so printed example text such as `var_dump($x)` in a manual page failed a gate.
+- PHP: when a one-line comment ends at a closing `?>` tag, the rest of that line (up to any `<?`) is template text, not code. 4.22.2 ended the comment at the tag and then read that text as code, so printed example text such as `var_dump($x)` after `// end ?>` failed a gate.
 - A file-wide `ignore-file` directive covers calls past the 100,000-per-file safety bound too; they were counted as held back and failed `--fail-on`.
 - Every deprecated SSE transport declaration in an MCP config is reported (JH715), not the first ten.
 - A file name holding a literal backslash followed by `x` and two hex digits, which reports show with the backslash doubled, is still matched by a rule's `files` pattern written as the name on disk.
