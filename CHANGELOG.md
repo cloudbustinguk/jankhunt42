@@ -4,7 +4,13 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.3] — 2026-11-24
+
+The skill now has an AI agent run only commands whose output stays short on any repository. 4.22.2 added the summaries but left 17 commands in SKILL.md that print a full report (among them `passport . --json` for AI inventory and OWASP questions, plain `scan .`, `review --json`, `--md` and `--brief`, and `map --json`); each is now a summary, a short report, or a full report written to a file and read in parts. A test reads every command out of SKILL.md and fails on any that is not bounded, and runs the short forms on a large project to check they stay under 20 KB.
+
+### Added
+
+- `map --out FILE` and `passport --out FILE` write the full JSON report to a file whatever the output format, as `scan` and `review` already do.
 
 ### Changed
 

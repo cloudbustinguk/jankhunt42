@@ -1239,6 +1239,7 @@ MUTANTS = [
     ('M880-score-reads-everything', 'the score reads every finding, so listing them all raises it', 'jh_score.py', '    budget = score_budget(items)              # what the score reads; the policy still sees every finding', '    budget = items', 'test_audit_4222.py'),
     ('M881-summary-unbounded', 'the summary lists every finding', 'jh_render.py', '        for f in findings[:limit]:                      # findings are already ordered most serious first', '        for f in findings:', 'test_audit_4222.py'),
     ('M882-reports-folder-scanned', "the tool's own report folder is scanned", 'jh_core.py', '    if name == ".jankhunt42":                    # this tool\'s own reports (--out .jankhunt42/...)\n        return "jankhunt42 reports"', '    if False:\n        return "jankhunt42 reports"', 'test_audit_4222.py'),
+    ('M883-map-passport-out-ignored', 'map and passport ignore --out', 'jankhunt42', '    if getattr(args, "out", None):               # the full JSON to a file, to read selectively; stdout as asked\n        _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False))\n', '', 'test_skill_bounded.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

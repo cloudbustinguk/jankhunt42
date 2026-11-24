@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.22.2"
+  version: "4.22.3"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -30,8 +30,10 @@ every later turn. So, as the agent running this skill:
 - Read the file selectively: one rule, one path or one severity at a time (for example
   `python3 -c "import json; d=json.load(open('.jankhunt42/scan.json')); print([f for f in d['findings'] if f['rule']=='JH101'][:5])"`),
   or rerun narrowed: `jankhunt42 scan . --summary --rule JH101` or a single path.
-- Never print `--json`, `--sarif`, `--html`, `map --json` or `passport --json` into the conversation: write them to a
-  file and read the parts you need. `map .` and `passport .` without `--json` are short and fine to show.
+- Only ever run the bounded forms this file lists. Never print `--json`, `--sarif`, `--html` or `--brief` output into
+  the conversation: use `--out FILE` (scan, review, map, passport) or redirect to a file, and read the parts you need.
+  `map .`, `passport .`, `passport . --profile citizen`, `scan . --score`, `scan . --prompt` and `rules --category NAME`
+  stay short on any repository and are fine to show.
 - For a diff, use `jankhunt42 review . --base <ref> --summary`; use `--brief` only when handing the review to a
   separate reviewer, and write it to a file first.
 - Read only the reference section that answers the question, not whole reference files.
@@ -47,13 +49,13 @@ every later turn. So, as the agent running this skill:
 | "can we ship this", ownership, a software passport | `jankhunt42 passport .` | `references/passport.md` |
 | the new access a pull request asks for, approving one change | `jankhunt42 passport . --base <ref> --md` | `references/change-review.md` |
 | a non-engineer building or shipping software, "is my app safe to share" | `jankhunt42 passport . --profile citizen` | `references/citizen.md` |
-| an AI agent workspace reviewed: settings, MCP servers, instruction files, skills | `jankhunt42 scan . --category agent` | `references/citizen.md` |
+| an AI agent workspace reviewed: settings, MCP servers, instruction files, skills | `jankhunt42 scan . --category agent --summary --out .jankhunt42/agent.json` | `references/citizen.md` |
 | a network allowlist for an AI coding agent (Claude Code, Codex, OpenShell, Agent Substrate) | `jankhunt42 passport . --emit-sandbox-policy claude-code` | `references/citizen.md` |
-| which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --json` (`ai`, `alignment`) | `references/ai-governance.md` |
-| OWASP Citizen Development (`CD-SEC`) or Agentic (`ASI`) risks | `jankhunt42 rules`, `jankhunt42 passport . --json` (`assessment.owasp`) | `references/ai-governance.md` |
-| an n8n workflow, a Power Platform solution export (flows, canvas apps, Copilot Studio agents), or an agent cloned with the Copilot Studio VS Code extension (`*.mcs.yml`), reviewed | `jankhunt42 scan .`, then `jankhunt42 map .` for what an n8n workflow reaches | `references/n8n.md`, `references/powerplatform.md` |
-| what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox .` | `references/sandbox.md` |
-| a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --ignore-rule JH417` | `references/rulesets.md` |
+| which AI services it uses, an AI inventory, NIST AI RMF or AIGP | `jankhunt42 passport . --out .jankhunt42/passport.json`, then read only `ai` and `alignment` from the file | `references/ai-governance.md` |
+| OWASP Citizen Development (`CD-SEC`) or Agentic (`ASI`) risks | `jankhunt42 rules --category agent` (or another category), `jankhunt42 passport . --out .jankhunt42/passport.json`, then read only `assessment.owasp` | `references/ai-governance.md` |
+| an n8n workflow, a Power Platform solution export (flows, canvas apps, Copilot Studio agents), or an agent cloned with the Copilot Studio VS Code extension (`*.mcs.yml`), reviewed | `jankhunt42 scan . --summary --out .jankhunt42/scan.json`, then `jankhunt42 map .` for what an n8n workflow reaches | `references/n8n.md`, `references/powerplatform.md` |
+| what the code does when installed or opened, **only when the user asks to run it** | `jankhunt42 sandbox . --md > .jankhunt42/sandbox.md`, then read its verdict and alerts | `references/sandbox.md` |
+| a site policy: rules of your own, or a rule set aside in CI | `jankhunt42 scan . --summary --ruleset "$SKILL_DIR/templates/site-ruleset.example.json"`, `jankhunt42 scan . --summary --ignore-rule JH417` | `references/rulesets.md` |
 
 When a request spans several rows, answer in order: what's broken, then what it can hurt, then whether to ship. Keep each answer's evidence model separate: a Jank Score is not an exposure class, and neither is a release decision.
 
@@ -71,13 +73,13 @@ When a request spans several rows, answer in order: what's broken, then what it 
 ## What's broken? Scan and review
 
 ```sh
-jankhunt42 scan .                             # leads, worst first
-jankhunt42 scan . --score                     # Jank Score 3.0: where to look first
-jankhunt42 scan . --sarif > jankhunt42.sarif  # CI code scanning
-jankhunt42 scan . --prompt                    # one fix prompt for a coding agent, most serious first
-jankhunt42 review . --base HEAD~1 --json      # receipts for committed changes (HEAD tree, never a dirty worktree)
-jankhunt42 review . --staged --md
-jankhunt42 review . --base HEAD~1 --brief     # handoff to the semantic reviewer
+jankhunt42 scan . --summary --out .jankhunt42/scan.json      # leads, worst first; the full report in the file
+jankhunt42 scan . --score                                    # Jank Score 3.0: where to look first
+jankhunt42 scan . --sarif > .jankhunt42/jankhunt42.sarif     # CI code scanning (to a file)
+jankhunt42 scan . --prompt                                   # one fix prompt for a coding agent, most serious first
+jankhunt42 review . --base HEAD~1 --summary --out .jankhunt42/review.json   # receipts for committed changes
+jankhunt42 review . --staged --summary
+jankhunt42 review . --base HEAD~1 --brief > .jankhunt42/brief.md   # handoff to a separate reviewer (to a file)
 ```
 
 - Findings are **leads**: secrets, injection, exposed data stores, unsafe CI, container privilege, AI-agent hazards, faked tests, and low-code exports (n8n workflows, Power Platform solutions, canvas apps, and agents' settings, tools and topics, zipped or not). The score says where to look first, not what is true.
@@ -89,10 +91,10 @@ jankhunt42 review . --base HEAD~1 --brief     # handoff to the semantic reviewer
 
 ```sh
 jankhunt42 map .                              # exposure, coverage, crossings, top paths, unknowns
-jankhunt42 map . --json                       # jankhunt.map.v1
-jankhunt42 map . --html > map.html            # offline explorer with evidence inspector
+jankhunt42 map . --out .jankhunt42/map.json   # the same, with the full jankhunt.map.v1 JSON in the file
+jankhunt42 map . --html > .jankhunt42/map.html   # offline explorer with evidence inspector (to a file)
 jankhunt42 map . --base HEAD~1                # what became newly reachable, escalated, or crossed a boundary
-jankhunt42 map . --redact --json              # shareable copy: no hostnames or snippets
+jankhunt42 map . --redact --out .jankhunt42/map-shared.json   # shareable copy: no hostnames or snippets
 ```
 
 - Start from the **highest-impact admissible paths** and open their receipts (`file:line`). Each path is a possibility to verify, not proof of access.
@@ -108,8 +110,8 @@ Edge semantics, adapters, inventory format, and limits: `references/connectivity
 
 ```sh
 jankhunt42 passport .                         # decision, reasons, evidence areas, next steps
-jankhunt42 passport . --json                  # jankhunt.passport.v1
-jankhunt42 passport . --html > passport.html
+jankhunt42 passport . --out .jankhunt42/passport.json   # the same, with the full jankhunt.passport.v1 JSON in the file
+jankhunt42 passport . --html > .jankhunt42/passport.html
 jankhunt42 passport . --fail-on block         # enforcement is opt-in
 jankhunt42 passport . --compare old-passport.json   # regressions since the last assessment
 jankhunt42 passport . --branch-rules ../rules/app.json   # an operator's ruleset export: can unreviewed code reach main?
@@ -128,7 +130,7 @@ Rules, precedence, declarations, and schema: `references/passport.md`.
 ## Citizen developers and AI agents: govern the blast radius
 
 ```sh
-jankhunt42 scan . --category agent            # agent settings, MCP servers, instruction files, AI steps in CI
+jankhunt42 scan . --category agent --summary  # agent settings, MCP servers, instruction files, AI steps in CI
 jankhunt42 passport . --profile citizen       # strict decision with a plain-language brief
 ```
 
@@ -143,7 +145,7 @@ Failure classes, the profile table, and limits: `references/citizen.md`.
 
 ## Sandbox: run it in a disposable container (opt-in)
 
-`jankhunt42 sandbox PATH` runs the repository's install hooks (npm lifecycle scripts, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. The network is off, the root filesystem is read-only, every capability is dropped, and canary credentials sit in a throwaway home. It reports what the code *tries*, like a firewall audit log: network attempts (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Its evidence tier is `sandbox-observed`: it adds to static findings and never refutes them.
+The sandbox (`jankhunt42 sandbox PATH --md > .jankhunt42/sandbox.md`; read the verdict and ALERTs from the file) runs the repository's install hooks (npm lifecycle scripts, `setup.py`, a pyproject backend) and what runs when it is opened (agent hooks, dev container commands, VS Code folder-open tasks, MCP stdio servers) in a disposable rootless container. The network is off, the root filesystem is read-only, every capability is dropped, and canary credentials sit in a throwaway home. It reports what the code *tries*, like a firewall audit log: network attempts (DENY), canary reads, canaries passed on or sent, and persistence attempts (ALERT). Its evidence tier is `sandbox-observed`: it adds to static findings and never refutes them.
 
 **Permission gate.** Run it only when the user asks to run or sandbox-test the code; a scan or passport request is not permission. It needs podman or docker and the image from `templates/sandbox.Containerfile`. If either is missing, say so and stop; never run the hooks any other way. Report ALERTs first, then coverage and its gaps; never print canary values.
 
