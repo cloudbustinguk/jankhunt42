@@ -1160,6 +1160,9 @@ MUTANTS = [
     ('M799-unreadable-folder-uncounted', 'a folder the walk cannot enter disappears without a count', 'jh_core.py', '            for dirpath, dirnames, filenames in os.walk(target, onerror=walk_error):', '            for dirpath, dirnames, filenames in os.walk(target):', 'test_discovery_4221.py'),
     ('M800-unreviewed-baseline-resolved', 'a baseline finding in a file the review skipped is called resolved', 'jh_review.py', '        baseline = compare_baseline(receipts, baseline_data, jank.score, context, scope_meta["reviewed_files"])', '        baseline = compare_baseline(receipts, baseline_data, jank.score, context)', 'test_review_4221.py'),
     ('M801-evidence-own-folder-rule', 'evidence discovery skips hidden folders and reads a virtual environment', 'jh_supply.py', '        dirnames[:] = sorted(d for d in dirnames if skipped_dir_reason(d, os.path.join(dirpath, d)) is None)', '        dirnames[:] = sorted(d for d in dirnames if d not in ("node_modules", ".git") and (not d.startswith(".") or d == ".github"))', 'test_discovery_4221.py'),
+    ('M802-rating-after-floor', 'a configured promotion is filtered at the original rating', 'jh_rules.py', '        if opts.rate is not None:\n            effective = opts.rate(finding)', '        if False:\n            effective = opts.rate(finding)', 'test_config_4221.py'),
+    ('M803-unknown-severity-accepted', 'a misspelled configured severity becomes a rating', 'jh_config.py', '    if sev in SEVERITIES:\n        return sev', '    if sev:\n        return sev', 'test_config_4221.py'),
+    ('M804-ignore-type-unchecked', 'a wrongly typed ignore setting stops the scan', 'jh_config.py', '    cfg.ignore_globs = _globs(raw.get("ignore", []), "ignore", cfg)', '    cfg.ignore_globs = [str(g) for g in raw.get("ignore", [])]', 'test_config_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
