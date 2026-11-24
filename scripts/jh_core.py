@@ -523,14 +523,10 @@ class _Sanitizer:
         self.regex = lang in ("js", "ts", "vue", "svelte")
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
-        self.php = lang == "php"
-        self.template = False                    # PHP: after ?> and before the next <?, the text is not code
         starts = {token[0] for token in self.quotes}
         starts.update(start[0] for start, _ in self.blocks)
         starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))
         starts.update(token[0] for token in _WS_LINE_COMMENTS.get(lang, ()))
-        if self.php:
-            starts.add("?")
         if self.regex:
             starts.add("/")
         self.opener_chars = "".join(sorted(starts))
@@ -613,15 +609,6 @@ class _Sanitizer:
         i = 0
         n = len(line)
         while i < n:
-            if self.template:
-                reopen = line.find("<?", i)
-                end = n if reopen == -1 else reopen
-                _blank(code, i, end)
-                if reopen == -1:
-                    return
-                self.template = False
-                i = reopen + (5 if line.startswith("<?php", reopen) else 3 if line.startswith("<?=", reopen) else 2)
-                continue
             if self.block_end is not None:
                 i = self._consume_block(line, code, nc, comments, i, n)
                 continue
@@ -651,17 +638,18 @@ class _Sanitizer:
                     _blank(code, i, close)
                     _blank(nc, i, close)
                     comments.append(line[i:close])
-                    i = close
+                    # the text after that tag on this line is template text, not code, until a <? reopens a block
+                    reopen = line.find("<?", close + 2)
+                    _blank(code, close, n if reopen == -1 else reopen)
+                    if reopen == -1:
+                        return
+                    i = reopen
                     continue
                 _blank(code, i, n)
                 _blank(nc, i, n)
                 comments.append(line[i:])
                 return
             ch = line[i]
-            if self.php and ch == "?" and line.startswith("?>", i):
-                i += 2
-                self.template = True
-                continue
             if self.triple and ch in ("'", '"') and line.startswith(ch * 3, i):
                 _blank(code, i, i + 3)
                 i += 3

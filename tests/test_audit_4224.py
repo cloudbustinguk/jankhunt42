@@ -33,11 +33,11 @@ class Base(unittest.TestCase):
 
 
 class PhpTemplateText(Base):
-    def test_text_after_a_closing_tag_is_not_code(self):
+    def test_text_after_a_comments_closing_tag_is_not_code(self):
         Path(self.path("card.php")).write_text("<?php // end ?> Manual: var_dump($shade) displays a value.\n")
-        Path(self.path("two.php")).write_text("<?php\n$a = 1; ?>\n<p>var_dump($x) shows</p>\n<?php var_dump($a); ?>\n")
+        Path(self.path("two.php")).write_text("<?php // x ?> text <?php var_dump($a); ?>\n")
         d = scan(self.root, "--no-config", "--rule", "JH204")
-        self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("two.php", 4)])
+        self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("two.php", 1)])
 
 
 class EveryDeclaration(Base):
@@ -127,6 +127,46 @@ class LinkedFiles(Base):
                 d = scan(repo, "--rule", "JH217")
                 self.assertEqual([(f["path"], f["severity"]) for f in d["findings"]], [("m.py", "minor")])
                 self.assertEqual(d["set_aside"]["git_ignored_read"]["paths"], ["m.py"])
+
+
+class TheSafetyBoundIsCountedAndGated(Base):
+    """Past the 100,000-per-file safety bound, findings are counted as held back and still fail a gate."""
+
+    def bound(self):
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        import jh_checks
+        return jh_checks.DEBUG_BOUND
+
+    def test_an_unsuppressed_call_past_the_bound_fails_the_gate(self):
+        n = self.bound()
+        Path(self.path("card.py")).write_text("breakpoint()  # jankhunt42: ignore JH204\n" * n + "breakpoint()\n")
+        proc = run_cli("scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "minor", "--summary",
+                       "--max-file-bytes", "20000000", "--no-progress")
+        self.assertEqual(proc.returncode, 1, proc.stdout[-400:])
+        self.assertIn("gate (--fail-on minor): FAIL", proc.stdout)
+
+    def test_findings_past_the_shared_bound_are_counted(self):
+        n = self.bound() + 1                     # a check with no bound of its own: one finding per eval() line
+        Path(self.path("calc.py")).write_text("eval(x)\n" * n)
+        d = scan(self.root, "--no-config", "--rule", "JH102", "--max-per-rule", "1", "--max-per-file-rule", "1",
+                 "--max-file-bytes", "50000000")
+        self.assertEqual(len(d["findings"]), 1)
+        self.assertEqual(d["set_aside"].get("capped"), n - 1)     # 99,999 by the limit and 1 past the bound
+
+
+@unittest.skipUnless(GIT, "git unavailable")
+class ReviewBriefSaysWhatWasSetAside(Base):
+    def test_the_brief_lists_what_the_review_set_aside(self):
+        subprocess.run(["git", "init", "-q", self.root], check=True)
+        Path(self.path("README.md")).write_text("x\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "one")
+        Path(self.path("card.py")).write_text("breakpoint()  # jankhunt42: ignore JH204\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "two")
+        out = run_cli("review", self.root, "--base", "HEAD^", "--brief").stdout
+        self.assertIn("## Set aside in this review", out)
 
 
 if __name__ == "__main__":
