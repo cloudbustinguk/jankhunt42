@@ -74,5 +74,26 @@ class RepositoryBoundariesAndAliases(unittest.TestCase):
                 self.assertEqual([f["rule"] for f in scan(str(root))["findings"]], ["JH217"])
 
 
+class DebugLeftoversAndDirectives(unittest.TestCase):
+    def test_the_cap_switch_reveals_every_debug_call_and_each_call_on_a_line_counts(self):
+        root = project(self, {"six/sample.py": "breakpoint()\n" * 6, "one/sample.py": "breakpoint(); breakpoint()\n"})
+        held = scan(str(root / "six"), "--rule", "JH204", "--max-per-file-rule", "3", "--max-per-rule", "6")
+        self.assertEqual((held["summary"]["findings"], held["set_aside"]["capped"]), (3, 3))
+        shown = scan(str(root / "six"), "--rule", "JH204", "--max-per-file-rule", "6", "--max-per-rule", "6")
+        self.assertEqual([f["line"] for f in shown["findings"]], [1, 2, 3, 4, 5, 6])
+        compact = scan(str(root / "one"), "--rule", "JH204")
+        self.assertEqual([(f["line"], f["column"]) for f in compact["findings"]], [(1, 1), (1, 15)])
+
+    def test_a_quoted_directive_is_text_and_a_comment_is_a_directive(self):
+        root = project(self, {"q/sample.py": 'note = "Example: jankhunt42: ignore JH204"\nbreakpoint()\n',
+                              "c/sample.py": "# jankhunt42: ignore JH204\nbreakpoint()\n",
+                              "j/settings.json": '{\n  "a": "jankhunt42: ignore JH306"\n}\n'})
+        quoted = scan(str(root / "q"))
+        self.assertEqual([(f["rule"], f["line"]) for f in quoted["findings"]], [("JH204", 2)])
+        self.assertNotIn("inline_ignore", quoted["set_aside"])
+        comment = scan(str(root / "c"))
+        self.assertEqual((comment["findings"], comment["set_aside"].get("inline_ignore")), ([], 1))
+
+
 if __name__ == "__main__":
     unittest.main()

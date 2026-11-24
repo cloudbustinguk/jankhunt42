@@ -3366,20 +3366,22 @@ def debug_leftover(sf: SourceFile, rule: Rule) -> List[Finding]:
         or "test" in sf.kinds or is_test_path(sf.rel)
     out: List[Finding] = []
     for i, line in enumerate(sf.code):
+        starts: Set[int] = set()                 # every debug call on the line, once each (two hooks can match one)
         for p in pats:
             if "console" in p and cli:
                 continue
-            m = re.search(p, line)
-            if m and "console" in p:
-                # one literal message ("listening on 5000") is logging; dumping values is debugging
-                arg = (sf.nocomment[i] if i < len(sf.nocomment) else line)[m.end():].lstrip()
-                lit = re.match(r"""(['"`])(?:\\.|(?!\1).)*\1\s*\)""", arg)
-                if lit:
-                    m = None
-            if m:
-                out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
-                break
-        if len(out) >= 5:
+            for m in re.finditer(p, line):
+                if "console" in p:
+                    # one literal message ("listening on 5000") is logging; dumping values is debugging
+                    arg = (sf.nocomment[i] if i < len(sf.nocomment) else line)[m.end():].lstrip()
+                    if re.match(r"""(['"`])(?:\\.|(?!\1).)*\1\s*\)""", arg):
+                        continue
+                starts.add(m.start())
+        for start in sorted(starts):
+            out.append(make_finding(rule, sf, i + 1, column=start + 1))
+        # the scan's per-file and per-rule caps limit what is shown, and count what they hold back; this bound only
+        # protects against a pathological file
+        if len(out) >= 1000:
             break
     return out
 

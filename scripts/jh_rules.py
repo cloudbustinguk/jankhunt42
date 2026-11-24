@@ -13,6 +13,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (
+    _ANY_LINE_COMMENTS, _BLOCK_COMMENTS, _WS_LINE_COMMENTS,
     Finding,
     Rule,
     SourceFile,
@@ -1206,6 +1207,21 @@ def _compile_rules() -> None:
                 _IGNORES[rule.id] = re.compile(r"(?!)")
 
 
+# An ignore directive counts only where the author wrote a comment: in a language whose comments are parsed, inside
+# a comment span; elsewhere (plain text, JSON with comments), right after a comment marker on the line. A quoted
+# example ("jankhunt42: ignore JH204" in a string) is text, never a suppression.
+_COMMENTED_LANGS = set(_ANY_LINE_COMMENTS) | set(_WS_LINE_COMMENTS) | set(_BLOCK_COMMENTS)
+_MARKED_DIRECTIVE = re.compile(r"(?:#|//|--|;|<!--|/\*|%)\s*(jankhunt(?:42)?:.*)")
+
+
+def _directive_text(sf: SourceFile, i: int) -> str:
+    """The text of line i (0-based) where an ignore directive may stand."""
+    if sf.lang in _COMMENTED_LANGS:
+        return sf.comments[i] if i < len(sf.comments) else ""
+    m = _MARKED_DIRECTIVE.search(sf.raw[i])
+    return m.group(1) if m else ""
+
+
 def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[str], Dict[int, Set[str]]]]:
     suppression: Dict[str, Tuple[Set[str], Dict[int, Set[str]]]] = {}
     for sf in sources:
@@ -1213,11 +1229,12 @@ def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[
         line_ids: Dict[int, Set[str]] = {}
         # `jankhunt42:` is canonical; the pre-0.4 `jankhunt:` prefix is still
         # honored so existing suppressions in users' code keep working.
-        for raw in sf.raw[:12]:
-            m = re.search(r"jankhunt(?:42)?:\s*ignore-file\s+([A-Za-z0-9, ]+)", raw)
+        for i in range(min(12, len(sf.raw))):
+            m = re.search(r"jankhunt(?:42)?:\s*ignore-file\s+([A-Za-z0-9, ]+)", _directive_text(sf, i))
             if m:
                 file_ids.update(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
-        for i, raw in enumerate(sf.raw, 1):
+        for i in range(1, len(sf.raw) + 1):
+            raw = _directive_text(sf, i - 1)
             m = re.search(r"jankhunt(?:42)?:\s*ignore\s+([A-Za-z0-9, ]+)", raw)
             if m:
                 line_ids[i] = set(re.findall(r"JH\d{3}|ALL", m.group(1).upper()))
@@ -1239,7 +1256,7 @@ class _FindingAcceptor:
         self.held: Set[Tuple[str, Tuple[str, str, int, int]]] = set()
 
     def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
-        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126") else 0))
+        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0))
         if key in self.held:                      # a rule can match one line twice: count the finding once
             return
         self.held.add(key)
@@ -1282,7 +1299,7 @@ class _FindingAcceptor:
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
             self._held("ignored_rules", finding)
             return False
-        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126") else 0)
+        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0)
         if key in self.seen:
             return False
         self.seen.add(key)
