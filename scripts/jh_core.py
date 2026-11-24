@@ -877,7 +877,11 @@ def discover_files(
                 if len(found) >= max_files:
                     break
         else:
-            for dirpath, dirnames, filenames in os.walk(target):
+            def walk_error(exc: OSError) -> None:     # a folder the walk cannot enter is counted, never skipped quietly
+                if not_read is not None and getattr(exc, "filename", None):
+                    rel_err = os.path.relpath(exc.filename, target).replace(os.sep, "/")
+                    not_read.setdefault("dirs", {}).setdefault("unreadable", []).append(rel_err)
+            for dirpath, dirnames, filenames in os.walk(target, onerror=walk_error):
                 rel_dir = os.path.relpath(dirpath, target)
                 rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
                 keep = []
@@ -934,21 +938,41 @@ def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
     )
 
 
+# Text in UTF-16 or UTF-32 carries NUL bytes, so its byte-order mark is read before the binary check
+_TEXT_BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"), (b"\xff\xfe", "utf-16"),
+              (b"\xfe\xff", "utf-16"))
+
+
 def load_source(path: Path, root: Path) -> Optional[SourceFile]:
+    return load_source_why(path, root)[0]
+
+
+def load_source_why(path: Path, root: Path) -> Tuple[Optional[SourceFile], Optional[str]]:
+    """The file as a SourceFile, or None and why it was not read: "unreadable" (permission or another read
+    error), "binary" or "empty"."""
     try:
         raw_bytes = path.read_bytes()
     except OSError:
-        return None
-    if b"\x00" in raw_bytes[:8192]:
-        return None
-    try:
-        text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw_bytes.decode("utf-8", "replace")
+        return None, "unreadable"
+    text = None
+    for bom, codec in _TEXT_BOMS:
+        if raw_bytes.startswith(bom):
+            try:
+                text = raw_bytes.decode(codec)
+            except UnicodeDecodeError:
+                text = None
+            break
+    if text is None:
+        if b"\x00" in raw_bytes[:8192]:
+            return None, "binary"
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw_bytes.decode("utf-8", "replace")
     if not text:
-        return None
+        return None, "empty"
     rel = os.path.relpath(str(path), str(root)).replace(os.sep, "/")
-    return source_from_text(rel, str(path), text)
+    return source_from_text(rel, str(path), text), None
 
 
 # ---------------------------------------------------------------------------

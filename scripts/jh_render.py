@@ -285,6 +285,14 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
     if git_ignored:
         out.append(("READ", "%d untracked file(s) covered by git ignore rules were read, including %s"
                     % (git_ignored["count"], _sample_paths(git_ignored))))
+    not_text = aside.get("files_not_read") or {}
+    if not_text.get("unreadable"):
+        out.append(("NOT READ", "%d file(s) could not be read (permission or read error), including %s; check the "
+                    "account running the scan can read them" % (not_text["unreadable"]["count"],
+                                                                _sample_paths(not_text["unreadable"]))))
+    plain = [(why, not_text[why]["count"]) for why in ("binary", "empty") if not_text.get(why)]
+    if plain:
+        out.append(("NOT READ", "%s not read as text" % " and ".join("%d %s file(s)" % (n, why) for why, n in plain)))
     floor = aside.get("below_floor") or {}
     held = {k: v for k, v in floor.items() if k != "floor"}
     if held:

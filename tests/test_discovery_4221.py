@@ -1,5 +1,6 @@
 """Discovery accounting on small, invented projects."""
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -151,4 +152,41 @@ class UnreadFilesMakeCoveragePartial(unittest.TestCase):
         cov_rule = [r for r in doc["assessment"]["decision"]["rules"] if r["rule"] == "P-COV-001"][0]
         self.assertEqual(cov_rule["outcome"], "insufficient-evidence")
         self.assertIn("b.py", cov_rule["message"])
+
+
+class FilesNotReadAreCounted(unittest.TestCase):
+    """An unreadable file or folder, a binary file and an empty file are each counted with the reason; text in
+    UTF-16 with a byte-order mark is read like its UTF-8 copy."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.addCleanup(lambda: [os.chmod(p, 0o755) for p in self.root.rglob("*")])
+
+    def scan(self, rel):
+        return json.loads(run_cli("scan", str(self.root / rel), "--json", "--no-progress", "--min-severity", "info").stdout)
+
+    def test_reasons(self):
+        for rel, data in (("binary/a.bin", b"a\x00b"), ("empty/empty.py", b""),
+                          ("utf8/leaf.py", "value = 1  # noqa\n".encode("utf-8")),
+                          ("utf16/leaf.py", "value = 1  # noqa\n".encode("utf-16"))):
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / rel).write_bytes(data)
+        self.assertEqual(self.scan("binary")["set_aside"]["files_not_read"]["binary"]["paths"], ["a.bin"])
+        self.assertEqual(self.scan("empty")["set_aside"]["files_not_read"]["empty"]["paths"], ["empty.py"])
+        utf8, utf16 = self.scan("utf8"), self.scan("utf16")
+        self.assertEqual(utf16["summary"]["files"], 1)
+        self.assertEqual([(f["rule"], f["line"]) for f in utf16["findings"]], [(f["rule"], f["line"]) for f in utf8["findings"]])
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root reads every file")
+    def test_unreadable_file_and_folder(self):
+        (self.root / "u").mkdir()
+        (self.root / "u" / "leaf.py").write_text("x = 1\n", encoding="utf-8")
+        os.chmod(self.root / "u" / "leaf.py", 0)
+        (self.root / "d" / "closed").mkdir(parents=True)
+        (self.root / "d" / "closed" / "f.py").write_text("x = 1\n", encoding="utf-8")
+        os.chmod(self.root / "d" / "closed", 0)
+        self.assertEqual(self.scan("u")["set_aside"]["files_not_read"]["unreadable"]["paths"], ["leaf.py"])
+        self.assertEqual(self.scan("d")["set_aside"]["folders_not_read"]["unreadable"]["paths"], ["closed"])
 

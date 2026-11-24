@@ -1155,6 +1155,9 @@ MUTANTS = [
     ('M794-review-caps-before-classification', 'an unchanged finding takes the only review slot and the new one passes the gate', 'jh_review.py', '        max_per_file_rule=10 ** 9,\n        max_per_rule=10 ** 9,', '        max_per_file_rule=getattr(args, "max_per_file_rule", 5),\n        max_per_rule=getattr(args, "max_per_rule", 200),', 'test_review_4221.py'),
     ('M795-review-relative-path-inside-repo', 'a relative review path is looked up inside the repository, so nothing is reviewed', 'jh_review.py', '        if root and p and not os.path.isabs(p) and os.path.exists(p):\n            p = os.path.abspath(p)\n', '', 'test_review_4221.py'),
     ('M796-baseline-ordinals-changed-lines-only', "a second copy added on a new line matches the baseline's original", 'jh_review.py', '        baseline = compare_baseline(receipts, baseline_data, jank.score, context)', '        baseline = compare_baseline(receipts, baseline_data, jank.score)', 'test_review_4221.py'),
+    ('M797-unreadable-file-uncounted', 'a file that cannot be read disappears without a count', 'jankhunt42', '                    count_path(not_read, "files_not_read_" + why, os.path.relpath(path, root).replace(os.sep, "/"))\n', '', 'test_discovery_4221.py'),
+    ('M798-utf16-read-as-binary', 'UTF-16 text with a byte-order mark is taken for binary', 'jh_core.py', '    for bom, codec in _TEXT_BOMS:\n', '    for bom, codec in ():\n', 'test_discovery_4221.py'),
+    ('M799-unreadable-folder-uncounted', 'a folder the walk cannot enter disappears without a count', 'jh_core.py', '            for dirpath, dirnames, filenames in os.walk(target, onerror=walk_error):', '            for dirpath, dirnames, filenames in os.walk(target):', 'test_discovery_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
