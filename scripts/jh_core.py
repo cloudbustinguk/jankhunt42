@@ -1012,10 +1012,20 @@ def _adds_role(link_rel: str, real_rel: str) -> bool:
     return link_lang not in _PLAIN_LANGS and link_lang != detect_lang(real_rel)
 
 
+_AMBIGUOUS_BACKSLASH = re.compile(r"\\(?:x[0-9A-Fa-f]{2}|\\)")
+
+
 def display_path(rel: str) -> str:
     """A path as reports show it. A file name byte that is not valid UTF-8 (kept by the file system's decoding as a
-    lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered."""
-    if not any("\udc80" <= ch <= "\udcff" for ch in rel):
+    lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered. A
+    name whose own text holds a backslash before xNN or another backslash has its backslashes doubled, so it can never
+    look like another file's escaped byte; any other backslash is shown as it is."""
+    has_bytes = any("\udc80" <= ch <= "\udcff" for ch in rel)
+    if not has_bytes and "\\" not in rel:
+        return rel
+    if _AMBIGUOUS_BACKSLASH.search(rel):
+        rel = rel.replace("\\", "\\\\")
+    if not has_bytes:
         return rel
     return "".join("\\x%02X" % (ord(ch) - 0xDC00) if "\udc80" <= ch <= "\udcff" else ch for ch in rel)
 

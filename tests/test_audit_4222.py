@@ -515,5 +515,50 @@ class RevisionRunsOnOddInput(unittest.TestCase):
         self.assertTrue(any("could not parse .jankhunt42.json" in w for w in doc["warnings"]))
 
 
+class PreTagAuditBatch2(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_an_unstaged_marker_never_changes_a_staged_review(self):
+        root = project(self, {"env/draft.py": "# noqa\n"})
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(["git", "-C", str(root), "add", "env/draft.py"], check=True)
+        (root / "env" / "pyvenv.cfg").write_text("home = fixture\n")
+        doc = json.loads(run_cli("review", ".", "--staged", "--rule", "JH306", "--min-severity", "info", "--json",
+                                 cwd=str(root)).stdout)
+        self.assertEqual([f["path"] for f in doc["findings"]], ["env/draft.py"])
+
+    def test_raised_limits_reach_every_debug_call_and_the_safety_bound_counts_the_rest(self):
+        root = project(self, {"widget.py": "breakpoint()\n" * 1001})
+        doc = scan(str(root), "--no-config", "--rule", "JH204", "--max-per-file-rule", "1001", "--max-per-rule", "1001")
+        self.assertEqual((doc["summary"]["findings"], doc["findings"][-1]["line"]), (1001, 1001))
+        sys.path.insert(0, str(Path(CLI).parent))
+        import jh_checks, jh_core, jh_rules
+        old = jh_checks.DEBUG_BOUND
+        jh_checks.DEBUG_BOUND = 3
+        try:
+            sf = jh_core.source_from_text("widget.py", str(root / "widget.py"), "breakpoint()\n" * 5)
+            res = jh_rules.scan_sources([sf], jh_rules.ScanOptions(rule_ids={"JH204"}, max_per_file_rule=100,
+                                                                   max_per_rule=100))
+        finally:
+            jh_checks.DEBUG_BOUND = old
+        self.assertEqual((len(res.findings), res.set_aside.get("capped")), (3, 2))
+
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin", "file names that are not UTF-8")
+    def test_a_byte_name_and_its_escaped_spelling_stay_two_files(self):
+        root = project(self, {"card-\\xFF.py": "# noqa\n"})
+        with open(os.path.join(os.fsencode(str(root)), b"card-\xff.py"), "wb") as fh:
+            fh.write(b"# noqa\n")
+        doc = scan(str(root), "--rule", "JH306", "--min-severity", "info")
+        self.assertEqual(sorted(f["path"] for f in doc["findings"]), ["card-\\\\xFF.py", "card-\\xFF.py"])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    @unittest.skipIf(os.name == "nt", "a backslash is a separator on Windows")
+    def test_a_backslash_in_an_untracked_name_is_not_a_folder(self):
+        root = project(self, {"a\\b.txt": "one\n", "a/b.txt": "two\nthree\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        scope = json.loads(run_cli("review", ".", "--json", cwd=str(root)).stdout)["review"]["scope"]
+        self.assertEqual((scope["changed_files"], scope["changed_lines"]), (["a/b.txt", "a\\b.txt"], 3))
+
+
 if __name__ == "__main__":
     unittest.main()
