@@ -1194,6 +1194,10 @@ MUTANTS = [
     ('M834-octal-name-unquoted', 'a quoted staged name keeps its escapes', 'jh_review.py', '            if re.match(r"[0-3][0-7]{2}", s[i + 1:i + 4]):', '            if False:', 'test_audit_4222.py'),
     ('M835-git-names-replaced', 'a git-listed name that is not UTF-8 is decoded with replacement and lost', 'jh_core.py', '    out = os.fsdecode(proc.stdout)', '    out = proc.stdout.decode("utf-8", "replace")', 'test_audit_4222.py'),
     ('M836-display-path-raw', 'a name byte that is not UTF-8 reaches the report raw', 'jh_core.py', '    if not any("\\udc80" <= ch <= "\\udcff" for ch in rel):\n        return rel', '    if True:\n        return rel', 'test_audit_4222.py'),
+    ('M837-site-rule-skips-blank', 'a site rule skips spaces-only lines its examples describe', 'jh_rules.py', '                if ignore and ignore.search(line):\n                    continue\n                if any(p.search(line) for p in pats):', '                if not line.strip() or (ignore and ignore.search(line)):\n                    continue\n                if any(p.search(line) for p in pats):', 'test_audit_4222.py'),
+    ('M838-site-rule-phantom-line', 'the empty entry after a final newline is matched as a line', 'jh_rules.py', '                lines = lines[:-1]                   # the empty entry after a final newline is not a line', '                pass', 'test_audit_4222.py'),
+    ('M839-rulepack-omits-files', 'a site rule narrowed to other files keeps the same rule-pack digest', 'jh_review.py', '                   "check": r.check, "langs": list(r.langs), "files": list(r.files), "target": r.target,', '                   "check": r.check, "langs": list(r.langs), "target": r.target,', 'test_audit_4222.py'),
+    ('M840-repro-drops-ruleset', "a receipt's reproduction command drops the ruleset", 'jh_review.py', '        "repro": _repro(f, policy),', '        "repro": _repro(f),', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
