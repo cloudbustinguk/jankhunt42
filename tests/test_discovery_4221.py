@@ -129,3 +129,26 @@ class GitIgnoredFindings(unittest.TestCase):
                                   cwd=self.root).stdout)
         self.assertEqual([f["path"] for f in held["findings"]], ["shipped.env"])
         self.assertEqual(held["set_aside"]["below_floor"]["minor"], 1)
+
+
+class UnreadFilesMakeCoveragePartial(unittest.TestCase):
+    """A supported file over the size limit is considered, named, and makes the map partial; the passport's
+    coverage floor then holds the release (insufficient evidence) instead of passing."""
+
+    def test_size_limit_on_a_supported_file(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "b.py").write_text("long_value = 1234567890\n", encoding="utf-8")
+        (root / "logo.png").write_bytes(b"\x89PNG" + b"\x00" * 64)
+        cov = json.loads(run_cli("map", str(root), "--max-file-bytes", "20", "--json").stdout)["coverage"]
+        self.assertEqual((cov["files_considered"], cov["files_read"]), (3, 1))
+        self.assertEqual(cov["status"], "partial")
+        self.assertTrue(any("b.py" in r for r in cov["partial_reasons"]))
+        self.assertFalse(any("logo.png" in r for r in cov["partial_reasons"]))   # not a type the map reads
+        doc = json.loads(run_cli("passport", str(root), "--max-file-bytes", "20", "--json").stdout)
+        cov_rule = [r for r in doc["assessment"]["decision"]["rules"] if r["rule"] == "P-COV-001"][0]
+        self.assertEqual(cov_rule["outcome"], "insufficient-evidence")
+        self.assertIn("b.py", cov_rule["message"])
+

@@ -12,6 +12,7 @@ semantic versioning.
 
 ### Fixed
 
+- A file the map reads but could not (over the size limit, or unreadable) now counts as considered and makes map coverage partial, naming the file, so the passport's coverage floor holds the release instead of passing. Before, the map counted only the files it read and called its coverage complete.
 - A scan counts files skipped by `--exclude` and by the config's `ignore` globs, with sample paths for each. A file matched by both counts once and the report names both exclusions.
 - A scan reads untracked files covered by git ignore rules, as a folder without git always did, and reports how many it read, with sample paths. A finding in such a file is at most minor and says the file is not committed, so a key kept in a git-ignored `.env` is not reported as a secret the repository carries. A file limit selects files in the same order in a repository and a plain folder.
 - JH101 reports a passphrase that starts with `!` again (4.22.0 read `"!correct horse 7"` as a command that fetches a key). A command now needs a path or a known secret-fetching program. An authentication method name counts as a placeholder only inside a list of method names, so a single `("password", "md5")` pair stays a lead. The password-hash message no longer says nobody can sign in with the value: if the code compares a supplied password with it directly, the value is the password.
