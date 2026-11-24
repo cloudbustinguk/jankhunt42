@@ -46,5 +46,33 @@ class UnparsedFilesAreReported(unittest.TestCase):
         self.assertNotIn("files_not_parsed", scan(str(good), "--min-severity", "info")["set_aside"])
 
 
+@unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+class RepositoryBoundariesAndAliases(unittest.TestCase):
+    def git(self, root, *args):
+        __import__("subprocess").run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    def test_a_submodule_or_nested_repository_is_listed(self):
+        for shape in ("gitlink", "nested"):
+            with self.subTest(shape=shape):
+                root = project(self, {"outer.txt": "hello\n", "child/leaf.py": BARE})
+                self.git(root, "init", "-q")
+                if shape == "gitlink":
+                    self.git(root, "update-index", "--add", "--cacheinfo",
+                             "160000,1111111111111111111111111111111111111111,child")
+                else:
+                    self.git(root / "child", "init", "-q")
+                doc = scan(str(root), "--min-severity", "info")
+                self.assertEqual(doc["set_aside"]["folders_not_read"]["nested repository"]["paths"], ["child"])
+
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_an_alias_never_displaces_the_real_source(self):
+        for alias in ("a.txt", "zz.txt"):                     # sorting before and after the source
+            with self.subTest(alias=alias):
+                root = project(self, {"m.py": BARE})
+                os.symlink("m.py", str(root / alias))
+                self.git(root, "init", "-q")
+                self.assertEqual([f["rule"] for f in scan(str(root))["findings"]], ["JH217"])
+
+
 if __name__ == "__main__":
     unittest.main()

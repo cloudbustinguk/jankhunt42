@@ -1173,6 +1173,8 @@ MUTANTS = [
     ('M813-hash-message-overwritten', 'documentation replaces the password-hash explanation', 'jh_rules.py', ' and not (message or "").startswith(HASH_MESSAGE[:30]):', ':', 'test_precision_422.py'),
     ('M814-config-from-caller', 'a named file takes the config of the folder the command runs from', 'jankhunt42', '        return os.path.commonpath(folders)', '        return str(_Path.cwd().resolve())', 'test_audit_4222.py'),
     ('M815-parse-failure-silent', 'a malformed supported config counts as scanned with no warning', 'jh_checks.py', '    PARSE_FAILURES.setdefault(sf.rel, type(exc).__name__)', '    return None', 'test_audit_4222.py'),
+    ('M816-nested-repo-silent', 'a submodule or nested repository vanishes from the scan without a count', 'jh_core.py', '                        not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(rel.rstrip("/"))\n', '                        pass\n', 'test_audit_4222.py'),
+    ('M817-alias-displaces-source', 'a link listed first decides the language of the file it points to', 'jh_core.py', '            if found[seen[key]].is_symlink() and not p.is_symlink():', '            if False:', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
