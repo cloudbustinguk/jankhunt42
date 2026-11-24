@@ -22,7 +22,7 @@ import re
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from jh_core import DEFAULT_SKIP_DIRS
+from jh_core import skipped_dir_reason
 
 MAX_EVIDENCE_BYTES = 24_000_000
 MAX_PACKAGES = 5000
@@ -168,10 +168,9 @@ def _walk_candidates(root: str) -> List[str]:
     out: List[str] = []
     base = os.path.abspath(root)
     for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in DEFAULT_SKIP_DIRS and (not d.startswith(".") or d == ".github")
-        )
+        # the scan's own folder rule: hidden project folders are read, a virtual environment named env is not, so
+        # an installed dependency's bill of materials can never stand in for the project's
+        dirnames[:] = sorted(d for d in dirnames if skipped_dir_reason(d, os.path.join(dirpath, d)) is None)
         for fn in sorted(filenames):
             low = fn.lower()
             if low.endswith((".pyc", ".pyo", ".class", ".jar", ".war", ".zip",

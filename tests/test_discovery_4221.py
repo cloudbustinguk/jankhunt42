@@ -190,3 +190,24 @@ class FilesNotReadAreCounted(unittest.TestCase):
         self.assertEqual(self.scan("u")["set_aside"]["files_not_read"]["unreadable"]["paths"], ["leaf.py"])
         self.assertEqual(self.scan("d")["set_aside"]["folders_not_read"]["unreadable"]["paths"], ["closed"])
 
+
+class EvidenceUsesTheSharedFolderRule(unittest.TestCase):
+    def test_a_bill_of_materials_in_a_hidden_folder_counts_and_one_in_a_virtualenv_does_not(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        top = Path(temp.name)
+        bom = '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[{"type":"library","name":"chalk","version":"1"}]}\n'
+        policy = top / "needed.json"
+        policy.write_text('{"require":{"sbom":true}}\n', encoding="utf-8")
+        for name, folder, venv in (("hidden", ".records", False), ("virtual", "env", True)):
+            (top / name / folder).mkdir(parents=True)
+            (top / name / "sheet.py").write_text("hue = 4\n", encoding="utf-8")
+            (top / name / folder / "bom.json").write_text(bom, encoding="utf-8")
+            if venv:
+                (top / name / folder / "pyvenv.cfg").write_text("version = 3.11\n", encoding="utf-8")
+        results = {}
+        for name in ("hidden", "virtual"):
+            doc = json.loads(run_cli("passport", str(top / name), "--no-config", "--policy", str(policy), "--json").stdout)
+            results[name] = [r["outcome"] for r in doc["assessment"]["decision"]["rules"] if r["rule"] == "P-EVD-001"][0]
+        self.assertEqual(results, {"hidden": "pass", "virtual": "insufficient-evidence"})
+
