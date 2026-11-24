@@ -122,5 +122,35 @@ class ShortFormsStayShort(unittest.TestCase):
         self.assertIn("review summary", proc.stdout)
 
 
+class SummaryEdges(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="jh-summary-edges-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    @unittest.skipIf(os.name == "nt", "file names with line breaks")
+    def test_line_breaks_in_file_names_keep_the_summary_short(self):
+        for i in range(10):
+            Path(self.root, "tile%d" % i + "\n" * 54 + ".py").write_text("breakpoint()\n")
+        out = run_cli("scan", self.root, "--rule", "JH204", "--summary", "--no-progress").stdout
+        self.assertLessEqual(len(out.splitlines()), 60)
+
+    def test_the_summary_states_the_gate_verdict(self):
+        Path(self.root, "card.py").write_text("breakpoint()\n")
+        fail = run_cli("scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "minor", "--summary", "--no-progress")
+        ok = run_cli("scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "major", "--summary", "--no-progress")
+        self.assertEqual((fail.returncode, ok.returncode), (1, 0))
+        self.assertIn("gate (--fail-on minor): FAIL", fail.stdout)
+        self.assertIn("gate (--fail-on major): PASS", ok.stdout)
+
+    def test_score_with_out_writes_the_report_and_refuses_summary(self):
+        Path(self.root, "chart.py").write_text("breakpoint()\n")
+        saved = os.path.join(self.root, "out", "saved.json")
+        proc = run_cli("scan", self.root, "--score", "--out", saved, "--rule", "JH204", "--no-progress")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(os.path.isfile(saved))
+        refused = run_cli("scan", self.root, "--score", "--summary", "--no-progress")
+        self.assertEqual(refused.returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

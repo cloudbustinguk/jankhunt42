@@ -274,7 +274,11 @@ def _sample_paths(info: Dict[str, Any]) -> str:
     return names + (", …" if info["count"] > len(paths) else "")
 
 
-def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = None, limit: int = 10) -> str:
+SUMMARY_MAX_LINES = 60                           # a hard bound, whatever the repository holds
+
+
+def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = None, limit: int = 10,
+                   gate: Optional[Tuple[str, bool]] = None) -> str:
     """A bounded overview for an AI agent's conversation: whatever the repository, a few dozen short lines. The full
     report goes to a file (--out) and is read selectively; printing it whole costs the conversation dearly."""
     import jh_score
@@ -287,6 +291,8 @@ def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = 
     from jh_core import VERSION
     lines = ["jankhunt42 %s summary: %d files, %d findings, Jank Score %d (%s, %s)"
              % (VERSION, result.files, len(findings), report.score, report.grade, report.label)]
+    if gate:
+        lines.append("gate (--fail-on %s): %s" % (gate[0], "FAIL" if gate[1] else "PASS"))
     if findings:
         lines.append("by severity: " + ", ".join("%s %d" % (s, sev_counts[s]) for s in order if sev_counts.get(s)))
         by_rule: Dict[str, List[Any]] = {}
@@ -312,12 +318,22 @@ def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = 
     else:
         lines.append("full report: rerun with --out FILE, then read only the parts you need")
     lines.append("narrow it: --rule ID, --category NAME, or a path; each finding's fix is in the JSON")
+    if len(lines) > SUMMARY_MAX_LINES:
+        lines = lines[:SUMMARY_MAX_LINES - 1] + ["... summary cut at %d lines; the rest is in the full report" % SUMMARY_MAX_LINES]
     return "\n".join(lines)
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _no_control(text: Any) -> str:
+    """Control characters (a line break in a file name, for one) written as \\xNN, so one item stays one line."""
+    return _CONTROL.sub(lambda m: "\\x%02x" % ord(m.group()), str(text or ""))
 
 
 def _tail(path: Any, limit: int) -> str:
     """A long path keeps its end (the file name), not its start."""
-    s = str(path or "")
+    s = _no_control(path)
     return s if len(s) <= limit else "\u2026" + s[-(limit - 1):]
 
 
