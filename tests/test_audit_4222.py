@@ -632,5 +632,41 @@ class InternationalHostsInSandboxLogs(unittest.TestCase):
         self.assertNotIn('"no_destination": 1', text)
 
 
+class SecondPassBatch1(unittest.TestCase):
+    def test_a_php_line_comment_ends_at_the_closing_tag(self):
+        root = project(self, {"card.php": "<?php # title ?>Draft<?php var_dump($shade); ?>\n"
+                                          "<?php // note ?><b>x</b><?php var_dump(2); ?>\n"})
+        doc = scan(str(root), "--no-config", "--rule", "JH204")
+        self.assertEqual([(f["line"], f["column"]) for f in doc["findings"]], [(1, 28), (2, 31)])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_git_ignored_cap_applies_before_the_limits_and_the_gate(self):
+        root = project(self, {".gitignore": "draft.py\n", "draft.py": "breakpoint()\nbreakpoint()\n",
+                              ".jankhunt42.json": '{"paths":{"draft.py":{"severity":{"JH204":"major"}}}}\n'})
+        sp = __import__("subprocess")
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(["git", "-C", str(root), "add", ".gitignore", ".jankhunt42.json"], check=True)
+        for limit in ("1", "2"):
+            with self.subTest(limit=limit):
+                proc = run_cli("scan", str(root), "--rule", "JH204", "--max-per-rule", limit, "--fail-on", "major", "--json")
+                self.assertEqual(proc.returncode, 0)
+                self.assertEqual({f["severity"] for f in json.loads(proc.stdout)["findings"]}, {"minor"})
+
+    def test_overflow_past_a_checks_bound_follows_the_selection(self):
+        root = project(self, {"draft.py": "breakpoint()\n" * 5})
+        sys.path.insert(0, str(Path(CLI).parent))
+        import jh_checks, jh_core, jh_rules
+        old = jh_checks.DEBUG_BOUND
+        jh_checks.DEBUG_BOUND = 3
+        try:
+            sf = jh_core.source_from_text("draft.py", str(root / "draft.py"), "breakpoint()\n" * 5)
+            other = jh_rules.scan_sources([sf], jh_rules.ScanOptions(categories={"supply-chain"}))
+            mine = jh_rules.scan_sources([sf], jh_rules.ScanOptions(rule_ids={"JH204"}))
+        finally:
+            jh_checks.DEBUG_BOUND = old
+        self.assertEqual((other.set_aside.get("capped"), other.capped_worst), (None, None))
+        self.assertEqual((len(mine.findings), mine.set_aside.get("capped")), (3, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1333,6 +1333,16 @@ class _FindingAcceptor:
         self.seen.add(key)
         return True                               # the caps apply once every finding is known (apply_caps)
 
+    def eligible(self, finding: Finding) -> Optional[str]:
+        """The rating a finding would carry if this run could show it, or None when the run's selection, a rule set
+        aside by name, or the config leaves it out. Records nothing."""
+        opts = self.opts
+        if (opts.categories and finding.category not in opts.categories) or (opts.rule_ids and finding.rule not in opts.rule_ids):
+            return None
+        if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
+            return None
+        return opts.rate(finding) if opts.rate is not None else finding.severity
+
     def apply_caps(self, findings: List[Finding]) -> List[Finding]:
         """Keep the most serious findings within each per-file and per-rule limit, never the first ones found, and
         count the rest as capped. The most severe capped rating is kept, so a gate still sees what the caps hid."""
@@ -1742,12 +1752,21 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     break
 
     result.findings = acceptor.apply_caps(result.findings)
-    for (rid, _path), n in jh_checks.BOUND_DROPPED.items():     # past a check's own safety bound: counted as capped
-        if not opts.rule_ids or rid in opts.rule_ids:
-            acceptor.set_aside["capped"] = acceptor.set_aside.get("capped", 0) + n
-            sev = rule_by_id(rid).severity if rule_by_id(rid) else "info"
-            if acceptor.capped_worst is None or sev_at_least(sev, acceptor.capped_worst):
-                acceptor.capped_worst = sev
+    by_rel = {s.rel: s for s in sources}
+    for (rid, path), n in jh_checks.BOUND_DROPPED.items():      # past a check's own safety bound: counted like any
+        rule, sf = rule_by_id(rid), by_rel.get(path)            # finding (selection, rating, floor), as capped
+        if rule is None or sf is None:
+            continue
+        sev = acceptor.eligible(make_finding(rule, sf, 1))
+        if sev is None:
+            continue
+        if not sev_at_least(sev, opts.min_severity):
+            bucket = acceptor.set_aside.setdefault("below_floor", {})
+            bucket[sev] = bucket.get(sev, 0) + n
+            continue
+        acceptor.set_aside["capped"] = acceptor.set_aside.get("capped", 0) + n
+        if acceptor.capped_worst is None or sev_at_least(sev, acceptor.capped_worst):
+            acceptor.capped_worst = sev
     jh_checks.BOUND_DROPPED.clear()
     if jh_checks.PARSE_FAILURES:                 # every command that scans (scan, review, passport) reports them
         failed = sorted(jh_checks.PARSE_FAILURES)

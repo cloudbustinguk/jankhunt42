@@ -622,6 +622,14 @@ class _Sanitizer:
                     i = end                 # /^https:\/\//i: the // inside is not a comment
                     continue
             if _comment_token(line, i, self.lang):
+                # a PHP one-line comment ends at the closing tag: what follows ?> is template text or the next block
+                close = line.find("?>", i) if self.lang == "php" else -1
+                if close != -1:
+                    _blank(code, i, close)
+                    _blank(nc, i, close)
+                    comments.append(line[i:close])
+                    i = close
+                    continue
                 _blank(code, i, n)
                 _blank(nc, i, n)
                 comments.append(line[i:])
