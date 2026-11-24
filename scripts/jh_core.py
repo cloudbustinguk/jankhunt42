@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from itertools import groupby
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -772,6 +773,7 @@ def discover_files(
     on_file: Optional[Callable[[int, int, str], None]] = None,
     not_read: Optional[Dict[str, Any]] = None,
     ignored_files: Optional[Set[Path]] = None,
+    config_excludes: Sequence[str] = (),
 ) -> Tuple[Path, List[Path]]:
     """The files to scan. `not_read`, when given, is filled with what was set aside: folders by reason
     {"dirs": {reason: [path, ...]}}, files over the size limit ("too_large"), and whether the file limit cut the
@@ -784,37 +786,42 @@ def discover_files(
     else:
         root = Path.cwd().resolve()
 
-    exclude_patterns = list(excludes) + [
-        "*.min.js", "*.min.css", "*.map", "*.snap", "*.lock",
-    ]
     found: List[Path] = []
     seen: Set[str] = set()
+    pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
-    def excluded(rel: str) -> bool:
-        for pat in exclude_patterns:
-            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat):
-                return True
-        return False
+    def matches(rel: str, patterns: Sequence[str]) -> bool:
+        return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat) for pat in patterns)
 
-    def add(p: Path, base: Optional[Path] = None, allow_symlink: bool = False, git_ignored: bool = False) -> None:
-        if p.is_symlink() and not allow_symlink:
+    def add(p: Path, base: Path, explicit: bool = False, git_ignored: bool = False) -> None:
+        if p.is_symlink() and not explicit:
             try:
                 resolved = p.resolve()
             except OSError:
                 return
-            if base is not None:
-                try:
-                    resolved.relative_to(base)
-                except ValueError:
-                    return
+            try:
+                resolved.relative_to(base)
+            except ValueError:
+                return
         key = str(p.resolve())
         if key in seen:
             return
-        try:                            # build folders count inside the scan root only, never above it
-            inside = p.relative_to(base) if base is not None else Path(p.name)
-        except ValueError:
-            inside = Path(p.name)
-        if not p.is_file() or _is_skipped_file(inside):
+        inside = p.relative_to(base)
+        if not p.is_file():
+            return
+        if not explicit and (excludes or config_excludes):
+            rel = inside.as_posix()
+            cli = matches(rel, excludes)
+            config = matches(rel, config_excludes)
+            if cli or config:
+                if not_read is not None:
+                    origin = "both" if cli and config else "--exclude" if cli else "config"
+                    if len(roots) == 1:
+                        count_path(not_read.setdefault("files_excluded", {}), origin, rel)
+                    else:
+                        pending_excludes[p] = origin if pending_excludes.get(p, origin) == origin else "both"
+                return
+        if _is_skipped_file(inside):
             return
         plugin = installed_plugin_dir(inside.as_posix())
         if plugin:
@@ -841,7 +848,7 @@ def discover_files(
         if target.is_file():
             ignored = ignored_files is not None and bool(_git_files(target.parent, "--others", "--ignored",
                                                                      "--", ":(literal)" + target.name))
-            add(target, base=target.parent, allow_symlink=True, git_ignored=ignored)
+            add(target, base=target.parent, explicit=True, git_ignored=ignored)
             continue
         if not target.is_dir():
             continue
@@ -851,9 +858,8 @@ def discover_files(
             ignored_paths = set(ignored_list)
             dir_reasons: Dict[str, Optional[str]] = {}
             # Match the sorted directory walk before applying the file limit.
-            for rel in sorted(git_list + ignored_list, key=lambda p: (p.split("/")[:-1], p.rsplit("/", 1)[-1])):
-                if excluded(rel):
-                    continue
+            ordered = sorted(git_list + ignored_list, key=lambda p: (p.split("/")[:-1], p.rsplit("/", 1)[-1]))
+            for rel, _ in groupby(ordered):
                 segs = rel.split("/")[:-1]
                 skip = None
                 for i, seg in enumerate(segs):           # the same folders are set aside as in a walk without git
@@ -885,9 +891,6 @@ def discover_files(
                     keep.append(d)
                 dirnames[:] = sorted(keep)
                 for fn in sorted(filenames):
-                    rel = f"{rel_dir}/{fn}" if rel_dir else fn
-                    if excluded(rel):
-                        continue
                     add(Path(dirpath) / fn, base=target)
                     if len(found) >= max_files:
                         break
@@ -896,8 +899,13 @@ def discover_files(
         if len(found) >= max_files:
             break
 
-    if not_read is not None and len(found) >= max_files:
-        not_read["file_limit"] = max_files
+    if not_read is not None:
+        for path, origin in pending_excludes.items():
+            if str(path.resolve()) not in seen:
+                rel = os.path.relpath(path, root).replace(os.sep, "/")
+                count_path(not_read.setdefault("files_excluded", {}), origin, rel)
+        if len(found) >= max_files:
+            not_read["file_limit"] = max_files
     found.sort(key=lambda p: str(p))
     total = len(found)
     for idx, p in enumerate(found, 1):

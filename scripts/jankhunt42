@@ -91,10 +91,10 @@ def _probe_root(paths: Sequence[str]) -> str:
 
 def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
                   spinner: Optional[Spinner] = None,
-                  not_read: Optional[Dict[str, Any]] = None) -> Tuple[Any, List[Any], int]:
+                  not_read: Optional[Dict[str, Any]] = None, config_excludes: Sequence[str] = ()) -> Tuple[Any, List[Any], int]:
     ignored_files = set() if not_read is not None else None
     root, files = discover_files(paths, excludes=excludes, max_files=max_files, max_bytes=max_bytes,
-                                 not_read=not_read, ignored_files=ignored_files)
+                                 not_read=not_read, ignored_files=ignored_files, config_excludes=config_excludes)
     if spinner:
         spinner.update("reading %d files…" % len(files))
     import jh_powerplatform
@@ -205,8 +205,8 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     if preloaded is not None:
         root, sources, skipped = preloaded
     else:
-        root, sources, skipped = _load_sources(args.paths, list(args.exclude or ()) + cfg.ignore_globs,
-                                               args.max_files, args.max_file_bytes, spinner, not_read)
+        root, sources, skipped = _load_sources(args.paths, args.exclude or (), args.max_files, args.max_file_bytes,
+                                               spinner, not_read, config_excludes=cfg.ignore_globs)
     if spinner:
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
     opts = ScanOptions(
@@ -256,13 +256,11 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     if cfg.source:
         meta["config"] = cfg.source
         meta["config_suppressed"] = config_suppressed
-        if cfg.ignore_globs:
-            meta["config_ignored_paths"] = list(cfg.ignore_globs)[:50]
     if ignored_rules(args):
         meta["ignored_rules"] = sorted(ignored_rules(args))
     if getattr(args, "rulesets", None):
         meta["rulesets"] = args.rulesets
-    meta["set_aside"] = set_aside(result, not_read, config_suppressed, ignored_rules(args), args)
+    meta["set_aside"] = set_aside(result, not_read, config_suppressed, ignored_rules(args), args, cfg.source)
     for rid in sorted(result.site_overrun):
         note = "site rule %s ran over its %g-second budget and was switched off for this run; its findings are " \
                "incomplete" % (rid, jh_rules.SITE_BUDGET)
@@ -277,7 +275,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
 
 
 def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: int, ignored: Set[str],
-              args: argparse.Namespace) -> Dict[str, Any]:
+              args: argparse.Namespace, config_source: Optional[str] = None) -> Dict[str, Any]:
     """Everything this run held back from the report, by cause, so a quiet report shows where it did not look:
     findings (inline ignore comments, the severity floor, rules set aside by name, the caps, the config) and input
     (folders not read by name, files over the size limit, the file limit). Version-control folders are left out."""
@@ -288,6 +286,9 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
         out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
     if config_suppressed:
         out["config"] = config_suppressed
+    if not_read.get("files_excluded"):
+        out["files_excluded"] = {origin: dict(info, source=config_source) if origin in ("both", "config") else info
+                                 for origin, info in not_read["files_excluded"].items()}
     if not_read.get("git_ignored_read"):
         out["git_ignored_read"] = not_read["git_ignored_read"]
     folders = {reason: paths for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}

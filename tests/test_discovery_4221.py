@@ -31,6 +31,42 @@ class DiscoveryAccounting(unittest.TestCase):
     def hits(self, report):
         return [(f["path"], f["line"]) for f in report["findings"]]
 
+    def test_excluded_files_are_counted_by_origin(self):
+        self.write(".jankhunt42.json", json.dumps({"ignore": ["*.py", "missing-*"]}))
+        for name in ("first.py", "src/second.py"):
+            self.write(name, HANDLER)
+        paths = ["first.py", "src/second.py"]
+        sample = {"count": 2, "paths": paths}
+        config_sample = dict(sample, source=str(self.root / ".jankhunt42.json"))
+        args = ("--rule", "JH217")
+        for mode in ("folder", "repository"):
+            if mode == "repository":
+                if not shutil.which("git"):
+                    break
+                subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+            with self.subTest(mode=mode):
+                config = self.scan(*args)
+                self.assertEqual(config["summary"]["files"], 1)
+                self.assertEqual(config["set_aside"]["files_excluded"], {"config": config_sample})
+                cli = self.scan(*args, "--no-config", "--exclude", "*.py", "--exclude", "first*")
+                self.assertEqual(cli["set_aside"]["files_excluded"], {"--exclude": sample})
+                both = self.scan(*args, "--exclude", "first*")["set_aside"]["files_excluded"]
+                self.assertEqual(both["both"], dict(config_sample, count=1, paths=["first.py"]))
+                self.assertEqual(both["config"], dict(config_sample, count=1, paths=["src/second.py"]))
+                restored = self.scan(*args, "--no-config", "--exclude", "missing-*")
+                self.assertNotIn("files_excluded", restored["set_aside"])
+                self.assertEqual(self.hits(restored), [(p, 3) for p in paths])
+                section = self.scan(*args, "--exclude", "first*", output="--md").split("### Set aside in this run")[1]
+                for word in ("1 file", "`first.py`", "`src/second.py`", ".jankhunt42.json", "--exclude", "--no-config"):
+                    self.assertIn(word, section)
+
+    def test_excluded_samples_stop_at_twenty(self):
+        for index in range(23):
+            self.write("src/page%02d.txt" % index, "ink\n")
+        self.write("vendor/page00.txt", "ink\n")
+        info = self.scan("--no-config", "--exclude", "*.txt")["set_aside"]["files_excluded"]["--exclude"]
+        self.assertEqual(info, {"count": 23, "paths": ["src/page%02d.txt" % i for i in range(20)]})
+
     @unittest.skipUnless(shutil.which("git"), "git unavailable")
     def test_ignored_files_are_read_in_both_modes(self):
         self.write(".gitignore", "*.py\n*.map\n")
