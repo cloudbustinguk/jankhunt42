@@ -792,6 +792,7 @@ def discover_files(
 
     found: List[Path] = []
     seen: Dict[str, int] = {}             # resolved path -> its index in found
+    overflow = [False]                    # an eligible file was left out by the file limit (explicit files count too)
     pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
     def matches(rel: str, patterns: Sequence[str]) -> bool:
@@ -850,6 +851,9 @@ def discover_files(
                 return
         except OSError:
             return
+        if len(found) >= max_files:          # an eligible file the limit turns away: only then is the walk cut short
+            overflow[0] = True
+            return
         seen[key] = len(found)
         found.append(p)
         if ignored_files is not None and git_ignored:
@@ -889,7 +893,7 @@ def discover_files(
                         not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(rel.rstrip("/"))
                     continue
                 add(target / rel, base=target, git_ignored=rel in ignored_paths)
-                if len(found) >= max_files:
+                if overflow[0]:
                     break
         else:
             def walk_error(exc: OSError) -> None:     # a folder the walk cannot enter is counted, never skipped quietly
@@ -911,11 +915,11 @@ def discover_files(
                 dirnames[:] = sorted(keep)
                 for fn in sorted(filenames):
                     add(Path(dirpath) / fn, base=target)
-                    if len(found) >= max_files:
+                    if overflow[0]:
                         break
-                if len(found) >= max_files:
+                if overflow[0]:
                     break
-        if len(found) >= max_files:
+        if overflow[0]:
             break
 
     if not_read is not None:
@@ -923,7 +927,7 @@ def discover_files(
             if str(path.resolve()) not in seen:
                 rel = os.path.relpath(path, root).replace(os.sep, "/")
                 count_path(not_read.setdefault("files_excluded", {}), origin, rel)
-        if len(found) >= max_files:
+        if overflow[0]:
             not_read["file_limit"] = max_files
     found.sort(key=lambda p: str(p))
     total = len(found)

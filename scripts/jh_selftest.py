@@ -1182,6 +1182,8 @@ MUTANTS = [
     ('M822-selection-unstated', 'a narrowed run does not say it was narrowed', 'jankhunt42', '        out["selection"] = selection', '        pass', 'test_audit_4222.py'),
     ('M823-site-rule-directive-ignored', 'an ignore comment cannot name a site rule', 'jh_rules.py', '    known = {r.id.upper() for r in RULES}', '    known = {r.id.upper() for r in RULES if re.fullmatch(r"JH\\d{3}", r.id)}', 'test_audit_4222.py'),
     ('M824-review-rules-off-unstated', 'review omits the rules switched off', 'jh_review.py', '    if ignored:\n        out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run', '    if False:\n        out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run', 'test_audit_4222.py'),
+    ('M825-file-limit-false-notice', 'the file-limit notice is claimed when the count only equals the limit', 'jh_core.py', '        if overflow[0]:\n            not_read["file_limit"] = max_files', '        if len(found) >= max_files:\n            not_read["file_limit"] = max_files', 'test_audit_4222.py'),
+    ('M826-max-files-zero', 'a file limit of zero is accepted', 'jankhunt42', '    if n < 1:\n        raise argparse.ArgumentTypeError("must be at least 1")', '    if n < 0:\n        raise argparse.ArgumentTypeError("must be at least 1")', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
