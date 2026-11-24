@@ -52,11 +52,10 @@ A larger corpus of **17,529 public repositories** was collected on 2026-11-17:
 
 **How each snapshot is pinned.** Each snapshot is identified by its git tree hash, which names its exact content.
 When it was pinned, the tip of the repository's default branch was also recorded; for a repository that kept
-changing, that tip can be later than the snapshot. On 2026-11-24 the first two groups (9,580 repositories) were
-fetched again with their history: for **9,043** of them the commit holding the snapshot's content is now recorded
-(8,866 with the identical tree, 177 with the same files and different file permissions). For 193 no commit in the
-history fetched matches, 169 were not checked and 175 are no longer available. The ordinary-repositories group is
-identified by tree hash only.
+changing, that tip can be later than the snapshot. On 2026-11-24 all 17,529 were fetched again with their history:
+for **17,013** of them the commit holding the snapshot's content is now recorded (16,041 with the identical tree, 972
+with the same files and different file permissions). For 332 no commit in the history fetched matches, and 184 are no
+longer available.
 
 **Release measurement.** Since 4.22.0 each release is compared, before it ships, with the previous one on a full scan
 of the same **1,840** repositories from this corpus (1,239 found by code search, 396 ordinary, 205 vibe-coded), in the
