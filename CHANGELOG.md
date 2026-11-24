@@ -4,7 +4,17 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.2] — 2026-11-24
+
+Closes the 34 findings the audit of 4.22.0 left open in 4.22.1; each was reproduced on invented projects and is now
+covered by a test. Measured before release on the full scan of the same 1,840 repositories, in locked-down containers:
+139,422 findings became 139,443 and 141 more files were read. `JH204` now reports each debug call on a line and no
+longer takes a directive inside a string as a suppression (+13); a file linked into an agent's folder is now read
+where that agent loads it as well as at its real location (`JH701` +5, `JH704` +3); three findings moved from a link
+to the file it points to. Reports say more about what they set aside: debug calls over the per-file cap in 51
+repositories, linked folders not followed in 48, files that could not be parsed in 43. Scans of 200 of these
+repositories with and without their git folders read the same files and report the same findings, except that a
+committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
