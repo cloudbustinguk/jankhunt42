@@ -12,6 +12,7 @@ semantic versioning.
 
 ### Fixed
 
+- Files set aside by name (lockfiles, minified libraries, generated code, maps) are counted by reason with sample paths. The name rule no longer reads any name ending in "lock" as a lockfile (`clock` is read), and it no longer drops folders such as `Build/` regardless of case: folders are left to the shared folder rule, which matches names exactly and lists what it skips.
 - What a run sets aside now reaches every output, not only JSON and Markdown: SARIF (a note per item and `setAside` in the run's properties), the HTML report's header, the fix prompt (which no longer says it found nothing to fix when it held findings back), review (`review.set_aside`, with what the caps held back) and passport (`scope.set_aside` and a section in its Markdown). The HTML empty state no longer calls an empty result good news.
 - The `--score` scorecard says how many files it read and lists what the run set aside; over zero files it says the score describes nothing. Before, it showed `quiet` and `pass` with no file count.
 - A rating set by a config or a ruleset applies before the severity floor and the caps: a promotion to major shows at the default floor, a demotion counts below a higher floor, and a finding the config sets aside no longer takes the only display slot. An unknown severity in a config (`"majo"`) and a wrongly typed `ignore` are reported and ignored; before, the typo invented a rating that let a gate pass, and the type error stopped the scan.
