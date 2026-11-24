@@ -470,9 +470,11 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
 # Receipts and baseline
 # ---------------------------------------------------------------------------
 
-def _review_aside(result: ScanResult, capped: int, floor: str) -> Dict[str, Any]:
+def _review_aside(result: ScanResult, capped: int, floor: str, ignored: Sequence[str] = ()) -> Dict[str, Any]:
     """What the review's scan of the changed files held back, in the same shape as a scan's set_aside."""
-    out: Dict[str, Any] = {k: v for k, v in result.set_aside.items() if v and k != "capped"}
+    out: Dict[str, Any] = {k: v for k, v in result.set_aside.items() if v and k not in ("capped", "ignored_rules")}
+    if ignored:
+        out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
     if out.get("below_floor"):
         out["below_floor"] = dict(out["below_floor"], floor=floor)
     if capped:
@@ -838,7 +840,8 @@ def run_review(args: Any) -> Dict[str, Any]:
         "resolved": (baseline or {}).get("resolved_findings", []),
         "unknowns": unknowns,
         "gate": gate,
-        "set_aside": _review_aside(result, review_capped, getattr(args, "min_severity", "minor")),
+        "set_aside": _review_aside(result, review_capped, getattr(args, "min_severity", "minor"),
+                                   sorted(getattr(args, "ignore_rule_ids", None) or ())),
         "receipt_version": _REVIEW_RECEIPT_VERSION,
         "rulepack_hash": rulepack_hash(),
     }

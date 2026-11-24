@@ -304,6 +304,10 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
         out["below_floor"] = dict(out["below_floor"], floor=getattr(args, "min_severity", "minor"))
     if ignored:
         out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
+    selection = {k: sorted(v) for k, v in (("rules", getattr(args, "rule", None) or ()),
+                                           ("categories", getattr(args, "category", None) or ())) if v}
+    if selection:
+        out["selection"] = selection                         # only these were reported: zero means zero of these
     if config_suppressed:
         out["config"] = config_suppressed
     if not_read.get("files_excluded"):
