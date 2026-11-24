@@ -4,7 +4,15 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.1] — 2026-11-24
+
+From an adversarial audit of 4.22.0 (56 findings, each reproduced on invented projects): the fixes below close every
+false pass and false resolution it found, the regression 4.22.0 shipped (a passphrase starting with `!`), and the ways
+a scan still left input or findings out without counting them. Measured before release on the full scan of the same
+1,840 repositories as 4.22.0, in locked-down containers: 139,379 findings became 139,422, almost all from `JH107`
+reporting 49 weak-hash calls marked `usedforsecurity=False` at info (they used to be skipped) and 9 such multi-line
+calls moving from major to info; the rest are single findings in files now read. Every report now carries what it
+set aside: files not read as text in 1,323 repositories, files set aside by name in 1,048, findings over a cap in 635.
 
 ### Changed
 
