@@ -63,6 +63,7 @@ class Collected:
     skipped: Dict[str, int] = field(default_factory=dict)
     skipped_paths: List[str] = field(default_factory=list)
     max_files_reached: bool = False
+    unread: List[str] = field(default_factory=list)      # files that exist but could not be read (size, permission)
 
     def skip(self, reason: str, rel: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -78,15 +79,21 @@ def _decode(raw: bytes) -> Optional[str]:
 
 def collect_worktree(root: str, paths: Sequence[str], excludes: Sequence[str],
                      max_files: int, max_bytes: int) -> Tuple[str, Collected]:
+    not_read: Dict[str, Any] = {}
     base, files = discover_files(paths or [root], excludes=excludes, max_files=max_files,
-                                 max_bytes=max_bytes)
+                                 max_bytes=max_bytes, not_read=not_read)
     col = Collected(considered=len(files), max_files_reached=len(files) >= max_files)
+    for rel in not_read.get("too_large") or []:      # over the size limit: considered, never read
+        col.considered += 1
+        col.skip("over the size limit", rel)
+        col.unread.append(rel)
     for p in files:
         rel = os.path.relpath(str(p), str(base)).replace(os.sep, "/")
         try:
             raw = p.read_bytes()
         except OSError:
             col.skip("unreadable", rel)
+            col.unread.append(rel)
             continue
         text = _decode(raw)
         if text is None:
@@ -2563,6 +2570,11 @@ def build_report(col: Collected, root: str, app_name: str, snapshot: str, source
         partial_reasons.append("%d file(s) could not be parsed" % len(ctx.parse_failures))
     if g.truncated:
         partial_reasons.extend(g.truncated)
+    # a file the map would have read but could not (over the size limit, unreadable) makes coverage partial
+    unread = sorted(r for r in col.unread if _classify_file(r, "")[0] not in ("doc", "test", "template", "unsupported"))
+    if unread:
+        partial_reasons.append("%d supported file(s) not read: %s%s" % (
+            len(unread), ", ".join(safe_text(r) for r in unread[:5]), ", ..." if len(unread) > 5 else ""))
     if not ctx.inspected:
         partial_reasons.append("no supported files inspected")
     coverage["status"] = "none" if not ctx.inspected else ("partial" if partial_reasons else "complete-for-supported-types")

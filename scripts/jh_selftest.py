@@ -1150,6 +1150,7 @@ MUTANTS = [
     ('M790-git-ignored-finding-critical', 'a key in a git-ignored file is reported as a secret the repository carries', 'jankhunt42', '            if f.path in ignored_paths and sev_at_least(f.severity, "major"):', '            if False:', 'test_discovery_4221.py'),
     ("M791-excluded-files", "files matched by a config are reported as command line exclusions", "jh_core.py",
      'else "--exclude" if cli else "config"', 'else "--exclude"', "test_discovery_4221.py"),
+    ('M792-unread-file-complete-map', 'a supported file over the size limit leaves map coverage complete', 'jh_map.py', '    if unread:\n        partial_reasons.append(', '    if False:\n        partial_reasons.append(', 'test_discovery_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
