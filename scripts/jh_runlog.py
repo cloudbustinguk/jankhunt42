@@ -68,6 +68,11 @@ def _endpoint(host: Any, port: Any = None) -> Optional[Tuple[str, Optional[int]]
         return str(ipaddress.ip_address(h)), p
     except ValueError:
         pass
+    if any(ord(ch) > 127 for ch in h):                  # an international name: compared in its ASCII (punycode)
+        try:                                            # form, so how a log or the code writes it never decides
+            h = h.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
     clean = jh_fence.clean_host(h)
     return (clean, p) if clean and clean == h.rstrip(".") else None
 
