@@ -26,6 +26,7 @@ from jh_core import (
     redact_secrets,
     sev_at_least,
 )
+import jh_checks
 from jh_checks import CHECKS, nonsecurity_hashes
 
 
@@ -1736,6 +1737,13 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     break
 
     result.findings = acceptor.apply_caps(result.findings)
+    for (rid, _path), n in jh_checks.BOUND_DROPPED.items():     # past a check's own safety bound: counted as capped
+        if not opts.rule_ids or rid in opts.rule_ids:
+            acceptor.set_aside["capped"] = acceptor.set_aside.get("capped", 0) + n
+            sev = rule_by_id(rid).severity if rule_by_id(rid) else "info"
+            if acceptor.capped_worst is None or sev_at_least(sev, acceptor.capped_worst):
+                acceptor.capped_worst = sev
+    jh_checks.BOUND_DROPPED.clear()
     result.capped_worst = acceptor.capped_worst
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule

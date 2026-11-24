@@ -640,6 +640,10 @@ _SECRET_FILE_NAMES = {
 }
 
 
+DEBUG_BOUND = 100000                            # findings one check makes for one file; the rest are counted
+BOUND_DROPPED: Dict[Tuple[str, str], int] = {}  # (rule, path) -> findings past the bound (cleared per scan)
+
+
 @check("secret_file")
 def secret_file(sf: SourceFile, rule: Rule) -> List[Finding]:
     base = sf.basename.lower()
@@ -3378,11 +3382,10 @@ def debug_leftover(sf: SourceFile, rule: Rule) -> List[Finding]:
                         continue
                 starts.add(m.start())
         for start in sorted(starts):
+            if len(out) >= DEBUG_BOUND:          # a pathological file: the rest is counted, never dropped silently
+                BOUND_DROPPED[(rule.id, sf.rel)] = BOUND_DROPPED.get((rule.id, sf.rel), 0) + 1
+                continue
             out.append(make_finding(rule, sf, i + 1, column=start + 1))
-        # the scan's per-file and per-rule caps limit what is shown, and count what they hold back; this bound only
-        # protects against a pathological file
-        if len(out) >= 1000:
-            break
     return out
 
 

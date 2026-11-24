@@ -329,7 +329,7 @@ def _untracked(root: str) -> List[str]:
     proc = _run_git(root, ["ls-files", "--others", "--exclude-standard", "-z"])
     if proc.returncode != 0:
         return []
-    return [p.replace("\\", "/") for p in proc.stdout.split("\0") if p]
+    return [p for p in proc.stdout.split("\0") if p]      # git always writes "/"; a backslash is part of a name
 
 
 def collect_diff(root: str, mode: str, base: str = "", commit: str = "",
@@ -354,6 +354,18 @@ def collect_diff(root: str, mode: str, base: str = "", commit: str = "",
         commit=commit_ref, pr=pr_ref, revision=revision, index=index,
         warning="",
     )
+
+
+def _in_reviewed_tree(root: str, scope: "DiffScope", rel: str) -> bool:
+    """Whether the tree under review holds a file: the index for a staged review, the revision for a revision
+    review, the working tree otherwise. An unstaged file never changes a review of the index or of a commit."""
+    if scope.index or scope.revision:
+        ref = (":%s" % rel) if scope.index else ("%s:%s" % (scope.revision, rel))
+        try:
+            return run_git(["git", "-C", root, "cat-file", "-e", ref], capture_output=True, timeout=10).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return os.path.isfile(os.path.join(root, rel))
 
 
 def _git_show(root: str, rev: str, rel: str) -> Optional[str]:
@@ -462,7 +474,7 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
             continue
         # the shared folder rule: an env folder holding pyvenv.cfg (on disk or among the changes) is installed code,
         # and so is an installed plugin's bundle
-        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or os.path.isfile(os.path.join(root, q)))
+        folder_why = tree_skip_reason(rel, lambda q: q in scope.files or _in_reviewed_tree(root, scope, q))
         if GENERATED_RE.search(rel) or folder_why:
             skipped.append({"path": rel, "reason": "generated/vendor" if not folder_why else folder_why})
             continue

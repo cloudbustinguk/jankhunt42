@@ -23,6 +23,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
+- A staged or revision review decides whether a folder is an installed environment from the tree it reviews, not the working folder. Raised limits reach every debug call; past a check's own safety bound (100,000 per file) findings are counted as capped. Untracked names keep their backslashes. A name whose text holds a backslash before `xNN` is shown with its backslashes doubled, so it can never look like another file's escaped byte.
 - The per-file and per-rule limits keep the most serious findings, not the first ones found, and `--fail-on` also counts findings the limits held back: a project-rated major in a later file can no longer be pushed out of the report, and out of the gate, by minor findings found earlier.
 - PHP `#` line comments are read as comments (a `#[...]` attribute stays code): code rules no longer match text inside them, and a `# jankhunt42: ignore` comment in PHP counts as the ignore comments of other languages do.
 - `map --base` reads each compared revision's own committed config (its ignore globs and declarations, found from the scanned folder up to the repository top), as `passport --base` does: an uncommitted policy edit no longer changes a comparison of two commits, `--no-config` is honoured, and a parent folder's declarations apply to a subfolder.
