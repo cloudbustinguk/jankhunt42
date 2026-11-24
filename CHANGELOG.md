@@ -4,6 +4,13 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- A file named on the command line is governed by its own folder's config, never by the folder the command runs from; several inputs start the search from the folder they share. Before, `scan ../target/sample.py` from a folder whose config disabled a rule applied that config to the file.
+- A supported structured file that could not be parsed (a malformed MCP or agent settings file) is reported as not parsed, so its structured checks are known not to have run; before, it counted as scanned with no warning.
+
 ## [4.22.1] — 2026-11-24
 
 From an adversarial audit of 4.22.0 (56 findings, each reproduced on invented projects): the fixes below close its

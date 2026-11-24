@@ -86,7 +86,13 @@ def _probe_root(paths: Sequence[str]) -> str:
     roots = [_Path(p).expanduser().resolve() for p in (paths or ["."])]
     if len(roots) == 1 and roots[0].is_dir():
         return str(roots[0])
-    return str(_Path.cwd().resolve())
+    # a named file is governed by its own folder's repository, never by the folder the command runs from; several
+    # inputs start from the folder they share
+    folders = [str(r if r.is_dir() else r.parent) for r in roots]
+    try:
+        return os.path.commonpath(folders)
+    except ValueError:                     # jankhunt42: ignore JH201 (inputs on different Windows drives share no folder)
+        return str(_Path.cwd().resolve())
 
 
 def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int, max_bytes: int,
@@ -234,7 +240,11 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         honor_suppressions=getattr(args, "honor_suppressions", True) and not getattr(args, "no_inline_ignore", False),
         rate=rate,
     )
+    import jh_checks
+    jh_checks.PARSE_FAILURES.clear()
     result = scan_sources(sources, opts)
+    for rel in sorted(jh_checks.PARSE_FAILURES):          # supported files a structured check could not parse
+        count_path(not_read, "files_not_parsed", rel)
     config_suppressed = int(result.set_aside.get("config", 0)) if cfg.source else 0
     # A file the repository's .gitignore covers is read (a folder without git reads it too), but it is not committed:
     # a finding there is at most minor and says why, so a key kept in a git-ignored .env is not reported as a secret
@@ -301,6 +311,8 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
                                  for origin, info in not_read["files_excluded"].items()}
     if not_read.get("git_ignored_read"):
         out["git_ignored_read"] = not_read["git_ignored_read"]
+    if not_read.get("files_not_parsed"):
+        out["files_not_parsed"] = not_read["files_not_parsed"]
     if not_read.get("files_by_name"):                        # lockfiles, minified libraries, generated files
         out["files_by_name"] = not_read["files_by_name"]
     for why in ("unreadable", "binary", "empty"):               # files found but not read as text, by reason

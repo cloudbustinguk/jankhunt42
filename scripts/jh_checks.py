@@ -1523,10 +1523,20 @@ def _shown(value: Any, limit: int) -> str:
     return trim(redact_secrets(str(value)), limit)
 
 
+# Supported structured files a check could not parse during this scan, {path: reason}: the scan reports them, so a
+# syntax error is never mistaken for a clean file (run_scan clears it before each scan)
+PARSE_FAILURES: Dict[str, str] = {}
+
+
+def _parse_failed(sf: SourceFile, exc: BaseException) -> None:
+    PARSE_FAILURES.setdefault(sf.rel, type(exc).__name__)
+
+
 def _settings(sf: SourceFile) -> Optional[Dict[str, Any]]:
     try:
         data = jh_agent.loads_jsonc(sf.text)
-    except ValueError:
+    except ValueError as exc:
+        _parse_failed(sf, exc)
         return None
     return data if isinstance(data, dict) else None
 
@@ -2536,7 +2546,8 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
 def _mcp(sf: SourceFile) -> List[jh_agent.McpServer]:
     try:
         return [s for s in jh_agent.mcp_servers(sf.rel, sf.text) if not s.disabled]
-    except (ValueError, RecursionError):
+    except (ValueError, RecursionError) as exc:
+        _parse_failed(sf, exc)
         return []
 
 
@@ -2550,7 +2561,8 @@ def agent_rule_of_two(sf: SourceFile, rule: Rule, settings: Optional[jh_agent.Cl
         agents = []
         try:
             groups = jh_agent.server_groups(jh_agent.mcp_servers(sf.rel, sf.text))
-        except (ValueError, RecursionError):
+        except (ValueError, RecursionError) as exc:
+            _parse_failed(sf, exc)
             return []
         for project, servers in groups.items():
             found = jh_rule2.mcp_agent(sf.rel, sf.text, sf.abspath, settings=settings, servers=servers)
