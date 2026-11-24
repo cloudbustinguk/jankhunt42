@@ -968,6 +968,11 @@ def auth_method_list(line: str, match_text: str) -> bool:
     return sum(1 for q in re.findall(r"[\"']([\w-]+)[\"']", line) if _AUTH_METHOD_RE.fullmatch(q)) >= 3
 
 
+HASH_MESSAGE = ("The value is shaped like a password hash. If the code hashes a supplied password and compares the "
+                "result, a weak password behind it can still be guessed offline. If the code compares a supplied "
+                "password with this value directly, it is the password itself: treat it as a hard-coded secret.")
+
+
 def password_hash(match_text: str) -> bool:
     """True when the matched value is a password hash (bcrypt, argon2, PBKDF2, crypt, LDAP {SSHA})."""
     quoted = _SECRET_QUOTED_RE.search(match_text) or _SECRET_ARG_PAIR_RE.match(match_text)
@@ -1571,10 +1576,7 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                             continue
                         if rule.id == "JH101" and password_hash(m.group()):
                             severity, confidence = "minor", "low"
-                            message = ("The value is shaped like a password hash. If the code hashes a supplied "
-                                       "password and compares the result, a weak password behind it can still be "
-                                       "guessed offline. If the code compares a supplied password with this value "
-                                       "directly, it is the password itself: treat it as a hard-coded secret.")
+                            message = HASH_MESSAGE
                         if "data\\s+source" in pat.pattern:
                             host = _CONN_HOST_RE.search(m.group(0))
                             if host and _local_db_host(host.group(1)):
@@ -1656,8 +1658,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                                 severity, confidence = "minor", "low"
                                 message = (rule.message + " It is inside a long data row (a dataset or export), which "
                                            "usually holds sample text: confirm it is not a real credential.")
-                            if "test" in sf.kinds or is_test_path(sf.rel) or sf.lang == "markdown" or \
-                                    sf.rel.lower().endswith(".txt"):
+                            if ("test" in sf.kinds or is_test_path(sf.rel) or sf.lang == "markdown" or
+                                    sf.rel.lower().endswith(".txt")) and not (message or "").startswith(HASH_MESSAGE[:30]):
                                 severity, confidence = "minor", "low"
                                 message = rule.message + " It is in test code or documentation: confirm it is an " \
                                                          "example, not a real credential."

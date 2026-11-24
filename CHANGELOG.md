@@ -12,6 +12,7 @@ semantic versioning.
 
 ### Fixed
 
+- An MCP config with more than 200 server definitions makes the map partial and says how many were not inventoried; before, the rest were dropped and coverage read complete. The password-hash explanation is kept in test code, documentation and text files, where a generic message used to replace it.
 - Files set aside by name (lockfiles, minified libraries, generated code, maps) are counted by reason with sample paths. The name rule no longer reads any name ending in "lock" as a lockfile (`clock` is read), and it no longer drops folders such as `Build/` regardless of case: folders are left to the shared folder rule, which matches names exactly and lists what it skips.
 - What a run sets aside now reaches every output, not only JSON and Markdown: SARIF (a note per item and `setAside` in the run's properties), the HTML report's header, the fix prompt (which no longer says it found nothing to fix when it held findings back), review (`review.set_aside`, with what the caps held back) and passport (`scope.set_aside` and a section in its Markdown). The HTML empty state no longer calls an empty result good news.
 - The `--score` scorecard says how many files it read and lists what the run set aside; over zero files it says the score describes nothing. Before, it showed `quiet` and `pass` with no file count.

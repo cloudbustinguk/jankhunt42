@@ -295,3 +295,13 @@ class HashMessageIsConditional(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertNotIn("Nobody can sign in", found[0].message)
         self.assertIn("compares a supplied password with this value directly", found[0].message)
+
+
+class HashMessageSurvivesDocumentation(unittest.TestCase):
+    def test_a_hash_in_a_text_file_keeps_its_explanation(self):
+        line = 'password: "$argon2id$v=19$m=65536,t=3,p=4$DjuQZ1CwKrfFsOLd$BsnyuCLeLKypIDZoM37czEgTtD"\n'
+        for path in ("record.txt", "docs/setup.md", "tests/fixture.yml"):
+            with self.subTest(path=path):
+                found = scan("JH101", line, path)
+                self.assertTrue(found and found[0].message.startswith("The value is shaped like a password hash"))
+

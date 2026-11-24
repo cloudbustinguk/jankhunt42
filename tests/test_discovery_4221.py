@@ -273,3 +273,15 @@ class NameBasedSkipsAreCountedAndNarrow(unittest.TestCase):
         self.assertEqual((by_name["generated"]["paths"], by_name["minified"]["paths"], by_name["lockfile"]["paths"]),
                          (["reader.generated.py"], ["bundle.min.js"], ["Cargo.lock"]))
 
+
+class InventoryCapIsPartial(unittest.TestCase):
+    def test_the_201st_mcp_server_makes_the_map_partial(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        servers = {"viewer%03d" % i: {"command": "node", "args": ["viewer.js"]} for i in range(201)}
+        (root / ".mcp.json").write_text(json.dumps({"mcpServers": servers}), encoding="utf-8")
+        cov = json.loads(run_cli("map", str(root), "--json").stdout)["coverage"]
+        self.assertEqual(cov["status"], "partial")
+        self.assertTrue(any("1 MCP server definition(s) past the first 200" in r for r in cov["partial_reasons"]))
+

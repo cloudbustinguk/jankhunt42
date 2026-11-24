@@ -1169,6 +1169,8 @@ MUTANTS = [
     ('M809-passport-set-aside-dropped', 'a passport drops what its scan held back', 'jh_passport.py', '                      **({"set_aside": dict(set_aside)} if set_aside else {}),\n', '', 'test_discovery_4221.py'),
     ('M810-name-skips-uncounted', 'files set aside by name disappear without a count', 'jh_core.py', '                count_path(not_read.setdefault("files_by_name", {}), why_name, inside.as_posix())\n', '                pass\n', 'test_discovery_4221.py'),
     ('M811-lock-suffix-broad', 'any name ending in lock is taken for a lockfile', 'jh_core.py', '    if low in SKIP_FILENAMES or low.endswith(".lock"):', '    if low in SKIP_FILENAMES or low.endswith("lock"):', 'test_discovery_4221.py'),
+    ('M812-mcp-cap-silent', 'MCP definitions past the cap vanish while coverage reads complete', 'jh_map.py', '    if jh_agent.OMITTED.get(item.rel):\n', '    if False:\n', 'test_discovery_4221.py'),
+    ('M813-hash-message-overwritten', 'documentation replaces the password-hash explanation', 'jh_rules.py', ' and not (message or "").startswith(HASH_MESSAGE[:30]):', ':', 'test_precision_422.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
