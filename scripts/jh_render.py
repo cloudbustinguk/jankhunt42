@@ -274,6 +274,58 @@ def _sample_paths(info: Dict[str, Any]) -> str:
     return names + (", …" if info["count"] > len(paths) else "")
 
 
+def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = None, limit: int = 10) -> str:
+    """A bounded overview for an AI agent's conversation: whatever the repository, a few dozen short lines. The full
+    report goes to a file (--out) and is read selectively; printing it whole costs the conversation dearly."""
+    import jh_score
+    findings = list(result.findings)
+    sev_counts: Dict[str, int] = {}
+    for f in findings:
+        sev_counts[f.severity] = sev_counts.get(f.severity, 0) + 1
+    report = jh_score.compute(findings, result.loc)
+    order = ("blocker", "critical", "major", "minor", "info")
+    from jh_core import VERSION
+    lines = ["jankhunt42 %s summary: %d files, %d findings, Jank Score %d (%s, %s)"
+             % (VERSION, result.files, len(findings), report.score, report.grade, report.label)]
+    if findings:
+        lines.append("by severity: " + ", ".join("%s %d" % (s, sev_counts[s]) for s in order if sev_counts.get(s)))
+        by_rule: Dict[str, List[Any]] = {}
+        for f in findings:
+            by_rule.setdefault(f.rule, []).append(f)
+        ranked = sorted(by_rule.items(), key=lambda kv: (min(order.index(f.severity) for f in kv[1]), -len(kv[1])))
+        lines.append("top rules:")
+        for rid, group in ranked[:8]:
+            worst = min(group, key=lambda f: order.index(f.severity))
+            lines.append("  %s x%d (worst %s) %s" % (rid, len(group), worst.severity, _short(worst.title, 70)))
+        if len(ranked) > 8:
+            lines.append("  ... %d more rules" % (len(ranked) - 8))
+        lines.append("most serious %d of %d:" % (min(limit, len(findings)), len(findings)))
+        for f in findings[:limit]:                      # findings are already ordered most serious first
+            lines.append("  %s %s %s:%d %s" % (f.severity, f.rule, _tail(f.path, 60), f.line, _short(f.title, 60)))
+    held = set_aside_lines(meta)
+    if held:
+        lines.append("set aside:")
+        for _, text in held:
+            lines.append("  " + _short(text.replace("`", ""), 160))
+    if out_path:
+        lines.append("full report: %s (JSON; read only the parts you need)" % out_path)
+    else:
+        lines.append("full report: rerun with --out FILE, then read only the parts you need")
+    lines.append("narrow it: --rule ID, --category NAME, or a path; each finding's fix is in the JSON")
+    return "\n".join(lines)
+
+
+def _tail(path: Any, limit: int) -> str:
+    """A long path keeps its end (the file name), not its start."""
+    s = str(path or "")
+    return s if len(s) <= limit else "\u2026" + s[-(limit - 1):]
+
+
+def _short(text: Any, limit: int) -> str:
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= limit else s[:limit - 1] + "\u2026"
+
+
 def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
     """(label, sentence) for each thing the run held back (meta["set_aside"]), each with the switch that shows it.
     Shared by the Markdown and terminal reports so neither can be quieter than the other."""

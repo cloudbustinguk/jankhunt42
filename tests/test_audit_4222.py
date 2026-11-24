@@ -786,5 +786,31 @@ class ScoreBudget(unittest.TestCase):
         self.assertEqual(doc["summary"]["jank"]["score"], limited["summary"]["jank"]["score"])
 
 
+class AgentSizedOutput(unittest.TestCase):
+    def test_the_summary_stays_small_and_the_full_report_goes_to_a_file(self):
+        files = {"f%03d.py" % i: "try:\n    v = 1\nexcept:\n    pass\nbreakpoint()\n" * 20 for i in range(60)}
+        root = project(self, files)
+        out = root / ".jankhunt42" / "scan.json"
+        proc = run_cli("scan", str(root), "--summary", "--out", str(out), "--no-progress")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertLess(len(proc.stdout), 4000)
+        self.assertIn("full report: %s" % out, proc.stdout)
+        full = json.loads(out.read_text(encoding="utf-8"))
+        self.assertGreater(len(full["findings"]), 1000)
+        again = scan(str(root))
+        self.assertEqual(again["set_aside"]["folders_not_read"]["jankhunt42 reports"]["paths"], [".jankhunt42"])
+
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_the_review_summary_names_the_gate_and_the_new_findings(self):
+        root = project(self, {"a.py": "x = 1  # noqa\nbreakpoint()\n"})
+        __import__("subprocess").run(["git", "-C", str(root), "init", "-q"], check=True)
+        proc = run_cli("review", ".", "--summary", "--out", ".jankhunt42/review.json", "--min-severity", "info",
+                       cwd=str(root))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("gate PASS", proc.stdout)
+        self.assertIn("minor JH204 a.py:2", proc.stdout)
+        self.assertTrue((root / ".jankhunt42" / "review.json").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

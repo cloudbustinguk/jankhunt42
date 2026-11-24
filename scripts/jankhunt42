@@ -444,6 +444,19 @@ def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Di
     return json.dumps(sarif, indent=2, ensure_ascii=False)
 
 
+def _write_out(path: str, text: str) -> bool:
+    """Write a full report for --out, creating its folder. A folder named .jankhunt42 is never scanned."""
+    try:
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        return True
+    except OSError as exc:
+        print("jankhunt42: cannot write --out %s: %s" % (path, exc), file=sys.stderr)
+        return False
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     if getattr(args, "score", False):
         if args.sarif or args.html or args.fail_on:
@@ -452,15 +465,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
                   file=sys.stderr)
             return 2
         return cmd_score(args)
-    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html, args.prompt) if enabled)
+    summary = getattr(args, "summary", False)
+    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.html, args.prompt, summary) if enabled)
     if formats > 1:
-        print("jankhunt42: choose one output format: --md, --json, --sarif, --html, or --prompt",
+        print("jankhunt42: choose one output format: --md, --json, --sarif, --html, --prompt or --summary",
               file=sys.stderr)
         return 2
-    tty = sys.stdout.isatty() and not args.md and not args.json and not args.sarif and not args.html and not args.prompt
+    tty = (sys.stdout.isatty() and not args.md and not args.json and not args.sarif and not args.html
+           and not args.prompt and not summary)
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
-    if args.json:
+    out_path = getattr(args, "out", None)
+    if out_path and not _write_out(out_path, _scan_json(root, result, meta)):   # the full report, read selectively
+        return 2
+    if summary:
+        print(jh_render.render_summary(result, meta, out_path))
+    elif args.json:
         print(_scan_json(root, result, meta))
     elif args.prompt:
         print(jh_prompt.combined(result.findings, held=[t.replace("`", "") for _, t in jh_render.set_aside_lines(meta)]))
@@ -483,9 +503,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_review(args: argparse.Namespace) -> int:
-    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.brief) if enabled)
+    formats = sum(1 for enabled in (args.md, args.json, args.sarif, args.brief, getattr(args, "summary", False))
+                  if enabled)
     if formats > 1:
-        print("jankhunt42: choose one output format: --md, --json, --sarif, or --brief",
+        print("jankhunt42: choose one output format: --md, --json, --sarif, --brief or --summary",
               file=sys.stderr)
         return 2
     try:
@@ -504,7 +525,12 @@ def cmd_review(args: argparse.Namespace) -> int:
             print("jankhunt42: cannot write baseline: %s" % exc, file=sys.stderr)
             return 2
     review = data["review"]
-    if args.json:
+    if getattr(args, "out", None):                     # the full review, for an agent to read selectively
+        if not _write_out(args.out, json.dumps(data, indent=2, ensure_ascii=False)):
+            return 2
+    if getattr(args, "summary", False):
+        print(jh_review.summary(review, getattr(args, "out", None)))
+    elif args.json:
         print(json.dumps(data, indent=2, ensure_ascii=False))
     elif args.sarif:
         print(jh_review.sarif(review))
@@ -1149,6 +1175,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--prompt", action="store_true",
                         help="one prompt to paste into your coding agent (Claude Code, Cursor, Copilot) to fix the "
                              "findings, most serious first")
+        sp.add_argument("--summary", action="store_true",
+                        help="a short overview (about a thousand tokens) for an AI agent's conversation: counts, top "
+                             "rules, the most serious findings, what was set aside; pair it with --out")
+        sp.add_argument("--out", metavar="FILE",
+                        help="also write the full JSON report to FILE (any output format), to read selectively")
         add_common_scan_inputs(sp)
         sp.add_argument("--max-findings", type=int, default=300,
                         help="display cap (JSON/SARIF keep all)")
@@ -1181,6 +1212,9 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--sarif", action="store_true", help="SARIF 2.1.0 with receipt fingerprints")
     out.add_argument("--md", action="store_true", help="force Markdown output")
     out.add_argument("--brief", action="store_true", help="Markdown review brief for the host agent")
+    out.add_argument("--summary", action="store_true",
+                     help="a short overview for an AI agent's conversation: gate, scope, the most serious new findings")
+    out.add_argument("--out", metavar="FILE", help="also write the full JSON review to FILE (any output format)")
     out.add_argument("--no-color", action="store_true")
     out.add_argument("--quiet", action="store_true")
     out.add_argument("--no-progress", action="store_true")

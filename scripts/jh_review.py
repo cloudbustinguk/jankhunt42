@@ -1129,6 +1129,33 @@ def markdown(review: Dict[str, Any], max_findings: int = 300) -> str:
     return "\n".join(out)
 
 
+def summary(review: Dict[str, Any], out_path: Optional[str] = None, limit: int = 10) -> str:
+    """A bounded overview of a review for an AI agent's conversation."""
+    import jh_render
+    scope, gate, summ = review.get("scope") or {}, review.get("gate") or {}, review.get("summary") or {}
+    lines = ["jankhunt42 %s review summary: gate %s; %s changed file(s), %s reviewed, %s skipped; %s changed line(s)"
+             % (VERSION, str(gate.get("result", "?")).upper(), scope.get("files_changed", 0),
+                scope.get("files_reviewed", 0), len(scope.get("skipped_files") or []), scope.get("changed_lines", 0))]
+    for reason in (gate.get("reasons") or [])[:5]:
+        lines.append("  gate: " + jh_render._short(reason, 150))
+    found = review.get("findings") or []
+    counts = summ.get("counts") or {}
+    lines.append("new findings: %d%s" % (len(found), (" (" + ", ".join("%s %d" % (s, counts[s]) for s in
+                 ("blocker", "critical", "major", "minor", "info") if counts.get(s)) + ")") if counts else ""))
+    for r in found[:limit]:
+        lines.append("  %s %s %s:%s %s" % (r.get("severity"), r.get("rule"), jh_render._tail(r.get("path"), 60),
+                                           r.get("line"), jh_render._short(r.get("title"), 60)))
+    if len(found) > limit:
+        lines.append("  ... %d more" % (len(found) - limit))
+    held = jh_render.set_aside_lines({"set_aside": review.get("set_aside") or {}})
+    if held:
+        lines.append("set aside:")
+        lines.extend("  " + jh_render._short(text.replace("`", ""), 160) for _, text in held)
+    lines.append("full review: %s" % (out_path + " (JSON; read only the parts you need)" if out_path
+                                      else "rerun with --out FILE, then read only the parts you need"))
+    return "\n".join(lines)
+
+
 def brief(review: Dict[str, Any]) -> str:
     """A compact pack for the host agent or an external LLM reviewer."""
     out = [
