@@ -299,10 +299,19 @@ def set_aside_lines(meta: Dict[str, object]) -> List[Tuple[str, str]]:
         rules = ignored.get("rules") or []
         out.append(("RULES OFF", "%d rule(s) set aside by name and not run: %s%s"
                     % (len(rules), ", ".join(rules[:12]), ", …" if len(rules) > 12 else "")))
-    if meta.get("config") and (meta.get("config_suppressed") or meta.get("config_ignored_paths")):
-        out.append(("CONFIG", "%s set aside %d finding(s)%s; `--no-config` shows everything" % (
-            safe_text(str(meta["config"])), meta.get("config_suppressed", 0),
-            " and skipped %d path pattern(s)" % len(meta["config_ignored_paths"]) if meta.get("config_ignored_paths") else "")))
+    if aside.get("config"):
+        out.append(("CONFIG", "%s set aside %d finding(s). `--no-config` shows everything held by this config"
+                    % (safe_text(str(meta["config"])), aside["config"])))
+    for origin, info in (aside.get("files_excluded") or {}).items():
+        causes, actions = [], []
+        if origin in ("--exclude", "both"):
+            causes.append("`--exclude`")
+            actions.append("remove the matching `--exclude`")
+        if origin in ("config", "both"):
+            causes.append("`%s`" % safe_text(info["source"]).replace("`", "\\`"))
+            actions.append("use `--no-config`")
+        out.append(("NOT READ", "%d file(s) excluded by %s, including %s. To read them, %s."
+                    % (info["count"], " and ".join(causes), _sample_paths(info), " and ".join(actions))))
     if aside.get("capped"):
         out.append(("CAPPED", "%d finding(s) over the per-file or per-rule cap; raise `--max-per-file-rule` or "
                     "`--max-per-rule`" % aside["capped"]))
