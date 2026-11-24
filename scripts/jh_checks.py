@@ -767,8 +767,6 @@ def dockerfile_base(sf: SourceFile, rule: Rule) -> List[Finding]:
         note = "no tag" if ":" not in image.rsplit("/", 1)[-1] else "mutable tag"
         out.append(make_finding(rule, sf, i + 1,
                                 message="Base image '%s' is not digest-pinned (%s)." % (image, note)))
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -816,8 +814,6 @@ def k8s_secret_literal(sf: SourceFile, rule: Rule) -> List[Finding]:
                         out.append(make_finding(rule, sf, start + k + 1,
                                                 evidence="%s: ***REDACTED***" % km.group(1),
                                                 message="Secret value for key '%s' is committed in plaintext." % km.group(1)))
-                        if len(out) >= 5:
-                            return out
                 k += 1
             j = k
     return out
@@ -879,8 +875,6 @@ def gh_expr_injection(sf: SourceFile, rule: Rule) -> List[Finding]:
             out.append(make_finding(rule, sf, i + 1, message=(
                 "Untrusted GitHub event data is interpolated into a shell command." if run_block or not scripts
                 else "Untrusted GitHub event data is interpolated into a github-script JavaScript block.")))
-            if len(out) >= 5:
-                break
     return out
 
 
@@ -942,15 +936,11 @@ def gh_pull_request_target(sf: SourceFile, rule: Rule) -> List[Finding]:
             event = "pull_request_target" if "pull_request_target" in sf.text else "workflow_run"
             out.append(make_finding(rule, sf, i + 1, message=(
                 "%s checks out untrusted PR code with repository secrets available." % event)))
-        if len(out) >= 3:
-            return out
     for i, line in _run_lines(sf):
         if _UNTRUSTED_FETCH.search(line):
             out.append(make_finding(rule, sf, i + 1, message=(
                 "A run step fetches untrusted PR code in a privileged workflow; actions/checkout's built-in "
                 "protection does not cover git or gh commands.")))
-            if len(out) >= 3:
-                break
     return out
 
 
@@ -985,8 +975,6 @@ def gh_action_pinning(sf: SourceFile, rule: Rule) -> List[Finding]:
             message=message,
             extra={"action": action, "ref": version, "official": official},
         ))
-        if len(out) >= 10:
-            break
     return out
 
 
@@ -1009,8 +997,6 @@ def gh_secrets_inherit(sf: SourceFile, rule: Rule) -> List[Finding]:
             message=("Every secret is passed to '%s', a workflow in another repository." % uses if external
                      else "Every secret is passed to the called workflow, whether it needs them or not."),
             extra={"workflow": uses} if uses else None))
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -1028,8 +1014,6 @@ def pip_extra_index(sf: SourceFile, rule: Rule) -> List[Finding]:
         # uv resolves an extra index with its first-index strategy by default.
         if _PIP_EXTRA_RE.search(line) and not re.search(r"\buv\s+(?:pip|add|sync|lock)\b", line):
             out.append(make_finding(rule, sf, i + 1))
-            if len(out) >= 5:
-                break
     return out
 
 
@@ -1127,8 +1111,6 @@ def public_env_secret(sf: SourceFile, rule: Rule) -> List[Finding]:
             out.append(make_finding(rule, sf, i + 1, evidence=redact_secrets(_redact_env_value(sf.raw[i].strip())),
                                     message="%s %s, and its public prefix inlines it into the browser bundle for "
                                             "every visitor." % hit, extra={"variable": hit[0]}))
-            if len(out) >= 10:
-                break
     return out
 
 
@@ -1393,8 +1375,6 @@ def hidden_unicode(sf: SourceFile, rule: Rule) -> List[Finding]:
             severity, message = "minor", message + " It is in test data, where hostile input is usually deliberate."
         out.append(make_finding(rule, sf, idx + 1, severity=severity, column=column, message=message,
                                 evidence="; ".join(names), extra=extra))
-        if len(out) >= 10:
-            break
     return out
 
 
@@ -2819,8 +2799,6 @@ def gh_agent_prompt(sf: SourceFile, rule: Rule) -> List[Finding]:
                             "the job can write to the repository or holds secrets" if privileged
                             else "the job is read-only, which limits but does not remove the impact")),
                 extra={"events": sorted(set(events)), "privileged": privileged}))
-            if len(out) >= 5:
-                return out
     return out
 
 
@@ -2882,8 +2860,6 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
                 continue
             out.append(make_finding(rule, sf, start + 1, end_line=end + 1,
                                     message="Test '%s' contains no assertion." % name))
-            if len(out) >= 10:
-                break
         return out
 
     if sf.lang == "rust":
@@ -2936,8 +2912,6 @@ def assertion_free_test(sf: SourceFile, rule: Rule) -> List[Finding]:
                     break
             if not _JS_ASSERT_RE.search("\n".join(span)) and not (helper_re and helper_re.search("\n".join(span))):
                 out.append(make_finding(rule, sf, i + 1, message="Test contains no assertion on this line."))
-        if len(out) >= 10:
-            break
     return out
 
 
@@ -2980,8 +2954,6 @@ def _rust_assertion_free(sf: SourceFile, rule: Rule) -> List[Finding]:
             name = re.search(r"\bfn\s+(\w+)", lines[j]).group(1)
             out.append(make_finding(rule, sf, j + 1, end_line=end + 1,
                                     message="Test '%s' contains no assertion." % name))
-            if len(out) >= 10:
-                break
     return out
 
 
@@ -3078,8 +3050,6 @@ def unsafe_extract(sf: SourceFile, rule: Rule) -> List[Finding]:
         if hit:
             out.append(make_finding(rule, sf, i + 1,
                                     message="Archive extraction without path validation enables zip-slip/path traversal."))
-            if len(out) >= 5:
-                break
     return out
 
 
@@ -3153,10 +3123,8 @@ def unsafe_deserialization(sf: SourceFile, rule: Rule) -> List[Finding]:
                     continue
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
             break
-        if len(out) >= 5:
-            break
     if lang == "python":
-        out = (out + _torch_unsafe_load(sf, rule, {f.line for f in out}))[:5]     # the native deserializers first
+        out = out + _torch_unsafe_load(sf, rule, {f.line for f in out})     # the native deserializers first
     return out
 
 
@@ -3257,8 +3225,6 @@ def _torch_unsafe_load(sf: SourceFile, rule: Rule, taken: Set[int]) -> List[Find
         confidence = "low" if test or tree is None else "medium"
         out.append(make_finding(rule, sf, line_no, column=col, severity="minor" if test else "major",
                                 confidence=confidence, message=message))
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -3290,8 +3256,6 @@ def dynamic_exec(sf: SourceFile, rule: Rule) -> List[Finding]:
                 out.append(make_finding(rule, sf, i + 1, column=hit.start() + 1,
                                         severity="minor" if test else None, confidence="low" if test else None))
                 break
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -3341,8 +3305,6 @@ def tls_verify_disabled(sf: SourceFile, rule: Rule) -> List[Finding]:
                 elif not _HTTP_CALLEE_RE.search(callee):
                     break
             out.append(make_finding(rule, sf, i + 1, column=m.start() + 1))
-            break
-        if len(out) >= 5:
             break
     return out
 
@@ -3411,8 +3373,6 @@ def dangerous_capability(sf: SourceFile, rule: Rule) -> List[Finding]:
             section = None
         if section and section[1] == "add" and re.match(r"(?i)^\s*-\s*['\"]?(?:SYS_ADMIN|NET_ADMIN|SYS_PTRACE|ALL)['\"]?\s*$", line):
             out.append(make_finding(rule, sf, i + 1))
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -3461,8 +3421,6 @@ def langchain_dangerous(sf: SourceFile, rule: Rule) -> List[Finding]:
                                            if test else "")
         out.append(make_finding(rule, sf, line_no, column=col, severity="minor" if test else None,
                                 confidence="low" if test or tree is None else None, message=message))
-        if len(out) >= 5:
-            break
     return out
 
 
@@ -3689,6 +3647,4 @@ def gpustack_image(sf: SourceFile, rule: Rule) -> List[Finding]:
             command = line.rstrip().endswith("\\")
         if any(_gpustack_old(r) for r in refs):
             out.append(make_finding(rule, sf, i + 1))
-        if len(out) >= 5:
-            break
     return out

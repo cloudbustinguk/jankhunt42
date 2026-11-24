@@ -546,6 +546,7 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
 def _review_aside(result: ScanResult, capped: int, floor: str, ignored: Sequence[str] = ()) -> Dict[str, Any]:
     """What the review's scan of the changed files held back, in the same shape as a scan's set_aside."""
     out: Dict[str, Any] = {k: v for k, v in result.set_aside.items() if v and k not in ("capped", "ignored_rules")}
+    capped = capped + int(result.set_aside.get("capped") or 0)   # the engine's own: past a check's bound or a limit
     if ignored:
         out["ignored_rules"] = {"rules": sorted(ignored)}      # set aside by name: these rules did not run
     if out.get("below_floor"):
@@ -808,7 +809,7 @@ def run_review(args: Any) -> Dict[str, Any]:
     unchanged: List[Finding] = []
     shown_files = {display_path(k): v for k, v in diff_scope.files.items()}
     for f in result.findings:
-        df = diff_scope.files.get(f.path) or shown_files.get(f.path)   # a finding names the path as shown
+        df = shown_files.get(f.path) or diff_scope.files.get(f.path)   # a finding names the path as shown (unique)
         if df is None:
             unchanged.append(f)
             continue
@@ -1152,9 +1153,15 @@ def brief(review: Dict[str, Any]) -> str:
                     "summary": review["summary"]}, indent=2),
         "```",
         "",
-        "## Deterministic leads",
-        "",
     ]
+    import jh_render
+    held = jh_render.set_aside_lines({"set_aside": review.get("set_aside") or {}})
+    if held:                                     # what the pre-pass held back is part of what the reviewer must know
+        out.append("## Set aside in this review")
+        out.append("")
+        out.extend("- %s" % text for _, text in held)
+        out.append("")
+    out.extend(["## Deterministic leads", ""])
     if review.get("findings"):
         for idx, r in enumerate(review["findings"], 1):
             out.extend(_receipt_block(r, idx))
@@ -1210,6 +1217,8 @@ def tty(review: Dict[str, Any], max_findings: int = 300, no_color: bool = False)
                                         baseline.get("resolved", 0),
                                         "  not reassessed %d" % baseline["unassessed"]
                                         if baseline.get("unassessed") else "")))
+    for label, text in jh_render.set_aside_lines({"set_aside": review.get("set_aside") or {}}):
+        out.append("  " + color.grey("set aside: " + text.replace("`", "")))   # what the gate did not see
     out.append("")
     counts = review["summary"]["counts"]
     bits = []
