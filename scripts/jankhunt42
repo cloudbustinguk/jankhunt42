@@ -137,6 +137,17 @@ def _globbed(rel: str, patterns: Sequence[str]) -> bool:
     return any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(os.path.basename(rel), p) for p in patterns)
 
 
+def _positive_int(value: str) -> int:
+    """A whole number of at least 1 (a limit of 0 would read nothing and say little about it)."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected a whole number")
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return n
+
+
 def _rule_list(value: str) -> str:
     """--ignore-rule's value: rule ids, comma-separated. Whether each exists is checked by prepare_rules, once any
     site rules are loaded, so a typo cannot pass for an ignore that took effect."""
@@ -785,7 +796,9 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     raw_pre = (root, [s for s in (jh_capabilities.source_from_text(i.rel, os.path.join(root, i.rel), i.text)
                     for i in col.items) if s is not None], 0) if snapshot else _load_sources(
                         [root], operator_excludes, args.max_files, args.max_file_bytes, not_read=pp_not_read)
-    raw_capped = len(raw_pre[1]) + raw_pre[2] >= args.max_files
+    # cut short only when the limit turned an eligible file away (discovery records it), not when the count merely
+    # equals the limit; a commit snapshot has no discovery, so it keeps the count
+    raw_capped = (len(raw_pre[1]) + raw_pre[2] >= args.max_files) if snapshot else bool(pp_not_read.get("file_limit"))
     if not scan_cfg.ignore_globs:
         main_pre = raw_pre
     elif not raw_capped:
@@ -1102,7 +1115,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
                              "re-rated (repeatable; references/rulesets.md)")
         sp.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
-        sp.add_argument("--max-files", type=int, default=20000)
+        sp.add_argument("--max-files", type=_positive_int, default=20000)
         sp.add_argument("--max-file-bytes", type=int, default=1500000)
         sp.add_argument("--max-per-file-rule", type=int, default=5)
         sp.add_argument("--max-per-rule", type=int, default=200)
@@ -1167,7 +1180,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="a site ruleset (jankhunt.ruleset.v1): your own rules, and shipped rules set aside or "
                               "re-rated (repeatable; references/rulesets.md)")
     filters.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
-    limits.add_argument("--max-files", type=int, default=20000)
+    limits.add_argument("--max-files", type=_positive_int, default=20000)
     limits.add_argument("--max-file-bytes", type=int, default=1500000)
     limits.add_argument("--max-per-file-rule", type=int, default=5)
     limits.add_argument("--max-per-rule", type=int, default=200)
@@ -1198,7 +1211,7 @@ def build_parser() -> argparse.ArgumentParser:
         limits.add_argument("--max-depth", type=int, default=jh_graph.DEFAULT_DEPTH,
                             help="reachability depth bound (1-%d, default %d)" % (jh_graph.MAX_DEPTH, jh_graph.DEFAULT_DEPTH))
         limits.add_argument("--exclude", action="append", help="glob to exclude (repeatable)")
-        limits.add_argument("--max-files", type=int, default=20000)
+        limits.add_argument("--max-files", type=_positive_int, default=20000)
         limits.add_argument("--max-file-bytes", type=int, default=1500000)
         inputs.add_argument("--config", metavar="PATH", help="explicit .jankhunt42.toml/.jankhunt42.json")
         inputs.add_argument("--no-config", action="store_true", help="ignore repository config and declarations")

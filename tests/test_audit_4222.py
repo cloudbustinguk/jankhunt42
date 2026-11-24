@@ -124,5 +124,17 @@ class ScopeAndSelection(unittest.TestCase):
         self.assertIn("JH417", doc["review"]["set_aside"]["ignored_rules"]["rules"])
 
 
+class FileLimit(unittest.TestCase):
+    def test_the_notice_is_true_named_files_count_and_zero_is_refused(self):
+        root = project(self, {"one/a.py": "x = 1\n", "two/a.py": "x = 1\n", "two/b.py": "y = 2\n"})
+        self.assertNotIn("file_limit", scan(str(root / "one"), "--max-files", "1")["set_aside"])
+        self.assertEqual(scan(str(root / "two"), "--max-files", "1")["set_aside"]["file_limit"], 1)
+        named = scan(str(root / "two" / "a.py"), str(root / "two" / "b.py"), "--max-files", "1")
+        self.assertEqual((named["summary"]["files"], named["set_aside"]["file_limit"]), (1, 1))
+        refused = run_cli("scan", str(root / "two"), "--max-files", "0", "--json")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("must be at least 1", refused.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- The file-limit notice appears only when the limit turned an eligible file away (a folder holding exactly as many files as the limit no longer claims later files were skipped); files named on the command line count toward the limit; `--max-files` must be at least 1.
 - A run narrowed with `--rule` or `--category` says so (JSON `set_aside.selection`, a scope line in the report), and what it holds back is counted only among findings it could have shown, so `--min-severity info` really reveals the count it gives. An ignore comment can name a site rule, hyphens included. Review lists the rules `--ignore-ci` or `--ignore-rule` switched off.
 - JH204 reports every debug call: two on one line are two findings, and its own five-per-file stop is gone, so `--max-per-file-rule` reveals them all (what the cap holds back is counted). An ignore directive counts only in a comment: a quoted example such as `"jankhunt42: ignore JH204"` in a string no longer suppresses the next line or counts as an author's suppression.
 - A submodule or a nested repository inside a scanned repository is listed as a folder not read (its own project), instead of vanishing from the scan. When a link and the file it points to are both listed, the real file is kept, so a link named `a.txt` no longer stops the Python checks of the `.py` file it points to.
