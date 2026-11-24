@@ -136,5 +136,19 @@ class FileLimit(unittest.TestCase):
         self.assertIn("must be at least 1", refused.stderr)
 
 
+class SkippedPathsAreAccurate(unittest.TestCase):
+    def test_version_control_folders_are_listed_but_the_repositorys_own_git_is_not(self):
+        root = project(self, {"a.py": "x = 1\n", ".hg/x": "1\n", ".svn/x": "1\n", ".git/HEAD": "ref\n"})
+        vcs = scan(str(root))["set_aside"]["folders_not_read"]["version control"]
+        self.assertEqual((vcs["count"], vcs["paths"]), (2, [".hg", ".svn"]))
+
+    def test_two_named_projects_keep_their_own_paths(self):
+        root = project(self, {"m1/build/a.js": "x=1\n", "m2/build/a.js": "x=1\n"})
+        for order in (("m1", "m2"), ("m2", "m1")):
+            with self.subTest(order=order):
+                built = scan(*order, cwd=str(root))["set_aside"]["folders_not_read"]["build output"]
+                self.assertEqual(built["paths"], ["m1/build", "m2/build"])
+
+
 if __name__ == "__main__":
     unittest.main()

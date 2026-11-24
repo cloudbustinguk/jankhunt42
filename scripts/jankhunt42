@@ -275,6 +275,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
                     continue
             kept.append(f)
         result.findings = kept
+        result.findings.sort(key=lambda f: f.sort_key())
     meta: Dict[str, object] = {
         "root": str(root),
         "elapsed": time.time() - t0,
@@ -333,7 +334,9 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
     for why in ("unreadable", "binary", "empty"):               # files found but not read as text, by reason
         if not_read.get("files_not_read_" + why):
             out.setdefault("files_not_read", {})[why] = not_read["files_not_read_" + why]
-    folders = {reason: paths for reason, paths in (not_read.get("dirs") or {}).items() if reason != "version control"}
+    folders = {reason: sorted(set(p for p in paths if not (reason == "version control" and p == ".git")))
+               for reason, paths in (not_read.get("dirs") or {}).items()}
+    folders = {reason: paths for reason, paths in folders.items() if paths}
     if folders:
         out["folders_not_read"] = {reason: {"count": len(paths), "paths": sorted(paths)[:20]}
                                    for reason, paths in sorted(folders.items())}

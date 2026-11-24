@@ -187,7 +187,10 @@ class SetAside(unittest.TestCase):
         paths = {f["path"] for f in doc["findings"]}
         self.assertIn(".obsidian/plugins/chat/data.json", paths)
         self.assertNotIn(".obsidian/plugins/chat/main.js", paths)
-        self.assertIn(".obsidian/plugins/chat", doc["set_aside"]["folders_not_read"]["dependencies"]["paths"])
+        # 4.22.2: the bundle is counted as a file; the folder is not called unread, since its settings were read
+        self.assertEqual(doc["set_aside"]["files_by_name"]["installed plugin"]["paths"], [".obsidian/plugins/chat/main.js"])
+        listed = [x for v in (doc["set_aside"].get("folders_not_read") or {}).values() for x in v["paths"]]
+        self.assertFalse(any(x.startswith(".obsidian") for x in listed))
 
     def test_a_file_over_the_size_limit_is_listed(self):
         write(self.tmp, {"big.js": "x" * 5000})
