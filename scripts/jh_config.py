@@ -28,7 +28,28 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from jh_core import sev_at_least  # noqa: E402
+from jh_core import SEVERITIES, sev_at_least  # noqa: E402
+
+
+def _severity(value: object, where: str, cfg: "Config") -> Optional[str]:
+    """A recognised severity, or None with a warning: a typo must never invent a rating that ranks below every real
+    one and lets a gate pass; the original rating stands instead."""
+    sev = str(value).strip().lower()
+    if sev in SEVERITIES:
+        return sev
+    cfg.warnings.append("%s: unknown severity %r (expected one of %s); the setting is ignored"
+                        % (where, value, ", ".join(SEVERITIES)))
+    return None
+
+
+def _globs(value: object, where: str, cfg: "Config") -> List[str]:
+    """A list of patterns from a string or a list of strings; any other type is reported and ignored."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return list(value)
+    cfg.warnings.append("%s: expected a string or a list of strings; the setting is ignored" % where)
+    return []
 
 CONFIG_NAMES = (".jankhunt42.toml", ".jankhunt42.json")
 
@@ -150,7 +171,9 @@ def load_config(path: Optional[str], contents: Optional[str] = None) -> Config:
             if "enabled" in spec:
                 cfg.rule_enabled[rid] = bool(spec["enabled"])
             if "severity" in spec:
-                cfg.rule_severity[rid] = str(spec["severity"])
+                sev = _severity(spec["severity"], "rules.%s.severity" % rid, cfg)
+                if sev:
+                    cfg.rule_severity[rid] = sev
 
     paths = raw.get("paths", {})
     if isinstance(paths, dict):
@@ -159,24 +182,21 @@ def load_config(path: Optional[str], contents: Optional[str] = None) -> Config:
                 cfg.warnings.append("paths.%s: expected a table" % pattern)
                 continue
             pr = PathRule(pattern=pattern)
-            ignore = spec.get("ignore", [])
-            if isinstance(ignore, str):
-                ignore = [ignore]
-            pr.ignore_rules = set(str(r) for r in ignore)
+            pr.ignore_rules = set(_globs(spec.get("ignore", []), "paths.%s.ignore" % pattern, cfg))
             if spec.get("min_severity"):
-                pr.min_severity = str(spec["min_severity"])
+                pr.min_severity = _severity(spec["min_severity"], "paths.%s.min_severity" % pattern, cfg)
             severity = spec.get("severity", {})
             if isinstance(severity, dict):
-                pr.severity = {str(k): str(v) for k, v in severity.items()}
+                for k, v in severity.items():
+                    sev = _severity(v, "paths.%s.severity.%s" % (pattern, k), cfg)
+                    if sev:
+                        pr.severity[str(k)] = sev
             cfg.path_rules.append(pr)
 
-    ignore_globs = raw.get("ignore", [])
-    if isinstance(ignore_globs, str):
-        ignore_globs = [ignore_globs]
-    cfg.ignore_globs = [str(g) for g in ignore_globs]
+    cfg.ignore_globs = _globs(raw.get("ignore", []), "ignore", cfg)
 
     if raw.get("fail_on"):
-        cfg.fail_on = str(raw["fail_on"])
+        cfg.fail_on = _severity(raw["fail_on"], "fail_on", cfg)
     passport = raw.get("passport", {})
     if isinstance(passport, dict):
         cfg.passport = passport

@@ -877,6 +877,9 @@ class ScanOptions:
     # False for governance scans: repository pragmas cannot hide what the
     # citizen profile must see.
     honor_suppressions: bool = True
+    # the effective rating (a ruleset's re-rating, then the repository config's rule and path settings), applied before
+    # the severity floor and the caps; None from it means the config sets the finding aside (counted as "config")
+    rate: Optional[Any] = None
 
 
 SITE_BUDGET = 10.0        # seconds one site rule may spend in a run; a rule that runs over is switched off
@@ -1258,6 +1261,12 @@ class _FindingAcceptor:
             if opts.honor_suppressions:
                 self._held("inline_ignore", finding)
                 return False
+        if opts.rate is not None:
+            effective = opts.rate(finding)
+            if effective is None:
+                self._held("config", finding)
+                return False
+            finding.severity = effective
         if not sev_at_least(finding.severity, opts.min_severity):
             self._held("below_floor", finding, finding.severity)
             return False

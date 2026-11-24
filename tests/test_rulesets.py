@@ -60,8 +60,13 @@ class Rulesets(unittest.TestCase):
         d = self.scan("--ruleset", self.write(ruleset(ignore=["JH101"])))
         self.assertNotIn("JH101", [f["rule"] for f in d["findings"]])
         self.assertEqual(d["ignored_rules"], ["JH101"])
-        d = self.scan("--ruleset", self.write(ruleset(severity={"JH101": "info"})))
+        rerated = self.write(ruleset(severity={"JH101": "info"}))
+        d = self.scan("--ruleset", rerated, "--min-severity", "info")
         self.assertEqual({f["severity"] for f in d["findings"] if f["rule"] == "JH101"}, {"info"})
+        # 4.22.1: the floor tests the rating the operator set, so at the default floor the re-rated finding is counted
+        d = self.scan("--ruleset", rerated)
+        self.assertNotIn("JH101", [f["rule"] for f in d["findings"]])
+        self.assertGreaterEqual(d["set_aside"]["below_floor"]["info"], 1)
 
     def test_a_broken_ruleset_is_refused_with_its_reason(self):
         cases = [

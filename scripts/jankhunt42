@@ -211,6 +211,19 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
                                                spinner, not_read, config_excludes=cfg.ignore_globs)
     if spinner:
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
+    severity_map = getattr(args, "severity_map", None) or {}
+
+    def rate(f: Any) -> Optional[str]:
+        """The rating the operator configured, applied before the floor and the caps (so a promotion is shown at
+        the default floor, a demotion counts below a higher one, and a finding the config sets aside never takes a
+        display slot)."""
+        sev = severity_map.get(f.rule, f.severity)
+        if cfg.source:
+            if not cfg.is_rule_enabled(f.rule):
+                return None
+            return cfg.severity_for(f.rule, f.path, sev)
+        return sev
+
     opts = ScanOptions(
         min_severity=args.min_severity,
         categories=set(args.category) if args.category else None,
@@ -219,15 +232,10 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         max_per_file_rule=args.max_per_file_rule,
         max_per_rule=args.max_per_rule,
         honor_suppressions=getattr(args, "honor_suppressions", True) and not getattr(args, "no_inline_ignore", False),
+        rate=rate,
     )
     result = scan_sources(sources, opts)
-    rerate(result.findings, getattr(args, "severity_map", None))
-    config_suppressed = 0
-    if cfg.source:
-        before = len(result.findings)
-        result.findings = jh_config.apply_to_findings(cfg, result.findings)
-        result.findings.sort(key=lambda f: f.sort_key())
-        config_suppressed = before - len(result.findings)
+    config_suppressed = int(result.set_aside.get("config", 0)) if cfg.source else 0
     # A file the repository's .gitignore covers is read (a folder without git reads it too), but it is not committed:
     # a finding there is at most minor and says why, so a key kept in a git-ignored .env is not reported as a secret
     # the repository carries. A finding that falls under the floor this way is counted, not dropped.
