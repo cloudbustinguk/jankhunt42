@@ -459,6 +459,9 @@ def _write_out(path: str, text: str) -> bool:
 
 def cmd_scan(args: argparse.Namespace) -> int:
     if getattr(args, "score", False):
+        if getattr(args, "summary", False):
+            print("jankhunt42: scan: choose --score or --summary (the summary already carries the score)", file=sys.stderr)
+            return 2
         if args.sarif or args.html or args.fail_on:
             print("jankhunt42: scan: --score prints the Jank Score breakdown; it cannot combine with --sarif, --html "
                   "or --fail-on (gate on findings with scan --fail-on, or on the score with --score --fail-policy)",
@@ -478,8 +481,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
     out_path = getattr(args, "out", None)
     if out_path and not _write_out(out_path, _scan_json(root, result, meta)):   # the full report, read selectively
         return 2
+    failed = _scan_gate_fails(args, result)           # one verdict: the summary states it, the exit status follows it
     if summary:
-        print(jh_render.render_summary(result, meta, out_path))
+        print(jh_render.render_summary(result, meta, out_path,
+                                       gate=(args.fail_on, failed) if args.fail_on else None))
     elif args.json:
         print(_scan_json(root, result, meta))
     elif args.prompt:
@@ -491,15 +496,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
     else:
         no_color = args.no_color or not tty
         print(jh_render.render_scan(result, meta, tty, no_color, args.max_findings))
-    if args.fail_on:
-        for f in result.findings:
-            if sev_at_least(f.severity, args.fail_on):
-                return 1
-        # a finding the display caps held back still counts for the gate
-        worst = getattr(result, "capped_worst", None)
-        if worst and sev_at_least(worst, args.fail_on):
-            return 1
-    return 0
+    return 1 if failed else 0
+
+
+def _scan_gate_fails(args: argparse.Namespace, result: Any) -> bool:
+    """--fail-on: any finding at or above the threshold, including one the display limits held back."""
+    if not args.fail_on:
+        return False
+    if any(sev_at_least(f.severity, args.fail_on) for f in result.findings):
+        return True
+    worst = getattr(result, "capped_worst", None)
+    return bool(worst and sev_at_least(worst, args.fail_on))
 
 
 def cmd_review(args: argparse.Namespace) -> int:
@@ -551,6 +558,8 @@ def cmd_score(args: argparse.Namespace) -> int:
     tty = sys.stdout.isatty() and not args.json and not args.md
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
+    if getattr(args, "out", None) and not _write_out(args.out, _scan_json(root, result, meta)):   # --out with any format
+        return 2
     report = jh_score.compute(result.findings, result.loc)
     if args.json:
         data = {
