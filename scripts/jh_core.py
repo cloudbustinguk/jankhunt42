@@ -791,7 +791,7 @@ def discover_files(
         root = Path.cwd().resolve()
 
     found: List[Path] = []
-    seen: Set[str] = set()
+    seen: Dict[str, int] = {}             # resolved path -> its index in found
     pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
     def matches(rel: str, patterns: Sequence[str]) -> bool:
@@ -809,6 +809,10 @@ def discover_files(
                 return
         key = str(p.resolve())
         if key in seen:
+            # two spellings of one file (a link and its target): keep the real file, whose name decides the language
+            # and the checks that run, whichever spelling the listing yields first
+            if found[seen[key]].is_symlink() and not p.is_symlink():
+                found[seen[key]] = p
             return
         inside = p.relative_to(base)
         if not p.is_file():
@@ -846,7 +850,7 @@ def discover_files(
                 return
         except OSError:
             return
-        seen.add(key)
+        seen[key] = len(found)
         found.append(p)
         if ignored_files is not None and git_ignored:
             ignored_files.add(p)
@@ -879,6 +883,10 @@ def discover_files(
                         skip = prefix
                         break
                 if skip:
+                    continue
+                if (target / rel).is_dir():                  # a submodule or a nested repository: its own project
+                    if not_read is not None:
+                        not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(rel.rstrip("/"))
                     continue
                 add(target / rel, base=target, git_ignored=rel in ignored_paths)
                 if len(found) >= max_files:
