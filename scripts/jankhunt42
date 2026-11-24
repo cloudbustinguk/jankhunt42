@@ -481,6 +481,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         for f in result.findings:
             if sev_at_least(f.severity, args.fail_on):
                 return 1
+        # a finding the display caps held back still counts for the gate
+        worst = getattr(result, "capped_worst", None)
+        if worst and sev_at_least(worst, args.fail_on):
+            return 1
     return 0
 
 

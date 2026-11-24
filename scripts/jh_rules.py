@@ -935,6 +935,8 @@ class ScanResult:
     # what this run held back from the report, by cause (report "set aside"): inline ignore comments honoured,
     # findings under the severity floor (by severity), rules set aside by name, and the per-file/per-rule caps
     set_aside: Dict[str, Any] = field(default_factory=dict)
+    # the most severe rating among findings the per-file/per-rule caps held back (None when nothing was capped)
+    capped_worst: Optional[str] = None
     # site rules switched off for running over their time budget (_site_rule)
     site_overrun: Set[str] = field(default_factory=set)
 
@@ -1272,6 +1274,7 @@ class _FindingAcceptor:
         self.suppressed_by_rule: Dict[str, int] = {}
         self.set_aside: Dict[str, Any] = {}
         self.held: Set[Tuple[str, Tuple[str, str, int, int]]] = set()
+        self.capped_worst: Optional[str] = None   # the most severe finding the caps held back (for --fail-on)
 
     def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
         key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0))
@@ -1323,16 +1326,28 @@ class _FindingAcceptor:
         if key in self.seen:
             return False
         self.seen.add(key)
-        file_rule = (finding.rule, finding.path)
-        if self.per_file_rule.get(file_rule, 0) >= opts.max_per_file_rule:
-            self._held("capped", finding)
-            return False
-        if self.per_rule.get(finding.rule, 0) >= opts.max_per_rule:
-            self._held("capped", finding)
-            return False
-        self.per_file_rule[file_rule] = self.per_file_rule.get(file_rule, 0) + 1
-        self.per_rule[finding.rule] = self.per_rule.get(finding.rule, 0) + 1
-        return True
+        return True                               # the caps apply once every finding is known (apply_caps)
+
+    def apply_caps(self, findings: List[Finding]) -> List[Finding]:
+        """Keep the most serious findings within each per-file and per-rule limit, never the first ones found, and
+        count the rest as capped. The most severe capped rating is kept, so a gate still sees what the caps hid."""
+        opts = self.opts
+        kept: List[Finding] = []
+        # by rating only: Python's sort is stable, so findings of equal rating keep the order the checks emitted them
+        # in (a check may list its most telling findings first)
+        for finding in sorted(findings, key=lambda f: f.sort_key()[0]):
+            file_rule = (finding.rule, finding.path)
+            if (self.per_file_rule.get(file_rule, 0) >= opts.max_per_file_rule
+                    or self.per_rule.get(finding.rule, 0) >= opts.max_per_rule):
+                self._held("capped", finding)
+                if self.capped_worst is None or sev_at_least(finding.severity, self.capped_worst):
+                    self.capped_worst = finding.severity
+                continue
+            self.per_file_rule[file_rule] = self.per_file_rule.get(file_rule, 0) + 1
+            self.per_rule[finding.rule] = self.per_rule.get(finding.rule, 0) + 1
+            kept.append(finding)
+        kept.sort(key=lambda f: f.sort_key())
+        return kept
 
 
 def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] = None) -> ScanResult:
@@ -1720,7 +1735,8 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                         result.findings.append(f)
                     break
 
-    result.findings.sort(key=lambda f: f.sort_key())
+    result.findings = acceptor.apply_caps(result.findings)
+    result.capped_worst = acceptor.capped_worst
     result.fired_by_rule = acceptor.fired_by_rule
     result.suppressed_by_rule = acceptor.suppressed_by_rule
     result.set_aside = acceptor.set_aside
