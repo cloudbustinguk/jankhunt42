@@ -63,7 +63,9 @@ class Parse(unittest.TestCase):
 
     def test_hostile_and_odd_destinations(self):
         for host, want in (("evil.invalid/../x", None), ("a b.invalid", None), ("<script>.invalid", None),
-                           ("exämple.invalid", None), ("API.Helpdesk.Invalid", ("api.helpdesk.invalid", None)),
+                           # 4.22.2: an international name is kept in its ASCII (punycode) form, never raw
+                           ("exämple.invalid", ("xn--exmple-cua.invalid", None)),
+                           ("API.Helpdesk.Invalid", ("api.helpdesk.invalid", None)),
                            ("[2001:db8::1]:8443", ("2001:db8::1", 8443)), ("198.18.0.2", ("198.18.0.2", None)),
                            ("a.invalid:99999", None), ("", None)):
             with self.subTest(host=host):

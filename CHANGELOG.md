@@ -24,6 +24,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
+- A connection to an international host name in an agent sandbox's log (`café.example.com`) is compared in its ASCII (punycode) form, so it is listed by name and reaches the undeclared-destination check instead of being counted as a connection with no destination.
 - A file that could not be read and has a name byte that is not UTF-8 no longer makes the JSON invalid. In a scan's SARIF, two debug calls (or two weak-hash or inner-HTML findings) on one line are two alerts; every other rule's alert identity is unchanged.
 - Review and passport report a supported file a structured check could not parse, as the scan does. A review's SARIF says what the review held back and which changed files it skipped, even when it has no alerts, and names the right project. The working-tree map records the folders and files it set aside, as a revision map does.
 - A staged or revision review decides whether a folder is an installed environment from the tree it reviews, not the working folder. Raised limits reach every debug call; past a check's own safety bound (100,000 per file) findings are counted as capped. Untracked names keep their backslashes. A name whose text holds a backslash before `xNN` is shown with its backslashes doubled, so it can never look like another file's escaped byte.

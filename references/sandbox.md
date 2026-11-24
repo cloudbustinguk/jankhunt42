@@ -372,7 +372,8 @@ policy like that would break the app.
   blocked requests to names the policy resolves, or to addresses.
 
 **The files:** at most 8, each a regular file outside the repository of at
-most 64 MB, with no links. A host name that is not a plain DNS name or an
+most 64 MB, with no links. An international host name is compared in its
+ASCII (punycode) form. A host name that is not a plain DNS name or an
 IP address never becomes a row; it is counted under `no_destination`.
 `--redact` replaces destinations and process names.
 

@@ -1225,6 +1225,7 @@ MUTANTS = [
     ('M865-default-cap', 'scan caps findings by default', 'jh_rules.py', 'NO_CAP = 10 ** 9                                # per-file and per-rule limits when none is given', 'NO_CAP = 5', 'test_audit_4222.py'),
     ('M866-unread-name-raw', "an unreadable file's raw name reaches the JSON", 'jankhunt42', '                               display_path(os.path.relpath(path, root).replace(os.sep, "/")))', '                               os.path.relpath(path, root).replace(os.sep, "/"))', 'test_audit_4222.py'),
     ('M867-sarif-line-identity', 'two findings on one line share a scan SARIF identity', 'jankhunt42', '                                                   if f.rule in ("JH107", "JH126", "JH204")', '                                                   if False', 'test_audit_4222.py'),
+    ('M868-idn-dropped', 'an international host in a sandbox log is dropped as nameless', 'jh_runlog.py', '            h = h.encode("idna").decode("ascii")', '            return None', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

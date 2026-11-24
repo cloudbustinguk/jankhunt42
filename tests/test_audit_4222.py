@@ -619,5 +619,18 @@ class PreTagAuditP2(unittest.TestCase):
         self.assertEqual(ids, {"JH204:a.py:1:1", "JH204:a.py:1:15"})
 
 
+class InternationalHostsInSandboxLogs(unittest.TestCase):
+    def test_a_unicode_host_in_a_sandbox_log_is_a_named_undeclared_destination(self):
+        root = project(self, {"p/a.py": "x = 1\n"})
+        log = root / "only.log"
+        log.write_text(json.dumps({"class_uid": 4001, "activity_id": 1, "action_id": 1, "disposition_id": 1,
+                                   "dst_endpoint": {"hostname": "caf\u00e9-other.example", "port": 443}, "time": 1}) + "\n",
+                       encoding="utf-8")
+        doc = json.loads(run_cli("passport", str(root / "p"), "--json", "--sandbox-log", str(log)).stdout)
+        text = json.dumps(doc)
+        self.assertIn("xn--caf-other-d4a.example:443", text)
+        self.assertNotIn('"no_destination": 1', text)
+
+
 if __name__ == "__main__":
     unittest.main()
