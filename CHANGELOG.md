@@ -4,10 +4,19 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.4] — 2026-11-24
+
+Fixes for regressions a third review pass found in the 4.22.2 changes, each now covered by its own test, and a summary that states the gate verdict.
 
 ### Fixed
 
+- `review`: the score again reads every finding on changed lines. 4.22.2's score budget (at most 5 per file per rule) applied to review as well, so nine findings on nine changed lines scored as five and a failing score policy passed; review never limited changed-line findings.
+- PHP: text after a closing `?>` tag, up to the next `<?`, is template text, not code. 4.22.2 ended a one-line comment at the closing tag and then read the template text after it as code, so printed example text such as `var_dump($x)` in a manual page failed a gate.
+- A file-wide `ignore-file` directive covers calls past the 100,000-per-file safety bound too; they were counted as held back and failed `--fail-on`.
+- Every deprecated SSE transport declaration in an MCP config is reported (JH715), not the first ten.
+- A file name holding a literal backslash followed by `x` and two hex digits, which reports show with the backslash doubled, is still matched by a rule's `files` pattern written as the name on disk.
+- `map --base` applies a subfolder-relative `--exclude` when the parent folder's name is shown escaped.
+- Linked files: when `--exclude` names a link's target, the allowed link represents the file, as before 4.22.2; a git-ignored link read for its own language is rated and listed as git-ignored whichever order the folder listing gives.
 - `scan --summary` states the `--fail-on` threshold and verdict, decided once for the summary and the exit status; a line break or other control character in a file name is shown as `\xNN`, and a summary never runs past 60 lines. `scan --score --out FILE` writes the report; `--score` with `--summary` is refused (the summary carries the score).
 
 ## [4.22.3] — 2026-11-24

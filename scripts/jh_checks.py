@@ -2654,7 +2654,7 @@ def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
         "retires with a 12-month offramp; it keeps a held-open stream, a wider surface than the stateless "
         "request/response core." % s.name), evidence="%s: transport sse" % s.name,
         extra={"server": s.name, **({"project": s.project} if s.project else {})})
-        for s in _mcp(sf) if s.transport == "sse"][:10]
+        for s in _mcp(sf) if s.transport == "sse"]
 
 
 # --------------------------------------------------------------------------- AI agents in workflows

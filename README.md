@@ -15,7 +15,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 Either way there are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.22.3 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.22.4 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 

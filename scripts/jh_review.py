@@ -826,7 +826,7 @@ def run_review(args: Any) -> Dict[str, Any]:
                                                         getattr(args, "max_per_file_rule", None) or 10 ** 9,
                                                         getattr(args, "max_per_rule", None) or 10 ** 9)
     changed_lines = max(0, scope_meta["changed_lines"])
-    jank = jh_score.compute(new, changed_lines)
+    jank = jh_score.compute(new, changed_lines, budget_limits=False)   # changed lines were never limited
     jank_dict = jank.to_dict()
     jank_dict["new_code"] = {
         "since": diff_scope.revision or diff_scope.mode,

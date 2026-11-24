@@ -1766,6 +1766,10 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
         sev = acceptor.eligible(make_finding(rule, sf, 1))
         if sev is None:
             continue
+        file_ids = acceptor.suppression.get(path, (set(), {}))[0]
+        if opts.honor_suppressions and ("ALL" in file_ids or rid in file_ids):   # a file-wide ignore covers them all
+            acceptor.set_aside["inline_ignore"] = acceptor.set_aside.get("inline_ignore", 0) + n
+            continue
         if not sev_at_least(sev, opts.min_severity):
             bucket = acceptor.set_aside.setdefault("below_floor", {})
             bucket[sev] = bucket.get(sev, 0) + n

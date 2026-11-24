@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.22.3"
+VERSION = "4.22.4"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -79,10 +79,18 @@ class SourceFile:
     nocomment: List[str]
     comments: List[str]
     loc: int
+    fs_rel: str = ""                 # the name on disk, when the report shows an escaped form (rel)
 
     @property
     def basename(self) -> str:
         return os.path.basename(self.rel)
+
+    def names(self) -> Tuple[str, ...]:
+        """What a file pattern is matched against: the name as shown and, when it is escaped, the name on disk."""
+        shown = (self.rel, self.basename)
+        if not self.fs_rel or self.fs_rel == self.rel:
+            return shown
+        return shown + (self.fs_rel, os.path.basename(self.fs_rel))
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +411,7 @@ def path_matches(rule: Rule, sf: SourceFile) -> bool:
         return False
     if rule.files:
         for pat in rule.files:
-            if fnmatch.fnmatch(sf.rel, pat) or fnmatch.fnmatch(sf.basename, pat):
+            if any(fnmatch.fnmatch(name, pat) for name in sf.names()):
                 return True
         return False
     return True
@@ -515,10 +523,14 @@ class _Sanitizer:
         self.regex = lang in ("js", "ts", "vue", "svelte")
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
+        self.php = lang == "php"
+        self.template = False                    # PHP: after ?> and before the next <?, the text is not code
         starts = {token[0] for token in self.quotes}
         starts.update(start[0] for start, _ in self.blocks)
         starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))
         starts.update(token[0] for token in _WS_LINE_COMMENTS.get(lang, ()))
+        if self.php:
+            starts.add("?")
         if self.regex:
             starts.add("/")
         self.opener_chars = "".join(sorted(starts))
@@ -601,6 +613,15 @@ class _Sanitizer:
         i = 0
         n = len(line)
         while i < n:
+            if self.template:
+                reopen = line.find("<?", i)
+                end = n if reopen == -1 else reopen
+                _blank(code, i, end)
+                if reopen == -1:
+                    return
+                self.template = False
+                i = reopen + (5 if line.startswith("<?php", reopen) else 3 if line.startswith("<?=", reopen) else 2)
+                continue
             if self.block_end is not None:
                 i = self._consume_block(line, code, nc, comments, i, n)
                 continue
@@ -637,6 +658,10 @@ class _Sanitizer:
                 comments.append(line[i:])
                 return
             ch = line[i]
+            if self.php and ch == "?" and line.startswith("?>", i):
+                i += 2
+                self.template = True
+                continue
             if self.triple and ch in ("'", '"') and line.startswith(ch * 3, i):
                 _blank(code, i, i + 3)
                 i += 3
@@ -822,7 +847,7 @@ def discover_files(
     found: List[Path] = []
     seen: Dict[str, int] = {}             # resolved path -> its index in found
     overflow = [False]                    # an eligible file was left out by the file limit (explicit files count too)
-    aliases: Dict[str, List[Tuple[Path, Path]]] = {}   # resolved path -> every link spelling of it (and its base)
+    aliases: Dict[str, List[Tuple[Path, Path, bool]]] = {}   # resolved path -> each link spelling (base, git-ignored)
     pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
     def shown(path: Any) -> str:
@@ -865,8 +890,18 @@ def discover_files(
                         origin = "both" if cli and config else "--exclude" if cli else "config"
                         count_path(not_read.setdefault("files_excluded", {}), origin, shown(p))
                     return
-                aliases.setdefault(key, []).append((p, base))
+                aliases.setdefault(key, []).append((p, base, git_ignored))
             elif prev.is_symlink():
+                # the real file replaces its link as the representative only when the run may read it: an excluded
+                # target stays excluded and the allowed link keeps representing the file, whichever comes first
+                if not explicit and (excludes or config_excludes):
+                    rel_t = p.relative_to(base).as_posix()
+                    cli, config = matches(rel_t, excludes), matches(rel_t, config_excludes)
+                    if cli or config:
+                        if not_read is not None:
+                            origin = "both" if cli and config else "--exclude" if cli else "config"
+                            count_path(not_read.setdefault("files_excluded", {}), origin, shown(p))
+                        return
                 found[seen[key]] = p
             return
         inside = p.relative_to(base)
@@ -909,7 +944,7 @@ def discover_files(
         seen[key] = len(found)
         found.append(p)
         if p.is_symlink():
-            aliases.setdefault(key, []).append((p, base))
+            aliases.setdefault(key, []).append((p, base, git_ignored))
         if ignored_files is not None and git_ignored:
             ignored_files.add(p)
 
@@ -983,7 +1018,7 @@ def discover_files(
     for key, spellings in aliases.items():
         representative = found[seen[key]]
         rep_rel = None
-        for link, link_base in spellings:
+        for link, link_base, link_ignored in spellings:
             if link == representative or link in found:
                 continue
             if rep_rel is None:
@@ -996,6 +1031,8 @@ def discover_files(
                     overflow[0] = True
                     break
                 found.append(link)
+                if ignored_files is not None and link_ignored:   # read, and said to be git-ignored, in either order
+                    ignored_files.add(link)
 
     if not_read is not None:
         for path, origin in pending_excludes.items():
@@ -1062,7 +1099,8 @@ def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
     """
     if not text or "\x00" in text[:8192]:
         return None
-    rel = display_path(rel.replace(os.sep, "/"))
+    fs_rel = rel.replace(os.sep, "/")
+    rel = display_path(fs_rel)
     lang = detect_lang(rel)
     kinds = detect_kinds(rel, text, lang)
     code, nocomment, comments = sanitize(text, lang)
@@ -1071,6 +1109,7 @@ def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
     return SourceFile(
         rel=rel, abspath=abspath, lang=lang, kinds=kinds, text=text,
         raw=raw_lines, code=code, nocomment=nocomment, comments=comments, loc=loc,
+        fs_rel=fs_rel if fs_rel != rel else "",
     )
 
 
