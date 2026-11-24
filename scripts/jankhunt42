@@ -231,16 +231,26 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     if spinner:
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
     severity_map = getattr(args, "severity_map", None) or {}
+    ignored_paths = not_read.get("_git_ignored_paths") or set()
 
     def rate(f: Any) -> Optional[str]:
         """The rating the operator configured, applied before the floor and the caps (so a promotion is shown at
         the default floor, a demotion counts below a higher one, and a finding the config sets aside never takes a
-        display slot)."""
+        display slot). A file the repository's .gitignore covers is read (a folder without git reads it too), but
+        it is not committed: a finding there is at most minor and says why, so a key kept in a git-ignored .env is
+        not reported as a secret the repository carries. Being a rating, it also applies before the caps and the
+        gate, so a capped finding carries it too."""
         sev = severity_map.get(f.rule, f.severity)
         if cfg.source:
             if not cfg.is_rule_enabled(f.rule):
                 return None
-            return cfg.severity_for(f.rule, f.path, sev)
+            sev = cfg.severity_for(f.rule, f.path, sev)
+        if f.path in ignored_paths and sev_at_least(sev, "major"):
+            if "This file is not committed" not in f.message:
+                f.message = (f.message.rstrip() + " This file is not committed (the repository's .gitignore covers "
+                             "it), so the repository does not carry it; keep it out of shared copies such as zips "
+                             "and uploads.")
+            return "minor"
         return sev
 
     opts = ScanOptions(
@@ -255,25 +265,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     )
     result = scan_sources(sources, opts)              # its set_aside carries the files a structured check could not parse
     config_suppressed = int(result.set_aside.get("config", 0)) if cfg.source else 0
-    # A file the repository's .gitignore covers is read (a folder without git reads it too), but it is not committed:
-    # a finding there is at most minor and says why, so a key kept in a git-ignored .env is not reported as a secret
-    # the repository carries. A finding that falls under the floor this way is counted, not dropped.
-    ignored_paths = not_read.get("_git_ignored_paths") or set()
-    if ignored_paths:
-        kept = []
-        for f in result.findings:
-            if f.path in ignored_paths and sev_at_least(f.severity, "major"):
-                f.severity = "minor"
-                f.message = (f.message.rstrip() + " This file is not committed (the repository's .gitignore covers "
-                             "it), so the repository does not carry it; keep it out of shared copies such as zips and "
-                             "uploads.")
-                if not sev_at_least(f.severity, args.min_severity):
-                    floor = result.set_aside.setdefault("below_floor", {})
-                    floor[f.severity] = floor.get(f.severity, 0) + 1
-                    continue
-            kept.append(f)
-        result.findings = kept
-        result.findings.sort(key=lambda f: f.sort_key())
+    # findings in git-ignored files are capped at minor inside `rate` above, before the floor, the caps and the gate
     meta: Dict[str, object] = {
         "root": str(root),
         "elapsed": time.time() - t0,

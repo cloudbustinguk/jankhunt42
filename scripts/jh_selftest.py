@@ -1146,7 +1146,7 @@ MUTANTS = [
     ('M788-nonsecurity-hash', 'an explicit non-security hash use loses its info finding', 'jh_checks.py', '_constant_keyword(call, ("usedforsecurity",), False)', '_constant_keyword(call, ("usedforsecurity",), True)', 'test_precision_4221.py'),
     ("M789-ignored-files-missing", "ignored files disappear from a repository scan", "jh_core.py",
      "sorted(git_list + ignored_list, key=", "sorted(git_list, key=", "test_discovery_4221.py"),
-    ('M790-git-ignored-finding-critical', 'a key in a git-ignored file is reported as a secret the repository carries', 'jankhunt42', '            if f.path in ignored_paths and sev_at_least(f.severity, "major"):', '            if False:', 'test_discovery_4221.py'),
+    ('M790-git-ignored-finding-critical', 'a finding in a git-ignored file keeps its full rating', 'jankhunt42', '            return "minor"\n        return sev\n', '            return sev\n        return sev\n', 'test_discovery_4221.py'),
     ("M791-excluded-files", "files matched by a config are reported as command line exclusions", "jh_core.py",
      'else "--exclude" if cli else "config"', 'else "--exclude"', "test_discovery_4221.py"),
     ('M792-unread-file-complete-map', 'a supported file over the size limit leaves map coverage complete', 'jh_map.py', '    if unread:\n        partial_reasons.append(', '    if False:\n        partial_reasons.append(', 'test_discovery_4221.py'),
@@ -1226,6 +1226,9 @@ MUTANTS = [
     ('M866-unread-name-raw', "an unreadable file's raw name reaches the JSON", 'jankhunt42', '                               display_path(os.path.relpath(path, root).replace(os.sep, "/")))', '                               os.path.relpath(path, root).replace(os.sep, "/"))', 'test_audit_4222.py'),
     ('M867-sarif-line-identity', 'two findings on one line share a scan SARIF identity', 'jankhunt42', '                                                   if f.rule in ("JH107", "JH126", "JH204")', '                                                   if False', 'test_audit_4222.py'),
     ('M868-idn-dropped', 'an international host in a sandbox log is dropped as nameless', 'jh_runlog.py', '            h = h.encode("idna").decode("ascii")', '            return None', 'test_audit_4222.py'),
+    ('M869-php-comment-past-close', 'a PHP line comment swallows the next block on its line', 'jh_core.py', '                close = line.find("?>", i) if self.lang == "php" else -1', '                close = -1', 'test_audit_4222.py'),
+    ('M870-ignored-cap-after-limits', "the git-ignored cap no longer lowers a capped finding's rating", 'jankhunt42', '        if f.path in ignored_paths and sev_at_least(sev, "major"):\n            if "This file is not committed"', '        if False:\n            if "This file is not committed"', 'test_audit_4222.py'),
+    ('M871-bound-ignores-selection', 'overflow past a bound is counted for an unselected rule', 'jh_rules.py', '        if (opts.categories and finding.category not in opts.categories) or (opts.rule_ids and finding.rule not in opts.rule_ids):\n            return None', '        if False:\n            return None', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
