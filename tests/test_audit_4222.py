@@ -399,5 +399,18 @@ class EachRevisionItsOwnConfig(unittest.TestCase):
         self.assertEqual(got, [["unknown"], ["unknown"], ["restricted"], ["restricted"]])
 
 
+class ALinkWithARole(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_a_link_that_makes_a_file_an_agent_command_is_read_there_and_a_plain_alias_is_not(self):
+        root = project(self, {"docs/commit.md": "---\nallowed-tools: Bash\n---\nCommit the work.\n", "lib/real.py": BARE})
+        (root / ".claude" / "commands").mkdir(parents=True)
+        os.symlink("../../docs/commit.md", str(root / ".claude" / "commands" / "commit.md"))
+        os.symlink("real.py", str(root / "lib" / "alias.py"))
+        doc = scan(str(root), "--no-config", "--min-severity", "info")
+        got = sorted((f["rule"], f["path"]) for f in doc["findings"] if f["rule"] in ("JH217", "JH712"))
+        self.assertEqual(got, [("JH217", "lib/real.py"), ("JH712", ".claude/commands/commit.md")])
+        self.assertEqual(doc["summary"]["files"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
