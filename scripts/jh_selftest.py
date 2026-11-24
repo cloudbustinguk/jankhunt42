@@ -1175,6 +1175,9 @@ MUTANTS = [
     ('M815-parse-failure-silent', 'a malformed supported config counts as scanned with no warning', 'jh_checks.py', '    PARSE_FAILURES.setdefault(sf.rel, type(exc).__name__)', '    return None', 'test_audit_4222.py'),
     ('M816-nested-repo-silent', 'a submodule or nested repository vanishes from the scan without a count', 'jh_core.py', '                        not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(rel.rstrip("/"))\n', '                        pass\n', 'test_audit_4222.py'),
     ('M817-alias-displaces-source', 'a link listed first decides the language of the file it points to', 'jh_core.py', '            if found[seen[key]].is_symlink() and not p.is_symlink():', '            if False:', 'test_audit_4222.py'),
+    ('M818-debug-five-stop', 'the debug check stops after five calls whatever the cap', 'jh_checks.py', '        if len(out) >= 1000:\n            break', '        if len(out) >= 5:\n            break', 'test_audit_4222.py'),
+    ('M819-debug-first-call-only', 'only the first debug call on a line is reported', 'jh_checks.py', '        for start in sorted(starts):', '        for start in sorted(starts)[:1]:', 'test_audit_4222.py'),
+    ('M820-directive-in-string', 'a quoted directive in a string suppresses the next line', 'jh_rules.py', '    if sf.lang in _COMMENTED_LANGS:\n        return sf.comments[i] if i < len(sf.comments) else ""', '    if sf.lang in _COMMENTED_LANGS:\n        return sf.raw[i]', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
