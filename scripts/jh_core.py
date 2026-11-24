@@ -755,7 +755,7 @@ def _git_files(root: Path, *args: str) -> Optional[List[str]]:
         return None
     if proc.returncode != 0:
         return None
-    out = proc.stdout.decode("utf-8", "replace")
+    out = os.fsdecode(proc.stdout)          # the file system's own decoding: a name that is not UTF-8 is still found
     return [p for p in out.split("\0") if p]
 
 
@@ -797,7 +797,7 @@ def discover_files(
 
     def shown(path: Any) -> str:
         """A recorded path, relative to the report's root (the same as the target when one folder is scanned)."""
-        return os.path.relpath(str(path), str(root)).replace(os.sep, "/")
+        return display_path(os.path.relpath(str(path), str(root)).replace(os.sep, "/"))
 
     def matches(rel: str, patterns: Sequence[str]) -> bool:
         return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat) for pat in patterns)
@@ -947,6 +947,14 @@ def discover_files(
     return root, found
 
 
+def display_path(rel: str) -> str:
+    """A path as reports show it. A file name byte that is not valid UTF-8 (kept by the file system's decoding as a
+    lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered."""
+    if not any("\udc80" <= ch <= "\udcff" for ch in rel):
+        return rel
+    return "".join("\\x%02X" % (ord(ch) - 0xDC00) if "\udc80" <= ch <= "\udcff" else ch for ch in rel)
+
+
 def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
     """Build a SourceFile from text that may come from the working tree or git.
 
@@ -955,7 +963,7 @@ def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:
     """
     if not text or "\x00" in text[:8192]:
         return None
-    rel = rel.replace(os.sep, "/")
+    rel = display_path(rel.replace(os.sep, "/"))
     lang = detect_lang(rel)
     kinds = detect_kinds(rel, text, lang)
     code, nocomment, comments = sanitize(text, lang)

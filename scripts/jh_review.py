@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (  # noqa: F401
+    display_path,
     run_git,
     Finding,
     safe_text,
@@ -72,7 +73,7 @@ class DiffScope:
 
     @property
     def changed_files(self) -> List[str]:
-        return sorted(self.files)
+        return sorted(display_path(p) for p in self.files)
 
     @property
     def changed_lines(self) -> int:
@@ -85,8 +86,9 @@ class DiffScope:
 
 def _run_git(root: str, args: Sequence[str], timeout: int = 45) -> subprocess.CompletedProcess:
     try:
+        # a file name that is not UTF-8 survives decoding (the file system's own rule), never crashes it
         return run_git(["git", "-C", root] + list(args), capture_output=True,
-                              text=True, timeout=timeout)
+                              text=True, errors="surrogateescape", timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ReviewError(str(exc))
 
@@ -179,18 +181,67 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
     if proc.returncode != 0:
         msg = (proc.stderr or "git diff failed").strip().splitlines()
         raise ReviewError(msg[0] if msg else "git diff failed")
-    return proc.stdout, mode, base_ref, head, commit, pr_ref, revision, index
+    return proc.stdout, mode, base_ref, head, commit, pr_ref, revision, index, _inventory(root, args)
+
+
+_STATUS = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "added", "T": "modified"}
+
+
+def _inventory(root: str, args: Sequence[str]) -> List[Tuple[str, str, str]]:
+    """Every changed path, exactly as git names it, with its status: (status, old path, new path). A binary file has
+    no text header in the patch, so the patch alone cannot be the inventory."""
+    proc = _run_git(root, [a for a in args if not a.startswith("--unified")] + ["--name-status", "-z"])
+    if proc.returncode != 0:
+        return []
+    parts = proc.stdout.split("\0")
+    out: List[Tuple[str, str, str]] = []
+    i = 0
+    while i < len(parts) and parts[i]:
+        code = parts[i][:1]
+        if code in ("R", "C") and i + 2 < len(parts):
+            out.append((_STATUS[code], parts[i + 1], parts[i + 2]))
+            i += 3
+        elif i + 1 < len(parts):
+            out.append((_STATUS.get(code, "modified"), parts[i + 1], parts[i + 1]))
+            i += 2
+        else:
+            break
+    return out
+
+
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def _unquote_git_path(value: str) -> str:
+    """Undo git's C-style quoting ("p\\303\\252che.py" is pêche.py): octal escapes are bytes of the UTF-8 name."""
+    if not (len(value) >= 2 and value[0] == '"' and value[-1] == '"'):
+        return value
+    s, out, i = value[1:-1], bytearray(), 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "\\" and i + 1 < len(s):
+            nxt = s[i + 1]
+            if re.match(r"[0-3][0-7]{2}", s[i + 1:i + 4]):
+                out.append(int(s[i + 1:i + 4], 8))
+                i += 4
+                continue
+            if nxt in _C_ESCAPES:
+                out.append(_C_ESCAPES[nxt])
+                i += 2
+                continue
+        out.extend(ch.encode("utf-8", "surrogateescape"))
+        i += 1
+    return out.decode("utf-8", "surrogateescape")
 
 
 def _clean_diff_path(raw: str) -> str:
-    value = raw.strip()
+    # git ends a ---/+++ path that holds a space with a tab; the quotes come off before the a/ or b/ prefix
+    value = _unquote_git_path(raw.rstrip("\t\r\n").strip(" "))
     if value.startswith("/dev/null"):
         return "/dev/null"
     if value.startswith(("a/", "b/")):
         value = value[2:]
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1].replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
-    return value.replace("\\", "/")
+    return value
 
 
 def parse_diff(text: str) -> Dict[str, DiffFile]:
@@ -282,10 +333,15 @@ def _untracked(root: str) -> List[str]:
 
 def collect_diff(root: str, mode: str, base: str = "", commit: str = "",
                  pr: str = "") -> DiffScope:
-    text, mode, base_ref, head, commit_ref, pr_ref, revision, index = _diff_command(
+    text, mode, base_ref, head, commit_ref, pr_ref, revision, index, inventory = _diff_command(
         root, mode, base, commit, pr
     )
     files = parse_diff(text)
+    for status, old, new in inventory:       # a path the patch gave no text header (a binary file) is still changed
+        path = old if status == "deleted" else new
+        if path not in files:
+            files[path] = DiffFile(path=path, status=status, old_path=old if status == "renamed" else "",
+                                   binary=True)
     if mode == "working":
         for rel in _untracked(root):
             if rel in files:
@@ -438,10 +494,11 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
         "changed_lines": changed_lines,
         "hunk_lines": hunk_lines,
         "reviewed_loc": sum(s.loc for s in sources),
-        "reviewed_files": reviewed,
-        "skipped_files": skipped,
-        "deleted_files": [p for p, f in scope.files.items() if f.status == "deleted"],
-        "untracked_files": untracked,
+        # paths as reports show them (a name byte that is not UTF-8 is written \xNN), the same form findings use
+        "reviewed_files": [display_path(p) for p in reviewed],
+        "skipped_files": [dict(s, path=display_path(s["path"])) for s in skipped],
+        "deleted_files": [display_path(p) for p, f in scope.files.items() if f.status == "deleted"],
+        "untracked_files": [display_path(p) for p in untracked],
         "test_files": sum(1 for p in reviewed if is_test_path(p)),
         "languages": sorted({s.lang for s in sources}),
         "rev": scope.revision or ("INDEX" if scope.index else "WORKTREE"),
@@ -717,8 +774,9 @@ def run_review(args: Any) -> Dict[str, Any]:
     new: List[Finding] = []
     contextual: List[Finding] = []
     unchanged: List[Finding] = []
+    shown_files = {display_path(k): v for k, v in diff_scope.files.items()}
     for f in result.findings:
-        df = diff_scope.files.get(f.path)
+        df = diff_scope.files.get(f.path) or shown_files.get(f.path)   # a finding names the path as shown
         if df is None:
             unchanged.append(f)
             continue
@@ -793,7 +851,7 @@ def run_review(args: Any) -> Dict[str, Any]:
     }
     scope_meta.update({
         "changed_files": diff_scope.changed_files,
-        "changed_file_status": {p: f.status for p, f in diff_scope.files.items()},
+        "changed_file_status": {display_path(p): f.status for p, f in diff_scope.files.items()},
     })
     unknowns = [
         "No runtime or test execution was performed by this review.",

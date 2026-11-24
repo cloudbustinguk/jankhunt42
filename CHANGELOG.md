@@ -8,6 +8,7 @@ semantic versioning.
 
 ### Fixed
 
+- Review lists every changed path, a staged binary included (recorded as binary), from git's exact name list; accented names, spaces and quotes in staged names are kept as written instead of becoming unreadable paths. A file name byte that is not valid UTF-8 no longer hides the file in a git project or crashes map and passport: reports write it as `\xNN` and stay valid UTF-8. The map claims the file limit only when a file was turned away.
 - A folder link is never followed and is now listed, as a link inside the scanned folder or one leading outside it, instead of vanishing. A stored password hash gets guidance about the verifier (no "rotate now", not tagged as a secret), since nothing shows the password itself was disclosed.
 - A ruleset field that is present is checked as written: `"rules": false`, `"ignore": null` or `"severity": ""` is refused with the field named (exit 2), while a field left out still takes its default.
 - Folders and files set aside are recorded relative to the report's root, so two projects scanned together no longer collapse into one path. Version-control folders other than the repository's own `.git` (`.hg`, `.svn`, a nested `.git`) are listed, as 4.22.0 promised. An installed plugin's bundle is counted as a file, so its folder is no longer called unread when its settings were read. Findings are ordered once more after every severity change, so the first detailed finding is the most serious.

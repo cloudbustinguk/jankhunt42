@@ -37,7 +37,7 @@ import jh_n8n
 import jh_n8n_code
 import jh_rule2
 import jh_yaml
-from jh_core import (TOOL, VERSION, run_git, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
+from jh_core import (TOOL, VERSION, run_git, display_path, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
                      safe_text, sanitize, detect_lang, _is_skipped_file)
 
 
@@ -82,13 +82,14 @@ def collect_worktree(root: str, paths: Sequence[str], excludes: Sequence[str],
     not_read: Dict[str, Any] = {}
     base, files = discover_files(paths or [root], excludes=excludes, max_files=max_files,
                                  max_bytes=max_bytes, not_read=not_read)
-    col = Collected(considered=len(files), max_files_reached=len(files) >= max_files)
+    # the limit was reached only when discovery turned an eligible file away, not when the count equals it
+    col = Collected(considered=len(files), max_files_reached=bool(not_read.get("file_limit")))
     for rel in not_read.get("too_large") or []:      # over the size limit: considered, never read
         col.considered += 1
         col.skip("over the size limit", rel)
         col.unread.append(rel)
     for p in files:
-        rel = os.path.relpath(str(p), str(base)).replace(os.sep, "/")
+        rel = display_path(os.path.relpath(str(p), str(base)).replace(os.sep, "/"))
         try:
             raw = p.read_bytes()
         except OSError:
