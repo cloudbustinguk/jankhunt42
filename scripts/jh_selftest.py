@@ -1171,6 +1171,8 @@ MUTANTS = [
     ('M811-lock-suffix-broad', 'any name ending in lock is taken for a lockfile', 'jh_core.py', '    if low in SKIP_FILENAMES or low.endswith(".lock"):', '    if low in SKIP_FILENAMES or low.endswith("lock"):', 'test_discovery_4221.py'),
     ('M812-mcp-cap-silent', 'MCP definitions past the cap vanish while coverage reads complete', 'jh_map.py', '    if jh_agent.OMITTED.get(item.rel):\n', '    if False:\n', 'test_discovery_4221.py'),
     ('M813-hash-message-overwritten', 'documentation replaces the password-hash explanation', 'jh_rules.py', ' and not (message or "").startswith(HASH_MESSAGE[:30]):', ':', 'test_precision_422.py'),
+    ('M814-config-from-caller', 'a named file takes the config of the folder the command runs from', 'jankhunt42', '        return os.path.commonpath(folders)', '        return str(_Path.cwd().resolve())', 'test_audit_4222.py'),
+    ('M815-parse-failure-silent', 'a malformed supported config counts as scanned with no warning', 'jh_checks.py', '    PARSE_FAILURES.setdefault(sf.rel, type(exc).__name__)', '    return None', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
