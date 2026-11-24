@@ -795,6 +795,10 @@ def discover_files(
     overflow = [False]                    # an eligible file was left out by the file limit (explicit files count too)
     pending_excludes: Dict[Path, str] = {}   # an overlapping target can still read the file
 
+    def shown(path: Any) -> str:
+        """A recorded path, relative to the report's root (the same as the target when one folder is scanned)."""
+        return os.path.relpath(str(path), str(root)).replace(os.sep, "/")
+
     def matches(rel: str, patterns: Sequence[str]) -> bool:
         return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat) for pat in patterns)
 
@@ -833,21 +837,19 @@ def discover_files(
         why_name = skipped_file_reason(inside)
         if why_name:
             if not_read is not None:                 # set aside by name, and counted
-                count_path(not_read.setdefault("files_by_name", {}), why_name, inside.as_posix())
+                count_path(not_read.setdefault("files_by_name", {}), why_name, shown(p))
             return
         plugin = installed_plugin_dir(inside.as_posix())
         if plugin:
             if not_read is not None:
-                listed = not_read.setdefault("dirs", {}).setdefault("dependencies", [])
-                if plugin not in listed:
-                    listed.append(plugin)
+                count_path(not_read.setdefault("files_by_name", {}), "installed plugin", shown(p))
             return
         try:
             # a Power Platform solution export (.zip) or canvas app (.msapp) is read from inside (jh_powerplatform)
             if p.stat().st_size > (max(max_bytes, MAX_ARCHIVE_BYTES) if p.name.lower().endswith((".zip", ".msapp"))
                                    else max_bytes):
                 if not_read is not None:
-                    not_read.setdefault("too_large", []).append(inside.as_posix())
+                    not_read.setdefault("too_large", []).append(shown(p))
                 return
         except OSError:
             return
@@ -882,7 +884,7 @@ def discover_files(
                     if prefix not in dir_reasons:
                         dir_reasons[prefix] = skipped_dir_reason(seg, str(target / prefix))
                         if dir_reasons[prefix] and not_read is not None:
-                            not_read.setdefault("dirs", {}).setdefault(dir_reasons[prefix], []).append(prefix)
+                            not_read.setdefault("dirs", {}).setdefault(dir_reasons[prefix], []).append(shown(target / prefix))
                     if dir_reasons[prefix]:
                         skip = prefix
                         break
@@ -890,7 +892,7 @@ def discover_files(
                     continue
                 if (target / rel).is_dir():                  # a submodule or a nested repository: its own project
                     if not_read is not None:
-                        not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(rel.rstrip("/"))
+                        not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(shown(target / rel.rstrip("/")))
                     continue
                 add(target / rel, base=target, git_ignored=rel in ignored_paths)
                 if overflow[0]:
@@ -898,8 +900,7 @@ def discover_files(
         else:
             def walk_error(exc: OSError) -> None:     # a folder the walk cannot enter is counted, never skipped quietly
                 if not_read is not None and getattr(exc, "filename", None):
-                    rel_err = os.path.relpath(exc.filename, target).replace(os.sep, "/")
-                    not_read.setdefault("dirs", {}).setdefault("unreadable", []).append(rel_err)
+                    not_read.setdefault("dirs", {}).setdefault("unreadable", []).append(shown(exc.filename))
             for dirpath, dirnames, filenames in os.walk(target, onerror=walk_error):
                 rel_dir = os.path.relpath(dirpath, target)
                 rel_dir = "" if rel_dir == "." else rel_dir.replace(os.sep, "/")
@@ -909,7 +910,7 @@ def discover_files(
                     if reason:
                         if not_read is not None:
                             not_read.setdefault("dirs", {}).setdefault(reason, []).append(
-                                "%s/%s" % (rel_dir, d) if rel_dir else d)
+                                shown(os.path.join(dirpath, d)))
                         continue
                     keep.append(d)
                 dirnames[:] = sorted(keep)
