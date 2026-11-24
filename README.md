@@ -8,7 +8,12 @@
 
 AI app builders and coding agents let anyone turn an idea into running software in an afternoon. That software inherits its builder's credentials, the tools their agent is wired to, and their access to production data, often without an engineer ever looking at it. jankhunt42 is the review that is missing. It reads a repository the way a security engineer would and explains what it finds in plain terms, both to the citizen developer who built it and to the team asked to approve it.
 
-jankhunt42 is local-first. It is an [Agent Skill](https://skills-hub.ai/skill-md) for Claude Code, Cursor, Codex CLI and OpenCode, plus a standalone CLI that needs nothing but Python 3.9+. There are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
+**Two ways to use it.** Both run the same checks on your own machine:
+
+- **Ask your AI coding agent.** Install jankhunt42 as an [Agent Skill](https://skills-hub.ai/skill-md) in Claude Code, Cursor, Codex CLI or OpenCode, then ask in plain words, such as "can this ship?". The agent runs the checks and explains what they found in the conversation.
+- **Run it yourself.** Use the command-line tool directly (`jankhunt42 scan .`) in a terminal or a CI job. It needs nothing but Python 3.9+.
+
+Either way there are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
 **Version:** 4.22.2 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
