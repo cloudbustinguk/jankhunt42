@@ -1153,6 +1153,8 @@ MUTANTS = [
     ('M792-unread-file-complete-map', 'a supported file over the size limit leaves map coverage complete', 'jh_map.py', '    if unread:\n        partial_reasons.append(', '    if False:\n        partial_reasons.append(', 'test_discovery_4221.py'),
     ('M793-initial-review-reads-index', 'a review before the first commit reads the staged copy, missing later edits', 'jh_review.py', '            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]', '            args = ["diff", "--cached", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]\n            index = True', 'test_review_4221.py'),
     ('M794-review-caps-before-classification', 'an unchanged finding takes the only review slot and the new one passes the gate', 'jh_review.py', '        max_per_file_rule=10 ** 9,\n        max_per_rule=10 ** 9,', '        max_per_file_rule=getattr(args, "max_per_file_rule", 5),\n        max_per_rule=getattr(args, "max_per_rule", 200),', 'test_review_4221.py'),
+    ('M795-review-relative-path-inside-repo', 'a relative review path is looked up inside the repository, so nothing is reviewed', 'jh_review.py', '        if root and p and not os.path.isabs(p) and os.path.exists(p):\n            p = os.path.abspath(p)\n', '', 'test_review_4221.py'),
+    ('M796-baseline-ordinals-changed-lines-only', "a second copy added on a new line matches the baseline's original", 'jh_review.py', '        baseline = compare_baseline(receipts, baseline_data, jank.score, context)', '        baseline = compare_baseline(receipts, baseline_data, jank.score)', 'test_review_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

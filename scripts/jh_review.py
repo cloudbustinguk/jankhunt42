@@ -353,6 +353,10 @@ def _path_selected(rel: str, paths: Sequence[str], root: str = "") -> bool:
     rel = rel.replace("\\", "/")
     for raw in paths:
         p = raw.replace("\\", "/").strip()
+        # a relative path names a place as seen from where the command runs ("review one" from the parent folder);
+        # one that does not exist from there keeps its meaning inside the repository
+        if root and p and not os.path.isabs(p) and os.path.exists(p):
+            p = os.path.abspath(p)
         if root and os.path.isabs(p):
             try:
                 p = os.path.relpath(p, root).replace("\\", "/")
@@ -607,13 +611,29 @@ def load_baseline(path: str) -> Dict[str, Any]:
 
 
 def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any],
-                     current_score: int) -> Dict[str, Any]:
-    current_fps = _fingerprints(current)
+                     current_score: int, context: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
+    """`context`: the other current findings in the same files (unchanged and contextual lines). Occurrences of the
+    same finding are numbered across all of them in line order, so a second copy added on a new line is the second
+    occurrence and stays new while the original sits unchanged."""
+    if context:
+        everything = sorted([(dict(c), False) for c in context] + [(dict(c), True) for c in current],
+                            key=lambda pair: (_finding_from_any(pair[0])["path"], _finding_from_any(pair[0])["line"]))
+        fps_all = _fingerprints([pair[0] for pair in everything])
+        mine = iter(fp for fp, (_, is_current) in zip(fps_all, everything) if is_current)
+        order = sorted(range(len(current)), key=lambda i: (_finding_from_any(current[i])["path"],
+                                                           _finding_from_any(current[i])["line"]))
+        current_fps = [""] * len(current)
+        for i in order:
+            current_fps[i] = next(mine)
+        all_fps = set(fps_all)
+    else:
+        current_fps = _fingerprints(current)
+        all_fps = set(current_fps)
     current_index = {fp: f for fp, f in zip(current_fps, current)}
     base_index = baseline["fingerprints"]
     new = [current_index[fp] for fp in current_fps if fp not in base_index]
     persisting = [current_index[fp] for fp in current_fps if fp in base_index]
-    resolved = [f for fp, f in base_index.items() if fp not in set(current_fps)]
+    resolved = [f for fp, f in base_index.items() if fp not in all_fps]
     base_score = baseline.get("score")
     delta = (current_score - base_score) if isinstance(base_score, int) else None
     return {
@@ -626,6 +646,7 @@ def compare_baseline(current: Sequence[Dict[str, Any]], baseline: Dict[str, Any]
         "resolved": len(resolved),
         "new_findings": new,
         "persisting_fingerprints": [fp for fp in current_fps if fp in base_index],
+        "current_fingerprints": current_fps,
         "resolved_findings": resolved,
     }
 
@@ -715,10 +736,12 @@ def run_review(args: Any) -> Dict[str, Any]:
     baseline = None
     if getattr(args, "baseline", ""):
         baseline_data = load_baseline(args.baseline)
-        baseline = compare_baseline(receipts, baseline_data, jank.score)
+        context = [{"rule": f.rule, "title": f.title, "path": f.path, "line": f.line, "evidence": f.evidence}
+                   for f in unchanged + contextual]
+        baseline = compare_baseline(receipts, baseline_data, jank.score, context)
         # Mark current findings that already existed in the baseline.
         persisting_fps = set(baseline.get("persisting_fingerprints", []))
-        current_fps = _fingerprints(receipts)
+        current_fps = baseline["current_fingerprints"]
         for receipt, fp in zip(receipts, current_fps):
             if fp in persisting_fps:
                 receipt["scope"] = "persisting"
