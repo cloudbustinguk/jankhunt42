@@ -325,5 +325,41 @@ class ReviewCountsIdentityAndScorecard(unittest.TestCase):
         self.assertEqual(card["jank"]["score"], full["summary"]["jank"]["score"])
 
 
+class RevisionsUseTheSameFolderRule(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_working_and_revision_runs_read_the_same_files(self):
+        sp = __import__("subprocess")
+        root = project(self, {"app.py": "x = 1\n"})
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t.invalid"]
+        sp.run(["git", "-C", str(root), "init", "-q"], check=True)
+        sp.run(git + ["add", "-A"], check=True)
+        sp.run(git + ["commit", "-qm", "one"], check=True)
+        for rel, text in ((".memo/note.py", "# noqa\n"), ("normal/note.py", "# noqa\n"), ("env/note.py", "# noqa\n"),
+                          ("env/pyvenv.cfg", "home = /usr\n"), (".obsidian/plugins/palette/main.js", "console.log(1);\n")):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sp.run(git + ["add", "-A"], check=True)
+        sp.run(git + ["commit", "-qm", "two"], check=True)
+        want = [".memo/note.py", "app.py", "normal/note.py"]
+        for extra in ((), ("--base", "HEAD^")):
+            with self.subTest(extra=extra):
+                m = json.loads(run_cli("map", ".", *extra, "--json", cwd=str(root)).stdout)
+                self.assertEqual(m["coverage"]["inspected_paths"], want)
+        doc = json.loads(run_cli("review", ".", "--base", "HEAD^", "--rule", "JH306", "--rule", "JH204",
+                                 "--min-severity", "info", "--json", cwd=str(root)).stdout)
+        self.assertEqual(sorted(f["path"] for f in doc["findings"]), [".memo/note.py", "normal/note.py"])
+        reasons = {s["path"]: s["reason"] for s in doc["review"]["scope"]["skipped_files"]}
+        self.assertEqual(reasons, {".obsidian/plugins/palette/main.js": "installed plugin",
+                                   "env/note.py": "dependencies", "env/pyvenv.cfg": "dependencies"})
+
+    @unittest.skipIf(os.name == "nt", "a backslash is a separator on Windows")
+    def test_map_evidence_keeps_a_backslash_in_a_file_name(self):
+        root = project(self, {"ink/page.py": "shade = 1\n",
+                              "ink\\page.py": 'import requests\nrequests.get("https://glaze.invalid/colour")\n'})
+        doc = json.loads(run_cli("map", str(root), "--no-config", "--json").stdout)
+        ev = doc["evidence"].values() if isinstance(doc["evidence"], dict) else doc["evidence"]
+        self.assertEqual([(e["path"], e["line"]) for e in ev if e["adapter"] == "python:http-call"], [("ink\\page.py", 2)])
+
+
 if __name__ == "__main__":
     unittest.main()

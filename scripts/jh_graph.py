@@ -19,6 +19,7 @@ import hashlib
 import ipaddress
 import json
 import math
+import os
 import re
 import urllib.parse
 from collections import deque
@@ -422,7 +423,8 @@ class Graph:
                      code_line: Optional[int] = None) -> Optional[str]:
         from jh_core import safe_text
         clean = sanitize_text(snippet, 160)
-        path = safe_text(path).replace("\\", "/")
+        # the platform's own separator becomes "/"; on POSIX a backslash is part of a file name and stays
+        path = safe_text(path).replace(os.sep, "/") if os.sep != "/" else safe_text(path)
         location = {}
         if json_pointer is not None or code_line is not None:
             if (not isinstance(json_pointer, str) or not re.fullmatch(

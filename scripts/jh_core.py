@@ -174,6 +174,23 @@ def skipped_dir_reason(name: str, path: Optional[str] = None) -> Optional[str]:
     if name == "env" and path is not None and os.path.isfile(os.path.join(path, "pyvenv.cfg")):
         return "dependencies"
     return None
+def tree_skip_reason(rel: str, has_file: Callable[[str], bool]) -> Optional[str]:
+    """The shared folder rule for a path inside a tree that is not walked on disk (a git revision, a review's
+    changed files): why it is not read, or None. `has_file(path)` says whether that tree holds a file, so an `env`
+    folder counts as a virtual environment only when it holds pyvenv.cfg, as in a walk. Installed plugin code is
+    set aside as in discovery."""
+    segs = rel.split("/")
+    for i, seg in enumerate(segs[:-1]):
+        if seg == "env":
+            if has_file("/".join(segs[:i + 1]) + "/pyvenv.cfg"):
+                return "dependencies"
+            continue
+        reason = skipped_dir_reason(seg)
+        if reason:
+            return reason
+    return "installed plugin" if installed_plugin_dir(rel) else None
+
+
 # Agent and editor workspace directories are walked too: what a coding agent
 # or editor does when it opens the repository is part of the attack surface.
 AGENT_DIRS = {".vscode", ".claude", ".cursor", ".gemini", ".codex", ".amazonq", ".windsurf", ".agent", ".antigravity",
