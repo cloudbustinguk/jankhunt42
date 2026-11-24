@@ -856,7 +856,7 @@ MUTANTS = [
     ('M492-substrate-boundary-without-policy', 'an actor template without a policy declares an empty boundary', 'jh_egress.py', '            continue                    # an actor template without a policy declares no boundary', '            pass', 'test_substrate.py'),
     ('M493-substrate-dummy-is-a-key', 'a dummy value (a prefix and one repeated character) is reported as a key', 'jh_substrate.py', '    if len(set(re.sub(r"^[A-Za-z]{2,10}[_-]", "", v))) <= 1:', '    if False:', 'test_substrate.py'),
     ('M494-substrate-cluster-cleartext-major', 'cleartext credentials to a cluster service stay major', 'jh_checks.py', '                    inside = bool(hosts) and all(S.cluster_internal(h) for h in hosts)', '                    inside = False', 'test_substrate.py'),
-    ('M495-skip-dirs-above-root', 'a scan root under a folder named out/ or build/ scans nothing', 'jh_core.py', '        if not p.is_file() or _is_skipped_file(inside):', '        if not p.is_file() or _is_skipped_file(p):', 'test_substrate.py'),
+    ('M495-skip-dirs-above-root', 'a scan root under a folder named out/ or build/ scans nothing', 'jh_core.py', '        if _is_skipped_file(inside):', '        if _is_skipped_file(p):', 'test_substrate.py'),
     ('M496-substrate-ceiling-cli-refused', 'the CLI refuses --sandbox-network-ceiling with --emit-sandbox-policy substrate', 'jankhunt42', '            and args.emit_sandbox_policy not in ("openshell", "claude-code", "substrate"):', '            and args.emit_sandbox_policy not in ("openshell", "claude-code"):', 'test_substrate.py'),
     ('M511-substrate-bare-name-in-cluster', 'a name without a dot counts as a cluster service', 'jh_substrate.py', '    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local"))', '    return h.endswith((".svc.cluster.local", ".svc", ".cluster.local")) or "." not in h', 'test_substrate.py'),
     ('M497-runlog-ocsf-prefix-ignored', "OpenShell's OCSF-JSON stderr lines are not read", 'jh_runlog.py', '        if start < 0 or (start > 0 and " OCSF-JSON " not in " " + line[:start] + " "):', '        if start != 0:', 'test_runlog.py'),
@@ -1151,6 +1151,8 @@ MUTANTS = [
     ("M791-excluded-files", "files matched by a config are reported as command line exclusions", "jh_core.py",
      'else "--exclude" if cli else "config"', 'else "--exclude"', "test_discovery_4221.py"),
     ('M792-unread-file-complete-map', 'a supported file over the size limit leaves map coverage complete', 'jh_map.py', '    if unread:\n        partial_reasons.append(', '    if False:\n        partial_reasons.append(', 'test_discovery_4221.py'),
+    ('M793-initial-review-reads-index', 'a review before the first commit reads the staged copy, missing later edits', 'jh_review.py', '            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]', '            args = ["diff", "--cached", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]\n            index = True', 'test_review_4221.py'),
+    ('M794-review-caps-before-classification', 'an unchanged finding takes the only review slot and the new one passes the gate', 'jh_review.py', '        max_per_file_rule=10 ** 9,\n        max_per_rule=10 ** 9,', '        max_per_file_rule=getattr(args, "max_per_file_rule", 5),\n        max_per_rule=getattr(args, "max_per_rule", 200),', 'test_review_4221.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

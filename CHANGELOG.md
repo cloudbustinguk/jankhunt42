@@ -12,6 +12,8 @@ semantic versioning.
 
 ### Fixed
 
+- In a review, the per-file and per-rule caps apply after findings are sorted into new, contextual and unchanged. A finding on a changed line is never capped, so an unchanged finding can no longer take the only slot and let a new one pass the gate. The review summary counts what the caps held back.
+- A working-tree review before the first commit reads the files as they are, so an edit made after `git add` is reviewed and can fail the gate; `--staged` still reviews the staged copy. Before, it read the staged copy in both modes.
 - A file the map reads but could not (over the size limit, or unreadable) now counts as considered and makes map coverage partial, naming the file, so the passport's coverage floor holds the release instead of passing. Before, the map counted only the files it read and called its coverage complete.
 - A scan counts files skipped by `--exclude` and by the config's `ignore` globs, with sample paths for each. A file matched by both counts once and the report names both exclusions.
 - A scan reads untracked files covered by git ignore rules, as a folder without git always did, and reports how many it read, with sample paths. A finding in such a file is at most minor and says the file is not committed, so a key kept in a git-ignored `.env` is not reported as a secret the repository carries. A file limit selects files in the same order in a repository and a plain folder.

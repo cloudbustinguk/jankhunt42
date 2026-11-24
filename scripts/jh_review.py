@@ -167,8 +167,12 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
         # Default review: everything not committed, including staged changes.
         args = ["diff", "HEAD", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
         if not head:
-            args = ["diff", "--cached", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
-            index = True
+            # Before the first commit: the working tree against the empty tree, read from the working tree, so an
+            # edit made after `git add` is reviewed (the staged copy is what --staged reviews)
+            empty = _run_git(root, ["hash-object", "-t", "tree", "/dev/null"])
+            if empty.returncode != 0:
+                raise ReviewError("git could not name the empty tree")
+            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
         revision = None
     proc = _run_git(root, args)
     if proc.returncode != 0:
@@ -445,8 +449,10 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
         categories=set(getattr(args, "category", ()) or ()) or None,
         rule_ids=set(getattr(args, "rule", ()) or ()) or None,
         ignore_rule_ids=set(getattr(args, "ignore_rule_ids", None) or ()) or None,
-        max_per_file_rule=getattr(args, "max_per_file_rule", 5),
-        max_per_rule=getattr(args, "max_per_rule", 200),
+        # the caps are applied after findings are sorted into new, contextual and unchanged (cap_review): a finding
+        # on an unchanged line must never take the slot of one on a changed line
+        max_per_file_rule=10 ** 9,
+        max_per_rule=10 ** 9,
     )
     result = scan_sources(sources, opts)
     for f in result.findings:                  # a ruleset's severity changes (prepare_rules)
@@ -457,6 +463,30 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
 # ---------------------------------------------------------------------------
 # Receipts and baseline
 # ---------------------------------------------------------------------------
+
+def cap_review(new: List[Finding], others: List[List[Finding]], max_per_file_rule: int,
+               max_per_rule: int) -> Tuple[List[List[Finding]], int]:
+    """Apply the per-file-rule and per-rule caps after classification. Findings on changed lines are never capped
+    (they are what the review is for, and the gate must see every one); they use up slots first, and the contextual
+    and unchanged findings share what is left. Returns the capped lists and how many findings the caps held back."""
+    per_file: Dict[Tuple[str, str], int] = {}
+    per_rule: Dict[str, int] = {}
+    for f in new:
+        per_file[(f.rule, f.path)] = per_file.get((f.rule, f.path), 0) + 1
+        per_rule[f.rule] = per_rule.get(f.rule, 0) + 1
+    out, held = [], 0
+    for group in others:
+        kept = []
+        for f in group:
+            if per_file.get((f.rule, f.path), 0) >= max_per_file_rule or per_rule.get(f.rule, 0) >= max_per_rule:
+                held += 1
+                continue
+            per_file[(f.rule, f.path)] = per_file.get((f.rule, f.path), 0) + 1
+            per_rule[f.rule] = per_rule.get(f.rule, 0) + 1
+            kept.append(f)
+        out.append(kept)
+    return out, held
+
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -655,6 +685,9 @@ def run_review(args: Any) -> Dict[str, Any]:
             unchanged.append(f)
     new.sort(key=_risk_rank)
     contextual.sort(key=_risk_rank)
+    (contextual, unchanged), review_capped = cap_review(new, [contextual, unchanged],
+                                                        getattr(args, "max_per_file_rule", 5),
+                                                        getattr(args, "max_per_rule", 200))
     changed_lines = max(0, scope_meta["changed_lines"])
     jank = jh_score.compute(new, changed_lines)
     jank_dict = jank.to_dict()
@@ -735,6 +768,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "persisting_findings": len(receipts) - len(new_receipts),
         "contextual_findings": len(contextual_receipts),
         "unchanged_findings": len(unchanged),
+        "capped_findings": review_capped,          # contextual and unchanged findings the caps held back
         "counts": _counts(new_receipts),
         "verification": _verification_counts(new_receipts),
         "jank_score": jank.score,
