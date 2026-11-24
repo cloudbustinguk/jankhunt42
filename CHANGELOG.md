@@ -23,6 +23,7 @@ committed secrets file is rated critical only when git can show it is committed.
 
 ### Fixed
 
+- PHP `#` line comments are read as comments (a `#[...]` attribute stays code): code rules no longer match text inside them, and a `# jankhunt42: ignore` comment in PHP counts as the ignore comments of other languages do.
 - `map --base` reads each compared revision's own committed config (its ignore globs and declarations, found from the scanned folder up to the repository top), as `passport --base` does: an uncommitted policy edit no longer changes a comparison of two commits, `--no-config` is honoured, and a parent folder's declarations apply to a subfolder.
 - Revision comparisons (`map --base`, `passport --base`, `review`) apply the same folder rule as a scan: a virtual environment (an `env` folder holding `pyvenv.cfg`) and an installed plugin's bundle are set aside, so switching to a revision comparison no longer brings installed code back into the assessment. Map evidence keeps a backslash that is part of a file name instead of pointing at a different file.
 - In a review, a new file's final newline no longer counts as an extra changed line (which lowered the score); a review's SARIF alert keeps its identity when unrelated files change, using the same finding identity baselines compare; the scorecard names the rulesets behind a changed rating, as the full scan does.

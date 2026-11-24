@@ -414,7 +414,7 @@ def path_matches(rule: Rule, sf: SourceFile) -> bool:
 _ANY_LINE_COMMENTS: Dict[str, Tuple[str, ...]] = {
     "python": ("#",), "ruby": ("#",), "perl": ("#",), "r": ("#",),
     "js": ("//",), "ts": ("//",), "java": ("//",), "c": ("//",), "cpp": ("//",),
-    "csharp": ("//",), "go": ("//",), "rust": ("//",), "php": ("//",),
+    "csharp": ("//",), "go": ("//",), "rust": ("//",), "php": ("//", "#"),
     "swift": ("//",), "kotlin": ("//",), "scala": ("//",), "dart": ("//",),
     "groovy": ("//",), "solidity": ("//",), "zig": ("//",), "nim": ("#",),
     "julia": ("#",), "fsharp": ("//",), "vb": ("'",), "asm": (";",),
@@ -458,6 +458,8 @@ _QUOTES: Dict[str, Tuple[str, ...]] = {
 def _comment_token(line: str, i: int, lang: str) -> Optional[str]:
     for tok in _ANY_LINE_COMMENTS.get(lang, ()):
         if line.startswith(tok, i):
+            if lang == "php" and tok == "#" and line.startswith("#[", i):
+                continue                     # a PHP 8 attribute, not a comment
             return tok
     for tok in _WS_LINE_COMMENTS.get(lang, ()):
         if line.startswith(tok, i) and (i == 0 or line[i - 1].isspace()):
