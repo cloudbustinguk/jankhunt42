@@ -4,6 +4,12 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- The formulas in `references/impact-model.md`, `scoring.md`, `connectivity.md` and `precision.md` are written as plain sentences and text formulas instead of LaTeX, so they read the same on GitHub, in an editor, in a terminal and to an AI agent.
+
 ## [4.22.2] — 2026-11-24
 
 Closes the findings an audit of 4.22.0 left open in 4.22.1, and the further findings two audit passes made on this

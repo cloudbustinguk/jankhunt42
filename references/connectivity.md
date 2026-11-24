@@ -145,7 +145,7 @@ on agents. Every condition is upward-closed, so adding authority, sensitivity,
 criticality, evidence strength, reach, or a more open entry can never lower
 the class (tested exhaustively), and the class is never below v1's. The
 breadth indicator
-$`1 + 0.5 \cdot \left(1 - e^{-(n-1)/4}\right)`$ over distinct trust domains is
+`1 + 0.5 × (1 − e^(−(n−1)/4))`, where n is the number of distinct trust domains, is
 shown for context only; it saturates at 1.5 and never blocks or lowers
 anything. These are explainable heuristics, not calibrated probabilities of
 compromise.
