@@ -1209,6 +1209,8 @@ MUTANTS = [
     ('M849-role-link-dropped', 'a link that makes a file an agent command is dropped in favour of its target', 'jh_core.py', '    return bool(_path_kinds(link_rel) - _path_kinds(real_rel))', '    return False', 'test_audit_4222.py'),
     ('M850-php-hash-not-comment', 'a PHP # line comment is not recognised', 'jh_core.py', '    "csharp": ("//",), "go": ("//",), "rust": ("//",), "php": ("//", "#"),', '    "csharp": ("//",), "go": ("//",), "rust": ("//",), "php": ("//",),', 'test_audit_4222.py'),
     ('M851-php-attribute-as-comment', 'a PHP 8 attribute is treated as a comment', 'jh_core.py', '            if lang == "php" and tok == "#" and line.startswith("#[", i):\n                continue                     # a PHP 8 attribute, not a comment\n', '', 'test_audit_4222.py'),
+    ('M852-caps-first-found', 'the caps keep the first findings found rather than the most serious', 'jh_rules.py', '        for finding in sorted(findings, key=lambda f: f.sort_key()[0]):', '        for finding in list(findings):', 'test_audit_4222.py'),
+    ('M853-gate-ignores-capped', '--fail-on ignores findings the caps held back', 'jankhunt42', '        if worst and sev_at_least(worst, args.fail_on):\n            return 1', '        if False:\n            return 1', 'test_audit_4222.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")

@@ -427,5 +427,27 @@ class PhpHashComments(unittest.TestCase):
         self.assertEqual(comments[1], "# note")
 
 
+class CapsKeepTheMostSerious(unittest.TestCase):
+    @unittest.skipUnless(__import__("shutil").which("git"), "git unavailable")
+    def test_a_major_is_kept_over_earlier_minors_and_the_gate_still_fails(self):
+        root = project(self, {"a.py": "breakpoint(); breakpoint()\n", "z.py": "breakpoint()\n",
+                              ".jankhunt42.json": '{"paths":{"z.py":{"severity":{"JH204":"major"}}}}\n'})
+        __import__("subprocess").run(["git", "init", "-q", str(root)], check=True)
+        proc = run_cli("scan", str(root), "--rule", "JH204", "--max-per-rule", "2", "--fail-on", "major", "--json")
+        doc = json.loads(proc.stdout)
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual([(f["path"], f["severity"]) for f in doc["findings"]], [("z.py", "major"), ("a.py", "minor")])
+        self.assertEqual(doc["set_aside"]["capped"], 1)
+        one = run_cli("scan", str(root), "--rule", "JH204", "--max-per-rule", "1", "--fail-on", "minor", "--json")
+        self.assertEqual(one.returncode, 1)
+
+    def test_a_capped_major_still_fails_the_gate(self):
+        root = project(self, {"a.py": "breakpoint()\nbreakpoint()\n", "b.py": "breakpoint()\n",
+                              ".jankhunt42.json": '{"paths":{"b.py":{"severity":{"JH204":"major"}}},'
+                                                  '"severity":{"JH204":"major"}}\n'})
+        proc = run_cli("scan", str(root), "--rule", "JH204", "--max-per-rule", "1", "--fail-on", "major", "--json")
+        self.assertEqual(proc.returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
