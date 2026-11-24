@@ -184,13 +184,15 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
             col.skip("symlink-or-submodule", rel)
             continue
         segs = rel.split("/")
-        scoped_rel = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel
+        # the prefix (a path on disk) comes off the raw path; exclusions match the name as shown and as stored
+        scoped_raw = raw_rel[len(prefix):] if prefix and raw_rel.startswith(prefix) else raw_rel
+        names = {rel, raw_rel, scoped_raw, display_path(scoped_raw), segs[-1], raw_rel.rsplit("/", 1)[-1]}
         # the same folders as a walk sets aside: an env folder only when it holds pyvenv.cfg, installed plugin code
         why = tree_skip_reason(raw_rel, in_tree.__contains__)
         if why:
             col.skip(why, display_path(rel))
             continue
-        if any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(scoped_rel, p) or fnmatch.fnmatch(segs[-1], p) for p in pats) \
+        if any(fnmatch.fnmatch(name, p) for name in names for p in pats) \
                 or (_is_skipped_file(Path(rel)) and not (include_locks and segs[-1].lower() in
                     {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock", "pipfile.lock"})):
             col.skip("excluded", rel)

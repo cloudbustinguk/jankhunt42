@@ -264,10 +264,11 @@ def _policy(findings: Sequence[Finding], dims: Dict[str, DimensionScore], overal
     return "pass"
 
 
-def compute(findings: Sequence[Finding], loc: int) -> ScoreReport:
+def compute(findings: Sequence[Finding], loc: int, budget_limits: bool = True) -> ScoreReport:
+    """budget_limits=False: every finding counts (review's changed-line findings, which no limit ever held back)."""
     items = list(findings)
     loc = max(0, int(loc or 0))
-    budget = score_budget(items)              # what the score reads; the policy still sees every finding
+    budget = score_budget(items) if budget_limits else items   # what the score reads; the policy sees every finding
     dims = {key: _dimension([f for f in budget if dimension_for(f) == key], loc, key)
             for key in DIMENSIONS}
     weighted = sum(DIMENSION_WEIGHTS[k] * dims[k].score for k in DIMENSIONS)
