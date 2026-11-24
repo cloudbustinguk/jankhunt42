@@ -838,9 +838,22 @@ def discover_files(
         key = str(p.resolve())
         if key in seen:
             # two spellings of one file (a link and its target): keep the real file, whose name decides the language
-            # and the checks that run, whichever spelling the listing yields first
-            if found[seen[key]].is_symlink() and not p.is_symlink():
-                found[seen[key]] = p
+            # and the checks that run, whichever spelling the listing yields first. A link whose own location gives
+            # the file a role its real path lacks (an agent command, settings, MCP config, a CI workflow) is read
+            # there too: that is where the tool that loads it finds it.
+            prev = found[seen[key]]
+            if prev.is_symlink() and not p.is_symlink():
+                found[seen[key]], link, real = p, prev, p
+            elif p.is_symlink() and not prev.is_symlink():
+                link, real = p, prev
+            else:
+                return
+            if _adds_role(link.relative_to(base).as_posix(), real.relative_to(base).as_posix()) \
+                    and link not in found:
+                if len(found) >= max_files:
+                    overflow[0] = True
+                    return
+                found.append(link)
             return
         inside = p.relative_to(base)
         if not p.is_file():
@@ -962,6 +975,16 @@ def discover_files(
         if on_file:
             on_file(idx, total, str(p))
     return root, found
+
+
+def _path_kinds(rel: str) -> Set[str]:
+    """The kinds a file gets from its path alone (no text): where agents, CI and MCP clients look for it."""
+    return set(detect_kinds(rel, "", detect_lang(rel)))
+
+
+def _adds_role(link_rel: str, real_rel: str) -> bool:
+    """True when a link's own location classifies the file in a way its real path does not."""
+    return bool(_path_kinds(link_rel) - _path_kinds(real_rel))
 
 
 def display_path(rel: str) -> str:
