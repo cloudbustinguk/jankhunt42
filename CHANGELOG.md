@@ -4,6 +4,12 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- A committed link whose target cannot be read (a Flutter plugin link into `/root`, say) no longer stops a scan on Python 3.9 to 3.13 with a `PermissionError`; the link is skipped like any link outside the scanned folder. Found by the full-corpus run (1 of 17,529 repositories).
+
 ## [4.22.4] — 2026-11-24
 
 Fixes for regressions a third review pass found in the 4.22.2 changes, each now covered by its own test, and a summary that states the gate verdict.
