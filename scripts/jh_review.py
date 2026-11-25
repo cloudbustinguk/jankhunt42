@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from jh_core import (  # noqa: F401
     display_path,
     fs_bytes,
+    git_inputs_unsafe,
     tree_skip_reason,
     run_git,
     Finding,
@@ -141,6 +142,10 @@ def _gh_pr_context(root: str, number: str) -> Tuple[str, str]:
 def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
                   pr: str = "") -> Tuple[str, str, str, str, str, str, Optional[str], bool]:
     """Return (diff_text, mode, base, head, commit, pr, revision, index)."""
+    unsafe = git_inputs_unsafe(root)
+    if unsafe:                       # git reads these while it lists and diffs; a named pipe would stall it
+        raise ReviewError("%s is not a regular file (a named pipe, link or device would stall git); not reviewed"
+                          % display_path(os.path.relpath(unsafe, root)))
     head = _git_head(root)
     base_ref = base
     pr_ref = ""

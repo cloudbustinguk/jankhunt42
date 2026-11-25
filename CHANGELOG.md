@@ -37,6 +37,12 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
   followed. The new hooks keep their state in the user's cache (`~/.cache/jankhunt42/hooks/`), never in the
   repository, `hook install --write` refuses a settings path that runs through a link inside the project, and the
   session briefing ignores a saved scan report that is a link or that git tracks (one shipped with the code).
+- A repository can no longer stall jankhunt42 by making a file git reads into a named pipe, a link or a device: a
+  `.gitignore` or `.gitattributes` anywhere in the tree, `.git/info/exclude`, or an excludes file its own config
+  names. git opens these while it lists and diffs and waits on a pipe forever; each command stalled for 25 s per git
+  call. Now `scan`, `map` and `passport` walk the folder instead (the walk never opens special files) and say why,
+  and `review` refuses with the reason. The check reads directory entries only: 0.3 s on a 53,651-file repository.
+  Found by adversarial fuzzing (named pipes at the files jankhunt42 and git read by name).
 
 ## [4.22.5] — 2026-11-25
 

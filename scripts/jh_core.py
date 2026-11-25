@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -798,7 +799,64 @@ def run_git(argv: Sequence[str], **kwargs: object) -> "subprocess.CompletedProce
                           env=git_env(filters), **kwargs)
 
 
+_GIT_READS = (".gitignore", ".gitattributes")     # files git opens in every folder it lists
+_git_inputs_cache: Dict[str, Optional[str]] = {}
+
+
+def git_inputs_unsafe(root: Any) -> Optional[str]:
+    """A file git would open while listing or diffing the working tree that is not a regular file, or None: a
+    .gitignore or .gitattributes anywhere in the tree, .git/info/exclude or attributes, or the excludes file the
+    repository's own config names. A named pipe there blocks git forever, a link or a device can feed it without
+    end. Directory entries only (no file is opened), so the check stays fast on large trees."""
+    top = os.path.abspath(str(root))
+    key = os.path.realpath(top)
+    if key in _git_inputs_cache:
+        return _git_inputs_cache[key]
+    found: Optional[str] = None
+    stack = [top]
+    while stack and found is None:
+        try:
+            entries = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with entries:
+            for e in entries:
+                try:
+                    if e.name in _GIT_READS:
+                        if not e.is_file(follow_symlinks=False):
+                            found = e.path
+                            break
+                    elif e.name != ".git" and e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                except OSError:
+                    continue
+    for rel in (os.path.join(".git", "info", "exclude"), os.path.join(".git", "info", "attributes")):
+        p = os.path.join(top, rel)
+        if found is None and os.path.lexists(p) and not (os.path.isfile(p) and not os.path.islink(p)):
+            found = p
+    if found is None:
+        try:
+            cfg = run_git(["git", "-C", top, "config", "--get", "core.excludesFile"], capture_output=True, timeout=10)
+            named = os.path.expanduser(cfg.stdout.decode("utf-8", "surrogateescape").strip()) if cfg.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            named = ""
+        if named:
+            p = named if os.path.isabs(named) else os.path.join(top, named)
+            try:
+                if not stat.S_ISREG(os.stat(p).st_mode):
+                    found = p
+            except OSError:
+                pass
+    _git_inputs_cache[key] = found
+    return found
+
+
 def _git_files(root: Path, *args: str) -> Optional[List[str]]:
+    unsafe = git_inputs_unsafe(root)
+    if unsafe:                       # git would block on it; the folder walk never opens special files
+        print("jankhunt42: not asking git to list files: %s is not a regular file (a named pipe, link or device "
+              "would stall git); walking the folder instead" % display_path(unsafe), file=sys.stderr)
+        return None
     try:
         proc = run_git(
             ["git", "-C", str(root), "ls-files", "-z", "--exclude-standard", *args],

@@ -1296,6 +1296,10 @@ MUTANTS = [
     ('M937-install-follows-repo-links', 'hook install writes through a link inside the project', 'jh_hooks.py', '        link = link_inside(target, [root])          # .claude or the settings file shipped as a link by the repository', '        link = None', 'test_hostile_links.py'),
     ('M938-briefing-trusts-shipped-scan', 'the briefing reads a scan report the repository ships', 'jh_hooks.py', '    if tracked:\n        return {}', '    if False:\n        return {}', 'test_hostile_links.py'),
     ('M939-briefing-follows-scan-link', 'the briefing reads a scan report through a link', 'jh_hooks.py', '    if not os.path.isfile(saved) or link_inside(saved, [root]):', '    if not os.path.isfile(saved):', 'test_hostile_links.py'),
+    ('M940-git-lists-through-pipes', 'discovery asks git to list a tree whose .gitignore is a named pipe', 'jh_core.py', '    unsafe = git_inputs_unsafe(root)\n    if unsafe:                       # git would block on it; the folder walk never opens special files', '    unsafe = None\n    if unsafe:', 'test_hostile_links.py'),
+    ('M941-review-diffs-through-pipes', 'review runs git over a named-pipe .gitignore', 'jh_review.py', '    unsafe = git_inputs_unsafe(root)\n    if unsafe:                       # git reads these while it lists and diffs; a named pipe would stall it', '    unsafe = None\n    if unsafe:', 'test_hostile_links.py'),
+    ('M942-pipe-check-misses-nested', 'the special-file check looks only at the top folder', 'jh_core.py', '                    elif e.name != ".git" and e.is_dir(follow_symlinks=False):\n                        stack.append(e.path)', '                    elif False:\n                        stack.append(e.path)', 'test_hostile_links.py'),
+    ('M943-pipe-check-ignores-config', 'a configured excludes file that is a pipe is not checked', 'jh_core.py', '                if not stat.S_ISREG(os.stat(p).st_mode):\n                    found = p', '                if False:\n                    found = p', 'test_hostile_links.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
