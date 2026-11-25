@@ -2624,7 +2624,7 @@ def mcp_unpinned(sf: SourceFile, rule: Rule) -> List[Finding]:
                        "executes the newest release." % (s.name, src["launcher"], src["package"]))
         out.append(make_finding(rule, sf, s.line, message=message,
                                 extra={"server": s.name, "launcher": src["launcher"], "package": src["package"]}))
-    return out[:10]
+    return out
 
 
 @check("mcp_credentials")
@@ -2647,7 +2647,7 @@ def mcp_credentials(sf: SourceFile, rule: Rule) -> List[Finding]:
 def mcp_plaintext(sf: SourceFile, rule: Rule) -> List[Finding]:
     return [make_finding(rule, sf, s.line, message="MCP server '%s' is reached over plaintext http://." % s.name,
                          extra={"server": s.name})
-            for s in _mcp(sf) if jh_agent.plaintext_remote(s.url)][:10]
+            for s in _mcp(sf) if jh_agent.plaintext_remote(s.url)]
 
 
 @check("mcp_sse")

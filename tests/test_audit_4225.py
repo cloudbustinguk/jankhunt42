@@ -349,6 +349,24 @@ class Review(Base):
             fh.write("# noqa\n")
         self.assertNotEqual(first, ident())
 
+    def test_only_small_files_that_read_as_text_get_a_text_diff(self):            # review cost with real binaries
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        import jh_review
+        r = self.repo("mixed")
+        Path(r, ".gitattributes").write_text("*.py binary\n*.dat binary\n")
+        Path(r, "draft.py").write_text("x = 1\n")
+        Path(r, "big.dat").write_bytes(b"a" * 2000000)                # text-like, but over the size limit
+        Path(r, "real.bin").write_bytes(bytes(range(256)) * 8)       # NUL bytes: a real binary
+        git(r, "add", "-A"); git(r, "commit", "-q", "-m", "one")
+        Path(r, "draft.py").write_text("x = 1\nbreakpoint()\n")
+        Path(r, "big.dat").write_bytes(b"b" * 2000000)
+        Path(r, "real.bin").write_bytes(b"\x00" + bytes(range(255, 0, -1)) * 8)   # NUL first: not a UTF-16 mark
+        args = ["diff", "HEAD", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
+        self.assertEqual(jh_review._binary_but_text(r, args, None, False), ["draft.py"])
+        patch = jh_review._diff_command(r, "working")[0]
+        self.assertIn("+breakpoint()", patch)
+        self.assertLess(len(patch), 20000)
+
     def test_moving_a_line_between_new_files_changes_the_review_identity(self):  # B79
         r = self.repo("mv")
         def ident():
@@ -360,6 +378,115 @@ class Review(Base):
         self.assertEqual(first, ident())                          # stable on a repeat
         Path(r, "a.py").write_text("a = 1"); Path(r, "b.py").write_text("breakpoint()\nb = 2")
         self.assertNotEqual(first, ident())
+
+
+class FifthPass(Base):
+    """Fixes from the review pass on the 4.22.5 candidate itself."""
+
+    def test_the_summary_counts_every_unread_item_and_the_report_lists_them(self):   # B87
+        import zipfile
+        for name, count in (("paint", 26), ("sketch", 25)):
+            with zipfile.ZipFile(self.path(name + ".zip"), "w") as z:
+                z.writestr("solution.xml", "<paper/>")
+                z.writestr("customizations.xml", "<paper/>")
+                for i in range(count):
+                    z.writestr("CanvasApps/page%02d.msapp" % i, "unfinished")
+        out = self.path("..", os.path.basename(self.root) + "-arch.json")
+        self.addCleanup(lambda: os.path.exists(out) and os.remove(out))
+        summary = run_cli("scan", self.root, "--summary", "--out", out, "--no-progress").stdout
+        self.assertIn("not read: 51 items", summary)
+        self.assertEqual(len(json.load(open(out))["warnings"]), 51)
+
+    @unittest.skipUnless(GIT, "git unavailable")
+    def test_the_review_ignores_the_repository_diff_prefix_setting(self):            # B90
+        r = self.repo("pre")
+        Path(r, "draft.py").write_text("x = 1\n")
+        git(r, "add", "-A"); git(r, "commit", "-q", "-m", "one")
+        Path(r, "draft.py").write_text("x = 1\nbreakpoint()\n")
+        for setting in ("diff.mnemonicPrefix", "diff.noprefix"):
+            with self.subTest(setting=setting):
+                git(r, "config", "--unset-all", "diff.mnemonicPrefix") if setting == "diff.noprefix" else None
+                git(r, "config", setting, "true")
+                proc = run_cli("review", r, "--rule", "JH204", "--fail-on", "minor", "--json")
+                d = json.loads(proc.stdout)
+                self.assertEqual(d["review"]["scope"]["changed_files"], ["draft.py"])
+                self.assertEqual(proc.returncode, 1)
+
+    def test_passport_compare_writes_out(self):                                     # B91
+        Path(self.path("card", "leaf.py")).write_text("breakpoint()\n")
+        ref = self.path("ref.json")
+        Path(ref).write_text(run_cli("passport", self.path("card"), "--json").stdout)
+        for extra, name in (((), "live.json"), (("--against", ref), "saved.json")):
+            with self.subTest(name=name):
+                dest = self.path("reports", name)
+                proc = run_cli("passport", self.path("card"), "--compare", ref, *extra, "--out", dest, "--json")
+                self.assertEqual(proc.returncode, 0, proc.stderr[-200:])
+                self.assertTrue(json.load(open(dest)))
+
+    @unittest.skipIf(os.name == "nt", "file modes and links")
+    def test_out_keeps_permissions_and_writes_through_a_link(self):               # B93
+        Path(self.path("reg", "leaf.py")).write_text("breakpoint()\n")
+        last = self.path("reports", "last.json")
+        Path(last).write_text("{}\n")
+        os.chmod(last, 0o600)
+        run_cli("scan", self.path("reg"), "--summary", "--out", last, "--no-progress")
+        self.assertEqual(os.stat(last).st_mode & 0o777, 0o600)
+        Path(self.path("reports", "run.json")).write_text('{"previous": true}\n')
+        os.symlink("run.json", self.path("reports", "daily.json"))
+        run_cli("scan", self.path("reg"), "--summary", "--out", self.path("reports", "daily.json"), "--no-progress")
+        self.assertTrue(os.path.islink(self.path("reports", "daily.json")))
+        self.assertEqual(json.load(open(self.path("reports", "run.json")))["summary"]["findings"], 1)
+
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_a_generated_link_stays_skipped_when_its_text_target_comes_first(self):  # B94
+        for n in ("0.txt", "z.txt"):
+            with self.subTest(target=n):
+                d = self.path(n + "-dir", n)
+                Path(d).write_text("breakpoint()\n")
+                os.symlink(n, os.path.join(os.path.dirname(d), "m.generated.py"))
+                proc = run_cli("scan", os.path.dirname(d), "--no-config", "--rule", "JH204", "--fail-on", "minor", "--json", "--no-progress")
+                r = json.loads(proc.stdout)
+                self.assertEqual(r["findings"], [])
+                self.assertEqual(r["set_aside"]["files_by_name"]["generated"]["paths"], ["m.generated.py"])
+                self.assertEqual(proc.returncode, 0)
+
+    def test_two_more_mcp_checks_report_every_server(self):                         # B100
+        for folder, rule, spec in (("cap", "JH705", lambda i: {"command": "npx", "args": ["paper-tone"]}),
+                                   ("net", "JH707", lambda i: {"type": "http", "url": "http://tone.invalid/%d" % i})):
+            with self.subTest(rule=rule):
+                Path(self.path(folder, ".mcp.json")).write_text(json.dumps({"mcpServers": {"tile%d" % i: spec(i) for i in range(11)}}, indent=2))
+                self.assertEqual(len(scan(self.path(folder), "--rule", rule)["findings"]), 11)
+
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_a_link_loop_is_set_aside_not_fatal(self):                              # B102 (RuntimeError on 3.12)
+        Path(self.path("loop", "note.py")).write_text("x = 1\n")
+        os.symlink("studio.py", self.path("loop", "preview.py"))
+        os.symlink("preview.py", self.path("loop", "studio.py"))
+        real_resolve = pathlib.Path.resolve
+
+        def resolve(self_, *a, **k):
+            if self_.name in ("preview.py", "studio.py"):
+                raise RuntimeError("Symlink loop from %r" % str(self_))
+            return real_resolve(self_, *a, **k)
+
+        with mock.patch.object(pathlib.Path, "resolve", resolve):
+            not_read = {}
+            _, files = jh_core.discover_files([self.path("loop")], not_read=not_read)
+        self.assertEqual([p.name for p in files], ["note.py"])
+        self.assertEqual(sorted(not_read["dirs"]["link that cannot be resolved"]), ["preview.py", "studio.py"])
+
+    @unittest.skipIf(sys.platform == "darwin" or os.name == "nt", "file names that are not UTF-8")
+    def test_a_byte_named_project_with_a_config_saves_its_scan(self):               # B103
+        d = os.path.join(self.root.encode(), b"studio-\xff")
+        os.makedirs(d)
+        with open(os.path.join(d, b"note.py"), "w") as fh:
+            fh.write("breakpoint()\n")
+        with open(os.path.join(d, b".jankhunt42.json"), "w") as fh:
+            fh.write('{"ignore": ["note.py"]}\n')
+        out = os.path.join(self.root, "scan.json")
+        proc = run_cli("scan", os.fsdecode(d), "--summary", "--out", out, "--no-progress")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        self.assertEqual(json.load(open(out, encoding="utf-8"))["command"], "scan")
 
 
 if __name__ == "__main__":

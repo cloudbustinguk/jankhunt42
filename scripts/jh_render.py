@@ -433,8 +433,10 @@ def _scan_markdown_meta(result, meta: Dict[str, object], root: str,
         out.append("_Scan time: %.2fs · rule engine offline_" % float(meta["elapsed"]))
     if meta.get("archive_warnings"):
         out.append("")
-        for warning in meta["archive_warnings"]:
+        for warning in meta["archive_warnings"][:50]:
             out.append("> Not read: %s" % warning)
+        if len(meta["archive_warnings"]) > 50:
+            out.append("> ... %d more not read (every one is in the JSON report)" % (len(meta["archive_warnings"]) - 50))
     if meta.get("config"):
         out.append("")
         out.append("_Config: `%s`_" % meta["config"])

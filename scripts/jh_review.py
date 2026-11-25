@@ -148,17 +148,17 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
     index = False
     warning = ""
     if mode == "staged":
-        args = ["diff", "--cached", "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "--cached", "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
         revision, index = None, True
     elif mode == "base":
         if not base:
             raise ReviewError("--base requires a git ref")
-        args = ["diff", "%s...HEAD" % base, "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "%s...HEAD" % base, "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
         revision = "HEAD"
     elif mode == "commit":
         if not commit:
             raise ReviewError("--commit requires a commit")
-        args = ["show", "--format=", "--unified=3", "--no-color", "--text", "--no-ext-diff",
+        args = ["show", "--format=", "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff",
                 "--find-renames", commit]
         revision = commit
         head = commit
@@ -166,24 +166,80 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
         if not pr:
             raise ReviewError("--pr requires a PR number or URL")
         base_ref, pr_ref = _gh_pr_context(root, pr)
-        args = ["diff", "%s...HEAD" % base_ref, "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "%s...HEAD" % base_ref, "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
         revision = "HEAD"
     else:
         # Default review: everything not committed, including staged changes.
-        args = ["diff", "HEAD", "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "HEAD", "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
         if not head:
             # Before the first commit: the working tree against the empty tree, read from the working tree, so an
             # edit made after `git add` is reviewed (the staged copy is what --staged reviews)
             empty = _run_git(root, ["hash-object", "-t", "tree", "/dev/null"])
             if empty.returncode != 0:
                 raise ReviewError("git could not name the empty tree")
-            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
+            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--no-ext-diff", "--find-renames"]
         revision = None
     proc = _run_git(root, args)
     if proc.returncode != 0:
         msg = (proc.stderr or "git diff failed").strip().splitlines()
         raise ReviewError(msg[0] if msg else "git diff failed")
-    return proc.stdout, mode, base_ref, head, commit, pr_ref, revision, index, _inventory(root, args)
+    text = proc.stdout
+    # A text file the repository marks binary (an attribute, -diff) has no lines in the patch. Those files alone get
+    # a text diff, and only when they are small and read as text; real binaries keep git's one-line summary, so a
+    # changed image or zip never becomes megabytes of patch.
+    readable = _binary_but_text(root, args, revision, index)
+    if readable:
+        main = _run_git(root, args + ["--", ":(top)"] + [":(top,exclude,literal)" + p for p in readable])
+        extra = _run_git(root, args + ["--text", "--"] + [":(top,literal)" + p for p in readable])
+        if main.returncode == 0 and extra.returncode == 0:
+            text = main.stdout + extra.stdout
+    return text, mode, base_ref, head, commit, pr_ref, revision, index, _inventory(root, args)
+
+
+_TEXT_DIFF_LIMIT = 1500000                         # the scan's default per-file limit: larger files are never read
+
+
+def _binary_but_text(root: str, args: Sequence[str], revision: Optional[str], index: bool) -> List[str]:
+    """Changed paths git reports as binary (no line counts) that jankhunt42 would read as text: within the size
+    limit, and no NUL byte in the first 8 KB unless a UTF-16 byte-order mark explains it."""
+    proc = _run_git(root, [a for a in args if not a.startswith("--unified")] + ["--numstat", "-z"])
+    if proc.returncode != 0:
+        return []
+    parts = proc.stdout.split("\0")
+    out: List[str] = []
+    i = 0
+    while i < len(parts):
+        fields = parts[i].split("\t")
+        if len(fields) == 3 and fields[2] == "" and i + 2 < len(parts):      # a rename: both paths follow
+            path, i = parts[i + 2], i + 3
+        else:
+            path, i = (fields[2] if len(fields) >= 3 else ""), i + 1
+        if fields[:2] == ["-", "-"] and path and _reads_as_text(root, path, revision, index):
+            out.append(path)
+    return out
+
+
+def _reads_as_text(root: str, rel: str, revision: Optional[str], index: bool) -> bool:
+    head = b""
+    try:
+        if revision is None and not index:
+            full = os.path.join(root, rel)
+            if os.path.getsize(full) > _TEXT_DIFF_LIMIT:
+                return False
+            with open(full, "rb") as fh:
+                head = fh.read(8192)
+        else:
+            ref = (":%s" % rel) if index else ("%s:%s" % (revision, rel))
+            size = _run_git(root, ["cat-file", "-s", ref])
+            if size.returncode != 0 or not size.stdout.strip().isdigit() or int(size.stdout) > _TEXT_DIFF_LIMIT:
+                return False
+            blob = run_git(["git", "-C", root, "cat-file", "-p", ref], capture_output=True, timeout=30)
+            if blob.returncode != 0:
+                return False
+            head = blob.stdout[:8192]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return b"\0" not in head or head.startswith((b"\xff\xfe", b"\xfe\xff"))
 
 
 _STATUS = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "added", "T": "modified"}

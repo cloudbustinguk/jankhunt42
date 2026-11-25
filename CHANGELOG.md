@@ -6,14 +6,16 @@ semantic versioning.
 
 ## [4.22.5] — 2026-11-25
 
-A scan no longer stops on a link it cannot read, and fixes for issues a further review pass found in the 4.22.2 to
-4.22.4 changes. Each fix has its own test.
+A scan no longer stops on a link it cannot read or a link loop, and fixes for issues two further review passes found
+in the 4.22.2 to 4.22.5 changes. Each fix has its own test.
 
 ### Fixed
 
 - A committed link whose target cannot be read (a Flutter plugin link into `/root`, say) no longer stops a scan on
   Python 3.9 to 3.13 with a `PermissionError`; the link is skipped like any link outside the scanned folder. Found by
   scanning a corpus of 17,529 public repositories (1 repository).
+- Two links that point at each other no longer stop a scan on Python 3.12 (a `RuntimeError`); they are set aside
+  and named in the report.
 - File names that reports show escaped (a literal backslash before `x` and two hex digits, or a byte that is not
   UTF-8): a rule's `files` pattern, a project's path ratings and ignore list, `map --exclude` and the SARIF link all
   use the name on disk. The shown form of one name can equal another file's name on disk, which matched the wrong
@@ -21,18 +23,25 @@ A scan no longer stops on a link it cannot read, and fixes for issues a further 
   such a byte is shown escaped in the report, and `--out` writes nothing until the whole report is encoded, so a
   failed write keeps the previous file.
 - Links: when the real file replaces its link as the representative, it gets the same name checks (a generated
-  target stays skipped) and keeps its git-ignored rating, whichever comes first in the folder listing.
+  target stays skipped) and keeps its git-ignored rating, whichever comes first in the folder listing; a link with a
+  generated name is skipped too when it would otherwise be read for its own file type.
 - Findings past the 100,000-per-file safety bound keep their own line, rating and inline ignores: a line-level
   ignore covers them, and an informational peer dependency stays informational, so neither fails a gate.
-- MCP configs: two servers declared on one line are two findings, and the scan's checks read every server, not
-  the first 200 the map's inventory keeps.
+- MCP configs: two servers declared on one line are two findings, the scan's checks read every server (not the
+  first 200 the map's inventory keeps), and the unpinned-launch and plain-HTTP checks report every server, not the
+  first ten.
 - PHP: on a line where a comment ends at `?>`, later `<?php ... ?>` tags on the same line also switch between code
   and template text.
 - `review`: a folder named like an environment marker (`pyvenv.cfg`) no longer skips its parent; a repository name
-  ending in a space is the one reviewed; a text file the repository marks as binary still has line-level changes;
-  moving a line from one new file to another changes the review's identity.
-- `map --out` and `passport --out` exit 2 when the report cannot be written. The scan and review summaries show
-  the output name on one short line and say when part of the project (an app inside a zip) could not be read.
+  ending in a space is the one reviewed; a text file the repository marks as binary still has line-level changes (only small files that read as
+  text get a text diff: a changed image or zip keeps git's one-line summary); a repository's `diff.mnemonicPrefix` or `diff.noprefix` setting no longer hides an added line; moving a line from
+  one new file to another changes the review's identity.
+- Output: `map --out`, `passport --out` and `passport --compare --out` write their report or exit 2. Refreshing a
+  report with `--out` keeps its file permissions and writes through an output link. A project path or config path
+  with a byte that is not UTF-8 is shown escaped, so the report can always be saved. The JSON report lists every
+  item that could not be read (the terminal and Markdown views show the first 50 and say how many more), and the
+  scan and review summaries count them all, show the output name on one short line and say when part of the
+  project (an app inside a zip) could not be read.
 
 ## [4.22.4] — 2026-11-24
 
