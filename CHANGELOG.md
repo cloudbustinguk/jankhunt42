@@ -14,7 +14,7 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
   left a problem at or above `--fail-on` (default major). Claude Code and Codex receive `{"decision": "block",
   "reason": ...}` with the review summary; after three blocked stops in one turn (`--rounds`) the agent may stop,
   and what is still open is reported. A clean change prints an empty decision. Outside a git repository nothing is
-  reviewed or written; state stays in `.jankhunt42/hooks/`, which is git-ignored and never scanned.
+  reviewed or written; its state stays in the user's cache, never in the repository.
 - `jankhunt42 hook start`: a session-start briefing under 2,500 characters, from the map (seconds even on large
   projects): the exposure class, the credentials, data stores, outside hosts and AI services in reach (names only,
   never values), what the agent must not widen, and, when a saved scan exists (`.jankhunt42/scan.json`), the
@@ -25,6 +25,18 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
   committed project settings (a committed hook that runs commands is what JH704 reports). OpenCode gets
   instructions for calling the hooks from a plugin.
 - The skill offers the hooks to people working with an AI coding agent.
+
+### Security
+
+- A scanned repository can no longer get jankhunt42 to overwrite a file outside the places it was asked to write.
+  A repository could ship a link named like a report (`.jankhunt42 -> ~`, `.jankhunt42/scan.json -> ~/.bashrc`);
+  `--out`, which the skill points inside the project, followed it (4.22.4 by writing through it, 4.22.5 by
+  writing at the link's target), and a report carries text the repository controls. Now `--out` on `scan`,
+  `review`, `map`, `passport` and `passport --compare` refuses any link inside the scanned folder and exits 2 with
+  the link's name; a link outside the scanned folder (an operator's own `daily.json -> run.json`) is still
+  followed. The new hooks keep their state in the user's cache (`~/.cache/jankhunt42/hooks/`), never in the
+  repository, `hook install --write` refuses a settings path that runs through a link inside the project, and the
+  session briefing ignores a saved scan report that is a link or that git tracks (one shipped with the code).
 
 ## [4.22.5] — 2026-11-25
 

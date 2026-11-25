@@ -30,6 +30,7 @@ every later turn. So, as the agent running this skill:
 - Read the file selectively: one rule, one path or one severity at a time (for example
   `python3 -c "import json; d=json.load(open('.jankhunt42/scan.json')); print([f for f in d['findings'] if f['rule']=='JH101'][:5])"`),
   or rerun narrowed: `jankhunt42 scan . --summary --rule JH101` or a single path.
+- **If `--out` refuses with "a link inside the scanned folder",** the repository ships a link where the report would go: tell the person (it is a warning sign about the repository), and write the report outside it instead, for example `--out "${TMPDIR:-/tmp}/jankhunt42-scan.json"`. Never remove or follow the link yourself.
 - Only ever run the bounded forms this file lists. Never print `--json`, `--sarif`, `--html` or `--brief` output into
   the conversation: use `--out FILE` (scan, review, map, passport) or redirect to a file, and read the parts you need.
   `map .`, `passport .`, `passport . --profile citizen`, `scan . --score`, `scan . --prompt` and `rules --category NAME`

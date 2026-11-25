@@ -76,13 +76,15 @@ class StopHook(Base):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("JH101", proc.stdout)
 
-    def test_state_stays_inside_the_repository_and_out_of_git(self):
+    def test_state_lives_in_the_users_cache_never_in_the_repository(self):
         r = self.repo()
         Path(r, "app.py").write_text(SECRET)
-        hook(["stop"], {"session_id": "s/../x", "cwd": r})
-        state = os.path.join(r, ".jankhunt42", "hooks")
-        self.assertEqual(Path(state, ".gitignore").read_text(), "*\n")
-        self.assertTrue(all(os.path.dirname(os.path.abspath(os.path.join(state, f))) == state for f in os.listdir(state)))
+        cache = os.path.join(self.root, "cache")
+        hook(["stop"], {"session_id": "s/../x", "cwd": r}, env={"XDG_CACHE_HOME": cache})
+        self.assertFalse(os.path.exists(os.path.join(r, ".jankhunt42")))
+        state = [os.path.join(d, f) for d, _, fs in os.walk(cache) for f in fs]
+        self.assertTrue(state)
+        self.assertTrue(all(os.path.realpath(p).startswith(os.path.realpath(cache) + os.sep) for p in state))
 
     def test_outside_a_repository_nothing_is_reviewed_or_written(self):
         d = os.path.join(self.root, "plain")

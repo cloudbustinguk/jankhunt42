@@ -14,16 +14,19 @@ reports). Stdlib only; never runs project code; never prints a secret value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional
 
+from jh_core import link_inside
+
 ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jankhunt42")
-STATE_DIR = os.path.join(".jankhunt42", "hooks")
 START_BUDGET = 2500                      # characters of briefing; agents cap session context at 10,000
 _UNSAFE = re.compile(r"[^A-Za-z0-9 ._:/@-]")
 _SESSION = re.compile(r"[^A-Za-z0-9._-]")
@@ -61,13 +64,19 @@ def _engine(argv: List[str], timeout: int = 600) -> subprocess.CompletedProcess:
 
 
 def _state_dir(root: str) -> str:
-    path = os.path.join(root, STATE_DIR)
-    os.makedirs(path, exist_ok=True)
-    ignore = os.path.join(path, ".gitignore")
-    if not os.path.exists(ignore):                # hook state is never committed
-        with open(ignore, "w", encoding="utf-8") as fh:
-            fh.write("*\n")
-    return path
+    """Hook state lives in the user's own cache, never in the repository: a repository could ship a link at any
+    path inside itself (.jankhunt42 -> ~), and the hook would write through it."""
+    key = hashlib.sha256(os.path.realpath(root).encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    for base in (os.path.join(cache, "jankhunt42", "hooks"), os.path.join(tempfile.gettempdir(), "jankhunt42-hooks-%d" % uid)):
+        path = os.path.join(base, key)
+        try:
+            os.makedirs(path, mode=0o700, exist_ok=True)
+            return path
+        except OSError:
+            continue
+    raise OSError("no writable cache folder for hook state")
 
 
 def _load(path: str) -> Dict[str, Any]:
@@ -80,8 +89,10 @@ def _load(path: str) -> Dict[str, Any]:
 
 
 def _save(path: str, data: Dict[str, Any]) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)    # never through a link
     try:
-        with open(path, "w", encoding="utf-8") as fh:
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
     except OSError:
         pass
@@ -160,6 +171,28 @@ def _names(items: List[str], limit: int) -> str:
     return shown + (" (+%d more)" % (len(seen) - limit) if len(seen) > limit else "")
 
 
+def _saved_scan(root: str) -> Dict[str, Any]:
+    """The user's own saved scan report, or {}: never one reached through a link inside the repository, and never
+    one the repository itself carries (a file git tracks was shipped with the code, not written by this user)."""
+    saved = os.path.join(root, ".jankhunt42", "scan.json")
+    if not os.path.isfile(saved) or link_inside(saved, [root]):
+        return {}
+    try:
+        tracked = subprocess.run(["git", "-C", root, "ls-files", "--error-unmatch", "--", ".jankhunt42/scan.json"],
+                                 capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        tracked = False
+    if tracked:
+        return {}
+    try:
+        fd = os.open(saved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _top_problems(scan: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The rules that fired most in a saved scan report, worst first: one example location each."""
     order = {"critical": 0, "major": 1, "minor": 2, "info": 3}
@@ -225,8 +258,7 @@ def start(args: Any) -> int:
         if _engine(["map", root, "--out", map_path]).returncode != 0:     # the map: seconds even on large projects
             print("jankhunt42 hook start: no briefing (the map did not run)", file=sys.stderr)
             return 0
-        saved = os.path.join(root, ".jankhunt42", "scan.json")          # written by `scan . --summary --out ...`
-        problems = _top_problems(_load(saved)) if os.path.isfile(saved) else None
+        problems = _top_problems(_saved_scan(root)) or None       # from `scan . --summary --out .jankhunt42/scan.json`
         print(briefing(_load(map_path), problems))
         return 0
     except (OSError, subprocess.SubprocessError) as exc:
@@ -280,6 +312,12 @@ def install(args: Any) -> int:
         target = os.path.expanduser("~/.claude/settings.json")
     else:
         target = os.path.join(root, ".claude", "settings.local.json")      # uncommitted, never settings.json
+    if args.agent == "claude-code" and args.scope == "local":
+        link = link_inside(target, [root])          # .claude or the settings file shipped as a link by the repository
+        if link:
+            print("jankhunt42 hook install: %s is a link inside the project, and the repository controls it; not "
+                  "writing there (use --scope user, or remove the link)" % link, file=sys.stderr)
+            return 2
     if not args.write:
         print("# add to %s (or rerun with --write)" % target)
         print(json.dumps(entries, indent=2))
