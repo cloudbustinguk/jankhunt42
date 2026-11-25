@@ -135,6 +135,22 @@ class SummaryEdges(unittest.TestCase):
         out = run_cli("scan", self.root, "--rule", "JH204", "--summary", "--no-progress").stdout
         self.assertLessEqual(len(out.splitlines()), 60)
 
+    @unittest.skipIf(os.name == "nt", "file names with line breaks")
+    def test_a_line_break_in_the_report_path_keeps_its_line_whole(self):
+        # file names reach the summary escaped already; the --out path the caller gives is printed as it is, so the
+        # summary's own filter keeps "full report: ..." on one line
+        Path(self.root, "card.py").write_text("breakpoint()\n")
+        out_dir = tempfile.mkdtemp(prefix="jh-out-")
+        self.addCleanup(shutil.rmtree, out_dir, True)
+        saved = os.path.join(out_dir, "re\nport\x1b[2J.json")
+        proc = run_cli("scan", self.root, "--rule", "JH204", "--summary", "--out", saved, "--no-progress")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(os.path.exists(saved))
+        line = [l for l in proc.stdout.splitlines() if l.startswith("full report:")]
+        self.assertEqual(len(line), 1, proc.stdout)
+        self.assertIn("re\\x0aport\\x1b[2J.json", line[0])
+        self.assertNotIn("\x1b", proc.stdout)
+
     def test_the_summary_states_the_gate_verdict(self):
         Path(self.root, "card.py").write_text("breakpoint()\n")
         fail = run_cli("scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "minor", "--summary", "--no-progress")
