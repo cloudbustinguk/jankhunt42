@@ -43,31 +43,73 @@ class Base(unittest.TestCase):
 
 @unittest.skipUnless(GIT, "git unavailable")
 class StopHook(Base):
-    def test_a_problem_keeps_the_agent_working_until_the_round_cap(self):
+    def stops(self, r, session, *actives, attempt=None):
+        out = []
+        for i, active in enumerate(actives):
+            if attempt:
+                attempt(i)
+            proc = hook(["stop"], {"session_id": session, "cwd": r, "stop_hook_active": active},
+                        env={"XDG_CACHE_HOME": os.path.join(self.root, "cache")})
+            self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+            out.append(json.loads(proc.stdout))
+        return out
+
+    def test_failed_fixes_keep_the_agent_working_until_the_round_cap(self):
         r = self.repo()
         Path(r, "app.py").write_text(SECRET)
-        decisions = []
-        for active in (False, True, True, True):
-            proc = hook(["stop"], {"session_id": "s1", "cwd": r, "stop_hook_active": active})
-            self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
-            decisions.append(json.loads(proc.stdout).get("decision", "allow"))
-        self.assertEqual(decisions, ["block", "block", "block", "allow"])
-        r2 = os.path.join(self.root, "repo2")
-        shutil.copytree(r, r2)
-        for active in (False, True, True):
-            hook(["stop"], {"session_id": "s9", "cwd": r2, "stop_hook_active": active})
-        capped = json.loads(hook(["stop"], {"session_id": "s9", "cwd": r2, "stop_hook_active": True}).stdout)
-        self.assertNotIn("decision", capped)                            # the agent may stop...
-        self.assertIn("problems still open", capped["systemMessage"])   # ...and the user is told, visibly
-        self.assertIn("JH101", capped["systemMessage"])
-        reason = json.loads(hook(["stop"], {"session_id": "s1", "cwd": r}).stdout)["reason"]
-        self.assertIn("JH101", reason)
-        self.assertIn("round 1 of 3", reason)
-        self.assertNotIn("sk-proj", reason)                         # never a secret value
-        second = json.loads(hook(["stop"], {"session_id": "s1", "cwd": r, "stop_hook_active": True}).stdout)["reason"]
-        self.assertIn("round 2 of 3", second)
-        fresh = json.loads(hook(["stop"], {"session_id": "s1", "cwd": r, "stop_hook_active": False}).stdout)["reason"]
-        self.assertIn("round 1 of 3", fresh)                        # a turn the agent began afresh starts again
+        tries = lambda i: Path(r, "other.py").write_text("x = 1\n" * (i + 1))   # the agent changes something
+        out = self.stops(r, "s1", False, True, True, True, attempt=tries)
+        self.assertEqual([d.get("decision", "allow") for d in out], ["block", "block", "block", "allow"])
+        for n in (1, 2, 3):
+            self.assertIn("round %d of 3" % n, out[n - 1]["reason"])
+        self.assertIn("JH101", out[0]["reason"])
+        self.assertNotIn("sk-proj", out[0]["reason"])                  # never a secret value
+        self.assertIn("problems still open after 3 rounds", out[3]["systemMessage"])   # the user is told, visibly
+        self.assertIn("JH101", out[3]["systemMessage"])
+
+    def test_an_explanation_without_changes_ends_the_turn_and_is_not_raised_again(self):
+        r = self.repo()
+        Path(r, "app.py").write_text(SECRET)
+        first, answered = self.stops(r, "s1", False, True)             # blocked; the agent explains, changes nothing
+        self.assertEqual(first["decision"], "block")
+        self.assertNotIn("decision", answered)
+        self.assertIn("gave its reasons", answered["systemMessage"])
+        self.assertIn("JH101", answered["systemMessage"])
+        later, = self.stops(r, "s1", False)                             # a later turn: not blocked again
+        self.assertNotIn("decision", later)
+        self.assertIn("1 problem accepted earlier in this session is still open", later["systemMessage"])
+        Path(r, "k2.py").write_text(SECRET)                             # a new problem still blocks, alone
+        new, = self.stops(r, "s1", False)
+        self.assertEqual(new["decision"], "block")
+        self.assertIn("k2.py", new["reason"])
+        self.assertNotIn("app.py", new["reason"])
+        other, = self.stops(r, "s2", False)                             # another session decides for itself
+        self.assertEqual(other["decision"], "block")
+        self.assertIn("app.py", other["reason"])
+
+    def test_an_accepted_problem_that_comes_back_is_raised_again(self):
+        r = self.repo()
+        Path(r, "app.py").write_text(SECRET)
+        self.stops(r, "s1", False, True)                                # accepted with reasons
+        os.remove(os.path.join(r, "app.py"))
+        self.assertEqual(self.stops(r, "s1", False)[0], {})             # fixed: forgotten
+        Path(r, "app.py").write_text(SECRET)
+        self.assertEqual(self.stops(r, "s1", False)[0]["decision"], "block")
+
+    def test_a_turn_the_agent_begins_afresh_starts_at_round_one(self):
+        r = self.repo()
+        Path(r, "app.py").write_text(SECRET)
+        self.stops(r, "s1", False)                                      # blocked; the user interrupts the turn
+        Path(r, "other.py").write_text("x = 1\n")
+        fresh, = self.stops(r, "s1", False)
+        self.assertIn("round 1 of 3", fresh["reason"])
+
+    def test_an_accepted_problem_stays_accepted_when_the_code_moves_or_is_committed(self):
+        r = self.repo()
+        Path(r, "app.py").write_text(SECRET)
+        self.stops(r, "s1", False, True)
+        Path(r, "app.py").write_text("import os\n\n" + SECRET)       # the same secret, two lines lower
+        self.assertNotIn("decision", self.stops(r, "s1", False)[0])
 
     def test_a_clean_change_or_one_below_the_threshold_lets_the_agent_stop_silently(self):
         r = self.repo()

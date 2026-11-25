@@ -22,9 +22,9 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from jh_core import git_inputs_unsafe, link_inside, run_git
+from jh_core import git_inputs_unsafe, link_inside, run_git, sev_at_least
 
 ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jankhunt42")
 START_BUDGET = 2500                      # characters of briefing; agents cap session context at 10,000
@@ -230,6 +230,80 @@ def _review(root: str, fail_on: str, out: str, base: Optional[str] = None) -> su
     return _engine(argv[:2] + (["--base", base] if base else []) + argv[2:])
 
 
+Problem = Tuple[str, str, str]                    # (section, identity, text shown)
+SECTION_HEAD = {
+    "committed": "Committed since this session began:",
+    "history": "",
+    "working": "Not committed yet:",
+    "exempt": "You added ways to silence jankhunt42 in this session; they do not count as fixes. Remove them and "
+              "fix the problem, or ask the user to approve the exemption:",
+}
+SECTION_LINES = 12
+
+
+def _gated(report: str, fail_on: str, section: str, fallback: str) -> List[Problem]:
+    """The findings that failed the review's gate (new, at or above --fail-on, not unverified: the review's own
+    test), each with an identity that survives the code moving: rule, path and the redacted evidence."""
+    data = _load(report)
+    found: List[Problem] = []
+    for f in data.get("findings") or []:
+        if not isinstance(f, dict) or f.get("scope") != "new" or f.get("verification") == "unverified":
+            continue
+        if not sev_at_least(str(f.get("severity") or ""), fail_on):
+            continue
+        ident = hashlib.sha256(("%s|%s|%s" % (f.get("rule"), f.get("path"), f.get("evidence"))).encode(
+            "utf-8", "replace")).hexdigest()[:24]
+        found.append((section, "f:" + ident, "  %s %s %s:%s %s" % (
+            _label(f.get("severity"), 10), _label(f.get("rule"), 12), _label(f.get("path"), 100), f.get("line") or "?",
+            _label(f.get("title"), 80))))
+    if not found:                                 # the report could not be read: keep the review's own summary
+        found.append((section, "s:" + hashlib.sha256(fallback.encode("utf-8", "replace")).hexdigest()[:24], fallback))
+    return found
+
+
+def _tree_state(root: str, head: Optional[str]) -> Optional[str]:
+    """A cheap fingerprint of what the agent has changed: the commit, and the size, time and mode of every changed
+    or new file. Equal fingerprints across two stops mean the agent changed nothing in between."""
+    if git_inputs_unsafe(root):
+        return None
+    try:
+        base = head or run_git(["git", "-C", root, "hash-object", "-t", "tree", "/dev/null"],
+                               capture_output=True, timeout=20).stdout.decode().strip()
+        names = run_git(["git", "-C", root, "diff", "--no-ext-diff", "--name-only", "-z", base], capture_output=True,
+                        timeout=60)
+        new = run_git(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"], capture_output=True,
+                      timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if names.returncode or new.returncode:
+        return None
+    digest = hashlib.sha256((head or "").encode())
+    for rel in sorted(set(names.stdout.split(b"\0") + new.stdout.split(b"\0")) - {b""}):
+        try:
+            st = os.lstat(os.path.join(os.fsencode(root), rel))
+            sig = "%d:%d:%o" % (st.st_size, st.st_mtime_ns, st.st_mode)
+        except OSError:
+            sig = "gone"
+        digest.update(rel + b"\0" + sig.encode() + b"\0")
+    return digest.hexdigest()
+
+
+def _describe(problems: List[Problem], reports: List[str]) -> str:
+    out: List[str] = []
+    sections = [s for s in SECTION_HEAD if any(p[0] == s for p in problems)]
+    for section in sections:
+        lines = [p[2] for p in problems if p[0] == section]
+        head = SECTION_HEAD[section]
+        if section == "working" and len(sections) == 1:
+            head = ""
+        shown = lines[:SECTION_LINES] + (["  ... and %d more" % (len(lines) - SECTION_LINES)]
+                                         if len(lines) > SECTION_LINES else [])
+        out.append("\n".join(([head] if head else []) + shown))
+    if reports:
+        out.append("Full review (JSON; read only the parts you need): " + ", ".join(reports))
+    return "\n\n".join(out)
+
+
 def stop(args: Any) -> int:
     event = _read_event()
     root = _repo_top(os.path.abspath(args.path or event.get("cwd") or "."))
@@ -243,65 +317,81 @@ def stop(args: Any) -> int:
         print("jankhunt42 hook stop: cannot keep state in %s: %s" % (root, exc), file=sys.stderr)
         return _emit(args.format)
     state_path = os.path.join(state_dir, "stop-%s.json" % session)
-    # rounds count the consecutive blocks within one turn: a turn the agent began afresh starts again at zero
-    rounds = int(_load(state_path).get("rounds", 0) or 0) if event.get("stop_hook_active") else 0
+    state = _load(state_path)
+    active = bool(event.get("stop_hook_active"))
+    # rounds count the consecutive blocks within one turn: a turn the agent began afresh starts again at zero.
+    # accepted: problems the agent already answered this session (it gave its reasons, or the cap was reached); the
+    # user was told about each one, and none of them stops the agent again in this session.
+    rounds = int(state.get("rounds", 0) or 0) if active else 0
+    last = (state.get("last") or {}) if active else {}
+    accepted = set(state.get("accepted") or [])
     # what the agent changed: everything committed since the session began (the start hook records that commit)
     # and everything not committed yet. An agent that commits before it stops is reviewed all the same.
     start = str(_load(os.path.join(state_dir, "session-%s.json" % session)).get("start") or "")
     head = _head(root)
-    parts: List[str] = []
-    failed = False
+    problems: List[Problem] = []
+    reports: List[str] = []
     try:
         if start and head and start != head:
-            committed = _review(root, args.fail_on, os.path.join(state_dir, "review-committed.json"), base=start)
+            out = os.path.join(state_dir, "review-committed.json")
+            committed = _review(root, args.fail_on, out, base=start)
             if committed.returncode == 1:
-                failed = True
-                parts.append("Committed since this session began:\n" + committed.stdout.strip())
+                problems.extend(_gated(out, args.fail_on, "committed", committed.stdout.strip()))
+                reports.append(out)
             elif committed.returncode != 0:
                 print("jankhunt42 hook stop: no review of the commits since %s (%s)" % (start[:12], (
                     committed.stderr.strip().splitlines() or ["unknown"])[-1][:160]), file=sys.stderr)
             else:                                 # the net change can be clean while a commit in between leaked
-                history = _secrets_in_history(root, start, state_dir)
-                if history:
-                    failed = True
-                    parts.extend(history)
+                problems.extend(("history", "h:" + line, line) for line in _secrets_in_history(root, start, state_dir))
         elif not start:
             print("jankhunt42 hook stop: no session start recorded (install the start hook too); reviewing the "
                   "uncommitted changes only", file=sys.stderr)
-        working = _review(root, args.fail_on, os.path.join(state_dir, "review.json"))
+        out = os.path.join(state_dir, "review.json")
+        working = _review(root, args.fail_on, out)
     except (OSError, subprocess.SubprocessError) as exc:
         print("jankhunt42 hook stop: review did not run: %s" % exc, file=sys.stderr)
         return _emit(args.format)
     if working.returncode == 1:
-        failed = True
-        parts.append(("Not committed yet:\n" if parts else "") + working.stdout.strip())
+        problems.extend(_gated(out, args.fail_on, "working", working.stdout.strip()))
+        reports.append(out)
     elif working.returncode != 0:                 # not a git worktree, or another reason review cannot run
         print("jankhunt42 hook stop: no review (%s)" % (working.stderr.strip().splitlines() or ["unknown"])[-1][:200],
               file=sys.stderr)
-    exemptions = _self_exemptions(root, start or None)
-    if exemptions:
-        failed = True
-        parts.append("You added ways to silence jankhunt42 in this session; they do not count as fixes. Remove them "
-                     "and fix the problem, or ask the user to approve the exemption:\n" +
-                     "\n".join("- " + e for e in exemptions))
-    if not failed:
-        _save(state_path, {"rounds": 0})
-        return _emit(args.format)
-    summary = "\n\n".join(parts)
-    if rounds >= args.rounds:                     # the cap: let the agent stop, and tell the user what is still open
-        _save(state_path, {"rounds": 0})
-        warning = ("jankhunt42: the agent stopped with problems still open after %d rounds of the end-of-turn check. "
-                   "Check them before you ship:\n%s" % (args.rounds, summary))
+    for text in _self_exemptions(root, start or None):    # identity without the line number: the code may move
+        problems.append(("exempt", "x:" + re.sub(r"^([^:]*):\d+: ", r"\1: ", text), "- " + text))
+    present = {p[1] for p in problems}
+    accepted &= present                           # a problem fixed and later brought back is raised again
+    still_accepted = len({p[1] for p in problems if p[1] in accepted})
+    open_now = [p for p in problems if p[1] not in accepted]
+    if not open_now:
+        _save(state_path, {"rounds": 0, "accepted": sorted(accepted)})
+        if not still_accepted:
+            return _emit(args.format)
+        return _emit(args.format, warning="jankhunt42: %d problem%s accepted earlier in this session %s still open; "
+                     "check before you ship." % (still_accepted, "" if still_accepted == 1 else "s",
+                                                 "is" if still_accepted == 1 else "are"))
+    keys = sorted({p[1] for p in open_now})
+    tree = _tree_state(root, head)
+    # the agent was blocked, changed nothing, and tried to stop again: it answered with its reasons, not a fix.
+    # Blocking again would only repeat the same message; the user sees what is open and decides.
+    explained = active and tree is not None and last.get("tree") == tree and set(keys) <= set(last.get("keys") or [])
+    if explained or rounds >= args.rounds:
+        _save(state_path, {"rounds": 0, "accepted": sorted(accepted | set(keys))})
+        why = (": it gave its reasons instead of changing anything (read them in its reply)" if explained else
+               " after %d rounds of the end-of-turn check" % args.rounds)
+        warning = ("jankhunt42: the agent stopped with problems still open%s. They will not stop it again in this "
+                   "session; check them before you ship:\n%s" % (why, _describe(open_now, [])))
         if len(warning) > 3000:
-            warning = warning[:2999] + "\u2026"
+            warning = warning[:2999] + "…"
         print(warning, file=sys.stderr)
         return _emit(args.format, warning=warning)
     rounds += 1
-    _save(state_path, {"rounds": rounds})
+    _save(state_path, {"rounds": rounds, "accepted": sorted(accepted), "last": {"tree": tree, "keys": keys}})
     reason = ("%s\n\nThese are problems in what you changed (jankhunt42 end-of-turn check, round %d of %d). Fix them "
-              "before you finish, or say why each one is acceptable." % (summary, rounds, args.rounds))
+              "before you finish. If one is acceptable, finish without changing anything else and say why in your "
+              "reply: the user sees it and decides, and it will not stop you again in this session."
+              % (_describe(open_now, reports), rounds, args.rounds))
     return _emit(args.format, "block", reason)
-
 
 def _names(items: List[str], limit: int) -> str:
     seen: List[str] = []

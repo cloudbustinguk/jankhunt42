@@ -12,8 +12,12 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
 
 - `jankhunt42 hook stop`: at the end of each turn, reviews what the agent changed and keeps it working while it has
   left a problem at or above `--fail-on` (default major). Claude Code and Codex receive `{"decision": "block",
-  "reason": ...}` with the review summary; after three blocked stops in one turn (`--rounds`) the agent may stop,
-  and the user sees a warning with what is still open (`systemMessage`). A clean change prints an empty decision. "What the agent changed" is
+  "reason": ...}` listing the problems. Each problem stops the agent until it is answered, once per session: an
+  agent that changes nothing after a block has given its reasons, so it may stop at once; one whose fixes keep
+  failing may stop after three blocked stops in a turn (`--rounds`). Either way the user sees a warning with what is
+  still open (`systemMessage`), and that problem does not stop the agent again in the session (later turns show a
+  one-line reminder; a problem fixed and later brought back is raised again). A clean change prints an empty
+  decision. "What the agent changed" is
   everything since the session began (the start hook records that commit), committed or not, so an agent that
   commits before it stops is reviewed all the same; each commit of the session is also checked for secrets, since
   a secret committed and removed later stays in the history. Ignore comments, or changes to jankhunt42's
