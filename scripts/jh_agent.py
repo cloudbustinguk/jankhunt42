@@ -307,16 +307,19 @@ def _server_from_spec(name: str, spec: Dict[str, Any], line: int, client: str, p
     return s
 
 
-def mcp_servers(rel: str, text: str) -> List[McpServer]:
+def mcp_servers(rel: str, text: str, limit: Optional[int] = MAX_SERVERS) -> List[McpServer]:
     """MCP servers defined in one config file. Raises ValueError when the
-    file cannot be parsed, so callers can record a coverage gap."""
+    file cannot be parsed, so callers can record a coverage gap. `limit` bounds the inventory the map and passport
+    keep (the rest is counted in OMITTED); the scan's checks pass None and read every server, since the shared
+    safety bound already counts what they do not list."""
     posix = rel.replace(os.sep, "/").lower()
     OMITTED.pop(rel, None)
     if posix.endswith(".toml"):
         found = _codex_servers(text)
-        if len(found) > MAX_SERVERS:
-            OMITTED[rel] = len(found) - MAX_SERVERS
-        return found[:MAX_SERVERS]
+        if limit is not None and len(found) > limit:
+            OMITTED[rel] = len(found) - limit
+            found = found[:limit]
+        return found
     data = loads_jsonc(text)
     if not isinstance(data, dict):
         return []                                       # valid JSON, but not an MCP client config
@@ -339,7 +342,7 @@ def mcp_servers(rel: str, text: str) -> List[McpServer]:
         if not isinstance(container, dict):
             continue
         for name, spec in container.items():
-            if len(out) >= MAX_SERVERS:
+            if limit is not None and len(out) >= limit:
                 if isinstance(spec, dict):
                     OMITTED[rel] = OMITTED.get(rel, 0) + 1
                 continue

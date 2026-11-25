@@ -313,8 +313,12 @@ def render_summary(result: Any, meta: Dict[str, Any], out_path: Optional[str] = 
         lines.append("set aside:")
         for _, text in held:
             lines.append("  " + _short(text.replace("`", ""), 160))
+    unread = list(meta.get("archive_warnings") or ())
+    if unread:                                   # never a clean-looking overview when part of the project was not read
+        lines.append("not read: %d item%s, e.g. %s" % (len(unread), "" if len(unread) == 1 else "s",
+                                                       _short(_no_control(unread[0]), 140)))
     if out_path:
-        lines.append("full report: %s (JSON; read only the parts you need)" % out_path)
+        lines.append("full report: %s (JSON; read only the parts you need)" % _tail(out_path, 120))
     else:
         lines.append("full report: rerun with --out FILE, then read only the parts you need")
     lines.append("narrow it: --rule ID, --category NAME, or a path; each finding's fix is in the JSON")

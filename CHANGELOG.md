@@ -4,11 +4,35 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
-## [Unreleased]
+## [4.22.5] — 2026-11-25
+
+A scan no longer stops on a link it cannot read, and fixes for issues a further review pass found in the 4.22.2 to
+4.22.4 changes. Each fix has its own test.
 
 ### Fixed
 
-- A committed link whose target cannot be read (a Flutter plugin link into `/root`, say) no longer stops a scan on Python 3.9 to 3.13 with a `PermissionError`; the link is skipped like any link outside the scanned folder. Found by the full-corpus run (1 of 17,529 repositories).
+- A committed link whose target cannot be read (a Flutter plugin link into `/root`, say) no longer stops a scan on
+  Python 3.9 to 3.13 with a `PermissionError`; the link is skipped like any link outside the scanned folder. Found by
+  scanning a corpus of 17,529 public repositories (1 repository).
+- File names that reports show escaped (a literal backslash before `x` and two hex digits, or a byte that is not
+  UTF-8): a rule's `files` pattern, a project's path ratings and ignore list, `map --exclude` and the SARIF link all
+  use the name on disk. The shown form of one name can equal another file's name on disk, which matched the wrong
+  file, lost a configured rating, scored an ignored file and linked to a file that does not exist. A scan root with
+  such a byte is shown escaped in the report, and `--out` writes nothing until the whole report is encoded, so a
+  failed write keeps the previous file.
+- Links: when the real file replaces its link as the representative, it gets the same name checks (a generated
+  target stays skipped) and keeps its git-ignored rating, whichever comes first in the folder listing.
+- Findings past the 100,000-per-file safety bound keep their own line, rating and inline ignores: a line-level
+  ignore covers them, and an informational peer dependency stays informational, so neither fails a gate.
+- MCP configs: two servers declared on one line are two findings, and the scan's checks read every server, not
+  the first 200 the map's inventory keeps.
+- PHP: on a line where a comment ends at `?>`, later `<?php ... ?>` tags on the same line also switch between code
+  and template text.
+- `review`: a folder named like an environment marker (`pyvenv.cfg`) no longer skips its parent; a repository name
+  ending in a space is the one reviewed; a text file the repository marks as binary still has line-level changes;
+  moving a line from one new file to another changes the review's identity.
+- `map --out` and `passport --out` exit 2 when the report cannot be written. The scan and review summaries show
+  the output name on one short line and say when part of the project (an app inside a zip) could not be read.
 
 ## [4.22.4] — 2026-11-24
 

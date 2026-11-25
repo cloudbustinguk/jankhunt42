@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TOOL = "jankhunt42"
-VERSION = "4.22.4"
+VERSION = "4.22.5"
 
 SEVERITIES = ("blocker", "critical", "major", "minor", "info")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -86,11 +86,10 @@ class SourceFile:
         return os.path.basename(self.rel)
 
     def names(self) -> Tuple[str, ...]:
-        """What a file pattern is matched against: the name as shown and, when it is escaped, the name on disk."""
-        shown = (self.rel, self.basename)
-        if not self.fs_rel or self.fs_rel == self.rel:
-            return shown
-        return shown + (self.fs_rel, os.path.basename(self.fs_rel))
+        """What a file pattern is matched against: the name on disk and its file name. Never the shown form, which
+        for one file can equal another file's name on disk (tile\\xFF.md shows as the name tile\\\\xFF.md has)."""
+        on_disk = self.fs_rel or self.rel
+        return (on_disk, os.path.basename(on_disk))
 
 
 # ---------------------------------------------------------------------------
@@ -523,10 +522,13 @@ class _Sanitizer:
         self.regex = lang in ("js", "ts", "vue", "svelte")
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
+        self.php_line_template = False           # PHP: on a line where a comment closed the block, tags alternate
         starts = {token[0] for token in self.quotes}
         starts.update(start[0] for start, _ in self.blocks)
         starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))
         starts.update(token[0] for token in _WS_LINE_COMMENTS.get(lang, ()))
+        if lang == "php":
+            starts.add("?")
         if self.regex:
             starts.add("/")
         self.opener_chars = "".join(sorted(starts))
@@ -608,6 +610,7 @@ class _Sanitizer:
                    comments: List[str]) -> None:
         i = 0
         n = len(line)
+        self.php_line_template = False
         while i < n:
             if self.block_end is not None:
                 i = self._consume_block(line, code, nc, comments, i, n)
@@ -643,12 +646,20 @@ class _Sanitizer:
                     _blank(code, close, n if reopen == -1 else reopen)
                     if reopen == -1:
                         return
+                    self.php_line_template = True   # a later ?> on this line closes the reopened block too
                     i = reopen
                     continue
                 _blank(code, i, n)
                 _blank(nc, i, n)
                 comments.append(line[i:])
                 return
+            if self.php_line_template and line.startswith("?>", i):
+                reopen = line.find("<?", i + 2)      # template text again until the next opening tag
+                _blank(code, i, n if reopen == -1 else reopen)
+                if reopen == -1:
+                    return
+                i = reopen
+                continue
             ch = line[i]
             if self.triple and ch in ("'", '"') and line.startswith(ch * 3, i):
                 _blank(code, i, i + 3)
@@ -890,7 +901,16 @@ def discover_files(
                             origin = "both" if cli and config else "--exclude" if cli else "config"
                             count_path(not_read.setdefault("files_excluded", {}), origin, shown(p))
                         return
+                # the same name checks as any file (a generated or minified target stays skipped), and the real file
+                # carries its own git-ignored status, whichever spelling the listing yields first
+                why_name = skipped_file_reason(p.relative_to(base))
+                if why_name:
+                    if not_read is not None:
+                        count_path(not_read.setdefault("files_by_name", {}), why_name, shown(p))
+                    return
                 found[seen[key]] = p
+                if ignored_files is not None and git_ignored:
+                    ignored_files.add(p)
             return
         inside = p.relative_to(base)
         if not _quiet_is_file(p):
@@ -1093,6 +1113,29 @@ def display_path(rel: str) -> str:
     if not has_bytes:
         return rel
     return "".join("\\x%02X" % (ord(ch) - 0xDC00) if "\udc80" <= ch <= "\udcff" else ch for ch in rel)
+
+
+_ESCAPE_TOKEN = re.compile(r"\\\\|\\x[0-9A-F]{2}")
+
+
+def fs_bytes(shown: str) -> bytes:
+    """The bytes of the name on disk behind a path as display_path shows it: an escaped form always holds \\\\ or
+    \\xNN and a name shown as it is never does, so the two are told apart and the escape is undone exactly."""
+    if not _ESCAPE_TOKEN.search(shown):
+        return os.fsencode(shown)
+    out = bytearray()
+    i = 0
+    while i < len(shown):
+        if shown.startswith("\\\\", i):
+            out += b"\\"
+            i += 2
+        elif re.match(r"\\x[0-9A-F]{2}", shown[i:i + 4]):
+            out.append(int(shown[i + 2:i + 4], 16))
+            i += 4
+        else:
+            out += shown[i].encode("utf-8", "surrogateescape")
+            i += 1
+    return bytes(out)
 
 
 def source_from_text(rel: str, abspath: str, text: str) -> Optional[SourceFile]:

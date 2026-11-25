@@ -1268,6 +1268,14 @@ def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[
     return suppression
 
 
+def _identity(finding: Finding) -> Tuple[object, ...]:
+    """What makes two findings the same one: rule, file and line; the column for rules that report every call on a
+    line; and the structured item a finding names (two MCP servers declared on one JSON line are two findings)."""
+    column = finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0
+    item = (finding.extra or {}).get("server") if isinstance(finding.extra, dict) else None
+    return (finding.rule, finding.path, finding.line, column, item)
+
+
 class _FindingAcceptor:
     def __init__(self, opts: ScanOptions,
                  suppression: Dict[str, Tuple[Set[str], Dict[int, Set[str]]]]) -> None:
@@ -1283,7 +1291,7 @@ class _FindingAcceptor:
         self.capped_worst: Optional[str] = None   # the most severe finding the caps held back (for --fail-on)
 
     def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
-        key = (why, (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0))
+        key = (why, _identity(finding))
         if key in self.held:                      # a rule can match one line twice: count the finding once
             return
         self.held.add(key)
@@ -1328,11 +1336,29 @@ class _FindingAcceptor:
         if opts.ignore_rule_ids and finding.rule in opts.ignore_rule_ids:
             self._held("ignored_rules", finding)
             return False
-        key = (finding.rule, finding.path, finding.line, finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0)
+        key = _identity(finding)
         if key in self.seen:
             return False
         self.seen.add(key)
         return True                               # the caps apply once every finding is known (apply_caps)
+
+    def count_past_bound(self, finding: Finding, n: int = 1) -> None:
+        """A finding past a check's safety bound: never listed, but held back like any other. The selection and the
+        rating first (eligible), then an inline ignore, then the floor; what is left counts as capped, so a gate
+        still sees it."""
+        sev = self.eligible(finding)
+        if sev is None:
+            return
+        if self.opts.honor_suppressions and self.suppressed(finding):
+            self.set_aside["inline_ignore"] = self.set_aside.get("inline_ignore", 0) + n
+            return
+        if not sev_at_least(sev, self.opts.min_severity):
+            bucket = self.set_aside.setdefault("below_floor", {})
+            bucket[sev] = bucket.get(sev, 0) + n
+            return
+        self.set_aside["capped"] = self.set_aside.get("capped", 0) + n
+        if self.capped_worst is None or sev_at_least(sev, self.capped_worst):
+            self.capped_worst = sev
 
     def eligible(self, finding: Finding) -> Optional[str]:
         """The rating a finding would carry if this run could show it, or None when the run's selection, a rule set
@@ -1442,8 +1468,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
                     continue
                 found = list(found)
                 if len(found) > jh_checks.DEBUG_BOUND:  # one safety bound for every check: the rest are counted
-                    jh_checks.BOUND_DROPPED[(rule.id, sf.rel)] = (jh_checks.BOUND_DROPPED.get((rule.id, sf.rel), 0)
-                                                                  + len(found) - jh_checks.DEBUG_BOUND)
+                    for past in found[jh_checks.DEBUG_BOUND:]:   # each with its own rating, line and ignores
+                        _example_context(past)
+                        acceptor.count_past_bound(past)
                     found = found[:jh_checks.DEBUG_BOUND]
                 for f in found:
                     _example_context(f)
@@ -1759,25 +1786,19 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
 
     result.findings = acceptor.apply_caps(result.findings)
     by_rel = {s.rel: s for s in sources}
-    for (rid, path), n in jh_checks.BOUND_DROPPED.items():      # past a check's own safety bound: counted like any
-        rule, sf = rule_by_id(rid), by_rel.get(path)            # finding (selection, rating, floor), as capped
+    for (rid, path), positions in jh_checks.BOUND_DROPPED_AT.items():   # past a check's own bound, where known:
+        rule, sf = rule_by_id(rid), by_rel.get(path)                     # each with its line, so its ignores apply
         if rule is None or sf is None:
             continue
-        sev = acceptor.eligible(make_finding(rule, sf, 1))
-        if sev is None:
+        for line, column in positions:
+            acceptor.count_past_bound(make_finding(rule, sf, line, column=column))
+    for (rid, path), n in jh_checks.BOUND_DROPPED.items():      # past even that: counted, as a file-wide finding
+        rule, sf = rule_by_id(rid), by_rel.get(path)
+        if rule is None or sf is None:
             continue
-        file_ids = acceptor.suppression.get(path, (set(), {}))[0]
-        if opts.honor_suppressions and ("ALL" in file_ids or rid in file_ids):   # a file-wide ignore covers them all
-            acceptor.set_aside["inline_ignore"] = acceptor.set_aside.get("inline_ignore", 0) + n
-            continue
-        if not sev_at_least(sev, opts.min_severity):
-            bucket = acceptor.set_aside.setdefault("below_floor", {})
-            bucket[sev] = bucket.get(sev, 0) + n
-            continue
-        acceptor.set_aside["capped"] = acceptor.set_aside.get("capped", 0) + n
-        if acceptor.capped_worst is None or sev_at_least(sev, acceptor.capped_worst):
-            acceptor.capped_worst = sev
+        acceptor.count_past_bound(make_finding(rule, sf, 1), n)
     jh_checks.BOUND_DROPPED.clear()
+    jh_checks.BOUND_DROPPED_AT.clear()
     if jh_checks.PARSE_FAILURES:                 # every command that scans (scan, review, passport) reports them
         failed = sorted(jh_checks.PARSE_FAILURES)
         acceptor.set_aside["files_not_parsed"] = {"count": len(failed), "paths": failed[:20]}
