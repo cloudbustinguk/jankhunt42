@@ -1300,6 +1300,13 @@ MUTANTS = [
     ('M941-review-diffs-through-pipes', 'review runs git over a named-pipe .gitignore', 'jh_review.py', '    unsafe = git_inputs_unsafe(root)\n    if unsafe:                       # git reads these while it lists and diffs; a named pipe would stall it', '    unsafe = None\n    if unsafe:', 'test_hostile_links.py'),
     ('M942-pipe-check-misses-nested', 'the special-file check looks only at the top folder', 'jh_core.py', '                    elif e.name != ".git" and e.is_dir(follow_symlinks=False):\n                        stack.append(e.path)', '                    elif False:\n                        stack.append(e.path)', 'test_hostile_links.py'),
     ('M943-pipe-check-ignores-config', 'a configured excludes file that is a pipe is not checked', 'jh_core.py', '                if not stat.S_ISREG(os.stat(p).st_mode):\n                    found = p', '                if False:\n                    found = p', 'test_hostile_links.py'),
+    ('M944-start-not-recorded', 'the start hook does not record where the session began', 'jh_hooks.py', '    root = os.path.abspath(args.path or event.get("cwd") or ".")\n    _record_start(event, root)', '    root = os.path.abspath(args.path or event.get("cwd") or ".")', 'test_hooks.py'),
+    ('M945-commits-not-reviewed', 'the stop hook ignores what the agent committed', 'jh_hooks.py', '        if start and head and start != head:', '        if False:', 'test_hooks.py'),
+    ('M946-history-not-checked', 'a secret committed and then removed passes', 'jh_hooks.py', '                history = _secrets_in_history(root, start, state_dir)', '                history = []', 'test_hooks.py'),
+    ('M947-resume-resets-start', 'a resumed session forgets where it began', 'jh_hooks.py', '    if event.get("source") in ("resume", "compact") and _load(path).get("start"):\n        return', '    if False:\n        return', 'test_hooks.py'),
+    ('M948-exemptions-ignored', 'ignore comments the agent added let it stop', 'jh_hooks.py', '    exemptions = _self_exemptions(root, start or None)', '    exemptions = []', 'test_hooks.py'),
+    ('M949-config-changes-ignored', 'a jankhunt42 config change the agent made is not reported', 'jh_hooks.py', '        if _is_jankhunt42_config(rel):\n            found.append', '        if False:\n            found.append', 'test_hooks.py'),
+    ('M950-new-file-ignores-missed', 'an ignore comment in a new file is not seen', 'jh_hooks.py', '            if _DIRECTIVE.search(text):\n                found.append', '            if False:\n                found.append', 'test_hooks.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
