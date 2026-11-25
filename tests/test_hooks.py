@@ -140,9 +140,12 @@ class StopHook(Base):
         d = os.path.join(self.root, "plain")
         os.makedirs(d)
         Path(d, "app.py").write_text(SECRET)
-        proc = hook(["stop"], {"cwd": d})
+        cache = os.path.join(self.root, "cache")
+        proc = hook(["stop"], {"cwd": d}, env={"XDG_CACHE_HOME": cache})
         self.assertEqual(json.loads(proc.stdout), {})
+        self.assertIn("not in a git repository; nothing reviewed", proc.stderr)
         self.assertEqual(sorted(os.listdir(d)), ["app.py"])
+        self.assertFalse(os.path.exists(cache))                     # no state kept anywhere for a non-repository
 
 
 class StartHook(Base):
