@@ -146,5 +146,43 @@ class FilesGitReads(unittest.TestCase):
         self.assertIn("not reviewed", self.quick(["review", "."], 2).stderr)
 
 
+@unittest.skipIf(os.name == "nt", "control characters in file names")
+@unittest.skipUnless(GIT, "git unavailable")
+class ControlCharacters(unittest.TestCase):
+    """A repository must not be able to rewrite the reader's terminal, or hide its own findings, with control or
+    bidi characters in its file names or contents: every report shows them escaped or replaced."""
+
+    RAW = {"ESC": b"\x1b", "BEL": b"\x07", "BS": b"\x08", "CR": b"\r", "RLO": "\u202e".encode()}
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="jh-ctl-")
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        for name in ("clear\x1b[2Jscreen.py", "title\x1b]0;pwned\x07.py", "rtl\u202etxt.py", "back\x08space.py",
+                     "cr\rline.py", "new\nline.py"):
+            Path(self.repo, name).write_text("breakpoint()\n")
+        Path(self.repo, "content.py").write_text('API_KEY = "sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0fGh3iJk"'
+                                                 '  # \x1b[2K\x1b]0;x\x07 \u202e\rhidden\n')
+
+    def test_no_report_carries_a_raw_control_character(self):
+        for argv in (["scan", "."], ["scan", ".", "--md"], ["scan", ".", "--summary"], ["scan", ".", "--json"],
+                     ["scan", ".", "--sarif"], ["scan", ".", "--html"], ["review", "."], ["review", ".", "--md"],
+                     ["review", ".", "--brief"], ["review", ".", "--summary"], ["map", "."], ["passport", "."]):
+            with self.subTest(argv=argv):
+                proc = subprocess.run([sys.executable, "-I", "-B", CLI] + argv + ["--min-severity", "info"],
+                                      cwd=self.repo, capture_output=True, timeout=120,
+                                      env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                found = {k: proc.stdout.count(v) for k, v in self.RAW.items() if proc.stdout.count(v)}
+                self.assertEqual(found, {}, argv)
+
+    def test_an_escaped_name_still_leads_back_to_the_file(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(CLI)))
+        import jh_core
+        for name in ("clear\x1b[2Jscreen.py", "rtl\u202etxt.py", "cr\rline.py"):
+            shown = jh_core.display_path(name)
+            self.assertFalse(jh_core._NAME_UNSAFE.search(shown), shown)
+            self.assertEqual(jh_core.fs_bytes(shown), name.encode("utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

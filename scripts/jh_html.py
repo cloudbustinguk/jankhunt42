@@ -9,7 +9,7 @@ from __future__ import annotations
 from html import escape
 from typing import Dict, List, Sequence, Tuple
 
-from jh_core import Finding, SEV_LABEL, TOOL, VERSION
+from jh_core import Finding, SEV_LABEL, TOOL, VERSION, safe_text
 from jh_frameworks import OWASP_RISKS, owasp
 from jh_prompt import combined, finding_prompt
 import jh_score
@@ -32,7 +32,9 @@ GRADE_COLOR = {
 
 
 def _e(value: object) -> str:
-    return escape(str(value), quote=True)
+    """Escaped for HTML, with control and bidi characters from the repository made visible (U+FFFD): a report
+    printed to a terminal must not rewrite it."""
+    return escape(safe_text(str(value)), quote=True)
 
 
 def _sev(value: str) -> str:
