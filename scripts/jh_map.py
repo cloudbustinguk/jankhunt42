@@ -186,7 +186,7 @@ def collect_git(root: str, rev: str, excludes: Sequence[str], max_files: int,
         segs = rel.split("/")
         # the prefix (a path on disk) comes off the raw path; exclusions match the name as shown and as stored
         scoped_raw = raw_rel[len(prefix):] if prefix and raw_rel.startswith(prefix) else raw_rel
-        names = {rel, raw_rel, scoped_raw, display_path(scoped_raw), segs[-1], raw_rel.rsplit("/", 1)[-1]}
+        names = {raw_rel, scoped_raw, raw_rel.rsplit("/", 1)[-1]}
         # the same folders as a walk sets aside: an env folder only when it holds pyvenv.cfg, installed plugin code
         why = tree_skip_reason(raw_rel, in_tree.__contains__)
         if why:

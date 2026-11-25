@@ -20,6 +20,7 @@ if HERE not in sys.path:
 
 from jh_core import (  # noqa: E402
     display_path,
+    fs_bytes,
     run_git,
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source, load_source_why,
     make_finding, sev_at_least,
@@ -232,6 +233,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         spinner.update("scanning %d files with %d rules…" % (len(sources), len(RULES)))
     severity_map = getattr(args, "severity_map", None) or {}
     ignored_paths = not_read.get("_git_ignored_paths") or set()
+    on_disk = {s.rel: s.fs_rel for s in sources if getattr(s, "fs_rel", "")}   # shown name -> name on disk
 
     def rate(f: Any) -> Optional[str]:
         """The rating the operator configured, applied before the floor and the caps (so a promotion is shown at
@@ -244,7 +246,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
         if cfg.source:
             if not cfg.is_rule_enabled(f.rule):
                 return None
-            sev = cfg.severity_for(f.rule, f.path, sev)
+            sev = cfg.severity_for(f.rule, on_disk.get(f.path, f.path), sev)
         if f.path in ignored_paths and sev_at_least(sev, "major"):
             if "This file is not committed" not in f.message:
                 f.message = (f.message.rstrip() + " This file is not committed (the repository's .gitignore covers "
@@ -267,7 +269,7 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     config_suppressed = int(result.set_aside.get("config", 0)) if cfg.source else 0
     # findings in git-ignored files are capped at minor inside `rate` above, before the floor, the caps and the gate
     meta: Dict[str, object] = {
-        "root": str(root),
+        "root": display_path(str(root)),
         "elapsed": time.time() - t0,
         "skipped": skipped,
     }
@@ -347,7 +349,7 @@ def _scan_json(root: str, result: ScanResult, meta: Dict[str, object]) -> str:
         "tool": TOOL,
         "version": VERSION,
         "command": "scan",
-        "root": root,
+        "root": display_path(str(root)),
         "summary": {
             "files": result.files,
             "loc": result.loc,
@@ -398,7 +400,7 @@ def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Di
             "message": {"text": f.message or f.title},
             "locations": [{
                 "physicalLocation": {
-                    "artifactLocation": {"uri": urllib.parse.quote(f.path.replace(os.sep, "/"), safe="/")},
+                    "artifactLocation": {"uri": urllib.parse.quote(fs_bytes(f.path.replace(os.sep, "/")), safe="/")},
                     "region": {
                         "startLine": max(1, f.line),
                         "startColumn": max(1, f.column),
@@ -447,12 +449,19 @@ def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Di
 def _write_out(path: str, text: str) -> bool:
     """Write a full report for --out, creating its folder. A folder named .jankhunt42 is never scanned."""
     try:
+        data = (text + "\n").encode("utf-8")      # encoded first: a report that cannot be written leaves the old file
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(text + "\n")
+        tmp = os.path.join(parent, ".%s.%d.tmp" % (os.path.basename(path) or "report", os.getpid()))
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        try:
+            os.replace(tmp, path)
+        except OSError:
+            os.unlink(tmp)
+            raise
         return True
-    except OSError as exc:
+    except (OSError, UnicodeEncodeError) as exc:
         print("jankhunt42: cannot write --out %s: %s" % (path, exc), file=sys.stderr)
         return False
 
@@ -566,7 +575,7 @@ def cmd_score(args: argparse.Namespace) -> int:
             "tool": TOOL,
             "version": VERSION,
             "command": "score",
-            "root": root,
+            "root": display_path(str(root)),
             "files": result.files,
             "loc": result.loc,
             "jank": report.to_dict(),
@@ -655,9 +664,11 @@ def _one_format(args: argparse.Namespace, names: Sequence[str]) -> bool:
     return True
 
 
-def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, html) -> None:
+def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, html) -> bool:
+    """Print the report as asked; False when --out could not be written (the caller then exits 2)."""
     if getattr(args, "out", None):               # the full JSON to a file, to read selectively; stdout as asked
-        _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False))
+        if not _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False)):
+            return False
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     elif args.html:
@@ -667,6 +678,7 @@ def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, htm
     else:
         color = jh_render.color_enabled(args.no_color)
         print(tty_view(report, color=color, ascii_only=jh_views.want_ascii()))
+    return True
 
 
 def _map_inputs(args: argparse.Namespace) -> Tuple[str, List[str], object]:
@@ -715,7 +727,8 @@ def cmd_map(args: argparse.Namespace) -> int:
         return 2
     if args.redact:
         report = jh_map.finalize_report(jh_graph.pseudonymize(report))
-    _emit(args, report, jh_map.markdown, jh_views.map_tty, jh_explorer.render_map)
+    if not _emit(args, report, jh_map.markdown, jh_views.map_tty, jh_explorer.render_map):
+        return 2
     return 0
 
 
@@ -854,14 +867,16 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     if not scan_cfg.ignore_globs:
         main_pre = raw_pre
     elif not raw_capped:
-        main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
+        # B86: the project's ignore list matches the name on disk, as discovery does; the shown name is recorded
+        main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)],
+                    raw_pre[2])
         for s in raw_pre[1]:
-            if _globbed(s.rel, scan_cfg.ignore_globs):
+            if _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs):
                 count_path(pp_not_read.setdefault("files_excluded", {}), "config", s.rel)
     elif not snapshot:
         main_pre = _load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
     else:
-        main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.rel, scan_cfg.ignore_globs)], raw_pre[2])
+        main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)], raw_pre[2])
     _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
     passport_aside = set_aside(result, pp_not_read, int(_meta.get("config_suppressed") or 0), ignored_rules(args),
                                scan_args, cfg.source)
@@ -1007,7 +1022,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
             return 2
         print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
         return 0
-    _emit(args, passport, jh_passport.markdown, jh_views.passport_tty, jh_explorer.render_passport)
+    if not _emit(args, passport, jh_passport.markdown, jh_views.passport_tty, jh_explorer.render_passport):
+        return 2
     return 1 if jh_policy.fails(passport["assessment"]["decision"]["result"], args.fail_on) else 0
 
 

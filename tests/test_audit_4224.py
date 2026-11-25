@@ -140,7 +140,8 @@ class TheSafetyBoundIsCountedAndGated(Base):
 
     def test_an_unsuppressed_call_past_the_bound_fails_the_gate(self):
         n = self.bound()
-        Path(self.path("card.py")).write_text("breakpoint()  # jankhunt42: ignore JH204\n" * n + "breakpoint()\n")
+        # a blank line first: an ignore comment also covers the line after it, as for every listed finding
+        Path(self.path("card.py")).write_text("breakpoint()  # jankhunt42: ignore JH204\n" * n + "\nbreakpoint()\n")
         proc = run_cli("scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "minor", "--summary",
                        "--max-file-bytes", "20000000", "--no-progress")
         self.assertEqual(proc.returncode, 1, proc.stdout[-400:])

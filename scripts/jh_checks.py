@@ -642,6 +642,9 @@ _SECRET_FILE_NAMES = {
 
 DEBUG_BOUND = 100000                            # findings one check makes for one file; the rest are counted
 BOUND_DROPPED: Dict[Tuple[str, str], int] = {}  # (rule, path) -> findings past the bound (cleared per scan)
+# where those findings were, while it stays affordable, so line-level ignores still apply to them
+BOUND_DROPPED_AT: Dict[Tuple[str, str], List[Tuple[int, int]]] = {}
+BOUND_POSITIONS_MAX = 1000000
 
 
 @check("secret_file")
@@ -2529,7 +2532,7 @@ def agent_config_autorun(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 def _mcp(sf: SourceFile) -> List[jh_agent.McpServer]:
     try:
-        return [s for s in jh_agent.mcp_servers(sf.rel, sf.text) if not s.disabled]
+        return [s for s in jh_agent.mcp_servers(sf.rel, sf.text, limit=None) if not s.disabled]   # every server
     except (ValueError, RecursionError) as exc:
         _parse_failed(sf, exc)
         return []
@@ -3345,7 +3348,11 @@ def debug_leftover(sf: SourceFile, rule: Rule) -> List[Finding]:
                 starts.add(m.start())
         for start in sorted(starts):
             if len(out) >= DEBUG_BOUND:          # a pathological file: the rest is counted, never dropped silently
-                BOUND_DROPPED[(rule.id, sf.rel)] = BOUND_DROPPED.get((rule.id, sf.rel), 0) + 1
+                at = BOUND_DROPPED_AT.setdefault((rule.id, sf.rel), [])
+                if len(at) < BOUND_POSITIONS_MAX:
+                    at.append((i + 1, start + 1))
+                else:
+                    BOUND_DROPPED[(rule.id, sf.rel)] = BOUND_DROPPED.get((rule.id, sf.rel), 0) + 1
                 continue
             out.append(make_finding(rule, sf, i + 1, column=start + 1))
     return out

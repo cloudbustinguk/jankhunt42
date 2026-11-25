@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from jh_core import (  # noqa: F401
     display_path,
+    fs_bytes,
     tree_skip_reason,
     run_git,
     Finding,
@@ -101,7 +102,7 @@ def git_root(path: str) -> str:
     proc = _run_git(path, ["rev-parse", "--show-toplevel"])
     if proc.returncode != 0:
         raise ReviewError("not a git worktree: %s" % path)
-    return proc.stdout.strip()
+    return proc.stdout.rstrip("\r\n")              # only git's line ending: a folder name may end in a space
 
 
 def _git_head(root: str) -> str:
@@ -147,17 +148,17 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
     index = False
     warning = ""
     if mode == "staged":
-        args = ["diff", "--cached", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "--cached", "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
         revision, index = None, True
     elif mode == "base":
         if not base:
             raise ReviewError("--base requires a git ref")
-        args = ["diff", "%s...HEAD" % base, "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "%s...HEAD" % base, "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
         revision = "HEAD"
     elif mode == "commit":
         if not commit:
             raise ReviewError("--commit requires a commit")
-        args = ["show", "--format=", "--unified=3", "--no-color", "--no-ext-diff",
+        args = ["show", "--format=", "--unified=3", "--no-color", "--text", "--no-ext-diff",
                 "--find-renames", commit]
         revision = commit
         head = commit
@@ -165,18 +166,18 @@ def _diff_command(root: str, mode: str, base: str = "", commit: str = "",
         if not pr:
             raise ReviewError("--pr requires a PR number or URL")
         base_ref, pr_ref = _gh_pr_context(root, pr)
-        args = ["diff", "%s...HEAD" % base_ref, "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "%s...HEAD" % base_ref, "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
         revision = "HEAD"
     else:
         # Default review: everything not committed, including staged changes.
-        args = ["diff", "HEAD", "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
+        args = ["diff", "HEAD", "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
         if not head:
             # Before the first commit: the working tree against the empty tree, read from the working tree, so an
             # edit made after `git add` is reviewed (the staged copy is what --staged reviews)
             empty = _run_git(root, ["hash-object", "-t", "tree", "/dev/null"])
             if empty.returncode != 0:
                 raise ReviewError("git could not name the empty tree")
-            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--no-ext-diff", "--find-renames"]
+            args = ["diff", empty.stdout.strip(), "--unified=3", "--no-color", "--text", "--no-ext-diff", "--find-renames"]
         revision = None
     proc = _run_git(root, args)
     if proc.returncode != 0:
@@ -361,8 +362,9 @@ def _in_reviewed_tree(root: str, scope: "DiffScope", rel: str) -> bool:
     review, the working tree otherwise. An unstaged file never changes a review of the index or of a commit."""
     if scope.index or scope.revision:
         ref = (":%s" % rel) if scope.index else ("%s:%s" % (scope.revision, rel))
-        try:
-            return run_git(["git", "-C", root, "cat-file", "-e", ref], capture_output=True, timeout=10).returncode == 0
+        try:                                      # a file, not a folder of the same name (a directory called pyvenv.cfg)
+            proc = run_git(["git", "-C", root, "cat-file", "-t", ref], capture_output=True, timeout=10)
+            return proc.returncode == 0 and proc.stdout.strip() in ("blob", b"blob")
         except (OSError, subprocess.SubprocessError):
             return False
     return os.path.isfile(os.path.join(root, rel))
@@ -422,7 +424,7 @@ def _path_selected(rel: str, paths: Sequence[str], root: str = "") -> bool:
         return True
     rel = rel.replace("\\", "/")
     for raw in paths:
-        p = raw.replace("\\", "/").strip()
+        p = raw.replace("\\", "/")                  # exactly as given: a name may begin or end with a space
         # a relative path names a place as seen from where the command runs ("review one" from the parent folder);
         # one that does not exist from there keeps its meaning inside the repository
         if root and p and not os.path.isabs(p) and os.path.exists(p):
@@ -794,8 +796,10 @@ def run_review(args: Any) -> Dict[str, Any]:
     diff_scope = collect_diff(root, mode, base=base, commit=commit, pr=pr)
     sources, scope_meta = build_review_scope(root, diff_scope, args)
     untracked_set = set(scope_meta.get("untracked_files", []))
-    diff_material = diff_scope.text + "\n" + "\n".join(
-        s.text for s in sources if s.rel in untracked_set
+    # each new file by its path and length as well as its text, so moving a line from one new file to another
+    # changes the hash (joining the texts alone gave both states the same input)
+    diff_material = diff_scope.text + "".join(
+        "\0%s\0%d\0%s" % (s.rel, len(s.text), s.text) for s in sources if s.rel in untracked_set
     )
     diff_hash = hashlib.sha256(diff_material.encode("utf-8", "replace")).hexdigest()
     result = scan_review(sources, args)
@@ -945,7 +949,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "tool": TOOL,
         "version": VERSION,
         "command": "review",
-        "root": root,
+        "root": display_path(str(root)),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "scan_id": scan_id,
         "summary": summary,
@@ -1151,7 +1155,7 @@ def summary(review: Dict[str, Any], out_path: Optional[str] = None, limit: int =
     if held:
         lines.append("set aside:")
         lines.extend("  " + jh_render._short(text.replace("`", ""), 160) for _, text in held)
-    lines.append("full review: %s" % (out_path + " (JSON; read only the parts you need)" if out_path
+    lines.append("full review: %s" % (jh_render._tail(out_path, 120) + " (JSON; read only the parts you need)" if out_path
                                       else "rerun with --out FILE, then read only the parts you need"))
     return "\n".join(lines)
 
@@ -1313,7 +1317,7 @@ def sarif(review: Dict[str, Any]) -> str:
             "message": {"text": r.get("message") or r["title"]},
             "locations": [{
                 "physicalLocation": {
-                    "artifactLocation": {"uri": urllib.parse.quote(r["path"].replace(os.sep, "/"), safe="/")},
+                    "artifactLocation": {"uri": urllib.parse.quote(fs_bytes(r["path"].replace(os.sep, "/")), safe="/")},
                     "region": {"startLine": max(1, r["line"]),
                                "startColumn": max(1, r.get("column", 1)),
                                **({"endLine": r["end_line"]} if r.get("end_line") else {})},
