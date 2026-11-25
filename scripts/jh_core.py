@@ -857,7 +857,7 @@ def discover_files(
                 if not_read is not None:             # never followed outside the scanned folder, and said so
                     not_read.setdefault("dirs", {}).setdefault("link outside the scanned folder", []).append(shown(p))
                 return
-            if resolved.is_dir():
+            if _quiet_is_dir(resolved):
                 if not_read is not None:             # a folder link inside the root: its target is read where it is
                     not_read.setdefault("dirs", {}).setdefault("linked folder (not followed)", []).append(shown(p))
                 return
@@ -893,7 +893,7 @@ def discover_files(
                 found[seen[key]] = p
             return
         inside = p.relative_to(base)
-        if not p.is_file():
+        if not _quiet_is_file(p):
             return
         if not explicit and (excludes or config_excludes):
             rel = inside.as_posix()
@@ -965,7 +965,7 @@ def discover_files(
                         break
                 if skip:
                     continue
-                if (target / rel).is_dir() and not (target / rel).is_symlink():   # a submodule or nested repository
+                if not (target / rel).is_symlink() and _quiet_is_dir(target / rel):   # a submodule or nested repository
                     if not_read is not None:
                         not_read.setdefault("dirs", {}).setdefault("nested repository", []).append(shown(target / rel.rstrip("/")))
                     continue
@@ -1060,6 +1060,22 @@ def _adds_role(link_rel: str, real_rel: str) -> bool:
 
 
 _AMBIGUOUS_BACKSLASH = re.compile(r"\\(?:x[0-9A-Fa-f]{2}|\\)")
+
+
+def _quiet_is_dir(p: Path) -> bool:
+    """is_dir() that reads an unreadable target (a committed link into /root, say) as not a folder, as Python 3.14
+    does; Python 3.9-3.13 raise PermissionError, which stopped the whole scan."""
+    try:
+        return p.is_dir()
+    except OSError:
+        return False
+
+
+def _quiet_is_file(p: Path) -> bool:
+    try:
+        return p.is_file()
+    except OSError:
+        return False
 
 
 def display_path(rel: str) -> str:

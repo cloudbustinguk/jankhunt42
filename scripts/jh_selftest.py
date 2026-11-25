@@ -1251,6 +1251,8 @@ MUTANTS = [
     ('M892-map-prefix-on-display', 'the historical map strips the prefix from the display path', 'jh_map.py', '        scoped_raw = raw_rel[len(prefix):] if prefix and raw_rel.startswith(prefix) else raw_rel', '        scoped_raw = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel', 'test_audit_4224.py'),
     ('M893-excluded-target-replaces-link', 'an excluded target replaces its allowed link', 'jh_core.py', '                if not explicit and (excludes or config_excludes):\n                    rel_t = p.relative_to(base).as_posix()', '                if False:\n                    rel_t = p.relative_to(base).as_posix()', 'test_audit_4224.py'),
     ('M894-link-loses-git-ignored', 'a link read in the link pass loses its git-ignored flag', 'jh_core.py', '                if ignored_files is not None and link_ignored:', '                if False:', 'test_audit_4224.py'),
+    ('M895-link-check-follows-first', 'the nested-repository check follows an unreadable link before asking whether it is one', 'jh_core.py', '                if not (target / rel).is_symlink() and _quiet_is_dir(target / rel):', '                if (target / rel).is_dir() and not (target / rel).is_symlink():', 'test_audit_4225.py'),
+    ('M896-file-check-raises', "an unreadable entry's file check stops the scan", 'jh_core.py', '        if not _quiet_is_file(p):', '        if not p.is_file():', 'test_audit_4225.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
