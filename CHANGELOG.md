@@ -13,8 +13,13 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
 - `jankhunt42 hook stop`: at the end of each turn, reviews what the agent changed and keeps it working while it has
   left a problem at or above `--fail-on` (default major). Claude Code and Codex receive `{"decision": "block",
   "reason": ...}` with the review summary; after three blocked stops in one turn (`--rounds`) the agent may stop,
-  and what is still open is reported. A clean change prints an empty decision. Outside a git repository nothing is
-  reviewed or written; its state stays in the user's cache, never in the repository.
+  and what is still open is reported. A clean change prints an empty decision. "What the agent changed" is
+  everything since the session began (the start hook records that commit), committed or not, so an agent that
+  commits before it stops is reviewed all the same; each commit of the session is also checked for secrets, since
+  a secret committed and removed later stays in the history. Ignore comments, or changes to jankhunt42's
+  configuration, rulesets or policy, that the agent added this session keep it working too: they hide a finding,
+  they do not fix it. Outside a git repository nothing is reviewed or written; its state stays in the user's cache,
+  never in the repository.
 - `jankhunt42 hook start`: a session-start briefing under 2,500 characters, from the map (seconds even on large
   projects): the exposure class, the credentials, data stores, outside hosts and AI services in reach (names only,
   never values), what the agent must not widen, and, when a saved scan exists (`.jankhunt42/scan.json`), the

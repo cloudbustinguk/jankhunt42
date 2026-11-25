@@ -24,7 +24,7 @@ import sys
 import tempfile
 from typing import Any, Dict, List, Optional
 
-from jh_core import link_inside
+from jh_core import git_inputs_unsafe, link_inside, run_git
 
 ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jankhunt42")
 START_BUDGET = 2500                      # characters of briefing; agents cap session context at 10,000
@@ -121,13 +121,116 @@ def _repo_top(path: str) -> Optional[str]:
     return top if proc.returncode == 0 and top else None
 
 
+def _head(root: str) -> Optional[str]:
+    """The commit the worktree is on, or None before the first commit."""
+    try:
+        proc = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+                              capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = proc.stdout.strip()
+    return sha if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def _session_id(event: Dict[str, Any]) -> str:
+    return _SESSION.sub("_", str(event.get("session_id") or "default"))[:80] or "default"
+
+
+SECRET_RULES = ("JH101", "JH132", "JH133", "JH149", "JH401", "JH415", "JH706", "JH713")
+HISTORY_COMMITS = 20                     # commits of one session checked one by one for secrets
+
+
+def _secrets_in_history(root: str, start: str, state_dir: str) -> List[str]:
+    """Commits since the session began that added a secret, even one a later commit removed: it stays in the
+    history, and anyone the branch is pushed to gets it."""
+    try:
+        proc = subprocess.run(["git", "-C", root, "rev-list", "--reverse", "--max-count=%d" % HISTORY_COMMITS,
+                               "%s..HEAD" % start], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for sha in proc.stdout.split():
+        if not re.fullmatch(r"[0-9a-f]{40,64}", sha):
+            continue
+        argv = ["review", root, "--commit", sha, "--summary", "--fail-on", "major",
+                "--out", os.path.join(state_dir, "review-%s.json" % sha[:12])]
+        for rule in SECRET_RULES:
+            argv += ["--rule", rule]
+        try:
+            r = _engine(argv)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 1:
+            found.append("Commit %s added a secret. It stays in the history even after a later commit removes it: "
+                         "rewrite the history before this branch is pushed.\n%s" % (sha[:12], r.stdout.strip()))
+    return found
+
+
+_DIRECTIVE = re.compile(r"jankhunt(?:42)?\s*:\s*ignore", re.I)
+_CONFIG_NAMES = (".jankhunt42.toml", ".jankhunt42.json")
+
+
+def _is_jankhunt42_config(rel: str) -> bool:
+    name = os.path.basename(rel)
+    return name in _CONFIG_NAMES or ("jankhunt42" in name.lower() and name.lower().endswith((".json", ".toml")))
+
+
+def _self_exemptions(root: str, start: Optional[str]) -> List[str]:
+    """Ways to silence jankhunt42 the agent added this session (committed since the session began, uncommitted, or
+    in new files): ignore comments and changes to jankhunt42's configuration, rulesets or policy. An agent told to
+    fix a finding must not be able to hide it instead."""
+    if git_inputs_unsafe(root):
+        return []
+    base = start or _head(root)
+    try:
+        if not base:
+            empty = run_git(["git", "-C", root, "hash-object", "-t", "tree", "/dev/null"], capture_output=True, timeout=20)
+            base = empty.stdout.decode().strip()
+        diff = run_git(["git", "-C", root, "diff", "--no-color", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", base],
+                       capture_output=True, timeout=60)
+        names = run_git(["git", "-C", root, "diff", "--name-only", "-z", base], capture_output=True, timeout=60)
+        new = run_git(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found: List[str] = []
+    path = None
+    for line in diff.stdout.decode("utf-8", "replace").splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("+") and path and _DIRECTIVE.search(line):
+            found.append("%s: %s" % (_label(path), _label(line[1:].strip(), 90)))
+    untracked = [os.fsdecode(n) for n in new.stdout.split(b"\0") if n]
+    for rel in [os.fsdecode(n) for n in names.stdout.split(b"\0") if n] + untracked:
+        if _is_jankhunt42_config(rel):
+            found.append("%s: jankhunt42 configuration changed" % _label(rel))
+    for rel in untracked:                         # a new file has no diff lines: read it, never through a link
+        full = os.path.join(root, rel)
+        try:
+            if link_inside(full, [root]) or os.path.getsize(full) > 1500000:
+                continue
+            fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        for n, text in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            if _DIRECTIVE.search(text):
+                found.append("%s:%d: %s" % (_label(rel), n, _label(text.strip(), 90)))
+    return found[:20]
+
+
+def _review(root: str, fail_on: str, out: str, base: Optional[str] = None) -> subprocess.CompletedProcess:
+    argv = ["review", root, "--summary", "--fail-on", fail_on, "--out", out]
+    return _engine(argv[:2] + (["--base", base] if base else []) + argv[2:])
+
+
 def stop(args: Any) -> int:
     event = _read_event()
     root = _repo_top(os.path.abspath(args.path or event.get("cwd") or "."))
     if root is None:                              # nothing to review, and nothing written outside a repository
         print("jankhunt42 hook stop: not in a git repository; nothing reviewed", file=sys.stderr)
         return _emit(args.format)
-    session = _SESSION.sub("_", str(event.get("session_id") or "default"))[:80] or "default"
+    session = _session_id(event)
     try:
         state_dir = _state_dir(root)
     except OSError as exc:
@@ -136,20 +239,49 @@ def stop(args: Any) -> int:
     state_path = os.path.join(state_dir, "stop-%s.json" % session)
     # rounds count the consecutive blocks within one turn: a turn the agent began afresh starts again at zero
     rounds = int(_load(state_path).get("rounds", 0) or 0) if event.get("stop_hook_active") else 0
+    # what the agent changed: everything committed since the session began (the start hook records that commit)
+    # and everything not committed yet. An agent that commits before it stops is reviewed all the same.
+    start = str(_load(os.path.join(state_dir, "session-%s.json" % session)).get("start") or "")
+    head = _head(root)
+    parts: List[str] = []
+    failed = False
     try:
-        proc = _engine(["review", root, "--summary", "--fail-on", args.fail_on,
-                        "--out", os.path.join(state_dir, "review.json")])
+        if start and head and start != head:
+            committed = _review(root, args.fail_on, os.path.join(state_dir, "review-committed.json"), base=start)
+            if committed.returncode == 1:
+                failed = True
+                parts.append("Committed since this session began:\n" + committed.stdout.strip())
+            elif committed.returncode != 0:
+                print("jankhunt42 hook stop: no review of the commits since %s (%s)" % (start[:12], (
+                    committed.stderr.strip().splitlines() or ["unknown"])[-1][:160]), file=sys.stderr)
+            else:                                 # the net change can be clean while a commit in between leaked
+                history = _secrets_in_history(root, start, state_dir)
+                if history:
+                    failed = True
+                    parts.extend(history)
+        elif not start:
+            print("jankhunt42 hook stop: no session start recorded (install the start hook too); reviewing the "
+                  "uncommitted changes only", file=sys.stderr)
+        working = _review(root, args.fail_on, os.path.join(state_dir, "review.json"))
     except (OSError, subprocess.SubprocessError) as exc:
         print("jankhunt42 hook stop: review did not run: %s" % exc, file=sys.stderr)
         return _emit(args.format)
-    if proc.returncode not in (0, 1):             # not a git worktree, or another reason review cannot run
-        print("jankhunt42 hook stop: no review (%s)" % (proc.stderr.strip().splitlines() or ["unknown"])[-1][:200],
+    if working.returncode == 1:
+        failed = True
+        parts.append(("Not committed yet:\n" if parts else "") + working.stdout.strip())
+    elif working.returncode != 0:                 # not a git worktree, or another reason review cannot run
+        print("jankhunt42 hook stop: no review (%s)" % (working.stderr.strip().splitlines() or ["unknown"])[-1][:200],
               file=sys.stderr)
-        return _emit(args.format)
-    if proc.returncode == 0:
+    exemptions = _self_exemptions(root, start or None)
+    if exemptions:
+        failed = True
+        parts.append("You added ways to silence jankhunt42 in this session; they do not count as fixes. Remove them "
+                     "and fix the problem, or ask the user to approve the exemption:\n" +
+                     "\n".join("- " + e for e in exemptions))
+    if not failed:
         _save(state_path, {"rounds": 0})
         return _emit(args.format)
-    summary = proc.stdout.strip()
+    summary = "\n\n".join(parts)
     if rounds >= args.rounds:                     # the cap: let the agent stop, and say what is still open
         _save(state_path, {"rounds": 0})
         print("jankhunt42 hook stop: %d rounds reached; still open:\n%s" % (args.rounds, summary), file=sys.stderr)
@@ -247,11 +379,29 @@ def briefing(graph: Dict[str, Any], problems: Optional[List[Dict[str, Any]]] = N
     return text if len(text) <= START_BUDGET else text[:START_BUDGET - 1] + "\u2026"
 
 
+def _record_start(event: Dict[str, Any], root: str) -> None:
+    """Remember the commit this session began at, so the stop hook also reviews what the agent commits. A resumed
+    or compacted session keeps the commit it first began at."""
+    top = _repo_top(root)
+    if top is None:
+        return
+    try:
+        path = os.path.join(_state_dir(top), "session-%s.json" % _session_id(event))
+    except OSError:
+        return
+    if event.get("source") in ("resume", "compact") and _load(path).get("start"):
+        return
+    head = _head(top)
+    if head:
+        _save(path, {"start": head})
+
+
 def start(args: Any) -> int:
     import shutil
     import tempfile
     event = _read_event()
     root = os.path.abspath(args.path or event.get("cwd") or ".")
+    _record_start(event, root)
     work = tempfile.mkdtemp(prefix="jankhunt42-hook-")   # nothing is written into the project
     try:
         map_path = os.path.join(work, "map.json")

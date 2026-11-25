@@ -143,6 +143,95 @@ class StartHook(Base):
         self.assertIn("JH101 x1 Hardcoded secret b.py:7", out)
 
 
+@unittest.skipUnless(GIT, "git unavailable")
+class CommitsInTheSession(Base):
+    """An agent that commits before it stops is reviewed all the same: the start hook records where the session
+    began, and the stop hook reviews everything committed since then as well as what is not committed yet."""
+
+    def setUp(self):
+        super().setUp()
+        self.r = self.repo()
+        self.env = {"XDG_CACHE_HOME": os.path.join(self.root, "cache")}
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", self.r, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"]
+                       + list(args), check=True, capture_output=True)
+
+    def start(self, session="s1", source="startup"):
+        hook(["start"], {"cwd": self.r, "session_id": session, "source": source}, env=self.env)
+
+    def stop(self, session="s1"):
+        proc = hook(["stop"], {"cwd": self.r, "session_id": session}, env=self.env)
+        return json.loads(proc.stdout), proc.stderr
+
+    def test_a_secret_committed_during_the_session_blocks(self):
+        self.start()
+        Path(self.r, "k.py").write_text(SECRET)
+        self.git("add", "-A"); self.git("commit", "-qm", "agent commits")
+        decision, _ = self.stop()
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("Committed since this session began", decision["reason"])
+
+    def test_a_secret_committed_and_then_removed_is_still_reported(self):
+        self.start()
+        Path(self.r, ".env").write_text("OPENAI_API_KEY=sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7cDe0fGh3iJk\n")
+        self.git("add", "-f", ".env"); self.git("commit", "-qm", "add env")
+        self.git("rm", "-q", ".env"); self.git("commit", "-qm", "remove env")
+        decision, _ = self.stop()
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("stays in the history", decision["reason"])
+
+    def test_clean_commits_pass(self):
+        self.start()
+        Path(self.r, "ok.py").write_text("x = 1\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "clean")
+        self.assertEqual(self.stop()[0], {})
+
+    def test_without_a_recorded_start_only_uncommitted_changes_are_reviewed_and_it_says_so(self):
+        Path(self.r, "k.py").write_text(SECRET)
+        self.git("add", "-A"); self.git("commit", "-qm", "agent commits")
+        decision, err = self.stop(session="unknown")
+        self.assertEqual(decision, {})
+        self.assertIn("no session start recorded", err)
+
+
+
+    def test_an_ignore_comment_added_this_session_is_not_a_fix(self):
+        Path(self.r, "app.py").write_text("x = 1\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "before")
+        self.start()
+        Path(self.r, "app.py").write_text("x = 1\n" + SECRET.rstrip("\n") + "  # jankhunt42: ignore JH101\n")
+        decision, _ = self.stop()
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("ways to silence jankhunt42", decision["reason"])
+        self.assertIn("app.py", decision["reason"])
+
+    def test_an_ignore_in_a_new_file_and_a_config_change_are_reported(self):
+        self.start()
+        Path(self.r, "new.py").write_text("breakpoint()  # jankhunt42: ignore JH204\n")
+        Path(self.r, ".jankhunt42.json").write_text('{"rules": {"JH101": {"enabled": false}}}\n')
+        self.git("add", ".jankhunt42.json"); self.git("commit", "-qm", "config")
+        reason = self.stop()[0]["reason"]
+        self.assertIn("new.py:1", reason)
+        self.assertIn(".jankhunt42.json: jankhunt42 configuration changed", reason)
+
+    def test_ignores_that_were_there_before_the_session_do_not_count(self):
+        Path(self.r, "old.py").write_text("breakpoint()  # jankhunt42: ignore JH204\n")
+        self.git("add", "-A"); self.git("commit", "-qm", "the user's own exemption")
+        self.start()
+        Path(self.r, "ok.py").write_text("x = 1\n")
+        self.assertEqual(self.stop()[0], {})
+
+    def test_a_resumed_session_keeps_the_commit_it_began_at(self):
+        self.start()
+        Path(self.r, "k.py").write_text(SECRET)
+        self.git("add", "-A"); self.git("commit", "-qm", "agent commits")
+        self.start(source="resume")
+        self.assertEqual(self.stop()[0].get("decision"), "block")
+        self.start(source="startup")                               # a new session starts from the current commit
+        self.assertEqual(self.stop()[0], {})
+
+
 class Install(Base):
     def test_print_mode_shows_both_hooks_and_writes_nothing(self):
         proc = hook(["install", self.root])
