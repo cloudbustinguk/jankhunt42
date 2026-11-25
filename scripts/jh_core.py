@@ -860,7 +860,9 @@ def discover_files(
         if p.is_symlink() and not explicit:
             try:
                 resolved = p.resolve()
-            except OSError:
+            except (OSError, RuntimeError):          # a loop: RuntimeError on Python 3.12, OSError on 3.13
+                if not_read is not None:
+                    not_read.setdefault("dirs", {}).setdefault("link that cannot be resolved", []).append(shown(p))
                 return
             try:
                 resolved.relative_to(base)
@@ -872,7 +874,10 @@ def discover_files(
                 if not_read is not None:             # a folder link inside the root: its target is read where it is
                     not_read.setdefault("dirs", {}).setdefault("linked folder (not followed)", []).append(shown(p))
                 return
-        key = str(p.resolve())
+        try:
+            key = str(p.resolve())
+        except (OSError, RuntimeError):
+            return
         if key in seen:
             # two spellings of one file (a link and its target): keep the real file, whose name decides the language
             # and the checks that run, whichever spelling the listing yields first. A link whose own location gives
@@ -1034,7 +1039,13 @@ def discover_files(
                     rep_rel = representative.relative_to(link_base).as_posix()
                 except ValueError:
                     rep_rel = representative.name
-            if _adds_role(link.relative_to(link_base).as_posix(), rep_rel):
+            link_rel = link.relative_to(link_base).as_posix()
+            why_name = skipped_file_reason(Path(link_rel))
+            if why_name:                                  # a generated or minified name stays skipped, and counted
+                if not_read is not None:
+                    count_path(not_read.setdefault("files_by_name", {}), why_name, shown(link))
+                continue
+            if _adds_role(link_rel, rep_rel):
                 if len(found) >= max_files:
                     overflow[0] = True
                     break

@@ -90,7 +90,10 @@ def _render_hero(root: str, result, meta: Dict[str, object], report: "jh_score.S
     worst = report.dimensions.get(report.worst_dimension)
     worst_label = _e(worst.label if worst else "risk")
     import jh_render
-    warnings: List[str] = ["Not read: %s" % w for w in (meta.get("archive_warnings") or [])]
+    unread = list(meta.get("archive_warnings") or [])
+    warnings: List[str] = ["Not read: %s" % w for w in unread[:50]]
+    if len(unread) > 50:
+        warnings.append("Not read: %d more (every one is in the JSON report)" % (len(unread) - 50))
     warnings += ["Set aside: %s" % text.replace("`", "") for _, text in jh_render.set_aside_lines(meta)]
     elapsed = meta.get("elapsed")
     elapsed_text = "%.2fs" % float(elapsed) if elapsed is not None else "—"

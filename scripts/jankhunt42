@@ -276,9 +276,9 @@ def run_scan(args: argparse.Namespace, spinner: Optional[Spinner] = None,
     import jh_powerplatform
     import jh_n8n
     if jh_powerplatform.GAPS or jh_n8n.GAPS:
-        meta["archive_warnings"] = list((jh_powerplatform.GAPS + jh_n8n.GAPS)[:50])
+        meta["archive_warnings"] = list(jh_powerplatform.GAPS + jh_n8n.GAPS)   # all of them; views show a sample
     if cfg.source:
-        meta["config"] = cfg.source
+        meta["config"] = display_path(str(cfg.source))
         meta["config_suppressed"] = config_suppressed
     if ignored_rules(args):
         meta["ignored_rules"] = sorted(ignored_rules(args))
@@ -315,7 +315,8 @@ def set_aside(result: ScanResult, not_read: Dict[str, Any], config_suppressed: i
     if config_suppressed:
         out["config"] = config_suppressed
     if not_read.get("files_excluded"):
-        out["files_excluded"] = {origin: dict(info, source=config_source) if origin in ("both", "config") else info
+        shown_source = display_path(str(config_source)) if config_source else None   # a byte in the path, escaped
+        out["files_excluded"] = {origin: dict(info, source=shown_source) if origin in ("both", "config") else info
                                  for origin, info in not_read["files_excluded"].items()}
     if not_read.get("git_ignored_read"):
         out["git_ignored_read"] = not_read["git_ignored_read"]
@@ -450,13 +451,19 @@ def _write_out(path: str, text: str) -> bool:
     """Write a full report for --out, creating its folder. A folder named .jankhunt42 is never scanned."""
     try:
         data = (text + "\n").encode("utf-8")      # encoded first: a report that cannot be written leaves the old file
-        parent = os.path.dirname(os.path.abspath(path))
+        target = os.path.realpath(path)          # an output link keeps pointing at the refreshed report
+        parent = os.path.dirname(target)
         os.makedirs(parent, exist_ok=True)
-        tmp = os.path.join(parent, ".%s.%d.tmp" % (os.path.basename(path) or "report", os.getpid()))
+        mode = None
+        if os.path.isfile(target):               # a report made private stays private
+            mode = os.stat(target).st_mode & 0o7777
+        tmp = os.path.join(parent, ".%s.%d.tmp" % (os.path.basename(target) or "report", os.getpid()))
         with open(tmp, "wb") as fh:
             fh.write(data)
         try:
-            os.replace(tmp, path)
+            if mode is not None:
+                os.chmod(tmp, mode)
+            os.replace(tmp, target)
         except OSError:
             os.unlink(tmp)
             raise
@@ -816,6 +823,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         except ValueError as exc:
             print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
+        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False)):
+            return 2
         print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
         return 0
     depth = max(1, min(jh_graph.MAX_DEPTH, args.max_depth))
@@ -1019,6 +1028,8 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
             delta = jh_passport.compare(_load_doc(args.compare, "passport"), passport)
         except ValueError as exc:
             print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
+            return 2
+        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False)):
             return 2
         print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
         return 0
