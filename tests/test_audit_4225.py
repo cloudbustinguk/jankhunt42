@@ -489,5 +489,27 @@ class FifthPass(Base):
         self.assertEqual(json.load(open(out, encoding="utf-8"))["command"], "scan")
 
 
+class PastThePositionLimit(Base):
+    """Past the bound, call positions are kept up to a limit; beyond it the calls are still counted (M859)."""
+
+    def test_calls_beyond_the_position_limit_are_counted(self):
+        import contextlib, io, runpy
+        Path(self.path("card.py")).write_text("breakpoint()\n" * 10)
+        scripts = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
+        sys.path.insert(0, scripts)
+        import jh_checks
+        out = io.StringIO()
+        argv = ["jankhunt42", "scan", self.root, "--no-config", "--rule", "JH204", "--fail-on", "minor", "--json",
+                "--no-progress"]
+        with mock.patch.object(jh_checks, "DEBUG_BOUND", 3), mock.patch.object(jh_checks, "BOUND_POSITIONS_MAX", 2), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as code:
+                runpy.run_path(os.path.join(scripts, "jankhunt42"), run_name="__main__")
+        d = json.loads(out.getvalue())
+        self.assertEqual(code.exception.code, 1)
+        self.assertEqual(len(d["findings"]), 3)
+        self.assertEqual(d["set_aside"].get("capped"), 7)          # 2 with their positions, 5 counted beyond them
+
+
 if __name__ == "__main__":
     unittest.main()
