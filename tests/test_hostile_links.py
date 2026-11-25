@@ -106,5 +106,45 @@ class HostileLinks(unittest.TestCase):
         self.assertNotIn("JH998", jh(["hook", "start"], self.repo).stdout)
 
 
+@unittest.skipIf(os.name == "nt", "named pipes")
+@unittest.skipUnless(GIT, "git unavailable")
+class FilesGitReads(unittest.TestCase):
+    """git opens every .gitignore and .gitattributes it meets: a named pipe there stalls it. jankhunt42 walks the
+    folder instead (scan, map, passport) or refuses with the reason (review), and never waits on git."""
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="jh-fifo-")
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        Path(self.repo, "app.py").write_text("breakpoint()\n")
+
+    def quick(self, argv, code):
+        proc = subprocess.run([sys.executable, "-I", "-B", CLI] + argv, cwd=self.repo, capture_output=True, text=True,
+                              timeout=20, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        self.assertEqual(proc.returncode, code, proc.stderr[-300:])
+        return proc
+
+    def test_a_named_pipe_gitignore_never_stalls_a_command(self):
+        os.makedirs(os.path.join(self.repo, "deep", "er"))
+        os.mkfifo(os.path.join(self.repo, "deep", "er", ".gitignore"))
+        for argv in (["scan", ".", "--rule", "JH204", "--json"], ["map", "."], ["passport", "."]):
+            with self.subTest(command=argv[0]):
+                proc = self.quick(argv + (["--no-progress"] if argv[0] == "scan" else []), 0)
+                self.assertIn("not asking git to list files", proc.stderr)
+        scan = json.loads(self.quick(["scan", ".", "--rule", "JH204", "--json", "--no-progress"], 0).stdout)
+        self.assertEqual([f["path"] for f in scan["findings"]], ["app.py"])           # the walk still reads the code
+        self.assertIn("not reviewed", self.quick(["review", "."], 2).stderr)
+
+    def test_a_configured_excludes_file_that_is_a_pipe_is_caught(self):
+        os.mkfifo(os.path.join(self.repo, "pipe"))
+        subprocess.run(["git", "-C", self.repo, "config", "core.excludesFile", os.path.join(self.repo, "pipe")], check=True)
+        self.assertIn("not asking git to list files", self.quick(["scan", ".", "--summary", "--no-progress"], 0).stderr)
+
+    def test_a_named_pipe_info_exclude_is_caught(self):
+        os.remove(os.path.join(self.repo, ".git", "info", "exclude"))
+        os.mkfifo(os.path.join(self.repo, ".git", "info", "exclude"))
+        self.assertIn("not reviewed", self.quick(["review", "."], 2).stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

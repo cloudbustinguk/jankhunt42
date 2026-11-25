@@ -38,7 +38,7 @@ import jh_n8n_code
 import jh_rule2
 import jh_yaml
 from jh_core import (TOOL, VERSION, run_git, display_path, tree_skip_reason, DEFAULT_SKIP_DIRS, discover_files, is_mcp_config, is_test_path,
-                     safe_text, sanitize, detect_lang, _is_skipped_file)
+                     safe_text, sanitize, detect_lang, _is_skipped_file, git_inputs_unsafe)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,8 @@ def git_revision(path: str, rev: str = "HEAD") -> Optional[str]:
 
 
 def git_dirty(path: str) -> Optional[bool]:
+    if git_inputs_unsafe(path):          # git status would stall on a special .gitignore: unknown, not clean
+        return None
     try:
         out = _git(path, ["status", "--porcelain", "--untracked-files=normal"])
     except GitError:
