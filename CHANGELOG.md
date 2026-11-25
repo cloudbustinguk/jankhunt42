@@ -4,6 +4,28 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [4.23.0] — 2026-11-25
+
+Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
+
+### Added
+
+- `jankhunt42 hook stop`: at the end of each turn, reviews what the agent changed and keeps it working while it has
+  left a problem at or above `--fail-on` (default major). Claude Code and Codex receive `{"decision": "block",
+  "reason": ...}` with the review summary; after three blocked stops in one turn (`--rounds`) the agent may stop,
+  and what is still open is reported. A clean change prints an empty decision. Outside a git repository nothing is
+  reviewed or written; state stays in `.jankhunt42/hooks/`, which is git-ignored and never scanned.
+- `jankhunt42 hook start`: a session-start briefing under 2,500 characters, from the map (seconds even on large
+  projects): the exposure class, the credentials, data stores, outside hosts and AI services in reach (names only,
+  never values), what the agent must not widen, and, when a saved scan exists (`.jankhunt42/scan.json`), the
+  repository's most frequent problems. Every name from the repository is reduced to plain characters, shortened and
+  marked as data, not instructions. Nothing is written into the project.
+- `jankhunt42 hook install --agent claude-code|codex|opencode`: prints the hook entries; `--write` adds them to
+  `.claude/settings.local.json` (or `--scope user`), or Codex's `~/.codex/hooks.json`, idempotently and never to the
+  committed project settings (a committed hook that runs commands is what JH704 reports). OpenCode gets
+  instructions for calling the hooks from a plugin.
+- The skill offers the hooks to people working with an AI coding agent.
+
 ## [4.22.5] — 2026-11-25
 
 A scan no longer stops on a link it cannot read or a link loop, and fixes for issues two further review passes found

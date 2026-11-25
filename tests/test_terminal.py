@@ -116,7 +116,7 @@ class CliModes(unittest.TestCase):
     def test_the_4_6_command_surface(self):
         # the main help lists the kept commands only; agent-fuzz still parses
         listed = re.findall(r"^    (\S+)\s", run_cli("--help").stdout, re.M)
-        self.assertEqual(sorted(listed), sorted(("scan", "review", "map", "passport", "sandbox", "selftest", "rules")))
+        self.assertEqual(sorted(listed), sorted(("scan", "review", "map", "passport", "sandbox", "hook", "selftest", "rules")))
         self.assertEqual(run_cli("agent-fuzz", "--help").returncode, 0)
         for name, pointer, release in (("hunt", "scan", "4.0.0"), ("merge", "hunt", "4.0.0"),
                                        ("report", "scan --md", "4.0.0"), ("score", "scan --score", "4.1.0"),

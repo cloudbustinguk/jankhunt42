@@ -1038,6 +1038,21 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     return 1 if jh_policy.fails(passport["assessment"]["decision"]["result"], args.fail_on) else 0
 
 
+def cmd_hook_stop(args: argparse.Namespace) -> int:
+    import jh_hooks
+    return jh_hooks.stop(args)
+
+
+def cmd_hook_start(args: argparse.Namespace) -> int:
+    import jh_hooks
+    return jh_hooks.start(args)
+
+
+def cmd_hook_install(args: argparse.Namespace) -> int:
+    import jh_hooks
+    return jh_hooks.install(args)
+
+
 def cmd_sandbox(args: argparse.Namespace) -> int:
     """Opt-in: run the repository's install hooks and the commands that run when it is opened, in a disposable
     sandbox, and report what they try to do."""
@@ -1408,6 +1423,31 @@ def build_parser() -> argparse.ArgumentParser:
                                         "on open in a disposable sandbox, and log what they try")
     add_sandbox_opts(sp)
     sp.set_defaults(func=cmd_sandbox)
+
+    sp = sub.add_parser("hook", help="agent hooks: an end-of-turn check and session-start guardrails "
+                                     "(Claude Code, Codex, others)")
+    hook_cmds = sp.add_subparsers(dest="hook_command", required=True, metavar="ACTION")
+    hstop = hook_cmds.add_parser("stop", help="review what the agent changed; keep it working while a problem "
+                                              "at or above --fail-on remains (a round cap ends loops)")
+    hstop.add_argument("path", nargs="?", default=None, help="repository (default: the agent's cwd, then .)")
+    hstop.add_argument("--fail-on", default="major", choices=("critical", "major", "minor", "info"))
+    hstop.add_argument("--rounds", type=_positive_int, default=3, help="blocked stops in one turn before the "
+                                                                        "agent may stop anyway (default 3)")
+    hstop.add_argument("--format", default="claude", choices=("claude", "codex", "plain"))
+    hstop.set_defaults(func=cmd_hook_stop)
+    hstart = hook_cmds.add_parser("start", help="a short briefing for the agent: what the repository reaches and "
+                                                "what not to widen (names only, never values)")
+    hstart.add_argument("path", nargs="?", default=None)
+    hstart.add_argument("--format", default="claude", choices=("claude", "codex", "plain"))
+    hstart.set_defaults(func=cmd_hook_start)
+    hinst = hook_cmds.add_parser("install", help="print the hook entries for an agent; --write adds them to your "
+                                                 "own or the uncommitted local settings, never the committed ones")
+    hinst.add_argument("path", nargs="?", default=None)
+    hinst.add_argument("--agent", default="claude-code", choices=("claude-code", "codex", "opencode"))
+    hinst.add_argument("--scope", default="local", choices=("local", "user"),
+                       help="claude-code: .claude/settings.local.json (default) or ~/.claude/settings.json")
+    hinst.add_argument("--write", action="store_true", help="write the entries (idempotent)")
+    hinst.set_defaults(func=cmd_hook_install)
 
     sp = sub.add_parser("agent-fuzz")  # 4.6.0: hidden from the main help until a runner ships
     agent_fuzz_cmds = sp.add_subparsers(dest="agent_fuzz_command", required=True, metavar="ACTION")

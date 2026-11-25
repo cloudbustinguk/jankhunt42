@@ -19,7 +19,8 @@ FULL_FORMATS = ("--json", "--sarif", "--html", "--brief")
 SHORT = re.compile(r"^jankhunt42 (?:map \.(?: --base \S+)?"
                    r"|passport \.(?: --profile citizen| --base \S+ --md| --emit-sandbox-policy \S+| --fail-on \S+"
                    r"| --compare \S+| --branch-rules \S+)?"
-                   r"|scan \. --score|scan \. --prompt|rules --category \S+)$")
+                   r"|scan \. --score|scan \. --prompt|rules --category \S+"
+                   r"|hook install --agent \S+(?: --write)?|hook (?:start|stop)(?: \S+)*)$")
 
 
 def skill_commands():
