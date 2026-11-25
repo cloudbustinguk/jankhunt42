@@ -15,7 +15,7 @@ AI app builders and coding agents let anyone turn an idea into running software 
 
 Either way there are no packages, no service, no telemetry, and no network access unless you ask for it (`sandbox --fetch`).
 
-**Version:** 4.22.5 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
+**Version:** 4.23.0 · **License:** MIT · **Runtime:** Python 3.9+ · stdlib only
 
 ## Three questions
 
@@ -135,7 +135,16 @@ jankhunt42 passport . --emit-sandbox-policy claude-code --sandbox-network-ceilin
 jankhunt42 sandbox .                    # opt-in: run the install hooks, the dependencies as they load, and what runs on open in a sandbox
 jankhunt42 passport . --base <ref> --md   # what new access, and which agent definitions, this change asks for (for IT to approve)
 jankhunt42 passport . --base <ref> --policy /etc/it/policy.json --emit-capability-approval   # an approval record for IT to fill in
+jankhunt42 hook install --agent claude-code --write   # agent hooks: an end-of-turn check and a session-start briefing
 ```
+
+- **Agent hooks**: at the end of each turn, `hook stop` reviews what the agent changed and keeps it
+  working while it has left a problem at or above `--fail-on` (default major), for at most three rounds, then lets it
+  stop and says what is still open; a clean change prints nothing to the agent. At session start, `hook start` briefs
+  it on what the repository reaches (credential names, data stores, outside hosts, AI services), what not to widen,
+  and the most frequent problems from the last saved scan, in under 2,500 characters; names from the repository are filtered and marked as
+  data. `hook install` prints the entries for Claude Code, Codex or OpenCode; `--write` adds them to
+  `.claude/settings.local.json` (or your user settings), never to the committed project settings.
 
 - **Agent workspace checks** (`JH701`-`JH715`, `JH432`):
   - an agent that holds untrusted input, private data and a way to act with nothing approving the step that acts (the Agents Rule of Two, `JH714`: MCP configurations with their Claude Code or VS Code settings, and n8n AI Agent nodes);

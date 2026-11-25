@@ -9,7 +9,7 @@ platforms:
   - CODEX_CLI
 metadata:
   opencode/autoinvoke: true
-  version: "4.22.5"
+  version: "4.23.0"
 ---
 
 # jankhunt42: what's broken, what can it hurt, can we ship it?
@@ -142,6 +142,16 @@ jankhunt42 passport . --profile citizen       # strict decision with a plain-lan
 - **To gate citizen pull requests,** point the operator to `templates/citizen-gate.yml`, whose policy lives in a protected repository, never the citizen's.
 
 Failure classes, the profile table, and limits: `references/citizen.md`.
+
+## Agent hooks: check every turn, brief every session
+
+```sh
+jankhunt42 hook install --agent claude-code   # print the hook entries (also codex, opencode); add --write to install
+```
+
+- **Offer the hooks** when the person works with an AI coding agent. `hook stop` reviews what the agent changed at the end of each turn and keeps it working while it has left a problem at or above `--fail-on` (default major), for at most three rounds; a clean change costs nothing. `hook start` gives the agent a short briefing at session start: the credentials, data stores and outside hosts in reach (names only), what not to widen, and the repository's most frequent problems.
+- **`--write` adds them to `.claude/settings.local.json`** (or `--scope user` for `~/.claude/settings.json`; Codex: `~/.codex/hooks.json`), never to the committed `.claude/settings.json`: a committed hook that runs commands is what JH704 reports. Ask before writing.
+- The agent runs `hook stop` and `hook start` itself; their output is bounded (a review summary, a briefing under 2,500 characters).
 
 ## Sandbox: run it in a disposable container (opt-in)
 

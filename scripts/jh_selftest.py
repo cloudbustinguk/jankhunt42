@@ -1283,6 +1283,14 @@ MUTANTS = [
     ('M924-loop-crashes', 'a link loop on Python 3.12 stops the scan', 'jh_core.py', '            except (OSError, RuntimeError):          # a loop: RuntimeError on Python 3.12, OSError on 3.13', '            except OSError:', 'test_audit_4225.py'),
     ('M925-config-source-raw', 'the config path in the set-aside entry keeps a raw byte', 'jankhunt42', '        shown_source = display_path(str(config_source)) if config_source else None   # a byte in the path, escaped', '        shown_source = config_source', 'test_audit_4225.py'),
     ('M926-text-diff-any-size', 'a large file marked binary gets a text diff', 'jh_review.py', '            if os.path.getsize(full) > _TEXT_DIFF_LIMIT:\n                return False', '            if False:\n                return False', 'test_audit_4225.py'),
+    ('M927-hook-no-round-cap', 'the stop hook never lets the agent stop', 'jh_hooks.py', '    if rounds >= args.rounds:                     # the cap: let the agent stop, and say what is still open', '    if False:', 'test_hooks.py'),
+    ('M928-hook-rounds-never-reset', "a fresh turn keeps the previous turn's round count", 'jh_hooks.py', '    rounds = int(_load(state_path).get("rounds", 0) or 0) if event.get("stop_hook_active") else 0', '    rounds = int(_load(state_path).get("rounds", 0) or 0)', 'test_hooks.py'),
+    ('M929-hook-writes-outside-repo', 'the stop hook keeps state outside a repository', 'jh_hooks.py', '    return top if proc.returncode == 0 and top else None', '    return top if proc.returncode == 0 and top else path', 'test_hooks.py'),
+    ('M930-hook-labels-unfiltered', 'repository names reach the agent unfiltered', 'jh_hooks.py', '_UNSAFE = re.compile(r"[^A-Za-z0-9 ._:/@-]")', '_UNSAFE = re.compile(r"(?!x)x")', 'test_hooks.py'),
+    ('M931-hook-install-committed', 'install writes the committed project settings', 'jh_hooks.py', '        target = os.path.join(root, ".claude", "settings.local.json")      # uncommitted, never settings.json', '        target = os.path.join(root, ".claude", "settings.json")', 'test_hooks.py'),
+    ('M932-hook-install-duplicates', 'install adds the hooks again on every run', 'jh_hooks.py', '        if not present:\n            current.append(groups[0])', '        if True:\n            current.append(groups[0])', 'test_hooks.py'),
+    ('M933-hook-plain-exit', 'the plain stop hook exits 0 when blocking', 'jh_hooks.py', '        if decision == "block":\n            print(reason)\n            return 1', '        if decision == "block":\n            print(reason)\n            return 0', 'test_hooks.py'),
+    ('M934-hook-briefing-unbounded', 'the session briefing has no budget', 'jh_hooks.py', '    return text if len(text) <= START_BUDGET else text[:START_BUDGET - 1] + "\\u2026"', '    return text', 'test_hooks.py'),
 ]
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+\.)+[A-Za-z]{2,}")
