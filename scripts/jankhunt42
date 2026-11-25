@@ -21,6 +21,7 @@ if HERE not in sys.path:
 from jh_core import (  # noqa: E402
     display_path,
     fs_bytes,
+    link_inside,
     run_git,
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source, load_source_why,
     make_finding, sev_at_least,
@@ -447,8 +448,23 @@ def _sarif(result: ScanResult, notes: Sequence[str] = (), set_aside: Optional[Di
     return json.dumps(sarif, indent=2, ensure_ascii=False)
 
 
-def _write_out(path: str, text: str) -> bool:
-    """Write a full report for --out, creating its folder. A folder named .jankhunt42 is never scanned."""
+def _scanned_roots(args: Optional[argparse.Namespace]) -> List[str]:
+    """The folders this run reads: the repository controls everything inside them, links included."""
+    if args is None:
+        return []
+    given = list(getattr(args, "paths", None) or []) or [getattr(args, "path", None) or "."]
+    return [os.path.abspath(p if os.path.isdir(p) else os.path.dirname(os.path.abspath(p)) or ".") for p in given]
+
+
+def _write_out(path: str, text: str, args: Optional[argparse.Namespace] = None) -> bool:
+    """Write a full report for --out, creating its folder. A folder named .jankhunt42 is never scanned. Never writes
+    through a link inside a scanned folder: the repository controls those (a link outside, such as an operator's
+    reports/daily.json -> run.json, is followed)."""
+    link = link_inside(path, _scanned_roots(args))
+    if link:
+        print("jankhunt42: will not write --out %s: %s is a link inside the scanned folder, and the repository controls "
+              "it; write the report outside the folder, or remove the link" % (path, link), file=sys.stderr)
+        return False
     try:
         data = (text + "\n").encode("utf-8")      # encoded first: a report that cannot be written leaves the old file
         target = os.path.realpath(path)          # an output link keeps pointing at the refreshed report
@@ -495,7 +511,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
     out_path = getattr(args, "out", None)
-    if out_path and not _write_out(out_path, _scan_json(root, result, meta)):   # the full report, read selectively
+    if out_path and not _write_out(out_path, _scan_json(root, result, meta), args):   # the full report, read selectively
         return 2
     failed = _scan_gate_fails(args, result)           # one verdict: the summary states it, the exit status follows it
     if summary:
@@ -549,7 +565,7 @@ def cmd_review(args: argparse.Namespace) -> int:
             return 2
     review = data["review"]
     if getattr(args, "out", None):                     # the full review, for an agent to read selectively
-        if not _write_out(args.out, json.dumps(data, indent=2, ensure_ascii=False)):
+        if not _write_out(args.out, json.dumps(data, indent=2, ensure_ascii=False), args):
             return 2
     if getattr(args, "summary", False):
         print(jh_review.summary(review, getattr(args, "out", None)))
@@ -574,7 +590,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     tty = sys.stdout.isatty() and not args.json and not args.md
     spinner = Spinner(tty and not args.quiet and not args.no_progress)
     root, result, meta = run_scan(args, spinner)
-    if getattr(args, "out", None) and not _write_out(args.out, _scan_json(root, result, meta)):   # --out with any format
+    if getattr(args, "out", None) and not _write_out(args.out, _scan_json(root, result, meta), args):   # --out with any format
         return 2
     report = jh_score.compute(result.findings, result.loc)
     if args.json:
@@ -674,7 +690,7 @@ def _one_format(args: argparse.Namespace, names: Sequence[str]) -> bool:
 def _emit(args: argparse.Namespace, report: Dict[str, object], md, tty_view, html) -> bool:
     """Print the report as asked; False when --out could not be written (the caller then exits 2)."""
     if getattr(args, "out", None):               # the full JSON to a file, to read selectively; stdout as asked
-        if not _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False)):
+        if not _write_out(args.out, json.dumps(report, indent=2, ensure_ascii=False), args):
             return False
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
@@ -823,7 +839,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         except ValueError as exc:
             print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
-        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False)):
+        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False), args):
             return 2
         print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
         return 0
@@ -1029,7 +1045,7 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         except ValueError as exc:
             print("jankhunt42: passport --compare: %s" % jh_core_safe(str(exc)), file=sys.stderr)
             return 2
-        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False)):
+        if getattr(args, "out", None) and not _write_out(args.out, json.dumps(delta, indent=2, ensure_ascii=False), args):
             return 2
         print(json.dumps(delta, indent=2, ensure_ascii=False) if args.json else jh_passport.compare_markdown(delta))
         return 0

@@ -1109,6 +1109,29 @@ def _quiet_is_file(p: Path) -> bool:
         return False
 
 
+def link_inside(path: str, roots: Sequence[str]) -> Optional[str]:
+    """The first link on the way to `path` (a folder or the file itself) that lies inside a scanned folder, or None.
+    A scanned repository can ship a link named like a report (.jankhunt42 -> ~, or scan.json -> ~/.bashrc); writing
+    through it would overwrite a file of the person running the scan with text the repository controls."""
+    bases = set()
+    for r in roots:
+        bases.update({os.path.abspath(r), os.path.realpath(r)})
+    chain, p = [], os.path.abspath(path)
+    while True:
+        chain.append(p)
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    for comp in reversed(chain):
+        if not os.path.islink(comp):
+            continue
+        for base in bases:
+            if comp != base and os.path.commonpath([comp, base]) == base:    # strictly inside a scanned folder
+                return comp
+    return None
+
+
 def display_path(rel: str) -> str:
     """A path as reports show it. A file name byte that is not valid UTF-8 (kept by the file system's decoding as a
     lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered. A
