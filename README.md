@@ -139,8 +139,10 @@ jankhunt42 hook install --agent claude-code --write   # agent hooks: an end-of-t
 ```
 
 - **Agent hooks**: at the end of each turn, `hook stop` reviews what the agent changed and keeps it
-  working while it has left a problem at or above `--fail-on` (default major), for at most three rounds, then lets it
-  stop and says what is still open; a clean change prints nothing to the agent. It reviews everything since the
+  working while it has left a problem at or above `--fail-on` (default major). Each problem is raised once per
+  session: an agent that answers with its reasons instead of a fix may stop at once, one whose fixes keep failing
+  after three rounds; either way you see a warning with what is still open, and it is not raised again that session.
+  A clean change prints nothing to the agent. It reviews everything since the
   session began, committed or not, checks each commit for secrets (one removed later stays in the history), and
   treats ignore comments or jankhunt42 config changes the agent added as problems, not fixes. At session start, `hook start` briefs
   it on what the repository reaches (credential names, data stores, outside hosts, AI services), what not to widen,
