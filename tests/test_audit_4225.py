@@ -265,7 +265,8 @@ class Output(Base):
         if os.name == "nt":
             self.skipTest("line breaks in file names")
         Path(self.path("a\nb.py")).write_text("breakpoint()\n")
-        self.assertIn("a\\x0ab.py", run_cli("scan", self.root, "--rule", "JH204", "--summary", "--no-progress").stdout)
+        # display_path writes the byte (\\x0A); the summary's own filter would write \\x0a: two digits either way
+        self.assertIn("a\\x0Ab.py", run_cli("scan", self.root, "--rule", "JH204", "--summary", "--no-progress").stdout)
 
     def test_the_summary_lists_ten_findings_and_eight_rules(self):               # W3-132, W3-130
         Path(self.path("calls.py")).write_text("breakpoint()\n" * 12)

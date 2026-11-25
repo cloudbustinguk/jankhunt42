@@ -98,15 +98,21 @@ def _save(path: str, data: Dict[str, Any]) -> None:
         pass
 
 
-def _emit(fmt: str, decision: Optional[str] = None, reason: str = "") -> int:
-    """The agent's answer. claude/codex: JSON on stdout, exit 0 (Codex requires JSON for its stop hook). plain:
-    the reason on stdout and exit 1 when blocking, nothing and exit 0 otherwise."""
+def _emit(fmt: str, decision: Optional[str] = None, reason: str = "", warning: str = "") -> int:
+    """The agent's answer. claude/codex: JSON on stdout, exit 0 (Codex requires JSON for its stop hook); a warning
+    goes in systemMessage, which the agent shows to the user. plain: the reason on stdout and exit 1 when blocking;
+    a warning on stdout and exit 0; nothing and exit 0 otherwise."""
     if fmt == "plain":
         if decision == "block":
             print(reason)
             return 1
+        if warning:
+            print(warning)
         return 0
-    print(json.dumps({"decision": "block", "reason": reason} if decision == "block" else {}))
+    if decision == "block":
+        print(json.dumps({"decision": "block", "reason": reason}))
+    else:
+        print(json.dumps({"systemMessage": warning} if warning else {}))
     return 0
 
 
@@ -282,10 +288,14 @@ def stop(args: Any) -> int:
         _save(state_path, {"rounds": 0})
         return _emit(args.format)
     summary = "\n\n".join(parts)
-    if rounds >= args.rounds:                     # the cap: let the agent stop, and say what is still open
+    if rounds >= args.rounds:                     # the cap: let the agent stop, and tell the user what is still open
         _save(state_path, {"rounds": 0})
-        print("jankhunt42 hook stop: %d rounds reached; still open:\n%s" % (args.rounds, summary), file=sys.stderr)
-        return _emit(args.format)
+        warning = ("jankhunt42: the agent stopped with problems still open after %d rounds of the end-of-turn check. "
+                   "Check them before you ship:\n%s" % (args.rounds, summary))
+        if len(warning) > 3000:
+            warning = warning[:2999] + "\u2026"
+        print(warning, file=sys.stderr)
+        return _emit(args.format, warning=warning)
     rounds += 1
     _save(state_path, {"rounds": rounds})
     reason = ("%s\n\nThese are problems in what you changed (jankhunt42 end-of-turn check, round %d of %d). Fix them "

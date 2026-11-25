@@ -1190,21 +1190,38 @@ def link_inside(path: str, roots: Sequence[str]) -> Optional[str]:
     return None
 
 
+# characters a name must never carry into a terminal or a report as they are: controls (a carriage return or
+# backspace can overwrite a line, an ESC sequence can clear the screen), and invisible or bidi-reordering ones
+_NAME_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\U000e0000-\U000e007f]")
+
+
 def display_path(rel: str) -> str:
     """A path as reports show it. A file name byte that is not valid UTF-8 (kept by the file system's decoding as a
-    lone surrogate) is written as the text \\xNN, so every report stays valid UTF-8 and the byte can be recovered. A
-    name that holds such a byte, or whose own text holds a backslash before xNN or another backslash, has its
-    backslashes doubled, so it can never look like another file's name; any other backslash is shown as it is."""
+    lone surrogate) is written as the text \\xNN, and so is each byte of a control, invisible or bidi-reordering
+    character (a repository could otherwise rewrite the reader's terminal or hide its own findings with its file
+    names), so every report stays valid, visible UTF-8 and the name can be recovered. A name that holds such a
+    character, or whose own text holds a backslash before xNN or another backslash, has its backslashes doubled, so
+    it can never look like another file's name; any other backslash is shown as it is."""
     has_bytes = any("\udc80" <= ch <= "\udcff" for ch in rel)
-    if not has_bytes and "\\" not in rel:
+    unsafe = bool(_NAME_UNSAFE.search(rel))
+    if not has_bytes and not unsafe and "\\" not in rel:
         return rel
-    # an escaped form doubles every backslash and writes each raw byte as \xNN, so it always holds \\ or \xNN; a
-    # name shown as it is never does, which keeps every two names apart
-    if has_bytes or _AMBIGUOUS_BACKSLASH.search(rel):
+    escape = has_bytes or unsafe
+    # an escaped form doubles every backslash and writes each such byte as \xNN, so it always holds \\ or \xNN;
+    # a name shown as it is never does, which keeps every two names apart
+    if escape or _AMBIGUOUS_BACKSLASH.search(rel):
         rel = rel.replace("\\", "\\\\")
-    if not has_bytes:
+    if not escape:
         return rel
-    return "".join("\\x%02X" % (ord(ch) - 0xDC00) if "\udc80" <= ch <= "\udcff" else ch for ch in rel)
+    out = []
+    for ch in rel:
+        if "\udc80" <= ch <= "\udcff":
+            out.append("\\x%02X" % (ord(ch) - 0xDC00))
+        elif _NAME_UNSAFE.match(ch):
+            out.append("".join("\\x%02X" % b for b in ch.encode("utf-8")))
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 _ESCAPE_TOKEN = re.compile(r"\\\\|\\x[0-9A-F]{2}")

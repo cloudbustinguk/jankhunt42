@@ -52,6 +52,14 @@ class StopHook(Base):
             self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
             decisions.append(json.loads(proc.stdout).get("decision", "allow"))
         self.assertEqual(decisions, ["block", "block", "block", "allow"])
+        r2 = os.path.join(self.root, "repo2")
+        shutil.copytree(r, r2)
+        for active in (False, True, True):
+            hook(["stop"], {"session_id": "s9", "cwd": r2, "stop_hook_active": active})
+        capped = json.loads(hook(["stop"], {"session_id": "s9", "cwd": r2, "stop_hook_active": True}).stdout)
+        self.assertNotIn("decision", capped)                            # the agent may stop...
+        self.assertIn("problems still open", capped["systemMessage"])   # ...and the user is told, visibly
+        self.assertIn("JH101", capped["systemMessage"])
         reason = json.loads(hook(["stop"], {"session_id": "s1", "cwd": r}).stdout)["reason"]
         self.assertIn("JH101", reason)
         self.assertIn("round 1 of 3", reason)

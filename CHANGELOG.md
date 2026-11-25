@@ -13,7 +13,7 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
 - `jankhunt42 hook stop`: at the end of each turn, reviews what the agent changed and keeps it working while it has
   left a problem at or above `--fail-on` (default major). Claude Code and Codex receive `{"decision": "block",
   "reason": ...}` with the review summary; after three blocked stops in one turn (`--rounds`) the agent may stop,
-  and what is still open is reported. A clean change prints an empty decision. "What the agent changed" is
+  and the user sees a warning with what is still open (`systemMessage`). A clean change prints an empty decision. "What the agent changed" is
   everything since the session began (the start hook records that commit), committed or not, so an agent that
   commits before it stops is reviewed all the same; each commit of the session is also checked for secrets, since
   a secret committed and removed later stays in the history. Ignore comments, or changes to jankhunt42's
@@ -48,6 +48,12 @@ Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.
   call. Now `scan`, `map` and `passport` walk the folder instead (the walk never opens special files) and say why,
   and `review` refuses with the reason. The check reads directory entries only: 0.3 s on a 53,651-file repository.
   Found by adversarial fuzzing (named pipes at the files jankhunt42 and git read by name).
+- A repository can no longer rewrite the reader's terminal, or hide its own findings, with control or bidi
+  characters in its file names or contents. File names in every report now write each control, invisible or
+  bidi-reordering character as the `\xNN` bytes of its UTF-8 form (as non-UTF-8 bytes already were; SARIF links
+  still lead to the real file), and the HTML report replaces such characters in any repository text with U+FFFD.
+  Before, `scan` and `review` printed ESC sequences, carriage returns and backspaces from file names as they were,
+  so a name could clear the screen or overwrite the line that reported it.
 
 ## [4.22.5] — 2026-11-25
 
