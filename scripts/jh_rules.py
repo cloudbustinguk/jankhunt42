@@ -887,6 +887,10 @@ class ScanOptions:
     # the effective rating (a ruleset's re-rating, then the repository config's rule and path settings), applied before
     # the severity floor and the caps; None from it means the config sets the finding aside (counted as "config")
     rate: Optional[Any] = None
+    # A review sets this to "is this finding on a changed line?". Such a finding is listed even when it lies past a
+    # check's safety bound (up to DEBUG_BOUND of them): the bound keeps a huge file affordable, it must not hide the
+    # one line the change added from the gate.
+    keep_past_bound: Optional[Any] = None
 
 
 SITE_BUDGET = 10.0        # seconds one site rule may spend in a run; a rule that runs over is switched off
@@ -1270,9 +1274,13 @@ def _collect_suppressions(sources: Sequence[SourceFile]) -> Dict[str, Tuple[Set[
 
 def _identity(finding: Finding) -> Tuple[object, ...]:
     """What makes two findings the same one: rule, file and line; the column for rules that report every call on a
-    line; and the structured item a finding names (two MCP servers declared on one JSON line are two findings)."""
+    line; and the structured item a finding names (two MCP servers, or two open dependencies, declared on one JSON
+    line are two findings)."""
     column = finding.column if finding.rule in ("JH107", "JH126", "JH204") else 0
-    item = (finding.extra or {}).get("server") if isinstance(finding.extra, dict) else None
+    extra = finding.extra if isinstance(finding.extra, dict) else {}
+    item = extra.get("server")
+    if item is None and finding.rule == "JH424" and "package" in extra:
+        item = (extra.get("section"), extra["package"])
     return (finding.rule, finding.path, finding.line, column, item)
 
 
@@ -1289,6 +1297,7 @@ class _FindingAcceptor:
         self.set_aside: Dict[str, Any] = {}
         self.held: Set[Tuple[str, Tuple[str, str, int, int]]] = set()
         self.capped_worst: Optional[str] = None   # the most severe finding the caps held back (for --fail-on)
+        self.rescued: List[Finding] = []          # past a safety bound, kept because the caller must see them
 
     def _held(self, why: str, finding: Finding, severity: Optional[str] = None) -> None:
         key = (why, _identity(finding))
@@ -1355,6 +1364,14 @@ class _FindingAcceptor:
         if not sev_at_least(sev, self.opts.min_severity):
             bucket = self.set_aside.setdefault("below_floor", {})
             bucket[sev] = bucket.get(sev, 0) + n
+            return
+        keep = self.opts.keep_past_bound
+        if n == 1 and keep is not None and len(self.rescued) < jh_checks.DEBUG_BOUND and keep(finding):
+            key = _identity(finding)
+            if key not in self.seen:
+                self.seen.add(key)
+                finding.severity = sev
+                self.rescued.append(finding)
             return
         self.set_aside["capped"] = self.set_aside.get("capped", 0) + n
         if self.capped_worst is None or sev_at_least(sev, self.capped_worst):
@@ -1797,6 +1814,9 @@ def scan_sources(sources: Sequence[SourceFile], options: Optional[ScanOptions] =
         if rule is None or sf is None:
             continue
         acceptor.count_past_bound(make_finding(rule, sf, 1), n)
+    if acceptor.rescued:
+        result.findings.extend(acceptor.rescued)
+        result.findings.sort(key=lambda f: f.sort_key())
     jh_checks.BOUND_DROPPED.clear()
     jh_checks.BOUND_DROPPED_AT.clear()
     if jh_checks.PARSE_FAILURES:                 # every command that scans (scan, review, passport) reports them

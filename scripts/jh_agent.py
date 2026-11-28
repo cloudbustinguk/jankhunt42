@@ -36,6 +36,7 @@ class McpServer:
     disabled: bool = False
     project: str = ""
     approvals: List[str] = field(default_factory=list)
+    transport_line: Optional[int] = None
 
 
 def client_for(rel: str) -> str:
@@ -239,10 +240,10 @@ def _strs(value: Any) -> Dict[str, str]:
 JSON_LINES_DEPTH = 64
 
 
-def json_lines(text: str) -> Dict[tuple, int]:
+def json_lines(text: str, string_value_keys: Tuple[str, ...] = ()) -> Dict[tuple, int]:
     """Locate members and array entries in an already parsed JSONC document, including duplicate names in
     different objects. Record the key line for a member and the value line for an array element, down to
-    JSON_LINES_DEPTH levels."""
+    JSON_LINES_DEPTH levels. For selected string properties, locate the value itself."""
     tokens = re.finditer(r'//[^\n]*|/\*.*?\*/|"(?:[^"\\]|\\.)*"|[{}\[\],:]|[^\s{}\[\],:/"]+', text.lstrip("\ufeff"), re.S)
     text = text.lstrip("\ufeff")
     lines = {}
@@ -270,7 +271,10 @@ def json_lines(text: str) -> Dict[tuple, int]:
             deep = len(stack) > JSON_LINES_DEPTH                 # deeper members keep the last located path
             child = path + ((index if key is None else key),) if stack and not deep else path
             if not deep:
-                lines.setdefault(child, line)
+                if key in string_value_keys and val.startswith('"'):
+                    lines[child] = line
+                else:
+                    lines.setdefault(child, line)
             if val in ("{", "["):
                 stack.append((path, val, index))
                 path, key, index = child, None, 0
@@ -280,19 +284,21 @@ def json_lines(text: str) -> Dict[tuple, int]:
 _SSE_KINDS = {"sse", "http+sse", "sse+http", "legacy-sse", "http-sse"}
 
 
-def _server_from_spec(name: str, spec: Dict[str, Any], line: int, client: str, project: str) -> McpServer:
+def _server_from_spec(name: str, spec: Dict[str, Any], path: tuple, lines: Dict[tuple, int],
+                      client: str, project: str) -> McpServer:
     command = spec.get("command")
     args = spec.get("args") if isinstance(spec.get("args"), list) else []
     if isinstance(command, list):                       # opencode: command is argv
         command, args = (command[0] if command else ""), command[1:] + list(args)
     url = spec.get("url") or spec.get("serverUrl") or spec.get("httpUrl") or ""
-    kind = str(spec.get("type") or spec.get("transport") or "").lower()
+    transport_key = "type" if spec.get("type") else "transport"
+    kind = str(spec.get(transport_key) or "").lower()
     if client == "gemini-cli":
         if spec.get("httpUrl"):
-            url, kind = spec["httpUrl"], "http"
+            url, kind, transport_key = spec["httpUrl"], "http", "httpUrl"
         elif spec.get("url") and not kind:
-            kind = "sse"
-    s = McpServer(name=name, line=line, transport="unknown",
+            kind, transport_key = "sse", "url"
+    s = McpServer(name=name, line=lines[path], transport="unknown", transport_line=lines.get(path + (transport_key,)),
                   command=command if isinstance(command, str) else "",
                   args=[a if isinstance(a, str) else json.dumps(a) for a in args],
                   env=_strs(spec.get("env") or spec.get("environment")),
@@ -330,7 +336,7 @@ def mcp_servers(rel: str, text: str, limit: Optional[int] = MAX_SERVERS) -> List
                           if isinstance(config, dict))
     if not any(isinstance(config.get(key), dict) for _, config in containers for key in ("mcpServers", "servers", "mcp")):
         return []
-    lines = json_lines(text)
+    lines = json_lines(text, string_value_keys=("type", "transport"))
     out = []
     for path, config in containers:
         key = "mcpServers"
@@ -347,7 +353,7 @@ def mcp_servers(rel: str, text: str, limit: Optional[int] = MAX_SERVERS) -> List
                     OMITTED[rel] = OMITTED.get(rel, 0) + 1
                 continue
             if isinstance(spec, dict):
-                out.append(_server_from_spec(name, spec, lines[path + (key, name)], client_for(rel),
+                out.append(_server_from_spec(name, spec, path + (key, name), lines, client_for(rel),
                                              path[-1] if path else ""))
     return out
 

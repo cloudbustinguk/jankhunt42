@@ -23,6 +23,53 @@ class UnreadableLinkTarget(unittest.TestCase):
     """Python 3.9-3.13 raise PermissionError from is_dir() on such a link; 3.14 returns False. The test makes the
     check raise on every version, as a committed link into /root does inside a container."""
 
+    def test_scan_and_map_count_unreadable_tracked_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            locked = root / "locked"
+            locked.mkdir()
+            target = locked / "studio.py"
+            target.write_text("breakpoint()\n")
+            (root / "preview.py").symlink_to("locked/studio.py")
+            (root / "note.py").write_text("x = 1\n")
+            git(tmp, "init", "-q")
+            git(tmp, "add", "note.py", "preview.py")
+            for state in ("inaccessible", "missing"):
+                if state == "inaccessible":
+                    locked.chmod(0)
+                else:
+                    target.unlink()
+                try:
+                    if state == "inaccessible" and os.access(target, os.F_OK):
+                        continue  # privileged accounts can still read the target
+                    with self.subTest(state=state):
+                        doc = scan(tmp)
+                        self.assertEqual(doc["summary"]["files"], 1)
+                        self.assertEqual(doc["set_aside"].get("files_not_read"),
+                                         {"unreadable": {"count": 1, "paths": ["preview.py"]}})
+                        cov = json.loads(run_cli("map", tmp, "--json").stdout)["coverage"]
+                        self.assertEqual((cov["status"], cov["files_considered"], cov["files_inspected"]),
+                                         ("partial", 2, 1))
+                        self.assertEqual((cov["skipped"], cov["skipped_paths"]), ({"unreadable": 1}, ["preview.py"]))
+                finally:
+                    locked.chmod(0o700)
+
+    def test_permission_error_resolving_a_link_is_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "target").write_text("text")
+            link = root / "preview.py"
+            link.symlink_to("target")
+            resolve = Path.resolve
+            def denied(path, *args, **kwargs):
+                if path == link:
+                    raise PermissionError("permission denied")
+                return resolve(path, *args, **kwargs)
+            with mock.patch.object(Path, "resolve", denied):
+                not_read = {}
+                jh_core.discover_files([tmp], not_read=not_read)
+            self.assertEqual(not_read.get("unreadable"), ["preview.py"])
+
     def test_a_committed_link_into_an_unreadable_folder_is_skipped_not_fatal(self):
         root = tempfile.mkdtemp(prefix="jh-4225-")
         self.addCleanup(shutil.rmtree, root, True)
@@ -157,6 +204,58 @@ class NamesOnDisk(Base):
 
 @unittest.skipIf(os.name == "nt", "symbolic links")
 class LinkReplacement(Base):
+    def test_explicit_link_uses_its_own_project_config(self):
+        project = Path(self.path("selected", ".jankhunt42.json"))
+        project.write_text(json.dumps({"rules": {"JH217": {"severity": "minor"}}}))
+        target = Path(self.path("source", "z.txt"))
+        target.write_text("try:\n    n = 1\nexcept:\n    raise\n")
+        link = project.parent / "m.py"
+        link.symlink_to(target)
+        doc = scan(str(link), "--rule", "JH217")
+        self.assertEqual(doc.get("config"), str(project))
+        self.assertEqual([f["severity"] for f in doc["findings"]], ["minor"])
+        target.unlink()                    # a named link whose target is gone is refused by name, never read as empty
+        proc = run_cli("scan", str(link), "--rule", "JH217", "--json", "--no-progress")
+        self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+        self.assertIn("broken symbolic link", proc.stderr)
+
+    def test_excluding_a_links_target_keeps_the_permitted_name_in_the_passport(self):   # B96
+        for target in ("draft.py", "zdraft.py"):                # the target sorts before and after the link
+            with self.subTest(target=target):
+                folder = Path(self.path(target[0], "x")).parent
+                (folder / target).write_text("breakpoint()\n")
+                (folder / "active.py").symlink_to(target)
+                (folder / ".jankhunt42.json").write_text(json.dumps({"ignore": [target]}))
+                doc = scan(str(folder))
+                self.assertEqual([(f["rule"], f["path"]) for f in doc["findings"]], [("JH204", "active.py")])
+                card = json.loads(run_cli("passport", str(folder), "--json").stdout)
+                self.assertEqual((card["scope"]["files_scanned"], card["assessment"]["jank"]["findings"],
+                                  card["assessment"]["jank"]["score"]),
+                                 (doc["summary"]["files"], 1, doc["summary"]["jank"]["score"]))
+
+    def test_explicit_file_links_select_rules_by_the_requested_name(self):
+        folder = Path(self.root, "project")
+        folder.mkdir()
+        (folder / "z.txt").write_text("try:\n    n = 1\nexcept:\n    raise\n")
+        (folder / "m.py").symlink_to("z.txt")
+        (folder / "policy.txt").symlink_to("z.txt")
+        rules = Path(self.root, "rules.json")
+        rules.write_text(json.dumps({"schema_version": "jankhunt.ruleset.v1", "name": "Policy", "rules": [{
+            "id": "POLICY01", "title": "Check policy", "message": "Check policy.", "severity": "major",
+            "patterns": ["except:"], "files": ["policy.txt"], "target": "raw", "examples": {"match": ["except:"]}}]}))
+        typed = ("m.py", "JH217", "major", 3)
+        named = ("policy.txt", "POLICY01", "major", 3)
+        for paths, count, expected in ((["."], 3, [typed, named]), (["m.py"], 1, [typed]),
+                                       (["policy.txt"], 1, [named]), (["z.txt"], 1, []),
+                                       (["m.py", "z.txt", "policy.txt"], 3, [typed, named])):
+            with self.subTest(paths=paths):
+                proc = run_cli("scan", *paths, "--no-config", "--ruleset", str(rules), "--rule", "JH217",
+                               "--rule", "POLICY01", "--json", cwd=folder)
+                doc = json.loads(proc.stdout)
+                self.assertEqual(doc["summary"]["files"], count)
+                self.assertCountEqual([(f["path"], f["rule"], f["severity"], f["line"]) for f in doc["findings"]],
+                                      expected)
+
     @unittest.skipUnless(GIT, "git unavailable")
     def test_an_ignored_target_is_rated_and_listed_as_ignored_in_either_order(self):   # B68
         for n in ("0.py", "z.py"):
@@ -209,6 +308,32 @@ class SafetyBound(Base):
         self.assertEqual(d["set_aside"]["below_floor"]["info"], n)
         self.assertEqual(proc.returncode, 0)
 
+    def test_a_dependency_is_read_from_the_manifest_not_from_its_layout(self):   # B89
+        doc = {"name": "palette", "description": "latest", "scripts": {"tint": "latest"},
+               "dependencies": {"chalkboard": "*", "easel": "latest", "frame": "^1.2.0"},
+               "peerDependencies": {"canvas": "*"}}
+        expected = [("dependencies", "chalkboard", "minor"), ("dependencies", "easel", "minor"),
+                    ("peerDependencies", "canvas", "info")]
+        for name, indent, lines in (("flat", None, [1, 1, 1]), ("pretty", 2, [8, 9, 13])):
+            with self.subTest(layout=name):
+                Path(self.path(name, "package.json")).write_text(json.dumps(doc, indent=indent))
+                Path(self.path(name, "package-lock.json")).write_text("{}")
+                proc = run_cli("scan", self.path(name, "x")[:-2], "--no-config", "--rule", "JH424", "--min-severity", "info",
+                               "--fail-on", "minor", "--json", "--no-progress")
+                found = json.loads(proc.stdout)["findings"]
+                self.assertEqual(sorted((f["extra"]["section"], f["extra"]["package"], f["severity"]) for f in found),
+                                 expected)
+                self.assertEqual(sorted(f["line"] for f in found), lines)
+                self.assertEqual(proc.returncode, 1)
+        Path(self.path("words", "package.json")).write_text('{\n  "name": "palette",\n  "description": "latest"\n}\n')
+        proc = run_cli("scan", self.path("words", "x")[:-2], "--no-config", "--rule", "JH424", "--min-severity", "info",
+                       "--fail-on", "info", "--json", "--no-progress")
+        self.assertEqual((json.loads(proc.stdout)["findings"], proc.returncode), ([], 0))
+        # a manifest that is not valid JSON is still read, line by line
+        Path(self.path("broken", "package.json")).write_text('{\n  "dependencies": {\n    "chalkboard": "*",\n  }\n}\n')
+        d = scan(self.path("broken", "x")[:-2], "--no-config", "--rule", "JH424")
+        self.assertEqual([f["line"] for f in d["findings"]], [3])
+
 
 class McpServers(Base):
     def test_two_servers_on_one_line_are_two_findings(self):                     # B76
@@ -232,6 +357,22 @@ class PhpTemplateText(Base):
         Path(self.path("real.php")).write_text("<?php // x ?> text <?php var_dump($a); ?> more\n")
         d = scan(self.root, "--no-config", "--rule", "JH204")
         self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("real.php", 1)])
+
+    def test_a_quote_in_the_page_text_does_not_hide_the_block_after_it(self):          # B101
+        files = {"prose.php": "<p>Today's shade: <?php var_dump($shade); ?></p>\n",
+                 "plain.php": "<p>Current shade: <?php var_dump($shade); ?></p>\n",
+                 "printed.php": "<p>Call var_dump($x) here: <?php echo 1; ?> and var_dump($y)</p>\n",
+                 # the state carries across lines: page text, a block, a comment closed by its tag, a tag in a string
+                 "long.php": "<html>\n<p>it's\n<?php\n// note ?> var_dump($a) <?php var_dump($b);\n"
+                             "$s = \"?>\"; var_dump($c);\n?>\nvar_dump($d)\n<?= var_dump($e) ?>\n",
+                 # no opening tag anywhere: read as code, as before
+                 "bare.php": "$label = 'x';\nvar_dump($label);\n"}
+        for name, text in files.items():
+            Path(self.path(name)).write_text(text)
+        d = scan(self.root, "--rule", "JH204", "--no-config")
+        self.assertEqual(sorted((f["path"], f["line"]) for f in d["findings"]),
+                         [("bare.php", 2), ("long.php", 4), ("long.php", 5), ("long.php", 8), ("plain.php", 1),
+                          ("prose.php", 1)])
 
 
 class Output(Base):
@@ -309,6 +450,47 @@ class Directives(Base):
 
 @unittest.skipUnless(GIT, "git unavailable")
 class Review(Base):
+    @unittest.skipIf(os.name == "nt", "symbolic links")
+    def test_only_markers_resolving_to_files_skip_source_in_each_view(self):
+        r = self.repo("markers")
+        expected = []
+        for kind in ("file", "linked", "directory", "missing", "loop"):
+            env = Path(r, kind, "env")
+            env.mkdir(parents=True)
+            marker = env / "pyvenv.cfg"
+            if kind == "file":
+                marker.write_text("home = fixture\n")
+            elif kind == "linked":
+                (env.parent / "layout").mkdir()
+                (env.parent / "layout" / "config").write_text("home = fixture\n")
+                (env / "alias").symlink_to("../layout")
+                marker.symlink_to("alias/config")
+            elif kind == "directory":
+                (env / "layout").mkdir()
+                (env / "layout" / "detail.txt").write_text("detail\n")
+                marker.symlink_to("layout")
+            else:
+                marker.symlink_to("pyvenv.cfg" if kind == "loop" else "absent")
+            (env / "card.py").write_text("breakpoint()\n")
+            if kind in ("directory", "missing", "loop"):
+                expected.append((kind + "/env/card.py", 1))
+        git(r, "add", "-A")
+        for mode in ([], ["--staged"], ["--commit", "HEAD"]):
+            if mode == ["--staged"]:
+                # Neither snapshot should consult the changed working copy.
+                Path(r, "linked/layout/config").unlink()
+                Path(r, "missing/env/absent").write_text("home = fixture\n")
+            if "--commit" in mode:
+                git(r, "commit", "-qm", "markers")
+            with self.subTest(mode=mode):
+                proc = run_cli("review", r, *mode, "--rule", "JH204", "--fail-on", "minor", "--json")
+                doc = json.loads(proc.stdout)
+                self.assertCountEqual([(f["path"], f["line"]) for f in doc["findings"]], expected)
+                skipped = {s["path"]: s["reason"] for s in doc["review"]["scope"]["skipped_files"]}
+                for kind in ("file", "linked"):
+                    self.assertEqual(skipped[kind + "/env/card.py"], "dependencies")
+                self.assertEqual((doc["review"]["gate"]["result"], proc.returncode), ("fail", 1))
+
     def test_a_folder_named_like_a_marker_does_not_skip_its_parent(self):         # B70
         r = self.repo("fm")
         Path(r, "README.md").write_text("x\n")
@@ -379,6 +561,53 @@ class Review(Base):
         self.assertEqual(first, ident())                          # stable on a repeat
         Path(r, "a.py").write_text("a = 1"); Path(r, "b.py").write_text("breakpoint()\nb = 2")
         self.assertNotEqual(first, ident())
+
+    @unittest.skipUnless(GIT, "git unavailable")
+    def test_a_staged_review_looks_for_the_lockfile_in_the_index(self):           # B99
+        r = self.repo("lock")
+        Path(r, "package.json").write_text('{"name":"palette","version":"1.0.0"}\n')
+        git(r, "add", "package.json")
+
+        def verdict(*mode):
+            proc = run_cli("review", r, *mode, "--rule", "JH423", "--min-severity", "info", "--fail-on", "info", "--json")
+            doc = json.loads(proc.stdout)
+            return [f["rule"] for f in doc["findings"]], doc["review"]["gate"]["result"], proc.returncode
+        missing, present = (["JH423"], "fail", 1), ([], "pass", 0)
+        self.assertEqual(verdict("--staged"), missing)
+        Path(r, "package-lock.json").write_text('{"name":"palette","lockfileVersion":3}\n')
+        self.assertEqual(verdict("--staged"), missing)        # on disk only: the index still has no lockfile
+        git(r, "add", "package-lock.json")
+        self.assertEqual(verdict("--staged"), present)
+        os.remove(os.path.join(r, "package-lock.json"))
+        self.assertEqual(verdict("--staged"), present)        # gone from disk, still in the index
+        git(r, "commit", "-qm", "both")
+        Path(r, "package.json").write_text('{"name":"palette","version":"1.0.1"}\n')
+        self.assertEqual(verdict(), missing)                  # the working tree is what a working review reads
+        git(r, "add", "package.json")
+        git(r, "commit", "-qm", "manifest only")
+        self.assertEqual(verdict("--commit", "HEAD"), present)   # the commit holds the lockfile the folder lost
+
+    @unittest.skipUnless(GIT, "git unavailable")
+    def test_a_changed_line_past_the_safety_bound_still_reaches_the_gate(self):   # B61
+        import jh_checks
+        n = jh_checks.DEBUG_BOUND + 1
+        r = self.repo("bound-change")
+        Path(r, "draft.py").write_text("breakpoint()\n" * n + "x = 1\n")
+        git(r, "add", "draft.py")
+        git(r, "commit", "-qm", "base")
+
+        def review():
+            proc = run_cli("review", r, "--rule", "JH204", "--fail-on", "minor", "--max-file-bytes", "9000000", "--json")
+            doc = json.loads(proc.stdout)
+            return (doc["summary"]["new_findings"], doc["summary"]["capped_findings"],
+                    doc["review"]["set_aside"].get("capped", 0), doc["review"]["gate"]["result"], proc.returncode,
+                    [f["line"] for f in doc["findings"] if f["line"] > n])
+        Path(r, "draft.py").write_text("breakpoint()\n" * n + "x = 2\n")
+        # the call past the bound is on an unchanged line: counted in both places, and the change passes
+        self.assertEqual(review(), (0, 1, 1, "pass", 0, []))
+        Path(r, "draft.py").write_text("breakpoint()\n" * n + "x = 2\nbreakpoint()\n")
+        # the added call is past the bound too: it is listed and fails the gate; the unchanged one is still counted
+        self.assertEqual(review(), (1, 1, 1, "fail", 1, [n + 2]))
 
 
 class FifthPass(Base):

@@ -2,9 +2,12 @@
 import io
 import json
 import os
+from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 import _util
@@ -153,6 +156,53 @@ def solution_zip(members, extra=()):
 
 
 class SolutionZip(unittest.TestCase):
+    def test_passport_scores_only_exports_in_the_scan_scope(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / 'suite'
+            root.mkdir()
+            ruleset = Path(folder) / 'rules.json'
+            ruleset.write_text(json.dumps({'schema_version': 'jankhunt.ruleset.v1', 'name': 'Paper',
+                'rules': [{'id': 'PAPER01', 'title': 'Draft note', 'message': 'Review the note.',
+                           'severity': 'blocker', 'patterns': ['pencil'], 'files': ['Page.json'],
+                           'target': 'raw', 'examples': {'match': ['pencil']}}]}), encoding='utf-8')
+            for name in ('studio.zip', 'album.zip'):
+                (root / name).write_bytes(solution_zip({'Workflows/Page.json': '{"note":"pencil"}'}))
+            (root / '.jankhunt42.json').write_text('{"ignore":["studio.zip"]}', encoding='utf-8')
+            for extra, files, findings, policy in [([], 3, 1, 'fail'), (['--exclude', 'album.zip'], 1, 0, 'pass')]:
+                with self.subTest(extra=extra):
+                    args = [str(root), '--ruleset', str(ruleset), '--json', *extra]
+                    scan = json.loads(run_cli('scan', *args).stdout)
+                    passport = json.loads(run_cli('passport', *args).stdout)
+                    score = passport['assessment']['jank']
+                    self.assertEqual((passport['scope']['files_scanned'], score['findings'], score['policy']),
+                                     (files, findings, policy))
+                    self.assertEqual(score['score'], scan['summary']['jank']['score'])
+                    self.assertEqual(passport['scope']['set_aside']['files_excluded'],
+                                     scan['set_aside']['files_excluded'])
+
+    @unittest.skipUnless(shutil.which('git'), 'git unavailable')
+    def test_ignored_export_caps_members_until_force_staged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / '.gitignore').write_text('studio.zip\n', encoding='utf-8')
+            trigger = flow({'manual': {'type': 'Request', 'kind': 'Http',
+                                       'inputs': {'triggerAuthenticationType': 'Anyone'}}})
+            members = ['Workflows/A.json', 'Workflows/B.json']
+            (root / 'studio.zip').write_bytes(solution_zip(dict.fromkeys(members, trigger)))
+            for staged, severity, status in [(False, 'minor', 0), (True, 'major', 1)]:
+                if staged:
+                    subprocess.run(['git', 'add', '-f', 'studio.zip'], cwd=root, check=True)
+                with self.subTest(staged=staged):
+                    proc = run_cli('scan', '.', '--no-config', '--rule', 'JH144',
+                                   '--fail-on', 'major', '--json', cwd=root)
+                    report = json.loads(proc.stdout)
+                    self.assertEqual(sorted((f['path'], f['severity']) for f in report['findings']),
+                                     [('studio.zip!/' + member, severity) for member in members])
+                    self.assertEqual(proc.returncode, status)
+                    self.assertEqual(report['set_aside'].get('git_ignored_read'),
+                                     None if staged else {'count': 1, 'paths': ['studio.zip']})
+
     def test_flows_are_read_from_inside_the_export(self):
         token = 'a8f3kd92' + 'jf83kd0s'
         open_ = flow({'manual': {'type': 'Request', 'kind': 'Http', 'inputs': {'triggerAuthenticationType': 'Anyone'}}},
@@ -257,6 +307,30 @@ def plain_zip():
 
 
 class CanvasApps(unittest.TestCase):
+    def test_unreadable_standalone_app_in_reports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'paper.msapp').write_bytes(b'unfinished')
+            (root / 'working.msapp').write_bytes(msapp({'Src/App.pa.yaml': 'App: {}\n'}))
+            (root / 'notes.zip').write_bytes(plain_zip())
+            args = ['scan', str(root), '--no-config', '--fail-on', 'major']
+            report = json.loads(run_cli(*args, '--json').stdout)
+            self.assertEqual(report['summary']['files'], 1)
+            self.assertEqual(report['warnings'], ['paper.msapp: not a readable zip, not read'])
+            summary = run_cli(*args, '--summary')
+            self.assertEqual(summary.returncode, 0)
+            self.assertIn('not read: 1 item, e.g. paper.msapp', summary.stdout)
+            self.assertIn('PASS', summary.stdout)
+            (root / 'paper.msapp').unlink()
+            (root / 'studio.zip').write_bytes(solution_zip({'CanvasApps/paper.msapp': b'unfinished'}))
+            nested = json.loads(run_cli(*args, '--json').stdout)
+            self.assertEqual(nested['warnings'], ['studio.zip!/CanvasApps/paper.msapp: not a readable zip, not read'])
+
+    def test_standalone_app_that_cannot_be_opened(self):
+        with patch.object(P, 'GAPS', []), patch('builtins.open', side_effect=PermissionError()):
+            self.assertEqual(P.load_archive(Path('paper.msapp'), Path('.')), [])
+            self.assertEqual(P.GAPS, ['paper.msapp: unreadable, not read'])
+
     KEY = 'q7Zr2' + 'mX9pL4vN8wK3'
 
     def test_formulas_from_controls_are_listed(self):

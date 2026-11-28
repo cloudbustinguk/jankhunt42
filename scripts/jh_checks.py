@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from bisect import bisect_right
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -2652,7 +2653,7 @@ def mcp_plaintext(sf: SourceFile, rule: Rule) -> List[Finding]:
 
 @check("mcp_sse")
 def mcp_sse(sf: SourceFile, rule: Rule) -> List[Finding]:
-    return [make_finding(rule, sf, s.line, message=(
+    return [make_finding(rule, sf, s.transport_line or s.line, message=(
         "MCP server '%s' uses the deprecated SSE transport (HTTP+SSE), which the 2026-07-28 MCP specification "
         "retires with a 12-month offramp; it keeps a held-open stream, a wider surface than the stateless "
         "request/response core." % s.name), evidence="%s: transport sse" % s.name,
@@ -2960,10 +2961,45 @@ def _rust_assertion_free(sf: SourceFile, rule: Rule) -> List[Finding]:
     return out
 
 
+_NPM_DEP_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+_NPM_OPEN_RANGES = ("*", "latest")
+_NPM_PEER_MESSAGE = ("An open peer dependency range lets the host app choose the version; "
+                     "npm 7+ installs a missing peer itself, at the newest release.")
+
+
 @check("package_json_dep")
 def package_json_dep(sf: SourceFile, rule: Rule) -> List[Finding]:
-    """'*' or 'latest' in package.json. Inside peerDependencies an open range is the usual way to say
-    "whatever the host app uses", but npm 7+ installs missing peers itself, so it is info, not minor."""
+    """'*' or 'latest' as the range of a dependency in package.json. The members of the dependency objects are read
+    from the parsed document, so the layout of the file changes nothing and a field elsewhere that happens to say
+    "latest" (a description, a script) is not a dependency. Inside peerDependencies an open range is the usual way to
+    say "whatever the host app uses", but npm 7+ installs missing peers itself, so it is info, not minor."""
+    try:
+        doc = json.loads(sf.text.lstrip("\ufeff"))
+    except (ValueError, RecursionError):
+        return _package_json_dep_by_line(sf, rule)       # not valid JSON: read line by line rather than say nothing
+    if not isinstance(doc, dict):
+        return []
+    lines = jh_agent.json_lines(sf.text)
+    out: List[Finding] = []
+    for section in _NPM_DEP_SECTIONS:
+        members = doc.get(section)
+        if not isinstance(members, dict):
+            continue
+        for name, spec in members.items():
+            if not isinstance(spec, str) or spec.strip() not in _NPM_OPEN_RANGES:
+                continue
+            line = lines.get((section, name)) or lines.get((section,)) or 1
+            extra = {"package": name, "section": section}     # two on one line stay two findings
+            if section == "peerDependencies":
+                out.append(make_finding(rule, sf, line, severity="info", confidence="medium", message=_NPM_PEER_MESSAGE,
+                                        extra=extra))
+            else:
+                out.append(make_finding(rule, sf, line, extra=extra))
+    out.sort(key=lambda f: f.line)
+    return out
+
+
+def _package_json_dep_by_line(sf: SourceFile, rule: Rule) -> List[Finding]:
     out: List[Finding] = []
     peer = 0                                    # brace depth inside "peerDependencies": { ... }
     for i, line in enumerate(sf.nocomment):
@@ -2975,21 +3011,25 @@ def package_json_dep(sf: SourceFile, rule: Rule) -> List[Finding]:
         if not re.match(r'^\s*"[^"]+"\s*:\s*"(?:\*|latest)"', line):
             continue
         if peer:
-            out.append(make_finding(rule, sf, i + 1, severity="info", confidence="medium",
-                                    message="An open peer dependency range lets the host app choose the version; "
-                                            "npm 7+ installs a missing peer itself, at the newest release."))
+            out.append(make_finding(rule, sf, i + 1, severity="info", confidence="medium", message=_NPM_PEER_MESSAGE))
         else:
             out.append(make_finding(rule, sf, i + 1))
     return out
+
+
+# A review of the index or of a revision sets this to "is this path a file in the tree under review?": a file that is
+# only in the working folder (or only missing from it) must not change the verdict on what is being committed.
+TREE_HAS_FILE = None
 
 
 @check("lockfile_missing")
 def lockfile_missing(sf: SourceFile, rule: Rule) -> List[Finding]:
     d = os.path.dirname(sf.abspath)
     names = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb")
+    exists = TREE_HAS_FILE or os.path.exists
     cur = d
     for _ in range(20):
-        if any(os.path.exists(os.path.join(cur, n)) for n in names):
+        if any(exists(os.path.join(cur, n)) for n in names):
             return []
         if os.path.isdir(os.path.join(cur, ".git")):
             break

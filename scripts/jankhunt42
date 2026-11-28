@@ -24,7 +24,7 @@ from jh_core import (  # noqa: E402
     link_inside,
     run_git,
     Finding, SEV_RANK, SEVERITIES, TOOL, VERSION, count_path, discover_files, load_source, load_source_why,
-    make_finding, sev_at_least,
+    make_finding, selected_path, sev_at_least,
 )
 import jh_rules  # noqa: E402
 import jh_ruleset  # noqa: E402
@@ -86,12 +86,12 @@ def _probe_root(paths: Sequence[str]) -> str:
     """Cheap, deterministic preview of the root discover_files() will land
     on, needed only so config discovery can happen before the real scan."""
     from pathlib import Path as _Path
-    roots = [_Path(p).expanduser().resolve() for p in (paths or ["."])]
-    if len(roots) == 1 and roots[0].is_dir():
+    roots = [selected_path(p) for p in (paths or ["."])]
+    if len(roots) == 1 and os.path.isdir(roots[0]):
         return str(roots[0])
     # a named file is governed by its own folder's repository, never by the folder the command runs from; several
     # inputs start from the folder they share
-    folders = [str(r if r.is_dir() else r.parent) for r in roots]
+    folders = [str(r if os.path.isdir(r) else r.parent) for r in roots]
     try:
         return os.path.commonpath(folders)
     except ValueError:                     # jankhunt42: ignore JH201 (inputs on different Windows drives share no folder)
@@ -112,12 +112,14 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
     import jh_n8n
     jh_n8n.GAPS.clear()
     sources = []
-    skipped = 0
+    unreadable = (not_read or {}).get("unreadable", [])
+    skipped = len(unreadable)
+    for rel in unreadable:
+        count_path(not_read, "files_not_read_unreadable", rel)
     for idx, path in enumerate(files, 1):
         if jh_powerplatform.is_archive(str(path)):
-            members = jh_powerplatform.load_archive(path, root)
-            sources.extend(members)
-            if not members:
+            loaded = jh_powerplatform.load_archive(path, root)
+            if not loaded:
                 continue
         else:
             sf, why = load_source_why(path, root)
@@ -127,11 +129,12 @@ def _load_sources(paths: Sequence[str], excludes: Sequence[str], max_files: int,
                     count_path(not_read, "files_not_read_" + why,
                                display_path(os.path.relpath(path, root).replace(os.sep, "/")))
                 continue
-            sources.append(sf)
+            loaded = [sf]
+        sources.extend(loaded)
         if not_read is not None and ignored_files and path in ignored_files:
             rel = display_path(os.path.relpath(path, root).replace(os.sep, "/"))
             count_path(not_read, "git_ignored_read", rel)
-            not_read.setdefault("_git_ignored_paths", set()).add(rel)     # internal: never part of set_aside
+            not_read.setdefault("_git_ignored_paths", set()).update(s.rel for s in loaded)
         if spinner and idx % 17 == 0:
             spinner.update("reading %d/%d  %s" % (idx, len(files), os.path.basename(str(path))))
     return root, sources, skipped
@@ -875,11 +878,6 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
         ignore_rule_ids=ignored_rules(args), severity_map=getattr(args, "severity_map", None),
         rulesets=getattr(args, "rulesets", None))
     ignored = set(getattr(args, "governance_ignore_ids", None) or ()) or None
-    # Files are read once: the main scan sees the repository's tuning (its
-    # ignore globs filter the same sources in memory), and the governance
-    # scans run in memory on the governance rules only. Only when the
-    # untuned discovery reaches --max-files is the tuned set discovered
-    # again, so the main scan is never starved by ignored trees.
     scan_cfg = cfg
     operator_excludes = list(args.exclude or ())
     pp_not_read: Dict[str, Any] = {}               # what discovery set aside, for the passport's own account
@@ -889,22 +887,6 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     # cut short only when the limit turned an eligible file away (discovery records it), not when the count merely
     # equals the limit; a commit snapshot has no discovery, so it keeps the count
     raw_capped = (len(raw_pre[1]) + raw_pre[2] >= args.max_files) if snapshot else bool(pp_not_read.get("file_limit"))
-    if not scan_cfg.ignore_globs:
-        main_pre = raw_pre
-    elif not raw_capped:
-        # B86: the project's ignore list matches the name on disk, as discovery does; the shown name is recorded
-        main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)],
-                    raw_pre[2])
-        for s in raw_pre[1]:
-            if _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs):
-                count_path(pp_not_read.setdefault("files_excluded", {}), "config", s.rel)
-    elif not snapshot:
-        main_pre = _load_sources([root], operator_excludes + scan_cfg.ignore_globs, args.max_files, args.max_file_bytes)
-    else:
-        main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)], raw_pre[2])
-    _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
-    passport_aside = set_aside(result, pp_not_read, int(_meta.get("config_suppressed") or 0), ignored_rules(args),
-                               scan_args, cfg.source)
     # Governance leads (P-SEC-001, P-AGT-001). Raw: the shipped rules with no
     # repository ignore globs, config, or inline pragmas, which is what the
     # citizen profile uses so the repository cannot opt out. Tuned: the same
@@ -916,6 +898,25 @@ def _cmd_passport(args: argparse.Namespace, snapshot=None) -> int:
     raw = scan_sources(raw_pre[1], ScanOptions(min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000,
                                                max_per_rule=100000, honor_suppressions=False,
                                                ignore_rule_ids=ignored)).findings
+    if not scan_cfg.ignore_globs:
+        main_pre = raw_pre
+    elif not snapshot:
+        # Select technical inputs by their on-disk names before expanding any archive, just as scan does.
+        pp_not_read = {}
+        main_pre = _load_sources([root], operator_excludes, args.max_files, args.max_file_bytes,
+                                 not_read=pp_not_read, config_excludes=scan_cfg.ignore_globs)
+    elif not raw_capped:
+        # B86: the project's ignore list matches the name on disk, as discovery does; the shown name is recorded
+        main_pre = (raw_pre[0], [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)],
+                    raw_pre[2])
+        for s in raw_pre[1]:
+            if _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs):
+                count_path(pp_not_read.setdefault("files_excluded", {}), "config", s.rel)
+    else:
+        main_pre = (root, [s for s in raw_pre[1] if not _globbed(s.fs_rel or s.rel, scan_cfg.ignore_globs)], raw_pre[2])
+    _, result, _meta = run_scan(scan_args, preloaded=main_pre, cfg=scan_cfg)
+    passport_aside = set_aside(result, pp_not_read, int(_meta.get("config_suppressed") or 0), ignored_rules(args),
+                               scan_args, cfg.source)
     tuned = jh_config.apply_to_findings(scan_cfg, scan_sources(main_pre[1], ScanOptions(
         min_severity="info", rule_ids=gov_rules, max_per_file_rule=1000, max_per_rule=100000,
         ignore_rule_ids=ignored)).findings)
