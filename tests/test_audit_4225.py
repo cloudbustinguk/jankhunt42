@@ -355,8 +355,11 @@ class PhpTemplateText(Base):
     def test_text_after_a_second_closing_tag_on_the_line_is_not_code(self):       # B71
         Path(self.path("card.php")).write_text("<?php // end ?><?php echo 1; ?> Manual: var_dump($shade).\n")
         Path(self.path("real.php")).write_text("<?php // x ?> text <?php var_dump($a); ?> more\n")
+        # the same with short tags only, where the line's own tags are all there is to go by
+        Path(self.path("short.php")).write_text("<? // end ?><? echo 1; ?> Manual: var_dump($shade).\n")
+        Path(self.path("tags.php")).write_text("<? // x ?> text <? var_dump($a); ?> more\n")
         d = scan(self.root, "--no-config", "--rule", "JH204")
-        self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("real.php", 1)])
+        self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("real.php", 1), ("tags.php", 1)])
 
     def test_a_quote_in_the_page_text_does_not_hide_the_block_after_it(self):          # B101
         files = {"prose.php": "<p>Today's shade: <?php var_dump($shade); ?></p>\n",
