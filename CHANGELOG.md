@@ -6,6 +6,8 @@ semantic versioning.
 
 ## [Unreleased]
 
+## [4.23.1] — 2026-11-28
+
 ### Fixed
 
 - A staged or revision review skips an `env` directory only when its `pyvenv.cfg` resolves to a regular
