@@ -4,6 +4,36 @@ All notable changes to jankhunt42 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- A staged or revision review skips an `env` directory only when its `pyvenv.cfg` resolves to a regular
+  file in that snapshot. Links to directories, missing targets and link cycles leave the source in scope.
+- Scans count unreadable source links under their selected names. Maps list them as skipped and report
+  partial coverage when a supported file could not be inspected.
+- Naming a file link directly applies the language and filename rules for the selected name and the
+  configuration from its project.
+- Findings inside an ignored, untracked export inherit its minor severity cap. The scan counts the export once.
+  Staging the export restores the members' configured severity.
+- The passport's technical score now applies project and command-line exclusions to archive names before
+  reading their members. Its file count, findings and score policy match the scan for excluded exports.
+- A standalone `.msapp` that cannot be opened or read as an archive now appears by name in scan warnings
+  and counts as one unread item in the summary.
+- The deprecated SSE transport finding points to the field that selects it. Changing an existing server to SSE
+  now fails a review gated at minor severity. Renaming the server leaves an unchanged transport finding contextual.
+- A review lists a finding on a changed line even when the file holds more findings than the engine's safety
+  limit, so the gate sees it. Findings past the limit on unchanged lines are counted in the summary as well as
+  in the detail.
+- A staged or revision review looks for the lockfile in the index or the revision under review. A lockfile that
+  exists only in the working folder no longer passes a manifest staged without one.
+- The open npm range finding (`*`, `latest`) reads the dependency sections of the parsed manifest. A manifest on
+  one line is checked like an indented one, two open dependencies on one line are two findings, and a field such
+  as `description` that says "latest" is not a dependency.
+- A PHP file with an opening tag is read as page text until that tag, across lines. An apostrophe in the HTML
+  before the first block no longer hides the code in it, and a call printed in the page text is not reported.
+- A project exclusion that names a link's target leaves the permitted link in the passport's score, as in the scan.
+
 ## [4.23.0] — 2026-11-25
 
 Agent hooks: jankhunt42 now works inside an AI coding agent's own loop.

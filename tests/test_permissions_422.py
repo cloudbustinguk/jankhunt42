@@ -147,7 +147,8 @@ class NestedClaudeProjects(unittest.TestCase):
         self.assertEqual([s.project for s in servers], list(doc["projects"]))
         self.assertEqual([s.line for s in servers], [i for i, l in enumerate(text.splitlines(), 1) if '"relay":' in l])
         hit, = scan({".claude.json": text}, "JH714", "JH715")
-        self.assertEqual((hit.rule, hit.extra["project"], hit.line), ("JH715", "/invented/bay", servers[-1].line))
+        type_line = next(i for i, line in enumerate(text.splitlines(), 1) if '"type": "sse"' in line)
+        self.assertEqual((hit.rule, hit.extra["project"], hit.line), ("JH715", "/invented/bay", type_line))
         graph, _, _ = jh_map.build_graph([jh_map.Item(".claude.json", text)], "pier", "fixture")
         agents = [n["attributes"] for n in graph.nodes.values() if n["attributes"].get("platform") == "ai-agent"]
         self.assertEqual({a["project"] for a in agents}, set(doc["projects"]))

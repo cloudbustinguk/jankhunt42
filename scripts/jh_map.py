@@ -85,10 +85,11 @@ def collect_worktree(root: str, paths: Sequence[str], excludes: Sequence[str],
                                  max_bytes=max_bytes, not_read=not_read)
     # the limit was reached only when discovery turned an eligible file away, not when the count equals it
     col = Collected(considered=len(files), max_files_reached=bool(not_read.get("file_limit")))
-    for rel in not_read.get("too_large") or []:      # over the size limit: considered, never read
-        col.considered += 1
-        col.skip("over the size limit", rel)
-        col.unread.append(rel)
+    for key, reason in (("too_large", "over the size limit"), ("unreadable", "unreadable")):
+        for rel in not_read.get(key) or []:
+            col.considered += 1
+            col.skip(reason, rel)
+            col.unread.append(rel)
     # everything else discovery set aside is recorded too, as a revision map records it: folders by reason (each
     # counted once, as a folder), files by name, excluded files and files that could not be read as text
     for reason, paths in sorted((not_read.get("dirs") or {}).items()):

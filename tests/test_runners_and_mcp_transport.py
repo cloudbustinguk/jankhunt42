@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from _util import run_cli
+from test_diff import git
 import jh_agent
 
 
@@ -108,6 +109,44 @@ class RunnersAndTransport(unittest.TestCase):
         self.assertIn("2026-07-28", got[0]["message"])
         for project in ("streamable", "noauth", "local", "plain", "stdio"):
             self.assertEqual(self.rules(project, "JH715"), [], project)
+
+    @unittest.skipUnless(shutil.which("git"), "git unavailable")
+    def test_review_gates_the_transport_edit(self):
+        with tempfile.TemporaryDirectory() as root:
+            git(root, "init", "-q")
+            definition = servers(paper={"type": "http", "url": "https://paper.invalid/events"})
+            write(root, {".mcp.json": definition})
+            git(root, "add", ".mcp.json")
+            git(root, "commit", "-qm", "Initial transport")
+            definition["mcpServers"]["paper"]["type"] = "sse"
+            write(root, {".mcp.json": definition})
+            args = [".", "--rule", "JH715", "--fail-on", "minor", "--json"]
+            for command in ("scan", "review"):
+                with self.subTest(command=command):
+                    result = run_cli(command, *args, cwd=root)
+                    report = json.loads(result.stdout)
+                    self.assertEqual([(f["line"], f["evidence"]) for f in report["findings"]],
+                                     [(4, "paper: transport sse")])
+                    self.assertEqual(result.returncode, 1)
+                    if command == "review":
+                        self.assertEqual(report["review"]["gate"]["result"], "fail")
+            git(root, "commit", "-qam", "Use SSE")
+            definition["mcpServers"]["album"] = definition["mcpServers"].pop("paper")
+            write(root, {".mcp.json": definition})
+            result = run_cli("review", *args, cwd=root)
+            report = json.loads(result.stdout)
+            self.assertEqual((result.returncode, report["review"]["gate"]["result"]), (0, "pass"))
+            self.assertEqual(report["findings"], [])
+            self.assertEqual([f["line"] for f in report["review"]["contextual"]], [4])
+
+    def test_transport_alias_and_implicit_url_locations(self):
+        cases = [(".mcp.json", '"type": "",\n"transport":\n"http+sse",\n"url": "https://paper.invalid"', 5),
+                 (".gemini/settings.json", '"headers": {},\n"url": "https://paper.invalid"', 4)]
+        for path, properties, expected in cases:
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as root:
+                write(root, {path: '{"mcpServers": {\n"paper": {\n' + properties + '}}}'})
+                result = run_cli("scan", root, "--rule", "JH715", "--json")
+                self.assertEqual([f["line"] for f in json.loads(result.stdout)["findings"]], [expected])
 
     def test_remote_server_by_url_alone_is_quiet(self):
         # Under the MCP authorization specification the client signs in (OAuth) when it connects, and public

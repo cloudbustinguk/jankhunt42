@@ -16,8 +16,10 @@ import shlex
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -418,17 +420,59 @@ def collect_diff(root: str, mode: str, base: str = "", commit: str = "",
     )
 
 
+def _snapshot_entry(root: str, scope: DiffScope, rel: str) -> Tuple[bytes, bytes]:
+    path = os.fsencode(rel)
+    if scope.index:
+        args = ["ls-files", "--stage", "-z"]
+    else:
+        args = ["ls-tree", "-z", "--end-of-options", scope.revision]
+    proc = run_git(["git", "-C", root, "--literal-pathspecs", *args, "--", rel], capture_output=True, timeout=10)
+    if proc.returncode == 0:
+        for record in proc.stdout.split(b"\0"):
+            header, _, name = record.partition(b"\t")
+            if name == path:
+                mode, second, third = header.split()
+                if not scope.index or third == b"0":
+                    return mode, second if scope.index else third
+            elif scope.index and name.startswith(path + b"/"):
+                return b"040000", b""   # the index records a directory's children
+    return b"", b""
+
+
 def _in_reviewed_tree(root: str, scope: "DiffScope", rel: str) -> bool:
     """Whether the tree under review holds a file: the index for a staged review, the revision for a revision
     review, the working tree otherwise. An unstaged file never changes a review of the index or of a commit."""
-    if scope.index or scope.revision:
-        ref = (":%s" % rel) if scope.index else ("%s:%s" % (scope.revision, rel))
-        try:                                      # a file, not a folder of the same name (a directory called pyvenv.cfg)
-            proc = run_git(["git", "-C", root, "cat-file", "-t", ref], capture_output=True, timeout=10)
-            return proc.returncode == 0 and proc.stdout.strip() in ("blob", b"blob")
-        except (OSError, subprocess.SubprocessError):
-            return False
-    return os.path.isfile(os.path.join(root, rel))
+    if not (scope.index or scope.revision):
+        return os.path.isfile(os.path.join(root, rel))
+    parents = rel.split("/")
+    pending = deque([parents.pop()])
+    links = 0
+    try:
+        while pending:
+            part = pending.popleft()
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not parents:
+                    return False
+                parents.pop()
+                continue
+            mode, oid = _snapshot_entry(root, scope, "/".join(parents + [part]))
+            if mode == b"040000":
+                parents.append(part)
+            elif mode == b"120000" and links < 40:
+                links += 1
+                proc = run_git(["git", "-C", root, "cat-file", "blob", oid.decode("ascii")],
+                               capture_output=True, timeout=10)
+                target = os.fsdecode(proc.stdout)
+                if proc.returncode or not target or target.startswith("/") or "\0" in target:
+                    return False
+                pending.extendleft(reversed(target.split("/")))
+            else:
+                return not pending and mode in (b"100644", b"100755")
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return False
 
 
 def _git_show(root: str, rev: str, rel: str) -> Optional[str]:
@@ -523,6 +567,11 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
     skipped: List[Dict[str, str]] = []
     handled: Set[str] = set()
     untracked = [p for p, f in scope.files.items() if f.status == "untracked"]
+
+    @lru_cache(maxsize=None)
+    def has_marker(path: str) -> bool:
+        return _in_reviewed_tree(root, scope, path)
+
     for rel in sorted(scope.files):
         handled.add(rel)
         df = scope.files[rel]
@@ -537,7 +586,7 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
             continue
         # the shared folder rule: an env folder holding pyvenv.cfg (on disk or among the changes) is installed code,
         # and so is an installed plugin's bundle
-        folder_why = tree_skip_reason(rel, lambda q: _in_reviewed_tree(root, scope, q))   # a deleted marker is gone
+        folder_why = tree_skip_reason(rel, has_marker)
         if GENERATED_RE.search(rel) or folder_why:
             skipped.append({"path": rel, "reason": "generated/vendor" if not folder_why else folder_why})
             continue
@@ -585,7 +634,9 @@ def build_review_scope(root: str, scope: DiffScope, args: Any) -> Tuple[List[Any
     return sources, meta
 
 
-def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
+def scan_review(sources: Sequence[Any], args: Any, root: str = "", scope: Optional[DiffScope] = None) -> ScanResult:
+    """Scan the reviewed sources. With `root` and `scope`, a check that asks whether another file exists is answered
+    from the tree under review (the index or the revision), not from whatever the working folder holds now."""
     opts = ScanOptions(
         min_severity=getattr(args, "min_severity", "minor"),
         categories=set(getattr(args, "category", ()) or ()) or None,
@@ -596,7 +647,26 @@ def scan_review(sources: Sequence[Any], args: Any) -> ScanResult:
         max_per_file_rule=10 ** 9,
         max_per_rule=10 ** 9,
     )
-    result = scan_sources(sources, opts)
+    import jh_checks
+    if scope is not None:
+        shown_files = {display_path(k): v for k, v in scope.files.items()}
+
+        def on_added_line(f: Finding) -> bool:
+            df = shown_files.get(f.path) or scope.files.get(f.path)
+            return df is not None and bool(set(range(f.line, (f.end_line or f.line) + 1)) & df.added)
+        opts.keep_past_bound = on_added_line
+    if scope is not None and (scope.index or scope.revision):
+        top = os.path.abspath(root)
+
+        @lru_cache(maxsize=None)
+        def in_tree(path: str) -> bool:
+            rel = os.path.relpath(os.path.abspath(path), top).replace(os.sep, "/")
+            return not rel.startswith("../") and rel not in ("..", ".") and _in_reviewed_tree(root, scope, rel)
+        jh_checks.TREE_HAS_FILE = in_tree
+    try:
+        result = scan_sources(sources, opts)
+    finally:
+        jh_checks.TREE_HAS_FILE = None
     for f in result.findings:                  # a ruleset's severity changes (prepare_rules)
         f.severity = (getattr(args, "severity_map", None) or {}).get(f.rule, f.severity)
     return result
@@ -863,7 +933,7 @@ def run_review(args: Any) -> Dict[str, Any]:
         "\0%s\0%d\0%s" % (s.rel, len(s.text), s.text) for s in sources if s.rel in untracked_set
     )
     diff_hash = hashlib.sha256(diff_material.encode("utf-8", "replace")).hexdigest()
-    result = scan_review(sources, args)
+    result = scan_review(sources, args, root, diff_scope)
     overrun = ["site rule %s ran over its time budget and was switched off for this run; its findings are incomplete"
                % rid for rid in sorted(result.site_overrun)]
     for note in overrun:
@@ -977,7 +1047,8 @@ def run_review(args: Any) -> Dict[str, Any]:
         "persisting_findings": len(receipts) - len(new_receipts),
         "contextual_findings": len(contextual_receipts),
         "unchanged_findings": len(unchanged),
-        "capped_findings": review_capped,          # contextual and unchanged findings the caps held back
+        # contextual and unchanged findings held back: by the review's caps, or past a check's safety bound
+        "capped_findings": review_capped + int(result.set_aside.get("capped") or 0),
         "counts": _counts(new_receipts),
         "verification": _verification_counts(new_receipts),
         "jank_score": jank.score,

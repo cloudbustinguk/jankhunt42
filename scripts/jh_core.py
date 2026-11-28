@@ -2,6 +2,7 @@
 """Core types, language detection, sanitizing, and file discovery for jankhunt42."""
 from __future__ import annotations
 
+import errno
 import fnmatch
 import os
 import re
@@ -511,6 +512,9 @@ def _regex_literal_end(line: str, i: int) -> Optional[int]:
     return None
 
 
+_PHP_OPEN = re.compile(r"<\?(?:php\b|=)", re.I)
+
+
 class _Sanitizer:
     """Line-oriented comment/string masking with cross-line state."""
 
@@ -524,6 +528,8 @@ class _Sanitizer:
         self.block_end: Optional[str] = None
         self.str_end: Optional[str] = None
         self.php_line_template = False           # PHP: on a line where a comment closed the block, tags alternate
+        self.php_doc = False                     # PHP: the document has an opening tag, so text outside tags is template
+        self.php_template = False                # PHP: the scan position is in template text (kept across lines)
         starts = {token[0] for token in self.quotes}
         starts.update(start[0] for start, _ in self.blocks)
         starts.update(token[0] for token in _ANY_LINE_COMMENTS.get(lang, ()))
@@ -539,6 +545,9 @@ class _Sanitizer:
         code_lines: List[str] = []
         nc_lines: List[str] = []
         comment_lines: List[str] = []
+        if self.lang == "php" and _PHP_OPEN.search(text):
+            # a file with an opening tag starts as template text: a quote in the HTML is prose, not a PHP string
+            self.php_doc = self.php_template = True
         for line in text.split("\n"):
             code = list(line)
             nc = list(line)
@@ -616,6 +625,14 @@ class _Sanitizer:
             if self.block_end is not None:
                 i = self._consume_block(line, code, nc, comments, i, n)
                 continue
+            if self.php_template:
+                reopen = line.find("<?", i)          # template text until the next opening tag, on this line or a later one
+                _blank(code, i, n if reopen == -1 else reopen)
+                if reopen == -1:
+                    return
+                self.php_template = False
+                i = reopen + 2
+                continue
             if self.str_end is not None:
                 i = self._consume_string(line, code, i, n)
                 continue
@@ -642,6 +659,9 @@ class _Sanitizer:
                     _blank(code, i, close)
                     _blank(nc, i, close)
                     comments.append(line[i:close])
+                    if self.php_doc:
+                        i = close                    # the closing tag is handled below, with every other one
+                        continue
                     # the text after that tag on this line is template text, not code, until a <? reopens a block
                     reopen = line.find("<?", close + 2)
                     _blank(code, close, n if reopen == -1 else reopen)
@@ -654,6 +674,10 @@ class _Sanitizer:
                 _blank(nc, i, n)
                 comments.append(line[i:])
                 return
+            if self.php_doc and line.startswith("?>", i):
+                self.php_template = True
+                i += 2
+                continue
             if self.php_line_template and line.startswith("?>", i):
                 reopen = line.find("<?", i + 2)      # template text again until the next opening tag
                 _blank(code, i, n if reopen == -1 else reopen)
@@ -880,6 +904,14 @@ def count_path(counts: Dict[str, Any], reason: str, rel: str) -> None:
         entry["paths"].append(rel)
 
 
+def selected_path(name: str) -> Path:
+    """Keep an explicitly selected file link's name for classification and project configuration."""
+    path = Path(name).expanduser()
+    if path.is_symlink() and not _quiet_is_dir(path):
+        return path.parent.resolve() / path.name
+    return path.resolve()
+
+
 def discover_files(
     paths: Sequence[str],
     excludes: Sequence[str] = (),
@@ -895,8 +927,8 @@ def discover_files(
     walk short ("file_limit")."""
     if not paths:
         paths = ["."]
-    roots = [Path(p).expanduser().resolve() for p in paths]
-    if len(roots) == 1 and roots[0].is_dir():
+    roots = [selected_path(p) for p in paths]
+    if len(roots) == 1 and _quiet_is_dir(roots[0]):
         root = roots[0]
     else:
         root = Path.cwd().resolve()
@@ -915,13 +947,17 @@ def discover_files(
         return any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(os.path.basename(rel), pat) for pat in patterns)
 
     def add(p: Path, base: Path, explicit: bool = False, git_ignored: bool = False) -> None:
-        if p.is_symlink() and not explicit:
-            try:
-                resolved = p.resolve()
-            except (OSError, RuntimeError):          # a loop: RuntimeError on Python 3.12, OSError on 3.13
-                if not_read is not None:
+        is_link = p.is_symlink()
+        try:
+            resolved = p.resolve()
+        except (OSError, RuntimeError) as exc:
+            if not_read is not None:
+                if isinstance(exc, RuntimeError) or exc.errno == errno.ELOOP:
                     not_read.setdefault("dirs", {}).setdefault("link that cannot be resolved", []).append(shown(p))
-                return
+                else:
+                    not_read.setdefault("unreadable", []).append(shown(p))
+            return
+        if is_link and not explicit:
             try:
                 resolved.relative_to(base)
             except ValueError:
@@ -932,10 +968,7 @@ def discover_files(
                 if not_read is not None:             # a folder link inside the root: its target is read where it is
                     not_read.setdefault("dirs", {}).setdefault("linked folder (not followed)", []).append(shown(p))
                 return
-        try:
-            key = str(p.resolve())
-        except (OSError, RuntimeError):
-            return
+        key = str(resolved)
         if key in seen:
             # two spellings of one file (a link and its target): keep the real file, whose name decides the language
             # and the checks that run, whichever spelling the listing yields first. A link whose own location gives
@@ -977,6 +1010,8 @@ def discover_files(
             return
         inside = p.relative_to(base)
         if not _quiet_is_file(p):
+            if is_link and not_read is not None:
+                not_read.setdefault("unreadable", []).append(shown(p))
             return
         if not explicit and (excludes or config_excludes):
             rel = inside.as_posix()
@@ -1008,6 +1043,8 @@ def discover_files(
                     not_read.setdefault("too_large", []).append(shown(p))
                 return
         except OSError:
+            if not_read is not None:
+                not_read.setdefault("unreadable", []).append(shown(p))
             return
         if len(found) >= max_files:          # an eligible file the limit turns away: only then is the walk cut short
             overflow[0] = True
@@ -1020,7 +1057,7 @@ def discover_files(
             ignored_files.add(p)
 
     for target in roots:
-        if target.is_file():
+        if target.is_symlink() or _quiet_is_file(target):
             ignored = ignored_files is not None and bool(_git_files(target.parent, "--others", "--ignored",
                                                                      "--", ":(literal)" + target.name))
             add(target, base=target.parent, explicit=True, git_ignored=ignored)

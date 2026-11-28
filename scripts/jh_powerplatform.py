@@ -31,7 +31,7 @@ import urllib.parse
 import zipfile
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from jh_core import MAX_ARCHIVE_BYTES, Finding, Rule, SourceFile, cut, make_finding, source_from_text
+from jh_core import MAX_ARCHIVE_BYTES, Finding, Rule, SourceFile, cut, display_path, make_finding, source_from_text
 
 MAX_ZIP_BYTES = MAX_ARCHIVE_BYTES        # a solution zip larger than this is not opened
 MAX_MEMBERS = 5000                       # entries in the central directory
@@ -71,6 +71,8 @@ def _open(data: Any, rel: str) -> Tuple[Optional[zipfile.ZipFile], List[zipfile.
     except UnicodeDecodeError:
         return None, [], ["%s: entry names are not valid UTF-8, not read" % rel]
     except (zipfile.BadZipFile, zipfile.LargeZipFile, ValueError, OSError, EOFError, NotImplementedError):
+        if rel.lower().endswith(".msapp"):
+            return None, [], ["%s: not a readable zip, not read" % display_path(rel)]
         return None, [], []
 
 
@@ -162,7 +164,7 @@ def expand(data: Any, rel: str, size: Optional[int] = None) -> Tuple[List[Tuple[
                 continue
             inner, inner_infos, bad = _open(io.BytesIO(raw), where)
             if inner is None:
-                gaps.extend(bad or ["%s: not a readable zip, not read" % where])
+                gaps.extend(bad)
             elif _kind(inner_infos) != "app" or len(inner_infos) > MAX_MEMBERS:
                 gaps.append("%s: not a canvas app this version reads, not read" % where)
             else:
@@ -234,6 +236,8 @@ def load_archive(path: Any, root: Any) -> List[SourceFile]:
         with open(path, "rb") as fh:
             members, gaps = expand(fh, rel, os.fstat(fh.fileno()).st_size)
     except OSError:
+        if rel.lower().endswith(".msapp"):
+            GAPS.append("%s: unreadable, not read" % display_path(rel))
         return []
     GAPS.extend(gaps)
     out = []
