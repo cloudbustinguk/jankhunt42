@@ -36,6 +36,8 @@ class PhpTemplateText(Base):
     def test_text_after_a_comments_closing_tag_is_not_code(self):
         Path(self.path("card.php")).write_text("<?php // end ?> Manual: var_dump($shade) displays a value.\n")
         Path(self.path("two.php")).write_text("<?php // x ?> text <?php var_dump($a); ?>\n")
+        # short tags only: the file has no "<?php", so the comment's own closing tag is what ends the block
+        Path(self.path("short.php")).write_text("<? // end ?> Manual: var_dump($shade) displays a value.\n")
         d = scan(self.root, "--no-config", "--rule", "JH204")
         self.assertEqual([(f["path"], f["line"]) for f in d["findings"]], [("two.php", 1)])
 
